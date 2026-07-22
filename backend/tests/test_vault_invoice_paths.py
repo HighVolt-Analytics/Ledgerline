@@ -60,6 +60,18 @@ def test_heading_fallback_when_canonical_empty() -> None:
     assert vault_document_type_folder_for_invoice(inv, []) == "Tax Invoice"
 
 
+def test_handover_slip_heading_not_unclassified() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.EXCEPTION,
+        route_target=ROUTE_UNROUTED,
+        document_heading="HANDOVER SLIP",
+        extracted_fields={},
+    )
+    assert vault_type_folder_from_llm_or_heading(inv) == "Handover Slip"
+    assert vault_document_type_folder_for_invoice(inv, []) == "Handover Slip"
+
+
 def test_packing_list_case_variants_same_folder() -> None:
     inv_caps = Invoice(
         tenant_id=TESTING_TENANT_UUID,
@@ -104,5 +116,6 @@ def test_header_extract_prompt_includes_canonical_and_edge_cases() -> None:
     assert "MULTI-PAGE / WHOLE-PDF HANDLING" in body
     assert "Merge evidence across ALL pages" in body
     assert "EVERY finance document kind" in body
-    assert "Never leave invoice_no empty when a clearly labeled candidate" in body
+    assert "invoice_no — ONLY when clearly labeled as an invoice number" in body
+    assert "Supporting / ops / legal titles still get a canonical_document_type" in body
     assert "SELF-CHECK BEFORE RETURNING OUTPUT" in body

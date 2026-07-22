@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -24,6 +25,116 @@ CANONICAL_DOCUMENT_TYPE_KEY = "canonical_document_type"
 
 # Below this confidence (or after heavy grounding clears), hold for header review.
 VISION_HEADER_REVIEW_CONFIDENCE = 0.55
+
+# Noise tokens stripped when deriving a vault type name from a raw printed heading.
+_HEADING_NOISE = re.compile(
+    r"(?i)\b(?:original|copy|duplicate|duplicate\s+copy|computer\s+generated"
+    r"|continuation(?:\s+page)?|page\s+\d+(?:\s+of\s+\d+)?)\b"
+)
+_HEADING_SEP = re.compile(r"[\s|/\-–—:]+")
+_COMPANY_TOKENS = frozenset(
+    {
+        "pty",
+        "ltd",
+        "llc",
+        "inc",
+        "corp",
+        "co",
+        "limited",
+        "pvt",
+        "private",
+        "company",
+        "plc",
+    }
+)
+_STRONG_KIND_TOKENS = frozenset(
+    {
+        "invoice",
+        "handover",
+        "authorization",
+        "authorisation",
+        "packing",
+        "receipt",
+        "delivery",
+        "waybill",
+        "lading",
+        "order",
+        "permit",
+        "certificate",
+        "statement",
+        "remittance",
+        "gate",
+        "letter",
+        "advice",
+        "grn",
+        "pod",
+        "proforma",
+        "quotation",
+        "quote",
+        "contract",
+        "agreement",
+        "customs",
+        "clearance",
+        "manifest",
+    }
+)
+_WEAK_KIND_ALONE = frozenset({"slip", "pass", "note", "list", "form", "doc", "document"})
+
+
+def _is_document_kind_phrase(words: list[str]) -> bool:
+    folded = [w.casefold().rstrip(".") for w in words if w]
+    if not folded:
+        return False
+    if any(tok in _COMPANY_TOKENS for tok in folded):
+        return False
+    if len(folded) == 1 and folded[0] in _WEAK_KIND_ALONE:
+        return False
+    return any(
+        tok in _STRONG_KIND_TOKENS or any(s in tok for s in _STRONG_KIND_TOKENS)
+        for tok in folded
+    )
+
+
+def derive_canonical_document_type(
+    *,
+    document_heading: str,
+    canonical_document_type: str = "",
+) -> str:
+    """Ensure Understood-path docs have a vault type name when a title is visible.
+
+    Prefer the model canonical when present. If the model left it empty (common for
+    non-finance forms under older prompts), Title-Case a cleaned printed heading so
+    Handover Slip / Letter of Authorization do not land in Unclassified.
+    """
+    from app.services.vault.vault_paths import normalize_vault_type_book_label
+
+    canonical = (canonical_document_type or "").strip()
+    if canonical:
+        return normalize_vault_type_book_label(canonical) or canonical[:200]
+
+    heading = (document_heading or "").strip()
+    if not heading:
+        return ""
+
+    cleaned = _HEADING_NOISE.sub(" ", heading)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .-_|/")
+    if not cleaned:
+        return ""
+
+    parts = [p for p in _HEADING_SEP.split(cleaned) if p]
+    # Prefer the longest trailing kind phrase (company names usually prefix the title).
+    best: str | None = None
+    for width in range(1, min(6, len(parts) + 1)):
+        cand_parts = parts[-width:]
+        if _is_document_kind_phrase(cand_parts):
+            best = " ".join(cand_parts)
+    if best:
+        labeled = normalize_vault_type_book_label(best)
+        if labeled:
+            return labeled[:200]
+
+    labeled = normalize_vault_type_book_label(cleaned)
+    return (labeled or cleaned)[:200]
 
 
 @dataclass(frozen=True)
@@ -186,10 +297,15 @@ def parse_vision_header_raw(
     except (TypeError, ValueError):
         confidence = 0.0
     confidence = max(0.0, min(1.0, confidence))
+    document_heading = _str_field(raw, "document_heading")[:500]
+    canonical = derive_canonical_document_type(
+        document_heading=document_heading,
+        canonical_document_type=_str_field(raw, CANONICAL_DOCUMENT_TYPE_KEY)[:200],
+    )
     return VisionHeaderExtractResult(
         success=True,
-        document_heading=_str_field(raw, "document_heading")[:500],
-        canonical_document_type=_str_field(raw, CANONICAL_DOCUMENT_TYPE_KEY)[:200],
+        document_heading=document_heading,
+        canonical_document_type=canonical,
         counterparty_name=_str_field(raw, "counterparty_name")[:500],
         perspective=_normalize_perspective(_str_field(raw, "perspective")),
         invoice_no=_str_field(raw, "invoice_no")[:128],

@@ -20,14 +20,18 @@ def _extracted_field(invoice: Invoice, key: str) -> str:
 
 def vault_type_folder_from_llm_or_heading(invoice: Invoice) -> str | None:
     """AI canonical type (preferred), else printed heading — Title Case only, no type allowlist."""
+    from app.services.invoice.vision_header_extract import derive_canonical_document_type
+
     canonical = _extracted_field(invoice, CANONICAL_DOCUMENT_TYPE_KEY)
-    if canonical:
-        return vault_document_type_folder(None, short_title=canonical)
     heading = (invoice.document_heading or "").strip() or _extracted_field(
         invoice, "document_heading"
     )
-    if heading:
-        return vault_document_type_folder(None, short_title=heading)
+    label = derive_canonical_document_type(
+        document_heading=heading,
+        canonical_document_type=canonical,
+    )
+    if label:
+        return vault_document_type_folder(None, short_title=label)
     return None
 
 

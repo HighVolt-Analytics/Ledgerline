@@ -73,6 +73,18 @@ _INVOICE_NO_STOPWORDS = frozenset(
         "due",
         "bill",
         "to",
+        "customer",
+        "buyer",
+        "seller",
+        "incoterm",
+        "packing",
+        "list",
+        "order",
+        "po",
+        "origin",
+        "brand",
+        "vendor",
+        "supplier",
     }
 )
 
@@ -151,7 +163,8 @@ def _invoice_no_sane(value: str | None) -> bool:
     token = value.strip().lower()
     if token in _INVOICE_NO_STOPWORDS:
         return False
-    if not re.search(r"\d", value) and len(value) < 6:
+    # Packing-list / form column headers are never invoice numbers.
+    if not re.search(r"\d", value):
         return False
     return True
 

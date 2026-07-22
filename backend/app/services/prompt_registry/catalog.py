@@ -734,14 +734,15 @@ Rules:
   dates, and totals when present) on ANY of these kinds — not only tax invoices:
   invoices / credit notes / debit notes, purchase or sales orders, packing lists,
   GRN / goods receipt, Proof of Delivery, AWB / bill of lading / transport docs,
-  cargo clearance permits / declarations, and similar AP/trade paperwork.
+  cargo clearance permits / declarations, handover slips, letters of authorization,
+  warehouse / gate passes, and similar AP/trade or supporting paperwork.
 - Do not require invoice amounts or line items. A readable Proof of Delivery or GRN
   without totals is still can_understand=true.
 - can_understand is false only for blank pages, extreme blur, heavy occlusion,
-  unreadable handwriting, or clearly non-document junk (random photos, internal
-  memos with no trade/shipping structure, blank fax covers).
-- Do not reject a readable shipping, delivery, packing, or receipt document merely
-  because it is "not an invoice" or lacks money fields.
+  unreadable handwriting, or clearly non-document junk (random photos, blank fax
+  covers). A readable titled supporting form is NOT junk.
+- Do not reject a readable shipping, delivery, packing, receipt, handover, or
+  authorization document merely because it is "not an invoice" or lacks money fields.
 - confidence is 0.0-1.0 for your understandability judgment.
 - reason is one short sentence explaining the decision.
 - Do not classify document type. Do not extract field values. Do not use a catalogue."""
@@ -751,8 +752,8 @@ def _vision_header_extract_default() -> str:
 
     keys = vision_header_json_keys_csv()
     return f"""\
-You extract header identity fields from finance document page images for accounts
-payable/receivable.
+You extract header identity fields from trade, finance, and related operations document
+page images (AP/AR paperwork and supporting forms).
 Return JSON only with keys:
 {keys}.
 Never omit keys — use empty string when a value is absent, unclear, or ambiguous between
@@ -776,30 +777,39 @@ DOCUMENT TITLE FIELDS
 - document_heading: copy the printed document title EXACTLY as shown on the page
   (spelling, casing, punctuation as printed). Do not invent a catalogue DT-xx code.
   If two titles appear (e.g. a form name and a company name both in large type), prefer the
-  one that names a document kind (invoice/packing list/etc.) over a company/product name.
+  one that names a document kind (invoice/packing list/handover slip/etc.) over a
+  company/product name.
   If no title is printed anywhere on the page (letterhead only, or a pure continuation page),
   leave empty — do not reconstruct a heading from context.
 - canonical_document_type: the vault folder name for this document. Use clear Title Case
-  English (e.g. "Packing List", "Tax Invoice"). There is NO fixed allowlist — if you see a
-  new document kind, invent a clear folder name and reuse it for that kind later.
+  English (e.g. "Packing List", "Tax Invoice", "Handover Slip"). There is NO fixed
+  allowlist and NO finance-only filter — if you see a titled document kind, invent a clear
+  folder name and reuse it for that kind later. Supporting / ops / legal titles still get a canonical_document_type
+  whenever a document kind is readable (Understood path uses this
+  name as the type; never leave it blank just because the form is non-posting).
   Same printed kind must always produce the SAME canonical name (stable across casing and
   abbreviations). Examples of consistent naming (guidance only, not a closed list):
   - GRN / G.R.N. / Goods Receipt → "Goods Receipt Note"
   - PO / Purchase Order → "Purchase Order"
   - TAX INVOICE / Tax Invoice → "Tax Invoice"
   - Packing List / PACKING LIST → "Packing List"
+  - Handover Slip / HANDOVER SLIP → "Handover Slip"
+  - Letter of Authorization / LOA / Authorisation → "Letter of Authorization"
   - New kinds (e.g. "Warehouse Gate Pass") → use that Title Case name as the folder
 
 Synonym consistency (same kind → same folder name):
 - Prefer one full English name per kind; do not oscillate between abbreviations and full forms.
 - Noise on the title line (company name glued to title, "original"/"copy"/"duplicate", page
   markers): document_heading may keep the printed form; canonical must be the clean type name only.
-- Ambiguous or multi-title pages: pick the primary commercial document title; do not invent
+- Ambiguous or multi-title pages: pick the primary document-kind title; do not invent
   a second type.
 - Non-English titles: English canonical_document_type when the kind is clear; else empty
   (downstream may Title-Case the raw heading into a folder).
-- Not a finance document, or type unreadable: leave canonical_document_type empty; set
-  document_heading only if a visible title exists.
+- Type unreadable / no document-kind title on the page: leave canonical_document_type empty;
+  set document_heading only if some other visible title text exists. Do NOT blank
+  canonical_document_type merely because the document is non-finance, non-posting, ops,
+  legal, or supporting (handover slip, letter of authorization, gate pass, delivery advice,
+  etc.) — name the kind when it is readable.
 - Watermark/stamp overlapping the title text (VOID / DRAFT / SAMPLE / COPY / CANCELLED)
   does not change canonical_document_type; extract the type normally and note the overlay
   in reason (e.g. "VOID stamp over header, type unaffected").
@@ -831,6 +841,10 @@ If it is absent or unclear, leave empty — never invent.
   Copy the printed token as-is (leading zeros, hyphens, slashes). Empty string when
   no Invoice/INV-labeled candidate exists or the token is unreadable — do not invent
   or substitute another document ID.
+  CRITICAL: never put an adjacent column HEADER into invoice_no (e.g. "Customer",
+  "Customer PO", "Incoterm", "PackingList No", "Date", "Order No"). On packing lists
+  the invoice number is the VALUE under the Invoice No column (often a digit run),
+  not the next header cell to its right.
 
 - proforma_invoice_no is only when labeled as proforma / pro-forma invoice number;
   empty string if absent. Do not copy commercial invoice_no into this field.
@@ -1007,12 +1021,15 @@ MULTI-PAGE / WHOLE-PDF HANDLING
 EDGE CASES
 ═══════════════════════════════════════════════
 E1. Page is entirely a letterhead/logo with no body text yet (e.g. a cover page before the
-    real invoice) → canonical_document_type empty, document_heading empty unless a real title
-    is printed, all other fields empty, low confidence, reason "letterhead only, no document
-    content visible."
-E2. Page is not a finance document at all (e.g. an internal memo, a photo, a blank fax cover)
-    → all fields empty except document_heading if a visible title exists; canonical_document_
-    type empty; reason states what the page appears to be.
+  real invoice) → canonical_document_type empty, document_heading empty unless a real title
+  is printed, all other fields empty, low confidence, reason "letterhead only, no document
+  content visible."
+E2. Page is untitled junk (photo, blank fax cover) with no document-kind title → all fields
+    empty; reason states what the page appears to be. If a readable ops/legal/supporting
+    title exists (e.g. Handover Slip, Letter of Authorization, Gate Pass, internal delivery
+    form), set document_heading from the printed title and canonical_document_type to the
+    stable Title Case kind name — do not treat "non-finance" as a reason to leave
+    canonical_document_type empty.
 E3. Document is in a non-English language with no English anywhere → document_heading in the
     original script/language as printed; canonical_document_type in English if the kind is
     confidently inferable from structure (see canonical rules); fields (dates, totals,

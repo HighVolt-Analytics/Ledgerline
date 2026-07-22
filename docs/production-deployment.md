@@ -145,6 +145,7 @@ Store in Kubernetes secrets or your secret manager — never in ConfigMap or git
 - `STRIPE_GLOBAL_PAYOUTS_WEBHOOK_SECRET` (when Global Payouts webhooks are registered)
 - `STRIPE_GLOBAL_PAYOUTS_FINANCIAL_ACCOUNT_ID` (after Stripe onboarding)
 - Integration OAuth secrets (Xero, QuickBooks, Microsoft Graph, etc.) as used
+- Claude Vision (Azure AI Foundry Anthropic Messages): `AZURE_AI_VISUALIZATION_ENDPOINT`, `AZURE_AI_VISUALIZATION_API_KEY`, `AZURE_AI_VISUALIZATION_DEPLOYMENT_NAME`, optional `AZURE_AI_VISUALIZATION_ANTHROPIC_VERSION` — sync with `python backend/scripts/patch_production_claude_vision_env.py --restart`
 
 ## Stripe Global Payouts approval (pending)
 

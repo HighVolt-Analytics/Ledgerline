@@ -317,6 +317,62 @@ def test_ground_prefers_commercial_inv_over_soft_grounded_permit() -> None:
     assert detail.get("invoice_no_vision_cleared") == "OD5I458006S"
 
 
+def test_ground_rejects_customer_header_and_recovers_invoice_no() -> None:
+    """Packing-list column bleed: vision 'Customer' → recover labeled Invoice No."""
+    from app.services.invoice.vision_header_extract import VisionHeaderExtractResult
+    from app.services.invoice.vision_header_reconcile import ground_vision_header_result
+
+    text = (
+        "PACKING LIST\n"
+        "Lexar Co., Limited\n"
+        "Date PackingList No. Invoice No. Customer PO Incoterm\n"
+        "2025-07-25 0000078729 82507681 PO-250742524 EXW Hong Kong\n"
+        + ("padding " * 20)
+    )
+    result = VisionHeaderExtractResult(
+        success=True,
+        document_heading="PACKING LIST",
+        canonical_document_type="Packing List",
+        counterparty_name="Lexar Co., Limited",
+        invoice_no="Customer",
+        confidence=0.88,
+        reason="header bleed",
+        provider="test",
+    )
+    grounded, detail = ground_vision_header_result(result, text)
+    assert grounded.invoice_no == "82507681"
+    assert detail.get("invoice_no_vision_rejected") == "Customer"
+    assert "invoice_no" in detail["recovered"]
+
+
+def test_ground_keeps_digit_invoice_no_when_customer_appears_in_ocr() -> None:
+    """Do not overwrite a correct vision invoice_no with adjacent 'Customer' header."""
+    from app.services.invoice.vision_header_extract import VisionHeaderExtractResult
+    from app.services.invoice.vision_header_reconcile import ground_vision_header_result
+
+    text = (
+        "PACKING LIST\n"
+        "Invoice No. Customer PO\n"
+        "82507681 PO-250742524\n"
+        + ("padding " * 20)
+    )
+    result = VisionHeaderExtractResult(
+        success=True,
+        document_heading="PACKING LIST",
+        counterparty_name="Lexar Co., Limited",
+        invoice_no="82507681",
+        confidence=0.9,
+        reason="ok",
+        provider="test",
+    )
+    grounded, detail = ground_vision_header_result(result, text)
+    assert grounded.invoice_no == "82507681"
+    assert "invoice_no" in detail["kept"] or detail.get("invoice_no_prefer_commercial") in (
+        None,
+        "82507681",
+    )
+
+
 def test_ground_fixes_near_miss_invoice_no() -> None:
     from app.services.invoice.vision_header_extract import VisionHeaderExtractResult
     from app.services.invoice.vision_header_reconcile import ground_vision_header_result

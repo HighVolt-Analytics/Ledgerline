@@ -210,6 +210,8 @@ async def test_documents_bundle_export_excludes_non_posting_documents(
     assert "Invoice date" in header
     assert "Counterparty" in header
     assert "Linkage" in header
+    assert "Document number" in header
+    assert header.index("Document number") + 1 == header.index("DT type")
     assert "PO goods invoice" in header
     assert "GRN (supporting)" in header
 
@@ -221,9 +223,11 @@ async def test_documents_bundle_export_excludes_non_posting_documents(
         row for row in data if _invoice_no_from_cell(row[header.index("Invoice no.")]) == "INV-POST-1"
     )
     assert posting_row[header.index("Universal match")] == "No"
+    assert str(posting_row[header.index("Document number")]).startswith("DOC-")
 
     unlinked_header, unlinked_data, _ = _read_unlinked_xlsx(res.content)
     assert unlinked_header == list(_UNLINKED_COLUMNS)
+    assert unlinked_header.index("Document number") + 1 == unlinked_header.index("DT type")
     unlinked_nos = _invoice_nos_from_rows(unlinked_header, unlinked_data)
     assert "INV-POST-1" in unlinked_nos
     assert "PO-SUPPORT-1" in unlinked_nos
@@ -286,11 +290,13 @@ def test_documents_bundle_row_universal_match_flag() -> None:
         linked=linked,
         dt_codes=[],
     )
-    # Fixed column order: Timestamp(0), Uploaded by(1), Source(2), … Universal(13)
+    # Fixed column order: Timestamp(0), Uploaded by(1), Source(2), Document number(3), … Universal(14)
     assert row[0] == "2026-05-12 09:30:00"
     assert row[1] == "vendor@example.com"
     assert row[2] == "Email"
-    assert row[13] == "No"
+    assert row[3] == "DOC-99"
+    assert row[_FIXED_COLUMNS.index("DT type")] == "PO goods invoice"
+    assert row[_FIXED_COLUMNS.index("Universal match")] == "No"
 
 
 def test_documents_bundle_timestamp_uses_browser_timezone() -> None:
@@ -604,17 +610,23 @@ async def test_documents_bundle_export_with_empty_tenant_document_types(
     assert res.status_code == 200
     assert res.headers.get("x-data-rows") == "1"
     header, data, _ws = _read_xlsx(res.content)
-    assert len(header) == 14
+    assert len(header) == 15
     assert "Timestamp" in header
     assert "Uploaded by" in header
     assert "Source" in header
+    assert "Document number" in header
     assert "Proforma invoice no." in header
     assert data == []
 
     unlinked_header, unlinked_data, _ = _read_unlinked_xlsx(res.content)
     assert unlinked_header == list(_UNLINKED_COLUMNS)
+    assert "Document number" in unlinked_header
     unlinked_nos = _invoice_nos_from_rows(unlinked_header, unlinked_data)
     assert unlinked_nos == {"INV-CATALOG-FALLBACK"}
+    orphan = unlinked_data[0]
+    assert orphan[unlinked_header.index("Document number")].startswith("DOC-")
+    assert orphan[unlinked_header.index("DT type")]  # present; may be Unclassified with empty catalogue
+    assert unlinked_header.index("Document number") + 1 == unlinked_header.index("DT type")
 
 
 @pytest.mark.asyncio
@@ -1080,11 +1092,13 @@ async def test_documents_bundle_export_includes_all_org_document_types(
     )
     assert res.status_code == 200
     header, _data, _ws = _read_xlsx(res.content)
-    fixed_count = 14
+    fixed_count = len(_FIXED_COLUMNS)
     dt_column_count = len(header) - fixed_count
     assert header[header.index("Timestamp")] == "Timestamp"
     assert "Uploaded by" in header
     assert "Source" in header
+    assert "Document number" in header
+    assert header.index("Document number") + 1 == header.index("DT type")
     assert "Proforma invoice no." in header
     assert dt_column_count == len(org_types.document_types)
     shipped_only_codes = {"DT-14", "DT-15", "DT-26", "DT-27", "DT-28"}

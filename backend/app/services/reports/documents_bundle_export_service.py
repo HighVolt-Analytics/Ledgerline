@@ -5,7 +5,7 @@ Sheet 1 — Documents Bundle
     vision soft-bundle invoice-family anchors (vault type-folder matrix).
 
 Fixed columns
-    Timestamp, Uploaded by, Source, DT type, Invoice date,
+    Timestamp, Uploaded by, Source, Document number, DT type, Invoice date,
     Counterparty, Total, Currency, Linkage, Invoice no. (vault hyperlink),
     Proforma invoice no., PO reference, SO reference, Universal match.
 
@@ -78,6 +78,7 @@ _FIXED_COLUMNS = [
     "Timestamp",
     "Uploaded by",
     "Source",
+    "Document number",
     "DT type",
     "Invoice date",
     "Counterparty",
@@ -125,6 +126,7 @@ _UNLINKED_COLUMNS = [
     "Timestamp",
     "Uploaded by",
     "Source",
+    "Document number",
     "DT type",
     "Invoice date",
     "Counterparty",
@@ -216,6 +218,16 @@ def _dt_type_label(defn: DocumentTypeDefinition | None) -> str:
     if short:
         return short
     return (defn.title or defn.code or "Unclassified").strip() or "Unclassified"
+
+
+def _document_number_label(invoice: Invoice) -> str:
+    """Org document register ref (DOC-…); falls back to DOC-{id}."""
+    ref = (invoice.document_ref or "").strip()
+    if ref:
+        return ref
+    if invoice.id is not None:
+        return f"DOC-{invoice.id}"
+    return ""
 
 
 def vault_folder_label_for_export(invoice: Invoice) -> str:
@@ -549,6 +561,7 @@ def build_documents_bundle_row(
         _timestamp_label(invoice, display_tz=display_tz),
         _uploaded_by_label(invoice, upload_actor=upload_actor),
         _source_label(invoice),
+        _document_number_label(invoice),
         _dt_type_label(definition),
         _invoice_date_label(invoice),
         (invoice.vendor or "").strip(),
@@ -589,6 +602,7 @@ def build_understood_bundle_row(
         _timestamp_label(invoice, display_tz=display_tz),
         _uploaded_by_label(invoice, upload_actor=upload_actor),
         _source_label(invoice),
+        _document_number_label(invoice),
         type_label,
         _invoice_date_label(invoice),
         (invoice.vendor or "").strip(),
@@ -640,6 +654,7 @@ def build_unlinked_document_row(
         _timestamp_label(invoice, display_tz=display_tz),
         _uploaded_by_label(invoice, upload_actor=upload_actor),
         _source_label(invoice),
+        _document_number_label(invoice),
         _document_type_label_for_export(invoice, definition),
         _invoice_date_label(invoice),
         (invoice.vendor or "").strip(),

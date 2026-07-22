@@ -90,6 +90,36 @@ def test_reject_date_money_junk_gstin() -> None:
     assert sanitize_invoice_no("29AAAAA0000A1Z5") is None
 
 
+def test_reject_packing_list_column_header_as_invoice_no() -> None:
+    """Adjacent 'Customer PO' header must never become invoice_no."""
+    assert sanitize_invoice_no("Customer") is None
+    assert sanitize_invoice_no("customer") is None
+    assert sanitize_invoice_no("Customer PO") is None
+    assert sanitize_invoice_no("Incoterm") is None
+    assert sanitize_invoice_no("Invoice No Customer") is None
+    assert sanitize_invoice_no("Customer 82507681") == "82507681"
+
+
+def test_extract_skips_customer_po_header_bleed() -> None:
+    """Lexar-style packing list: Invoice No. | Customer PO reading-order bleed."""
+    text = (
+        "PACKING LIST\n"
+        "Date PackingList No. Invoice No. Customer PO Incoterm\n"
+        "2025-07-25 0000078729 82507681 PO-250742524 EXW Hong Kong\n"
+    )
+    assert extract_invoice_no_from_text(text) == "82507681"
+
+    bleed = (
+        "PACKING LIST\n"
+        "Invoice No. Customer PO\n"
+        "82507681 PO-250742524\n"
+    )
+    assert extract_invoice_no_from_text(bleed) == "82507681"
+
+    glued = "Invoice No Customer\n82507681 SPECTRA\n"
+    assert extract_invoice_no_from_text(glued) == "82507681"
+
+
 def test_extract_prefers_commercial_over_proforma() -> None:
     text = (
         "PROFORMA INVOICE NO: PF-999\n"

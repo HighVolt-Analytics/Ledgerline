@@ -44,14 +44,17 @@ _KIND_LABEL: dict[str, str] = {
 
 def vision_document_type_label(invoice: Invoice) -> str:
     """AI / printed document name from vision header (no catalogue DT required)."""
+    from app.services.invoice.vision_header_extract import derive_canonical_document_type
+
     fields = invoice.extracted_fields if isinstance(invoice.extracted_fields, dict) else {}
     canonical = str(fields.get("canonical_document_type") or "").strip()
-    if canonical:
-        return canonical
     heading = (invoice.document_heading or "").strip() or str(
         fields.get("document_heading") or ""
     ).strip()
-    return heading
+    return derive_canonical_document_type(
+        document_heading=heading,
+        canonical_document_type=canonical,
+    ) or heading
 
 
 @dataclass(frozen=True)

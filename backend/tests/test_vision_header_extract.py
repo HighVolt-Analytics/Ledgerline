@@ -7,12 +7,107 @@ import pytest
 from app.models.invoice import Invoice, InvoiceStatus
 from app.services.extraction.document_ai_provider import DocumentAiProvider
 from app.services.invoice.vision_header_extract import (
+    derive_canonical_document_type,
     evaluate_vision_header_extract,
     parse_vision_header_raw,
     persist_vision_header_to_invoice,
 )
+from app.services.invoice.vision_header_schema import VISION_HEADER_PROMPT_MARKERS
+from app.services.prompt_registry.catalog import catalog_default_body
 from app.services.tenant.tenant_org_context import OrgContext
 from app.tenant_ids import TESTING_TENANT_UUID
+
+
+def test_derive_canonical_from_handover_heading() -> None:
+    assert (
+        derive_canonical_document_type(
+            document_heading="HANDOVER SLIP",
+            canonical_document_type="",
+        )
+        == "Handover Slip"
+    )
+    assert (
+        derive_canonical_document_type(
+            document_heading="LETTER OF AUTHORIZATION",
+            canonical_document_type="",
+        )
+        == "Letter of Authorization"
+    )
+    assert (
+        derive_canonical_document_type(
+            document_heading="ACME PTY LTD HANDOVER SLIP",
+            canonical_document_type="",
+        )
+        == "Handover Slip"
+    )
+    assert (
+        derive_canonical_document_type(
+            document_heading="TAX INVOICE",
+            canonical_document_type="Tax Invoice",
+        )
+        == "Tax Invoice"
+    )
+
+
+def test_parse_fills_canonical_when_model_leaves_non_finance_empty() -> None:
+    """Older prompts blanked canonical for non-finance; derive from printed heading."""
+    result = parse_vision_header_raw(
+        {
+            "document_heading": "HANDOVER SLIP",
+            "canonical_document_type": "",
+            "counterparty_name": "Site Ops",
+            "perspective": "unknown",
+            "invoice_no": "",
+            "confidence": 0.82,
+            "reason": "non-finance supporting form",
+        },
+        provider="claude_vision",
+    )
+    assert result.success is True
+    assert result.canonical_document_type == "Handover Slip"
+
+    loa = parse_vision_header_raw(
+        {
+            "document_heading": "Letter of Authorisation",
+            "canonical_document_type": "",
+            "counterparty_name": "",
+            "perspective": "unknown",
+            "confidence": 0.7,
+            "reason": "ops form",
+        },
+        provider="claude_vision",
+    )
+    assert loa.canonical_document_type == "Letter of Authorisation"
+
+
+def test_persist_derived_canonical_for_handover_slip() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PARSING,
+        currency="",
+    )
+    result = parse_vision_header_raw(
+        {
+            "document_heading": "HANDOVER SLIP",
+            "canonical_document_type": "",
+            "counterparty_name": "Warehouse Co",
+            "perspective": "unknown",
+            "confidence": 0.8,
+            "reason": "handover",
+        },
+        provider="claude_vision",
+    )
+    persist_vision_header_to_invoice(inv, result)
+    fields = inv.extracted_fields or {}
+    assert fields.get("canonical_document_type") == "Handover Slip"
+    assert fields.get("document_heading") == "HANDOVER SLIP"
+
+
+def test_vision_header_prompt_names_supporting_docs() -> None:
+    body = catalog_default_body("vision.header_extract.system") or ""
+    assert "Supporting / ops / legal titles still get a canonical_document_type" in body
+    assert 'Handover Slip / HANDOVER SLIP → "Handover Slip"' in body
+    assert all(marker in body for marker in VISION_HEADER_PROMPT_MARKERS)
 
 
 def test_parse_vision_header_raw_success() -> None:

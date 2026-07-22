@@ -16,7 +16,8 @@ _INVOICE_NO_BLEED = re.compile(
     r"\s*,\s*(?:DATED?|DATE)\b.*$"
     r"|\s+\bDATED?\b.*$"
     r"|\s+\bOF\s+THE\b.*$"
-    r"|\s+(?:Invoice\s+Date|GSTIN|ABN|ACN|PAN|PO|Bill\s+To|Ship\s+To|Page|GST|Total)\b.*$",
+    r"|\s+(?:Invoice\s+Date|GSTIN|ABN|ACN|PAN|PO|Bill\s+To|Ship\s+To|Page|GST|Total|"
+    r"Customer(?:\s*(?:PO|P/?N))?|Incoterm(?:s)?|Packing\s*List)\b.*$",
     re.I,
 )
 _LEADING_LABEL = re.compile(
@@ -24,6 +25,15 @@ _LEADING_LABEL = re.compile(
     r"\s*[:#.\-\s]+",
     re.I,
 )
+# Label only — capture handled by look-ahead so adjacent column headers are skipped.
+_INVOICE_NO_LABEL = re.compile(
+    r"(?:(?<!Proforma\s)(?<!PROFORMA\s)Invoice\s*(?:No\.?|Number|#)|"
+    r"Inv\.?\s*(?:No\.?|Number|#)|"
+    r"Inv\.?\s*#|Invoice\s*ID|"
+    r"INV\s*NO)\s*[:\s#]*",
+    re.I,
+)
+# Kept for callers / tests that still expect a capturing form; prefer label + look-ahead.
 _INVOICE_NO_TIGHT = re.compile(
     r"(?:(?<!Proforma\s)(?<!PROFORMA\s)Invoice\s*(?:No\.?|Number|#)|"
     r"Inv\.?\s*(?:No\.?|Number|#)|"
@@ -32,6 +42,36 @@ _INVOICE_NO_TIGHT = re.compile(
     r"#?"
     r"([A-Z0-9][A-Z0-9\-/_]{2,})",
     re.I,
+)
+_CANDIDATE_TOKEN = re.compile(r"#?([A-Z0-9][A-Z0-9\-/_]{2,})", re.I)
+# Packing-list / form headers glued right after "Invoice No." in reading order.
+_ADJACENT_COLUMN_HEADER = re.compile(
+    r"^(?:"
+    r"Customer(?:\s*(?:PO|P/?N(?:\s*\(ASIN\))?|Part(?:\s*No\.?)?|No\.?|Number|#))?|"
+    r"Packing\s*List\s*(?:No\.?|Number|#)?|"
+    r"Incoterm(?:s)?|"
+    r"Order\s*(?:No\.?|Number|#)?|"
+    r"Date|"
+    r"Bill\s*To|Ship\s*To"
+    r")\b\s*",
+    re.I,
+)
+_PO_LIKE_TOKEN = re.compile(r"^PO[-_]?\d", re.I)
+_PACKING_LIST_NO_LABELED = re.compile(
+    r"Packing\s*List\s*(?:No\.?|Number|#)?[ \t]*[:#=]?[ \t]*"
+    r"([A-Z0-9][A-Z0-9\-/_]{2,})",
+    re.I,
+)
+_CUSTOMER_PO_LABELED = re.compile(
+    r"Customer\s*PO[ \t]*[:#=]?[ \t]*([A-Z0-9][A-Z0-9\-/_]{2,})",
+    re.I,
+)
+_HEADER_CELL = re.compile(
+    r"(?i)(?:"
+    r"Date|Packing\s*List\s*(?:No\.?|Number|#)?|"
+    r"Invoice\s*(?:No\.?|Number|#)|Inv\.?\s*(?:No\.?|Number|#)|"
+    r"Customer(?:\s*(?:PO|P/?N))?|Incoterm(?:s)?|Order\s*(?:No\.?|Number|#)?"
+    r")"
 )
 _PERMIT_OR_DOC_NO = re.compile(
     r"(?:Permit\s*(?:No\.?|Number|#)|"
@@ -70,9 +110,45 @@ _JUNK_WORDS = frozenset(
         "tax",
         "page",
         "amount",
+        # Adjacent form / packing-list column headers (never invoice numbers).
+        "customer",
+        "buyer",
+        "seller",
+        "shipper",
+        "consignee",
+        "address",
+        "incoterm",
+        "incoterms",
+        "packing",
+        "list",
+        "order",
+        "origin",
+        "brand",
+        "remark",
+        "remarks",
+        "description",
+        "qty",
+        "quantity",
+        "unit",
+        "price",
+        "vendor",
+        "supplier",
+        "ship",
+        "bill",
+        "to",
+        "from",
+        "attn",
+        "attention",
+        "tel",
+        "phone",
+        "fax",
+        "email",
+        "po",
+        "asin",
     }
 )
 _MAX_TOKEN_LEN = 64
+_LOOKAHEAD_CHARS = 240
 
 
 def _unicode_cleanup(value: str) -> str:
@@ -91,6 +167,19 @@ def _strip_wrappers(value: str) -> str:
     return token
 
 
+def _strip_leading_junk_tokens(token: str) -> str:
+    """Drop leading form labels (Customer / Date / …) before the real ID."""
+    # Split on whitespace only — never commas (money like 1,234.56).
+    parts = re.split(r"\s+", token.strip())
+    while parts:
+        head = parts[0].strip(" .:/-#").lower()
+        if head in _JUNK_WORDS or _ADJACENT_COLUMN_HEADER.match(parts[0]):
+            parts = parts[1:]
+            continue
+        break
+    return " ".join(parts).strip() if parts else ""
+
+
 def _cleanup_token(value: str) -> str:
     """Contamination-only cleanup before dual split / plausibility."""
     token = _unicode_cleanup(str(value))
@@ -103,8 +192,14 @@ def _cleanup_token(value: str) -> str:
     token = token.strip(" .,;:/#")
     if token.startswith("#"):
         token = token.lstrip("#").strip()
+    token = _strip_leading_junk_tokens(token)
     if len(token) > _MAX_TOKEN_LEN and re.search(r"[\s,;]", token):
         parts = re.split(r"[\s,;]+", token)
+        # Prefer the first plausible fragment (skip leftover label words).
+        for part in parts:
+            cleaned = part.strip(" .,;:/#")
+            if is_plausible_invoice_no(cleaned):
+                return cleaned
         token = parts[0] if parts else token[:_MAX_TOKEN_LEN]
     return token.strip(" .,;:/#")
 
@@ -116,6 +211,12 @@ def is_plausible_invoice_no(value: str | None) -> bool:
     lowered = token.lower()
     if lowered in _JUNK_WORDS:
         return False
+    # Multi-word blobs that start with a form label are never invoice numbers.
+    first = re.split(r"[\s,;|]+", lowered, maxsplit=1)[0].strip(" .:/-#")
+    if first in _JUNK_WORDS:
+        return False
+    if _ADJACENT_COLUMN_HEADER.match(token):
+        return False
     if _INVOICE_NO_BLEED.search(token):
         return False
     if _DATE_ONLY.match(token):
@@ -124,9 +225,82 @@ def is_plausible_invoice_no(value: str | None) -> bool:
         return False
     if _GSTIN_ONLY.match(token):
         return False
-    if not re.search(r"\d", token) and len(token) < 6:
+    # Real invoice / packing-list cross-refs always carry at least one digit.
+    if not re.search(r"\d", token):
         return False
     return True
+
+
+def _excluded_cross_ref_tokens(text: str) -> set[str]:
+    """Values clearly labeled as Packing List No / Customer PO — not invoice_no."""
+    out: set[str] = set()
+    for pattern in (_PACKING_LIST_NO_LABELED, _CUSTOMER_PO_LABELED):
+        for match in pattern.finditer(text or ""):
+            token = match.group(1).strip().upper()
+            if token:
+                out.add(token)
+    return out
+
+
+def _table_invoice_no_from_header_row(text: str, label_match: re.Match[str]) -> str | None:
+    """When Invoice No sits in a header row, take the aligned value on the next line."""
+    line_start = text.rfind("\n", 0, label_match.start()) + 1
+    line_end = text.find("\n", label_match.end())
+    header_line = text[line_start : line_end if line_end >= 0 else len(text)]
+    cells = [m.group(0) for m in _HEADER_CELL.finditer(header_line)]
+    if len(cells) < 2:
+        return None
+    inv_idx = None
+    for i, cell in enumerate(cells):
+        if re.search(r"(?i)invoice\s*(?:no|number|#)|inv\.?\s*(?:no|number|#)", cell):
+            inv_idx = i
+            break
+    if inv_idx is None:
+        return None
+    if line_end < 0:
+        return None
+    next_end = text.find("\n", line_end + 1)
+    value_line = text[line_end + 1 : next_end if next_end >= 0 else len(text)].strip()
+    if not value_line or not re.search(r"\d", value_line):
+        return None
+    values = [m.group(1) for m in _CANDIDATE_TOKEN.finditer(value_line)]
+    # Also split on whitespace for tokens like "EXW Hong Kong" — keep ID-like only.
+    if inv_idx >= len(values):
+        return None
+    return sanitize_invoice_no(values[inv_idx])
+
+
+def _first_plausible_token_after(
+    text: str,
+    *,
+    exclude: set[str] | None = None,
+) -> str | None:
+    """Scan look-ahead window for the first plausible invoice-no token."""
+    window = (text or "")[:_LOOKAHEAD_CHARS]
+    window = _ADJACENT_COLUMN_HEADER.sub("", window, count=1).lstrip(" :.\t|-")
+    # Repeated adjacent headers (Invoice No. Customer PO Incoterm …).
+    for _ in range(4):
+        stripped = _ADJACENT_COLUMN_HEADER.sub("", window, count=1)
+        if stripped == window:
+            break
+        window = stripped.lstrip(" :.\t|-")
+
+    lines = window.splitlines() or [window]
+    # Header residue with no digits → jump to the next line (table value row).
+    if lines and not re.search(r"\d", lines[0]):
+        window = "\n".join(lines[1:]) if len(lines) > 1 else window
+
+    exclude_u = {e.upper() for e in (exclude or set())}
+    for match in _CANDIDATE_TOKEN.finditer(window):
+        raw_tok = match.group(1)
+        if raw_tok.upper() in exclude_u:
+            continue
+        if _PO_LIKE_TOKEN.match(raw_tok):
+            continue
+        candidate = sanitize_invoice_no(raw_tok)
+        if candidate:
+            return candidate
+    return None
 
 
 def _is_dual_numeric(token: str) -> tuple[str, str] | None:
@@ -182,15 +356,40 @@ def extract_permit_or_doc_no_from_text(text: str) -> str | None:
 
 
 def extract_commercial_invoice_no_from_text(text: str) -> str | None:
-    """Only Invoice No / INV NO / proforma-labeled tokens — never Permit/Doc No."""
+    """Only Invoice No / INV NO / proforma-labeled tokens — never Permit/Doc No.
+
+    Skips adjacent packing-list column headers (Customer PO, Incoterm, …) that OCR
+    often places immediately after the Invoice No label in reading order.
+    """
     if not text or not text.strip():
         return None
-    for pattern in (_INVOICE_NO_TIGHT, _PROFORMA_REF):
-        match = pattern.search(text)
-        if match:
-            candidate = sanitize_invoice_no(match.group(1))
-            if candidate:
-                return candidate
+    exclude = _excluded_cross_ref_tokens(text)
+    for match in _INVOICE_NO_LABEL.finditer(text):
+        prefix = text[max(0, match.start() - 16) : match.start()]
+        if re.search(r"proforma\s*$", prefix, re.I):
+            continue
+        table_candidate = _table_invoice_no_from_header_row(text, match)
+        if table_candidate and table_candidate.upper() not in exclude:
+            return table_candidate
+        candidate = _first_plausible_token_after(text[match.end() :], exclude=exclude)
+        if candidate:
+            return candidate
+    # Legacy capturing form as a secondary pass (already-sane layouts).
+    for match in _INVOICE_NO_TIGHT.finditer(text):
+        prefix = text[max(0, match.start() - 16) : match.start()]
+        if re.search(r"proforma\s*$", prefix, re.I):
+            continue
+        candidate = sanitize_invoice_no(match.group(1))
+        if candidate and candidate.upper() not in exclude:
+            return candidate
+        candidate = _first_plausible_token_after(text[match.end() :], exclude=exclude)
+        if candidate:
+            return candidate
+    match = _PROFORMA_REF.search(text)
+    if match:
+        candidate = sanitize_invoice_no(match.group(1))
+        if candidate:
+            return candidate
     return None
 
 

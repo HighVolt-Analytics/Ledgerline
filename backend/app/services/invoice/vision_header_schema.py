@@ -52,10 +52,14 @@ VISION_HEADER_PROMPT_MARKERS: tuple[str, ...] = (
     "EVERY finance document kind",
     "invoice_no — ONLY when clearly labeled as an invoice number",
     "NEVER put Permit No / Clearance No / Declaration No / Document No",
+    "never put an adjacent column HEADER into invoice_no",
     "Never invent AUD/USD when ₹ is printed",
     "you MUST return the after-tax Total",
     "SELF-CHECK BEFORE RETURNING OUTPUT",
     "An empty string is always a safer output",
+    # Non-finance titled docs (handover / LOA) must still get a vault type name.
+    "Supporting / ops / legal titles still get a canonical_document_type",
+    "Handover Slip / HANDOVER SLIP → \"Handover Slip\"",
 )
 
 # Common LLM aliases → canonical JSON key (first match wins).

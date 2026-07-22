@@ -112,6 +112,18 @@ def reconcile_currency_from_text(
     iso, symbol = resolve_currency_from_ocr(text, existing_currency=None)
     if iso:
         if current and current != iso:
+            # Dual-currency docs: OCR "first code wins" must not flip a vision ISO
+            # that also appears as a column header / tagged amount on the page.
+            from app.services.shared.currency_total_pair import (
+                detect_multi_currency_in_text,
+                iso_appears_as_currency_column,
+            )
+
+            current_supported = _iso_corroborated_in_text(current, text) or (
+                iso_appears_as_currency_column(current, text)
+            )
+            if detect_multi_currency_in_text(text) and current_supported:
+                return current, None, "keep_vision_iso_multi_currency"
             return iso, None, f"ocr_override_{current}_to_{iso}"
         if not current:
             return iso, None, f"ocr_fill_{iso}"
@@ -137,6 +149,11 @@ def reconcile_currency_from_text(
 
     if current and _iso_corroborated_in_text(current, text):
         return current, None, "keep_corroborated_vision_iso"
+    if current:
+        from app.services.shared.currency_total_pair import iso_appears_as_currency_column
+
+        if iso_appears_as_currency_column(current, text):
+            return current, None, "keep_vision_iso_column_header"
     if current and text_usable:
         # Vision invented an ISO with no text support — leave empty for human pick.
         return "", None, "cleared_ungrounded_iso"
@@ -335,6 +352,7 @@ def enrich_vision_header_refs_from_text(
     ``invoice_no`` only from Invoice/INV labels. Permit No goes to other_reference
     (including when no commercial invoice number exists).
     """
+    from app.services.extraction.invoice_no_sanitizer import sanitize_invoice_no
     from app.services.invoice.vision_header_extract import VisionHeaderExtractResult
 
     detail: dict[str, Any] = {"filled": []}
@@ -344,7 +362,11 @@ def enrich_vision_header_refs_from_text(
         return result, detail
 
     updates: dict[str, Any] = {}
-    inv = (result.invoice_no or "").strip()
+    inv_raw = (result.invoice_no or "").strip()
+    inv = (sanitize_invoice_no(inv_raw) or "").strip()
+    if inv_raw and not inv:
+        updates["invoice_no"] = ""
+        detail["filled"].append("invoice_no_cleared_label_word")
     recovered_inv = _recover_invoice_no_from_text(text)
     permit = _recover_permit_no_from_text(text)
 
@@ -450,15 +472,24 @@ def ground_vision_header_result(
         field_key="vendor",
     )
 
-    vision_inv = (result.invoice_no or "").strip()
+    from app.services.extraction.invoice_no_sanitizer import (
+        extract_commercial_invoice_no_from_text,
+        is_plausible_invoice_no,
+        sanitize_invoice_no,
+    )
+
+    vision_raw = (result.invoice_no or "").strip()
+    vision_inv = (sanitize_invoice_no(vision_raw) or "").strip()
+    if vision_raw and not vision_inv:
+        # Column-header bleed (e.g. "Customer" from "Customer PO") — treat as missing.
+        detail["invoice_no_vision_rejected"] = vision_raw
+
     commercial_inv = ""
     try:
-        from app.services.extraction.invoice_no_sanitizer import (
-            extract_commercial_invoice_no_from_text,
-        )
-
         commercial_inv = (extract_commercial_invoice_no_from_text(raw) or "").strip()
     except Exception:
+        commercial_inv = ""
+    if commercial_inv and not is_plausible_invoice_no(commercial_inv):
         commercial_inv = ""
 
     if vision_inv and _invoice_no_soft_grounded(vision_inv, raw):
@@ -476,6 +507,8 @@ def ground_vision_header_result(
             detail["invoice_no_vision_cleared"] = vision_inv
             detail["invoice_no_cleared_reason"] = "non_invoice_labeled_id"
         else:
+            if vision_inv != vision_raw:
+                updates["invoice_no"] = vision_inv
             kept.append("invoice_no")
     elif vision_inv:
         # Vision value not corroborated — try labeled Invoice/INV recovery before clearing.
@@ -493,7 +526,12 @@ def ground_vision_header_result(
         if recovered_inv:
             updates["invoice_no"] = recovered_inv
             recovered.append("invoice_no")
-
+        elif vision_raw:
+            # Rejected label word with no recovery — clear so it does not persist.
+            updates["invoice_no"] = ""
+            cleared.append("invoice_no")
+            detail["invoice_no_vision_cleared"] = vision_raw
+            detail["invoice_no_cleared_reason"] = "label_word_rejected"
     for field in (
         "proforma_invoice_no",
         "po_reference",
@@ -598,6 +636,42 @@ def apply_vision_header_text_reconcile(
         fields = dict(invoice.extracted_fields or {})
         fields["total"] = format(money, "f")
         invoice.extracted_fields = fields
+
+    # Multi-currency dual-column / FX layouts: bind total to selected currency.
+    from app.services.shared.currency_total_pair import reconcile_currency_total_pair
+
+    pair = reconcile_currency_total_pair(
+        currency=invoice.currency,
+        total=invoice.total,
+        text=text,
+    )
+    detail["pair_reason"] = pair.reason
+    detail["multi_currency"] = pair.multi_currency
+    if pair.currency != (invoice.currency or "").strip().upper():
+        invoice.currency = pair.currency
+        fields = dict(invoice.extracted_fields or {})
+        if pair.currency:
+            fields["currency"] = pair.currency
+            fields.pop("currency_symbol", None)
+        else:
+            fields.pop("currency", None)
+        invoice.extracted_fields = fields
+        detail["currency_after"] = pair.currency or None
+        detail["currency_reason"] = f"{detail['currency_reason']};{pair.reason}"
+    if pair.total != invoice.total:
+        invoice.total = pair.total
+        fields = dict(invoice.extracted_fields or {})
+        if pair.total is not None:
+            fields["total"] = format(pair.total, "f")
+        else:
+            fields.pop("total", None)
+        invoice.extracted_fields = fields
+        detail["total_reason"] = (
+            f"{detail['total_reason']};{pair.reason}"
+            if detail.get("total_reason")
+            else pair.reason
+        )
+
     # Clear totals that never appear in rich text (invented amounts).
     if (
         invoice.total is not None

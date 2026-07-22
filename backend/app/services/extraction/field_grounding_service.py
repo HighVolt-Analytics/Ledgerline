@@ -423,10 +423,16 @@ def currency_passes_grounding(
         return True
 
     from app.services.shared.currency import currency_evidence_in_text
+    from app.services.shared.currency_total_pair import iso_appears_as_currency_column
 
     if currency_evidence_in_text(currency, ocr_text):
         if grounding_debug is not None:
             grounding_debug["currency"] = "literal_ocr"
+        return True
+    # Dual-column summaries (SGD | USD) corroborate both ISOs without inline amounts.
+    if iso_appears_as_currency_column(currency, ocr_text):
+        if grounding_debug is not None:
+            grounding_debug["currency"] = "column_header"
         return True
     return False
 
@@ -537,6 +543,29 @@ def ground_invoice_scalars(
         grounding_debug=grounding_debug,
     ):
         updates["currency"] = ""
+
+    # Multi-currency dual-column: bind total to the grounded currency (and vice versa).
+    if "total" not in skip or "currency" not in skip:
+        from app.services.shared.currency_total_pair import reconcile_currency_total_pair
+
+        resolved_currency = (
+            updates["currency"] if "currency" in updates else working.currency
+        )
+        resolved_total = updates["total"] if "total" in updates else working.total
+        pair_total = resolved_total if isinstance(resolved_total, Decimal) or resolved_total is None else None
+        pair = reconcile_currency_total_pair(
+            currency=str(resolved_currency or ""),
+            total=pair_total,
+            text=ocr_text,
+        )
+        if pair.multi_currency or pair.swapped or pair.reason.startswith("filled_"):
+            cur_now = (str(resolved_currency or "")).strip().upper()
+            if "currency" not in skip and pair.currency != cur_now:
+                updates["currency"] = pair.currency
+                grounding_debug["currency_total_pair"] = pair.reason
+            if "total" not in skip and pair.total != pair_total:
+                updates["total"] = pair.total
+                grounding_debug["currency_total_pair"] = pair.reason
 
     bsb = validate_bank_bsb(data.bank_bsb, ocr_text)
     account = validate_bank_account(data.bank_account, ocr_text)

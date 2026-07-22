@@ -254,10 +254,13 @@ async def test_understood_bundle_sheet_invoice_row_with_siblings(
     )
     assert payload.data_rows >= 1
     header, data = _read_understood_sheet(payload.xlsx_bytes)
+    assert "Document number" in header
+    assert header.index("Document number") + 1 == header.index("DT type")
     assert "Packing List" in header
     assert "Air Waybill" in header
     assert len(data) == 1
     row = data[0]
+    assert _cell_text(row[header.index("Document number")]) == "DOC-TAX-1"
     assert _cell_text(row[header.index("DT type")]) == "Tax Invoice"
     pl_cell = _cell_text(row[header.index("Packing List")])
     awb_cell = _cell_text(row[header.index("Air Waybill")])
@@ -284,6 +287,7 @@ async def test_understood_bundle_excludes_packing_list_only(
         invoice_no="INV-UB-ONLY-PL",
         invoice_date=date(2026, 7, 12),
         document_heading="PACKING LIST",
+        document_ref="DOC-PL-ONLY",
         extracted_fields={
             "canonical_document_type": "Packing List",
             "vision_bundle_kind": "invoice_no",
@@ -308,7 +312,9 @@ async def test_understood_bundle_excludes_packing_list_only(
     assert data == []
     unlinked_header, unlinked_data = _read_unlinked_sheet(payload.xlsx_bytes)
     assert unlinked_header == list(_UNLINKED_COLUMNS)
+    assert unlinked_header.index("Document number") + 1 == unlinked_header.index("DT type")
     assert len(unlinked_data) == 1
+    assert _cell_text(unlinked_data[0][unlinked_header.index("Document number")]) == "DOC-PL-ONLY"
     assert _cell_text(unlinked_data[0][unlinked_header.index("DT type")]) == "Packing List"
     assert _invoice_no_from_cell(unlinked_data[0][unlinked_header.index("Invoice no.")]) == (
         "INV-UB-ONLY-PL"
