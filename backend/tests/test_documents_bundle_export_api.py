@@ -27,6 +27,9 @@ from app.services.purchase.purchase_match_service import sync_purchase_order_fro
 from app.services.reports.documents_bundle_export_service import (
     _FIXED_COLUMNS,
     _HEADER_ROW,
+    _SHEET_POSTING,
+    _SHEET_UNLINKED,
+    _UNLINKED_COLUMNS,
     _match_flags,
     build_documents_bundle_export,
     build_documents_bundle_row,
@@ -39,7 +42,28 @@ from tests.test_audit_export_api import assert_csv_hyperlink
 
 def _read_xlsx(content: bytes) -> tuple[list[str], list[list[object]], object]:
     wb = load_workbook(io.BytesIO(content), data_only=False)
-    ws = wb.active
+    assert _SHEET_POSTING in wb.sheetnames
+    assert _SHEET_UNLINKED in wb.sheetnames
+    ws = wb[_SHEET_POSTING]
+    header = [
+        ws.cell(row=_HEADER_ROW, column=col).value
+        for col in range(1, ws.max_column + 1)
+    ]
+    assert header and header[0] is not None
+    headers = [str(value) for value in header]
+    data: list[list[object]] = []
+    for row_idx in range(_HEADER_ROW + 1, ws.max_row + 1):
+        values = [ws.cell(row=row_idx, column=col).value for col in range(1, ws.max_column + 1)]
+        if all(value is None or value == "" for value in values):
+            continue
+        data.append(values)
+    return headers, data, ws
+
+
+def _read_unlinked_xlsx(content: bytes) -> tuple[list[str], list[list[object]], object]:
+    wb = load_workbook(io.BytesIO(content), data_only=False)
+    assert _SHEET_UNLINKED in wb.sheetnames
+    ws = wb[_SHEET_UNLINKED]
     header = [
         ws.cell(row=_HEADER_ROW, column=col).value
         for col in range(1, ws.max_column + 1)
@@ -175,7 +199,7 @@ async def test_documents_bundle_export_excludes_non_posting_documents(
         "?date_from=2026-05-01&date_to=2026-05-31"
     )
     assert res.status_code == 200
-    assert res.headers.get("x-data-rows") == "1"
+    assert res.headers.get("x-data-rows") == "3"
     header, data, _ws = _read_xlsx(res.content)
     assert "Class" not in header
     assert "Posting" not in header
@@ -197,6 +221,12 @@ async def test_documents_bundle_export_excludes_non_posting_documents(
         row for row in data if _invoice_no_from_cell(row[header.index("Invoice no.")]) == "INV-POST-1"
     )
     assert posting_row[header.index("Universal match")] == "No"
+
+    unlinked_header, unlinked_data, _ = _read_unlinked_xlsx(res.content)
+    assert unlinked_header == list(_UNLINKED_COLUMNS)
+    unlinked_nos = _invoice_nos_from_rows(unlinked_header, unlinked_data)
+    assert "INV-POST-1" in unlinked_nos
+    assert "PO-SUPPORT-1" in unlinked_nos
 
 
 def test_documents_bundle_row_universal_match_flag() -> None:
@@ -572,7 +602,7 @@ async def test_documents_bundle_export_with_empty_tenant_document_types(
         "?date_from=2026-07-01&date_to=2026-07-31"
     )
     assert res.status_code == 200
-    assert res.headers.get("x-data-rows") == "0"
+    assert res.headers.get("x-data-rows") == "1"
     header, data, _ws = _read_xlsx(res.content)
     assert len(header) == 14
     assert "Timestamp" in header
@@ -580,6 +610,11 @@ async def test_documents_bundle_export_with_empty_tenant_document_types(
     assert "Source" in header
     assert "Proforma invoice no." in header
     assert data == []
+
+    unlinked_header, unlinked_data, _ = _read_unlinked_xlsx(res.content)
+    assert unlinked_header == list(_UNLINKED_COLUMNS)
+    unlinked_nos = _invoice_nos_from_rows(unlinked_header, unlinked_data)
+    assert unlinked_nos == {"INV-CATALOG-FALLBACK"}
 
 
 @pytest.mark.asyncio
@@ -1255,3 +1290,95 @@ async def test_documents_bundle_export_includes_validating_anchor(
         if _invoice_no_from_cell(r[header.index("Invoice no.")]) == "SHARED-VAL-88"
     )
     assert row[header.index("Universal match")] == "Yes"
+
+    _unlinked_header, unlinked_data, _ = _read_unlinked_xlsx(payload.xlsx_bytes)
+    assert unlinked_data == []
+
+
+@pytest.mark.asyncio
+async def test_documents_bundle_export_unlinked_sheet_lists_isolates_only(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Peer-linked docs stay off Unlinked Documents; true isolates appear there."""
+    po_doc = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme Supplies",
+        document_type_code="DT-02",
+        po_reference="PO-UNL-1",
+        invoice_no="PO-UNL-1",
+        invoice_date=date(2026, 10, 5),
+        route_target=ROUTE_PURCHASE,
+        purchase_document_type=PurchaseDocumentType.PO.value,
+        subtotal=Decimal("100.00"),
+        status=InvoiceStatus.PROCESSED,
+        file_hash="bundle-unlinked-po",
+    )
+    db_session.add(po_doc)
+    await db_session.flush()
+    db_session.add(
+        LineItem(
+            invoice_id=po_doc.id,
+            description="Widgets",
+            qty=Decimal("1"),
+            unit_price=Decimal("100.00"),
+            amount=Decimal("100.00"),
+        )
+    )
+    await db_session.flush()
+    await sync_purchase_order_from_invoice(db_session, po_doc)
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme Supplies",
+        document_type_code="DT-01",
+        po_reference="PO-UNL-1",
+        invoice_no="INV-UNL-LINKED",
+        invoice_date=date(2026, 10, 6),
+        route_target=ROUTE_PURCHASE,
+        purchase_document_type=PurchaseDocumentType.INVOICE.value,
+        subtotal=Decimal("100.00"),
+        total=Decimal("100.00"),
+        status=InvoiceStatus.PROCESSED,
+        file_hash="bundle-unlinked-inv",
+    )
+    orphan = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Lone Vendor",
+        document_type_code="DT-02",
+        invoice_no="PO-UNL-ORPHAN",
+        invoice_date=date(2026, 10, 7),
+        status=InvoiceStatus.PROCESSED,
+        file_hash="bundle-unlinked-orphan",
+    )
+    db_session.add_all([inv, orphan])
+    await db_session.flush()
+    db_session.add(
+        LineItem(
+            invoice_id=inv.id,
+            description="Widgets",
+            qty=Decimal("1"),
+            unit_price=Decimal("100.00"),
+            amount=Decimal("100.00"),
+        )
+    )
+    await db_session.flush()
+    await sync_purchase_order_from_invoice(db_session, inv)
+    await db_session.commit()
+
+    res = await client.get(
+        "/api/reports/documents-bundle/export"
+        "?date_from=2026-10-01&date_to=2026-10-31"
+    )
+    assert res.status_code == 200
+
+    header, data, _ws = _read_xlsx(res.content)
+    bundled_nos = _invoice_nos_from_rows(header, data)
+    assert "INV-UNL-LINKED" in bundled_nos
+
+    unlinked_header, unlinked_data, _ = _read_unlinked_xlsx(res.content)
+    assert unlinked_header == list(_UNLINKED_COLUMNS)
+    unlinked_nos = _invoice_nos_from_rows(unlinked_header, unlinked_data)
+    assert "PO-UNL-ORPHAN" in unlinked_nos
+    assert "INV-UNL-LINKED" not in unlinked_nos
+    assert "PO-UNL-1" not in unlinked_nos

@@ -1,6 +1,6 @@
 """Excel export — documents bundle matrix for auditors.
 
-Single sheet — Documents Bundle
+Sheet 1 — Documents Bundle
     Rows: transactional posting anchors (Rule Book DT matrix) plus
     vision soft-bundle invoice-family anchors (vault type-folder matrix).
 
@@ -12,6 +12,10 @@ Fixed columns
 Dynamic columns
     Org Rule Book document types (DT codes), then vault type-folder names
     for soft-bundle siblings (Air Waybill, Packing List, …).
+
+Sheet 2 — Unlinked Documents
+    Flat list of period documents with no peer link to any other invoice
+    (no dossier sibling, invoice-no / PO / SO / vision soft-bundle, or manual link).
 """
 
 from __future__ import annotations
@@ -115,6 +119,22 @@ _HEADER_ROW = 4
 _FIRST_DATA_ROW = 5
 
 _SHEET_POSTING = "Documents Bundle"
+_SHEET_UNLINKED = "Unlinked Documents"
+
+_UNLINKED_COLUMNS = [
+    "Timestamp",
+    "Uploaded by",
+    "Source",
+    "DT type",
+    "Invoice date",
+    "Counterparty",
+    "Total",
+    "Currency",
+    "Invoice no.",
+    "Proforma invoice no.",
+    "PO reference",
+    "SO reference",
+]
 
 
 @dataclass(frozen=True)
@@ -585,6 +605,53 @@ def build_understood_bundle_row(
     return row
 
 
+def _document_type_label_for_export(
+    invoice: Invoice,
+    definition: DocumentTypeDefinition | None,
+) -> str:
+    if definition is not None:
+        return _dt_type_label(definition)
+    return vault_folder_label_for_export(invoice) or "Unclassified"
+
+
+def mark_peer_linked_invoice_ids(
+    invoice_id: int,
+    linked: DossierLinkedDocumentsResponse,
+    participating: set[int],
+) -> None:
+    """Add this invoice and every real peer sibling to *participating* when any peer exists."""
+    entries = collect_linked_doc_entries(invoice_id, linked)
+    if not entries:
+        return
+    participating.add(invoice_id)
+    participating.update(entry.invoice_id for entry in entries)
+
+
+def build_unlinked_document_row(
+    invoice: Invoice,
+    *,
+    definition: DocumentTypeDefinition | None,
+    cell_format: BundleCellFormat = "excel",
+    upload_actor: str | None = None,
+    display_tz: tzinfo | None = None,
+) -> list[str]:
+    """Fixed-column row for a document with no peer links."""
+    return [
+        _timestamp_label(invoice, display_tz=display_tz),
+        _uploaded_by_label(invoice, upload_actor=upload_actor),
+        _source_label(invoice),
+        _document_type_label_for_export(invoice, definition),
+        _invoice_date_label(invoice),
+        (invoice.vendor or "").strip(),
+        _total_label(invoice),
+        (invoice.currency or "").strip(),
+        _invoice_no_cell(invoice, cell_format=cell_format),
+        _proforma_invoice_no_label(invoice),
+        (invoice.po_reference or "").strip(),
+        (invoice.so_reference or "").strip(),
+    ]
+
+
 async def _upload_actors_by_invoice_id(
     db: AsyncSession,
     invoice_ids: list[int],
@@ -768,8 +835,10 @@ def _write_bundle_sheet(
     date_from: date | None,
     date_to: date | None,
     cell_format: BundleCellFormat,
+    fixed_headers: list[str] | None = None,
 ) -> None:
-    headers = [*_FIXED_COLUMNS, *dynamic_headers]
+    fixed = list(fixed_headers) if fixed_headers is not None else list(_FIXED_COLUMNS)
+    headers = [*fixed, *dynamic_headers]
     widths = _logical_column_widths(rows, headers=headers, link_mode=cell_format)
     physical_headers = _physical_header_labels(headers, widths)
     col_count = len(physical_headers)
@@ -832,10 +901,12 @@ def documents_bundle_rows_to_xlsx(
     cell_format: BundleCellFormat = "excel",
     understood_rows: list[list[str]] | None = None,
     vault_folder_headers: list[str] | None = None,
+    unlinked_rows: list[list[str]] | None = None,
 ) -> bytes:
-    """Build a single-sheet workbook: posting + understood rows together."""
+    """Build workbook: Documents Bundle + Unlinked Documents sheets."""
     vault_headers = list(vault_folder_headers or [])
     understood = list(understood_rows or [])
+    unlinked = list(unlinked_rows or [])
     n_dt = len(dt_column_headers)
     n_vault = len(vault_headers)
     combined_headers = [*dt_column_headers, *vault_headers]
@@ -868,6 +939,18 @@ def documents_bundle_rows_to_xlsx(
         date_from=date_from,
         date_to=date_to,
         cell_format=cell_format,
+    )
+
+    ws_unlinked = wb.create_sheet(_SHEET_UNLINKED)
+    _write_bundle_sheet(
+        ws_unlinked,
+        title=_SHEET_UNLINKED,
+        rows=unlinked,
+        dynamic_headers=[],
+        date_from=date_from,
+        date_to=date_to,
+        cell_format=cell_format,
+        fixed_headers=_UNLINKED_COLUMNS,
     )
 
     buffer = io.BytesIO()
@@ -1014,6 +1097,56 @@ async def build_documents_bundle_export(
             )
         )
 
+    # --- Unlinked Documents sheet (no peer link to any other invoice) ---
+    linked_by_invoice_id: dict[int, DossierLinkedDocumentsResponse] = {
+        ctx.invoice.id: ctx.linked for ctx in contexts
+    }
+    for ctx in understood_contexts:
+        linked_by_invoice_id.setdefault(ctx.invoice.id, ctx.linked)
+
+    peer_linked_ids: set[int] = set()
+    for invoice_id, linked in linked_by_invoice_id.items():
+        mark_peer_linked_invoice_ids(invoice_id, linked, peer_linked_ids)
+
+    remaining = [inv for inv in invoices if inv.id not in linked_by_invoice_id]
+    if remaining:
+        remaining_cache = await build_linkage_sibling_cache(
+            db, tenant_id=tenant_id, anchors=remaining
+        )
+        for invoice in remaining:
+            definition = resolve_definition_for_invoice(invoice, catalogue)
+            linked = await build_dossier_linked_documents(
+                db,
+                invoice,
+                definition=definition,
+                document_types=catalogue,
+                linkage_cache=remaining_cache,
+            )
+            linked_by_invoice_id[invoice.id] = linked
+            mark_peer_linked_invoice_ids(invoice.id, linked, peer_linked_ids)
+
+    unlinked_invoices = [inv for inv in invoices if inv.id not in peer_linked_ids]
+    unlinked_upload_actors = await _upload_actors_by_invoice_id(
+        db,
+        [
+            inv.id
+            for inv in unlinked_invoices
+            if not (inv.email_sender or "").strip()
+            and not (inv.uploaded_by_name or "").strip()
+            and not (inv.uploaded_by_email or "").strip()
+        ],
+    )
+    unlinked_rows: list[list[str]] = [
+        build_unlinked_document_row(
+            invoice,
+            definition=resolve_definition_for_invoice(invoice, catalogue),
+            cell_format=cell_format,
+            upload_actor=unlinked_upload_actors.get(invoice.id),
+            display_tz=display_tz,
+        )
+        for invoice in unlinked_invoices
+    ]
+
     xlsx_bytes = documents_bundle_rows_to_xlsx(
         data_rows,
         dt_column_headers=dt_headers,
@@ -1022,10 +1155,11 @@ async def build_documents_bundle_export(
         cell_format=cell_format,
         understood_rows=understood_rows,
         vault_folder_headers=vault_folder_headers,
+        unlinked_rows=unlinked_rows,
     )
     filename = documents_bundle_filename(date_from=date_from)
     return DocumentsBundleExportPayload(
         xlsx_bytes=xlsx_bytes,
         filename=filename,
-        data_rows=len(data_rows) + len(understood_rows),
+        data_rows=len(data_rows) + len(understood_rows) + len(unlinked_rows),
     )

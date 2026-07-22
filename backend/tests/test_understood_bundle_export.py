@@ -18,6 +18,8 @@ from app.services.extraction.document_heading_utils import is_invoice_family_vau
 from app.services.reports.documents_bundle_export_service import (
     _HEADER_ROW,
     _SHEET_POSTING,
+    _SHEET_UNLINKED,
+    _UNLINKED_COLUMNS,
     build_documents_bundle_export,
     is_understood_invoice_family_anchor,
     vault_folder_label_for_export,
@@ -128,8 +130,27 @@ def test_packing_list_not_understood_anchor() -> None:
 
 def _read_understood_sheet(content: bytes) -> tuple[list[str], list[list[object]]]:
     wb = load_workbook(io.BytesIO(content), data_only=False)
-    assert wb.sheetnames == [_SHEET_POSTING]
+    assert _SHEET_POSTING in wb.sheetnames
+    assert _SHEET_UNLINKED in wb.sheetnames
     ws = wb[_SHEET_POSTING]
+    header = [
+        ws.cell(row=_HEADER_ROW, column=col).value
+        for col in range(1, ws.max_column + 1)
+    ]
+    assert header and header[0] is not None
+    headers = [str(value) for value in header]
+    data: list[list[object]] = []
+    for row_idx in range(_HEADER_ROW + 1, ws.max_row + 1):
+        values = [ws.cell(row=row_idx, column=col).value for col in range(1, ws.max_column + 1)]
+        if all(value is None or value == "" for value in values):
+            continue
+        data.append(values)
+    return headers, data
+
+
+def _read_unlinked_sheet(content: bytes) -> tuple[list[str], list[list[object]]]:
+    wb = load_workbook(io.BytesIO(content), data_only=False)
+    ws = wb[_SHEET_UNLINKED]
     header = [
         ws.cell(row=_HEADER_ROW, column=col).value
         for col in range(1, ws.max_column + 1)
@@ -149,6 +170,13 @@ def _cell_text(value: object) -> str:
     if value is None:
         return ""
     return str(value)
+
+
+def _invoice_no_from_cell(value: object) -> str:
+    text = _cell_text(value)
+    if " | " in text:
+        return text.split(" | ", 1)[0]
+    return text
 
 
 @pytest.mark.asyncio
@@ -238,6 +266,10 @@ async def test_understood_bundle_sheet_invoice_row_with_siblings(
     assert "DOC-PL-1" in pl_cell or pl_cell.startswith("DOC-")
     assert "DOC-AWB-1" in awb_cell or awb_cell.startswith("DOC-")
 
+    unlinked_header, unlinked_data = _read_unlinked_sheet(payload.xlsx_bytes)
+    assert unlinked_header == list(_UNLINKED_COLUMNS)
+    assert unlinked_data == []
+
 
 @pytest.mark.asyncio
 async def test_understood_bundle_excludes_packing_list_only(
@@ -274,6 +306,13 @@ async def test_understood_bundle_excludes_packing_list_only(
     )
     _header, data = _read_understood_sheet(payload.xlsx_bytes)
     assert data == []
+    unlinked_header, unlinked_data = _read_unlinked_sheet(payload.xlsx_bytes)
+    assert unlinked_header == list(_UNLINKED_COLUMNS)
+    assert len(unlinked_data) == 1
+    assert _cell_text(unlinked_data[0][unlinked_header.index("DT type")]) == "Packing List"
+    assert _invoice_no_from_cell(unlinked_data[0][unlinked_header.index("Invoice no.")]) == (
+        "INV-UB-ONLY-PL"
+    )
 
 
 @pytest.mark.asyncio
@@ -325,3 +364,10 @@ async def test_understood_bundle_distinct_invoice_kinds(
     assert "Tax Invoice" in types
     assert "Commercial Invoice" in types
     assert len(data) >= 2
+
+    unlinked_header, unlinked_data = _read_unlinked_sheet(payload.xlsx_bytes)
+    unlinked_types = {
+        _cell_text(row[unlinked_header.index("DT type")]) for row in unlinked_data
+    }
+    assert "Tax Invoice" in unlinked_types
+    assert "Commercial Invoice" in unlinked_types
