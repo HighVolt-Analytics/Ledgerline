@@ -94,6 +94,25 @@ _ENGLISH_FALSE_POSITIVE_ISO = frozenset(
     }
 )
 
+# ISO codes that are also common brand / ticker / tech tokens on invoices.
+# Near-money adjacency alone is not enough (e.g. "AMD Ryzen … 53.00").
+# Require an explicit currency label or a totals/currency anchor before the code.
+_BRAND_TICKER_ISO = frozenset(
+    {
+        "AMD",  # Advanced Micro Devices vs Armenian Dram
+        "PHP",  # programming language vs Philippine Peso
+    }
+)
+
+# Text immediately before a brand/ticker ISO+amount must look like currency use.
+_BRAND_TICKER_CURRENCY_ANCHOR = re.compile(
+    r"(?is)(?:currency|ccy|curr(?:ency)?(?:\s*code)?|"
+    r"amount\s+in|invoiced?\s+in|payable\s+in|"
+    r"grand\s+total|total(?:\s+amount)?(?:\s+payable)?|"
+    r"amount\s+(?:due|payable)|net\s+(?:amount|payable))"
+    r"\s*[:#\-]?\s*$"
+)
+
 # Common currency glyphs near amounts.
 _CURRENCY_GLYPHS = r"[$€£¥₹₩₪₫₱₽₴₺₦₡₵₲]"
 
@@ -132,6 +151,29 @@ def _amount_looks_like_money(amount: str | None) -> bool:
         return True
     digits = re.sub(r"\D", "", token)
     return len(digits) >= 3
+
+
+def _brand_ticker_currency_context(match: re.Match[str], text: str) -> bool:
+    """True when text before a brand/ticker ISO looks like a currency/total label."""
+    prefix = text[max(0, match.start() - 48) : match.start()]
+    return _BRAND_TICKER_CURRENCY_ANCHOR.search(prefix) is not None
+
+
+def _iso_near_money_hit(code: str, match: re.Match[str], text: str) -> bool:
+    """Validate one ``_ISO_NEAR_MONEY`` hit for ``code`` (brand tickers need anchors)."""
+    hit = (match.group("code_before") or match.group("code_after") or "").upper()
+    if hit != code:
+        return False
+    amount = match.group("amt_before") or match.group("amt_after")
+    if not is_iso4217_currency(code):
+        return False
+    if code in _ENGLISH_FALSE_POSITIVE_ISO:
+        return False
+    if not _amount_looks_like_money(amount):
+        return False
+    if code in _BRAND_TICKER_ISO and not _brand_ticker_currency_context(match, text):
+        return False
+    return True
 
 
 def _prefix_hit_in_text(prefix: str, text: str) -> bool:
@@ -185,12 +227,7 @@ def detect_currency_code_in_text(text: str | None) -> str | None:
     near_money: Counter[str] = Counter()
     for match in _ISO_NEAR_MONEY.finditer(text):
         code = (match.group("code_before") or match.group("code_after") or "").upper()
-        amount = match.group("amt_before") or match.group("amt_after")
-        if not is_iso4217_currency(code):
-            continue
-        if code in _ENGLISH_FALSE_POSITIVE_ISO:
-            continue
-        if not _amount_looks_like_money(amount):
+        if not _iso_near_money_hit(code, match, text):
             continue
         near_money[code] += 1
     if near_money:
@@ -213,23 +250,38 @@ def detect_currency_code_in_text(text: str | None) -> str | None:
 def currency_evidence_in_text(iso: str | None, text: str | None) -> bool:
     """True when OCR/text literally supports this ISO (code, prefix, or glyph).
 
-    Never treats tax IDs, country names, or tenant defaults as evidence.
+    Requires corroboration for *this* code: near-money (with brand-ticker
+    anchors), an explicit currency label, a prefixed symbol (US$/S$), or an
+    unambiguous glyph (€/£/₹). A bare word-bounded ISO anywhere in the
+    document is not evidence — brand names like AMD processors must not
+    corroborate Armenian Dram.
     """
     code = (iso or "").strip().upper()
-    if not code or not is_iso4217_currency(code) or not (text or "").strip():
+    if (
+        not code
+        or not is_iso4217_currency(code)
+        or code in _ENGLISH_FALSE_POSITIVE_ISO
+        or not (text or "").strip()
+    ):
         return False
     raw = text or ""
-    if detect_currency_code_in_text(raw) == code:
-        return True
-    if re.search(rf"(?<![A-Z0-9]){re.escape(code)}(?![A-Z0-9])", raw.upper()):
-        # Require the ISO token itself (word-bounded), not a substring of a longer word.
-        return True
+
     for prefix, mapped in _PREFIXED_SYMBOL_TO_ISO:
         if mapped == code and _prefix_hit_in_text(prefix, raw):
             return True
+
     symbol = detect_currency_symbol_in_text(raw)
     if symbol and UNAMBIGUOUS_SYMBOL_TO_ISO.get(symbol) == code:
         return True
+
+    for match in _CURRENCY_LABEL_ISO.finditer(raw):
+        if (match.group("code") or "").upper() == code:
+            return True
+
+    for match in _ISO_NEAR_MONEY.finditer(raw):
+        if _iso_near_money_hit(code, match, raw):
+            return True
+
     return False
 
 

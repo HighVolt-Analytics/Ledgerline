@@ -44,6 +44,23 @@ def test_bare_dollar_clears_uncorroborated_aud() -> None:
     assert "cleared" in reason
 
 
+def test_amd_processor_brand_clears_invented_armenian_dram() -> None:
+    iso, symbol, reason = reconcile_currency_from_text(
+        current_currency="AMD",
+        text=(
+            "COMMERCIAL INVOICE Spectra Innovations Pte Ltd\n"
+            "1 AMD Ryzen 5 5500 Desktop Processor 10 53.00 530.00\n"
+            "2 AMD Ryzen 7 5700G Desktop Processor 30 145.00 4,350.00\n"
+            "PAYMENT: SIGHT L/C\n"
+            "Total 34,410.95\n"
+            "Enough body text so grounding length threshold is satisfied for currency checks."
+        ),
+    )
+    assert iso == ""
+    assert symbol is None
+    assert "cleared" in reason
+
+
 def test_thin_text_keeps_vision_iso() -> None:
     iso, symbol, reason = reconcile_currency_from_text(
         current_currency="USD",

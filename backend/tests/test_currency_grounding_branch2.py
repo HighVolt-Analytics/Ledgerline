@@ -75,6 +75,21 @@ def test_ground_clears_currency_without_tax_id_or_iso() -> None:
     assert (grounded.currency or "") == ""
 
 
+def test_ground_clears_amd_invented_from_processor_brand() -> None:
+    """Vision/LLM inventing AMD from CPU line items must not survive grounding."""
+    ocr = (
+        "COMMERCIAL INVOICE\n"
+        "Spectra Innovations Pte Ltd\n"
+        "1 AMD Ryzen 5 5500 Desktop Processor 10 53.00 530.00\n"
+        "2 AMD Ryzen 7 5700G 30 145.00 4,350.00\n"
+        "PAYMENT: SIGHT L/C\n"
+        "Total 34,410.95\n"
+    )
+    parsed = InvoiceData(currency="AMD", total=Decimal("34410.95"), document_text=ocr)
+    grounded = ground_invoice_scalars(parsed, ocr)
+    assert (grounded.currency or "") == ""
+
+
 def test_ground_rejects_usd_when_not_on_document() -> None:
     ocr = f"TAX INVOICE\nABN {_ABN}\nTotal: $100.00\n"
     parsed = InvoiceData(abn=_ABN, currency="USD", total=Decimal("100.00"), document_text=ocr)

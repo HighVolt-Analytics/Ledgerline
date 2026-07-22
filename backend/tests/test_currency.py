@@ -168,3 +168,53 @@ def test_currency_evidence_accepts_prefix_and_glyph() -> None:
     assert currency_evidence_in_text("EUR", "Total €45.00")
     assert not currency_evidence_in_text("AUD", "Total $100.00 ABN 51824753556")
     assert currency_evidence_in_text("AUD", "Total AUD 100.00")
+
+
+def test_amd_brand_on_invoice_is_not_armenian_dram() -> None:
+    """Spectra-style tech invoices list AMD processors — never treat as currency."""
+    from app.services.shared.currency import currency_evidence_in_text
+
+    ocr = (
+        "COMMERCIAL INVOICE\n"
+        "Spectra Innovations Pte Ltd\n"
+        "1 AMD Ryzen 5 5500 Desktop Processor 10 53.00 530.00\n"
+        "2 AMD Ryzen 7 5700G Desktop Processor 30 145.00 4,350.00\n"
+        "PAYMENT: SIGHT L/C\n"
+        "Total 34,410.95\n"
+    )
+    assert detect_currency_code_in_text(ocr) is None
+    assert not currency_evidence_in_text("AMD", ocr)
+    iso, symbol = resolve_currency_from_ocr(ocr)
+    assert iso == ""
+    assert symbol is None
+
+
+def test_amd_accepted_only_with_currency_anchor() -> None:
+    from app.services.shared.currency import currency_evidence_in_text
+
+    labeled = "Currency: AMD\nTotal: 100.00"
+    assert detect_currency_code_in_text(labeled) == "AMD"
+    assert currency_evidence_in_text("AMD", labeled)
+
+    total_anchored = "Grand Total AMD 34,410.95"
+    assert detect_currency_code_in_text(total_anchored) == "AMD"
+    assert currency_evidence_in_text("AMD", total_anchored)
+
+    # Bare adjacency without a totals/currency label is not enough.
+    assert detect_currency_code_in_text("AMD 34,410.95") is None
+    assert not currency_evidence_in_text("AMD", "AMD 34,410.95")
+
+
+def test_bare_iso_token_is_not_currency_evidence() -> None:
+    """Word-bounded ISO anywhere in the doc must not corroborate invented currency."""
+    from app.services.shared.currency import currency_evidence_in_text
+
+    ocr = "Vendor: USD Logistics Ltd\nTotal: 100.00\nFOR ALL ITEMS.\n"
+    assert not currency_evidence_in_text("USD", ocr)
+    assert detect_currency_code_in_text(ocr) is None
+
+
+def test_normalize_currency_rejects_english_false_positive_iso() -> None:
+    assert normalize_currency("ALL") is None
+    assert normalize_currency("TRY") is None
+    assert normalize_currency("USD") == "USD"

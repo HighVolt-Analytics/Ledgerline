@@ -62,8 +62,15 @@ def normalize_currency(value: Any) -> str | None:
         return None
     import re
 
-    from app.services.shared.currency import detect_prefixed_currency_in_text
+    from app.services.shared.currency import (
+        _ENGLISH_FALSE_POSITIVE_ISO,
+        detect_prefixed_currency_in_text,
+    )
     from app.services.shared.iso4217_catalog import is_iso4217_currency
+
+    def _acceptable_iso(code: str) -> bool:
+        # Prose-word ISO codes are never a valid bare currency field value.
+        return is_iso4217_currency(code) and code not in _ENGLISH_FALSE_POSITIVE_ISO
 
     # Unambiguous symbols → ISO
     symbol_map = {"£": "GBP", "€": "EUR", "₹": "INR"}
@@ -78,21 +85,21 @@ def normalize_currency(value: Any) -> str | None:
 
     token = raw.upper().strip()
     # Exact ISO code
-    if len(token) == 3 and is_iso4217_currency(token):
+    if len(token) == 3 and _acceptable_iso(token):
         return token
 
     # Leading ISO: "AUD 100.00" / "USD$" / "EUR€"
     leading = re.match(r"^(?P<code>[A-Z]{3})(?:\s|[$€£¥₹]|$)", token)
     if leading:
         code = leading.group("code")
-        if is_iso4217_currency(code):
+        if _acceptable_iso(code):
             return code
 
     # Trailing ISO: "100.00 AUD" / "$100 AUD"
     trailing = re.search(r"(?:^|[\s$])(?P<code>[A-Z]{3})$", token)
     if trailing:
         code = trailing.group("code")
-        if is_iso4217_currency(code):
+        if _acceptable_iso(code):
             return code
 
     return None

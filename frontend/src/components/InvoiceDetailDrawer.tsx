@@ -709,6 +709,22 @@ function FieldRow({
   );
 }
 
+function currencySelectOptions(current: string) {
+  const selected = (current || "").trim().toUpperCase();
+  if (
+    !selected ||
+    INVOICE_CURRENCY_OPTIONS.some((option) => option.value === selected)
+  ) {
+    return INVOICE_CURRENCY_OPTIONS;
+  }
+  // Rare valid ISO not in the curated list — still show the stored code so the
+  // select is never blank while Total formats with that currency.
+  return [
+    ...INVOICE_CURRENCY_OPTIONS,
+    { value: selected, label: `${selected} (from document)` },
+  ];
+}
+
 function CurrencySelectRow({
   value,
   symbolHint,
@@ -733,7 +749,7 @@ function CurrencySelectRow({
           value={selected}
           disabled={disabled}
           onValueChange={onChange}
-          options={INVOICE_CURRENCY_OPTIONS}
+          options={currencySelectOptions(selected)}
           placeholder={
             symbolHint
               ? `Select ISO code (amounts show as ${symbolHint})`
