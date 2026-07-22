@@ -11,7 +11,11 @@
 | Content similarity | Boosts fuzzy confidence | `CONTENT_SIMILARITY_CHECK_ENABLED=false` | done |
 | Canonical intake facade | Shared validate→dedupe→create→audit | `CANONICAL_INTAKE_CHANNELS=upload,email,whatsapp,viber` | done |
 
-**Blocking automatically (T1–T3):** identical files, strong business/content fingerprints, page overlap when cheaper signals miss. Actions follow the existing matrix (`skip_in_progress` / `shadow_duplicate` / `reingest_rejected` / `skip_logged`).
+**Blocking automatically (T1–T3):** identical files, strong business/content fingerprints, multi-page fingerprint overlap when cheaper signals miss. Actions follow the existing matrix (`skip_in_progress` / `shadow_duplicate` / `reingest_rejected` / `skip_logged`).
+
+**Identity overlap (T2):** document-number matches are role-aware. Logistics companions (`packing_list` / `transport_doc` / `grn` / `certificate_of_origin`) do **not** hard-match on a shared commercial `invoice_no` alone — they require a logistics primary id (`bol_no` / `hawb_no` / `tracking_no` / `freight_order_no`) or other strong refs. Distinct BOL/HAWB values never collapse.
+
+**Page fingerprints (T3):** single-page uploads still match on one page; multi-page uploads require ≥2 overlapping pages (or a majority) so a shared cover/Ts&Cs page cannot mark unrelated same-type files as duplicates.
 
 **Allow with review (T4):** filename-only noise, or when ≥3 of 4 signal families are unavailable — never auto-skip. Visible in Upload as filter **Possible duplicates** (`duplicate_review_suggested`), separate from evaluation **Needs review only**.
 

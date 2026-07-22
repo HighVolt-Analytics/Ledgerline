@@ -233,8 +233,8 @@ async def test_business_fingerprint_ingest_shadow_duplicate(
         lambda _path: PdfPageTextExtraction(pages=[_page(0, po_text)]),
     )
     monkeypatch.setattr(
-        "app.services.ingest.ingest_fanout_service.compute_business_fingerprint_from_pages",
-        lambda _pages, **kwargs: business_fp,
+        "app.services.ingest.ingest_fanout_service.compute_business_fingerprint",
+        lambda _fields, **kwargs: business_fp,
     )
     monkeypatch.setattr(
         "app.services.ingest.ingest_fanout_service.store_invoice_pdf",
@@ -614,6 +614,72 @@ async def test_identity_overlap_still_blocks_invoice_no_match(
     dup = await identity_overlap_duplicate_exists(
         db_session,
         {"invoice_no": "INV-DUP-1"},
+        tenant_id=TESTING_TENANT_UUID,
+    )
+    assert dup is not None
+    assert dup.id == existing.id
+
+
+@pytest.mark.asyncio
+async def test_identity_overlap_allows_distinct_packing_lists_sharing_invoice_no(
+    db_session: AsyncSession,
+) -> None:
+    """Same-type logistics companions that share a commercial invoice_no are not duplicates."""
+    existing = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PROCESSED,
+        currency="SGD",
+        vendor="Rashi Peripherals",
+        invoice_no="6000000299",
+        document_heading="PACKING LIST",
+        extracted_fields={
+            "document_role": "packing_list",
+            "bol_no": "BOL-AAA-1",
+        },
+    )
+    db_session.add(existing)
+    await db_session.flush()
+
+    dup = await identity_overlap_duplicate_exists(
+        db_session,
+        {
+            "vendor": "Rashi Peripherals",
+            "invoice_no": "6000000299",
+            "document_role": "packing_list",
+            "bol_no": "BOL-BBB-2",
+        },
+        tenant_id=TESTING_TENANT_UUID,
+    )
+    assert dup is None
+
+
+@pytest.mark.asyncio
+async def test_identity_overlap_blocks_same_packing_list_bol(
+    db_session: AsyncSession,
+) -> None:
+    existing = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PROCESSED,
+        currency="SGD",
+        vendor="Rashi Peripherals",
+        invoice_no="6000000299",
+        document_heading="PACKING LIST",
+        extracted_fields={
+            "document_role": "packing_list",
+            "bol_no": "BOL-SAME-9",
+        },
+    )
+    db_session.add(existing)
+    await db_session.flush()
+
+    dup = await identity_overlap_duplicate_exists(
+        db_session,
+        {
+            "vendor": "Rashi Peripherals",
+            "invoice_no": "6000000299",
+            "document_role": "packing_list",
+            "bol_no": "BOL-SAME-9",
+        },
         tenant_id=TESTING_TENANT_UUID,
     )
     assert dup is not None

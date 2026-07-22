@@ -108,6 +108,7 @@ async def normalized_invoice_number_duplicate_exists(
     *,
     tenant_id: int,
     exclude_id: int | None = None,
+    document_role: str | None = None,
 ) -> Invoice | None:
     targets = _invoice_data_dup_tokens(data)
     if not targets or not (data.vendor or "").strip():
@@ -127,6 +128,8 @@ async def normalized_invoice_number_duplicate_exists(
         stmt = stmt.where(Invoice.id != exclude_id)
 
     for row in (await session.execute(stmt)).scalars().all():
+        if document_roles_conflict(document_role, document_role_from_invoice(row)):
+            continue
         if _invoice_row_dup_tokens(row) & targets:
             return row
     return None
@@ -361,6 +364,11 @@ async def find_invoices_by_business_fingerprint_for_ingest(
 _LINKING_REFERENCE_KEYS = frozenset({"po_reference", "so_reference"})
 _REGISTER_TYPE_KEYS = frozenset({"sales_document_type", "purchase_document_type", "document_role"})
 _MONEY_KEYS = frozenset({"total", "subtotal"})
+# Mirror document_identity_service — logistics companions share invoice_no as a cross-ref.
+_LOGISTICS_ROLES = frozenset(
+    {"packing_list", "transport_doc", "grn", "certificate_of_origin"}
+)
+_LOGISTICS_PRIMARY_KEYS = frozenset({"bol_no", "freight_order_no", "tracking_no", "hawb_no"})
 
 _PURCHASE_TYPE_TO_ROLE = {
     "invoice": "invoice",
@@ -420,6 +428,39 @@ def _register_types_differ(left: dict[str, str], right: dict[str, str]) -> bool:
     return False
 
 
+def _field_role(fields: dict[str, str]) -> str | None:
+    return (fields.get("document_role") or "").strip().lower() or None
+
+
+def _logistics_primaries_conflict(left: dict[str, str], right: dict[str, str]) -> bool:
+    """True when both sides expose different BOL/HAWB/tracking ids — distinct instruments."""
+    for key in _LOGISTICS_PRIMARY_KEYS:
+        left_val = (left.get(key) or "").strip()
+        right_val = (right.get(key) or "").strip()
+        if left_val and right_val and left_val != right_val:
+            return True
+    return False
+
+
+def _matched_refs_for_overlap(
+    left: dict[str, str],
+    right: dict[str, str],
+    matched_refs: set[str],
+) -> set[str]:
+    """
+    Drop weak cross-refs that must not hard-block.
+
+    Packing lists / transport docs / GRNs often reprint the commercial invoice number.
+    That shared invoice_no is a shipment link, not proof the PDF is the same instrument.
+    """
+    left_role = _field_role(left)
+    right_role = _field_role(right)
+    either_logistics = left_role in _LOGISTICS_ROLES or right_role in _LOGISTICS_ROLES
+    if either_logistics:
+        return {key for key in matched_refs if key != "invoice_no"}
+    return matched_refs
+
+
 def _invoice_identity_snapshot(invoice: Invoice) -> dict[str, str]:
     from app.services.extraction.extraction_field_values import extracted_fields_from_invoice
 
@@ -456,11 +497,15 @@ def _identity_fields_overlap(left: dict[str, str], right: dict[str, str]) -> boo
     if not ref_keys:
         return False
     matched_refs = {k for k in ref_keys if left[k] == right[k]}
+    matched_refs = _matched_refs_for_overlap(left, right, matched_refs)
     if not matched_refs:
         return False
     left_vendor = left.get("vendor")
     right_vendor = right.get("vendor")
     if left_vendor and right_vendor and left_vendor != right_vendor:
+        return False
+    # Distinct logistics ids always win over a shared commercial invoice number.
+    if _logistics_primaries_conflict(left, right):
         return False
     if any(_is_document_number_key(k) for k in matched_refs):
         return True
@@ -501,6 +546,29 @@ async def identity_overlap_duplicate_exists(
     return None
 
 
+def _document_role_from_invoice_data(data: InvoiceData) -> str | None:
+    """Best-effort role for VR02 so packing lists don't collide with invoices on invoice_no."""
+    from app.services.extraction.document_heading_utils import (
+        document_role_from_heading,
+        infer_page_document_kind,
+    )
+
+    extracted = data.extracted_fields if isinstance(data.extracted_fields, dict) else {}
+    role = str(extracted.get("document_role") or "").strip().lower()
+    if role:
+        return role
+    heading = (data.document_heading or "").strip()
+    if heading:
+        inferred = document_role_from_heading(infer_page_document_kind(heading))
+        if inferred:
+            return inferred
+    text = (data.document_text or "").strip()
+    if text:
+        # First ~2k chars usually contain the title block.
+        return document_role_from_heading(infer_page_document_kind(text[:2000]))
+    return None
+
+
 async def identity_duplicate_exists(
     session: AsyncSession,
     data: InvoiceData,
@@ -536,6 +604,10 @@ async def identity_duplicate_exists(
         )
         fields.update(harvested)
 
+    role = _document_role_from_invoice_data(data)
+    if role:
+        fields["document_role"] = role
+
     overlap = await identity_overlap_duplicate_exists(
         session,
         fields,
@@ -545,23 +617,28 @@ async def identity_duplicate_exists(
     if overlap is not None:
         return BusinessDuplicateMatch(invoice=overlap, kind="identity_overlap")
 
-    duplicate = await invoice_number_duplicate_exists(
-        session,
-        data,
-        tenant_id=tenant_id,
-        exclude_id=exclude_id,
-    )
-    if duplicate is not None:
-        return BusinessDuplicateMatch(invoice=duplicate, kind="exact")
+    # Exact / normalized invoice_no checks are commercial-instrument matches.
+    # Skip them for logistics roles — companions reprint the invoice number.
+    if role not in _LOGISTICS_ROLES:
+        duplicate = await invoice_number_duplicate_exists(
+            session,
+            data,
+            tenant_id=tenant_id,
+            exclude_id=exclude_id,
+            document_role=role,
+        )
+        if duplicate is not None:
+            return BusinessDuplicateMatch(invoice=duplicate, kind="exact")
 
-    normalized = await normalized_invoice_number_duplicate_exists(
-        session,
-        data,
-        tenant_id=tenant_id,
-        exclude_id=exclude_id,
-    )
-    if normalized is not None:
-        return BusinessDuplicateMatch(invoice=normalized, kind="normalized")
+        normalized = await normalized_invoice_number_duplicate_exists(
+            session,
+            data,
+            tenant_id=tenant_id,
+            exclude_id=exclude_id,
+            document_role=role,
+        )
+        if normalized is not None:
+            return BusinessDuplicateMatch(invoice=normalized, kind="normalized")
 
     if get_settings().fuzzy_duplicate_check_enabled:
         fuzzy = await fuzzy_business_duplicate_exists(
@@ -1031,6 +1108,7 @@ async def invoice_number_duplicate_exists(
     *,
     tenant_id: int,
     exclude_id: int | None = None,
+    document_role: str | None = None,
 ) -> Invoice | None:
     """Return an existing invoice that blocks VR02, if any."""
     if not (data.invoice_no or "").strip():
@@ -1052,4 +1130,8 @@ async def invoice_number_duplicate_exists(
     if exclude_id is not None:
         stmt = stmt.where(Invoice.id != exclude_id)
 
-    return (await session.execute(stmt)).scalars().first()
+    for row in (await session.execute(stmt)).scalars().all():
+        if document_roles_conflict(document_role, document_role_from_invoice(row)):
+            continue
+        return row
+    return None

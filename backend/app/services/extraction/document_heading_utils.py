@@ -505,6 +505,20 @@ def document_role_from_heading(kind: HeadingKind | str | None) -> str | None:
     return token
 
 
+def infer_document_role_from_pages(pages: list[object] | None, *, max_pages: int = 3) -> str | None:
+    """Infer dedup role from the first pages' heading/title signals (single-file ingest)."""
+    if not pages:
+        return None
+    for page in pages[: max(1, max_pages)]:
+        text = getattr(page, "text", None)
+        if not isinstance(text, str) or not text.strip():
+            continue
+        role = document_role_from_heading(infer_page_document_kind(text))
+        if role:
+            return role
+    return None
+
+
 def _expected_heading_kinds(
     definition: DocumentTypeDefinition | None,
 ) -> frozenset[HeadingKind] | None:

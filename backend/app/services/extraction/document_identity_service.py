@@ -290,8 +290,18 @@ def compute_business_fingerprint_from_pages(
     pages: list[PdfPageText],
     *,
     custom_field_keys: list[str] | None = None,
+    document_role: str | None = None,
 ) -> str | None:
     fields = extract_identity_fields_from_pages(pages, custom_field_keys=custom_field_keys)
+    role = (document_role or "").strip().lower()
+    if not role:
+        from app.services.extraction.document_heading_utils import (
+            infer_document_role_from_pages,
+        )
+
+        role = infer_document_role_from_pages(pages) or ""
+    if role:
+        fields = {**fields, "document_role": role}
     return compute_business_fingerprint(fields)
 
 

@@ -17,6 +17,7 @@ from app.services.ingest.filename_normalize import normalize_attachment_filename
 from app.services.ingest.page_fingerprint_service import (
     collect_page_fingerprints,
     page_fingerprint_for_index,
+    required_page_fingerprint_matches,
 )
 from app.services.extraction.pdf_page_text_service import PdfPageText
 from app.services.ingest.canonical_intake_service import (
@@ -80,6 +81,14 @@ def test_page_fingerprint_skips_short_boilerplate() -> None:
     pairs = collect_page_fingerprints(pages)
     assert len(pairs) == 1
     assert pairs[0][0] == 1
+
+
+def test_required_page_fingerprint_matches_avoids_single_boilerplate_page() -> None:
+    assert required_page_fingerprint_matches(1) == 1
+    assert required_page_fingerprint_matches(2) == 2
+    assert required_page_fingerprint_matches(3) == 2
+    assert required_page_fingerprint_matches(4) == 2
+    assert required_page_fingerprint_matches(5) == 3
 
 
 def test_validate_intake_file() -> None:

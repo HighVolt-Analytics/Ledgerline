@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections import defaultdict
 
 from pathlib import Path
 
@@ -45,6 +46,19 @@ def collect_page_fingerprints(pages: list[PdfPageText]) -> list[tuple[int, str]]
         if fp:
             out.append((index, fp))
     return out
+
+
+def required_page_fingerprint_matches(incoming_count: int) -> int:
+    """
+    How many page FPs must overlap for a T3 hard match.
+
+    Single-page uploads still match on one page. Multi-page uploads require at least
+    two overlapping pages (or a majority) so a shared Ts&Cs / cover page alone cannot
+    mark unrelated files of the same type as duplicates.
+    """
+    if incoming_count <= 1:
+        return 1
+    return max(2, (incoming_count + 1) // 2)
 
 
 def enrich_pages_for_fingerprints(
@@ -119,12 +133,16 @@ async def find_invoice_by_page_fingerprints(
     tenant_id: uuid.UUID,
     page_fingerprints: list[str],
 ) -> Invoice | None:
-    """Return the oldest non-shadow invoice matching any page fingerprint."""
+    """Return the oldest non-shadow invoice with enough overlapping page fingerprints."""
     if not page_fingerprints:
         return None
-    unique = list(dict.fromkeys(page_fingerprints))
+    unique = list(dict.fromkeys(fp for fp in page_fingerprints if fp))
+    if not unique:
+        return None
+    need = required_page_fingerprint_matches(len(unique))
+
     stmt = (
-        select(Invoice)
+        select(Invoice, InvoicePageFingerprint.page_fingerprint)
         .join(
             InvoicePageFingerprint,
             InvoicePageFingerprint.invoice_id == Invoice.id,
@@ -137,4 +155,17 @@ async def find_invoice_by_page_fingerprints(
         )
         .order_by(Invoice.created_at.asc())
     )
-    return (await session.execute(stmt)).scalars().first()
+    rows = (await session.execute(stmt)).all()
+    if not rows:
+        return None
+
+    counts: dict[int, set[str]] = defaultdict(set)
+    invoices: dict[int, Invoice] = {}
+    for invoice, fingerprint in rows:
+        invoices[invoice.id] = invoice
+        counts[invoice.id].add(fingerprint)
+
+    for invoice_id, matched in counts.items():
+        if len(matched) >= need:
+            return invoices[invoice_id]
+    return None

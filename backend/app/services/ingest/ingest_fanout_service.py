@@ -38,10 +38,12 @@ from app.services.extraction.pdf_content_fingerprint import (
     compute_pdf_content_fingerprint,
     compute_pdf_content_fingerprint_from_pages,
 )
-from app.services.extraction.document_heading_utils import document_role_from_heading
+from app.services.extraction.document_heading_utils import (
+    document_role_from_heading,
+    infer_document_role_from_pages,
+)
 from app.services.extraction.document_identity_service import (
     compute_business_fingerprint,
-    compute_business_fingerprint_from_pages,
     extract_identity_fields,
     extract_identity_fields_from_pages,
     identity_field_keys_from_catalogue,
@@ -721,9 +723,14 @@ async def _ingest_file_with_fanout_core(
                         pages_for_fp,
                         custom_field_keys=custom_field_keys,
                     )
-                    business_fingerprint = compute_business_fingerprint_from_pages(
-                        pages_for_fp,
-                        custom_field_keys=custom_field_keys,
+                    inferred_role = infer_document_role_from_pages(pages_for_fp)
+                    if inferred_role:
+                        identity_fields = {
+                            **identity_fields,
+                            "document_role": inferred_role,
+                        }
+                    business_fingerprint = compute_business_fingerprint(
+                        identity_fields
                     )
             finally:
                 if tmp_fp_path is not None:
@@ -812,10 +819,10 @@ async def _ingest_file_with_fanout_core(
             pages,
             custom_field_keys=custom_field_keys,
         )
-        business_fingerprint = compute_business_fingerprint_from_pages(
-            pages,
-            custom_field_keys=custom_field_keys,
-        )
+        inferred_role = infer_document_role_from_pages(pages)
+        if inferred_role:
+            identity_fields = {**identity_fields, "document_role": inferred_role}
+        business_fingerprint = compute_business_fingerprint(identity_fields)
 
         if incomplete_ocr:
             await _log_pdf_split_skipped(
@@ -883,10 +890,13 @@ async def _ingest_file_with_fanout_core(
                     pages,
                     custom_field_keys=custom_field_keys,
                 )
-                business_fingerprint = compute_business_fingerprint_from_pages(
-                    pages,
-                    custom_field_keys=custom_field_keys,
-                )
+                inferred_role = infer_document_role_from_pages(pages)
+                if inferred_role:
+                    identity_fields = {
+                        **identity_fields,
+                        "document_role": inferred_role,
+                    }
+                business_fingerprint = compute_business_fingerprint(identity_fields)
                 segment_result = await segment_pdf_pages_smart(
                     pages,
                     max_segments=settings.pdf_segment_max_segments,
