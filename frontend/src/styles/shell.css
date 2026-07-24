@@ -144,6 +144,23 @@
   flex: 1;
 }
 
+.primary-sidebar__logo-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  line-height: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.primary-sidebar__logo-mark img {
+  display: block;
+  height: 18px;
+  width: auto;
+  max-width: 44px;
+}
+
 .app-shell--basic-sidebar.app-shell--primary-collapsed .primary-sidebar__rail .primary-sidebar__logo-label,
 .app-shell--primary-collapsed:not(.app-shell--basic-sidebar) .primary-sidebar__logo-label {
   display: none;
@@ -1827,9 +1844,22 @@
   color: hsl(var(--card-foreground));
 }
 
-.profile-menu__row--flyout:hover,
-.profile-menu__row--flyout:focus-within {
+.profile-menu__row--flyout-open {
   background-color: hsl(var(--muted) / 0.45);
+}
+
+.profile-menu__row-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 .profile-menu__row-main {
@@ -1858,7 +1888,7 @@
 }
 
 .profile-menu__flyout {
-  display: none;
+  display: block;
   position: absolute;
   left: calc(100% + 4px);
   top: 0;
@@ -1870,11 +1900,6 @@
   padding: 4px;
   max-height: 280px;
   overflow-y: auto;
-}
-
-.profile-menu__row--flyout:hover .profile-menu__flyout,
-.profile-menu__row--flyout:focus-within .profile-menu__flyout {
-  display: block;
 }
 
 .profile-menu__flyout-item {

@@ -478,12 +478,12 @@ export function Layout() {
           <div
             className={cn("primary-sidebar__logo", iconOnly && "primary-sidebar__logo--collapsed")}
           >
-            <span className="shrink-0 primary-sidebar__logo-mark">
-              <Logo size={iconOnly ? 30 : 24} />
+            <span className="primary-sidebar__logo-mark" aria-hidden={!iconOnly}>
+              <Logo size={iconOnly ? 16 : 18} />
             </span>
             {!iconOnly && (
               <div className="primary-sidebar__logo-label flex flex-col min-w-0 leading-none">
-                <span className="font-semibold text-[13px] tracking-tight truncate">Ledgerline</span>
+                <span className="font-semibold text-[13px] tracking-tight truncate">Ledgerlink</span>
               </div>
             )}
           </div>
@@ -669,7 +669,7 @@ export function Layout() {
         </main>
 
         <footer className="app-workspace__footer flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span className="font-medium text-foreground/70 shrink-0">Ledgerline v4</span>
+          <span className="font-medium text-foreground/70 shrink-0">Ledgerlink v4</span>
           {user?.email && !user.is_support_session && (
             <span className="hidden sm:inline truncate max-w-[10rem] md:max-w-none">
               {user.email}
@@ -680,7 +680,7 @@ export function Layout() {
               {t}
             </span>
           ))}
-          <span className="ml-auto hidden sm:inline">© 2026 Ledgerline · Sandbox environment</span>
+          <span className="ml-auto hidden sm:inline">© 2026 Ledgerlink · Sandbox environment</span>
           <span className="ml-auto sm:hidden">© 2026</span>
         </footer>
 
