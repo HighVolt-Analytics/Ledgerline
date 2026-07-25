@@ -128,6 +128,38 @@ const INTERNAL_EXTRACTED_KEYS = new Set([
 ]);
 
 /**
+ * Extracted keys present on the invoice but not in the DT's configured
+ * extraction_fields list — shown read-only under "Additional extracted fields"
+ * so vision/OCR extras are not silently hidden after DT classification.
+ *
+ * Party keys (seller_abn, etc.) are included here: the Fields tab does not
+ * render party blocks (those live on Summary).
+ */
+export function additionalExtractedFieldKeys(
+  inv: Pick<Invoice, "extracted_fields">,
+  extractionFieldKeys: string[]
+): string[] {
+  const configured = new Set(
+    (extractionFieldKeys ?? []).map((k) => k.trim().toLowerCase()).filter(Boolean)
+  );
+  const fields = inv.extracted_fields;
+  if (!fields || typeof fields !== "object") return [];
+  const out: string[] = [];
+  for (const [rawKey, rawValue] of Object.entries(fields)) {
+    const key = rawKey.trim();
+    if (!key) continue;
+    const token = key.toLowerCase();
+    if (configured.has(token)) continue;
+    if (INTERNAL_EXTRACTED_KEYS.has(token)) continue;
+    if (token === "vision_header_confidence" || token === "field_confidence") continue;
+    if (rawValue == null) continue;
+    const text = String(rawValue).trim();
+    if (!text) continue;
+    out.push(key);
+  }
+  return out.sort((a, b) => a.localeCompare(b));
+}
+/**
  * Vision can-understand hold: awaiting classification without OCR body.
  * Summary / Fields should show header fields only — not OCR empty-state copy.
  * Field keys for Fields tab come from API `document_type_extraction_fields`
@@ -443,9 +475,16 @@ function parseNumeric(value: string | null | undefined): number | null {
   return Number.isNaN(n) ? null : n;
 }
 
-function formatNumericForDisplay(value: number): string {
-  const rounded = Math.round(value * 100) / 100;
-  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
+function formatNumericForDisplay(value: number, maxDecimals = 4): string {
+  // Match line qty / unit_price NUMERIC(12,4); trim trailing zeros.
+  if (!Number.isFinite(value)) return "";
+  const factor = 10 ** maxDecimals;
+  const rounded = Math.round(value * factor) / factor;
+  if (Number.isInteger(rounded)) return String(rounded);
+  return rounded
+    .toFixed(maxDecimals)
+    .replace(/(\.\d*?[1-9])0+$/u, "$1")
+    .replace(/\.0+$/u, "");
 }
 
 function hasDisplayValue(value: string | null | undefined): boolean {
@@ -719,8 +758,8 @@ export function sanitizeLineItemValues(
 
     return {
       ...line,
-      unit_price: unitPrice != null ? formatNumericForDisplay(unitPrice) : line.unit_price,
-      amount: amount != null ? formatNumericForDisplay(amount) : null,
+      unit_price: unitPrice != null ? formatNumericForDisplay(unitPrice, 4) : line.unit_price,
+      amount: amount != null ? formatNumericForDisplay(amount, 2) : null,
     };
   });
 }
@@ -913,10 +952,10 @@ export function enrichLineItemsForPreview(
 
     return {
       ...line,
-      displayQty: qty != null ? formatNumericForDisplay(qty) : null,
+      displayQty: qty != null ? formatNumericForDisplay(qty, 4) : null,
       displayUnitPrice:
-        derivedUnitPrice != null ? formatNumericForDisplay(derivedUnitPrice) : null,
-      displayAmount: amount != null ? formatNumericForDisplay(amount) : null,
+        derivedUnitPrice != null ? formatNumericForDisplay(derivedUnitPrice, 4) : null,
+      displayAmount: amount != null ? formatNumericForDisplay(amount, 2) : null,
     };
   });
 }
@@ -988,7 +1027,7 @@ function sumLineAmounts(items: PreviewLineItem[]): string | null {
     if (amount == null) return null;
     sum += amount;
   }
-  return formatNumericForDisplay(sum);
+  return formatNumericForDisplay(sum, 2);
 }
 
 export function contentHasFinancialBody(profile: DocumentContentProfile): boolean {

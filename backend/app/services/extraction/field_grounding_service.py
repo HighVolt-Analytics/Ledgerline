@@ -116,6 +116,82 @@ def _money_grounded_adjacent_line(
     return False
 
 
+# Indian GST split tax: vision often stores CGST+SGST as one gst total that never
+# appears as a single token on the page (only the components do).
+_COMPONENT_TAX_KIND = re.compile(
+    r"(?is)\b(?P<kind>c\s*gst|s\s*gst|i\s*gst)\b"
+)
+_COMPONENT_TAX_RATE = re.compile(r"@\s*\d+(?:\.\d+)?\s*%|\b\d+(?:\.\d+)?\s*%")
+_COMPONENT_TAX_MONEY = re.compile(
+    r"(?:₹|rs\.?\s*|inr\s*)?(?P<amt>[\d][\d,]*(?:\.\d{1,4})?)",
+    re.I,
+)
+_GST_COMPONENT_EPS = Decimal("0.02")
+
+
+def _first_money_skipping_tax_rates(text: str) -> Decimal | None:
+    """Parse the first money token after stripping % rates (e.g. ``CGST @9%``)."""
+    from app.services.extraction.field_validators import normalize_amount
+
+    cleaned = _COMPONENT_TAX_RATE.sub(" ", text or "")
+    for match in _COMPONENT_TAX_MONEY.finditer(cleaned):
+        money = normalize_amount(match.group("amt"))
+        if money is not None and money > 0:
+            return money
+    return None
+
+
+def _gst_component_amounts_from_ocr(ocr_text: str) -> dict[str, Decimal]:
+    """Map ``cgst`` / ``sgst`` / ``igst`` → amount from labeled OCR lines."""
+    found: dict[str, Decimal] = {}
+    lines = (ocr_text or "").splitlines()
+    for index, line in enumerate(lines):
+        match = _COMPONENT_TAX_KIND.search(line)
+        if not match:
+            continue
+        kind = re.sub(r"\s+", "", match.group("kind").lower())
+        if kind in found:
+            continue
+        amount = _first_money_skipping_tax_rates(line[match.end() :])
+        if amount is None:
+            for offset in (1, 2):
+                next_index = index + offset
+                if next_index >= len(lines):
+                    break
+                amount = _first_money_skipping_tax_rates(lines[next_index])
+                if amount is not None:
+                    break
+        if amount is not None:
+            found[kind] = amount
+    return found
+
+
+def _gst_grounded_via_component_sum(
+    value: Decimal | str,
+    ocr_text: str,
+) -> bool:
+    """True when gst equals IGST or CGST+SGST component amounts on the page."""
+    target = _normalize_money_for_grounding(value)
+    if not target:
+        return False
+    try:
+        target_dec = Decimal(target)
+    except Exception:
+        return False
+    comps = _gst_component_amounts_from_ocr(ocr_text)
+    if not comps:
+        return False
+    igst = comps.get("igst")
+    if igst is not None and (igst - target_dec).copy_abs() <= _GST_COMPONENT_EPS:
+        return True
+    cgst = comps.get("cgst")
+    sgst = comps.get("sgst")
+    if cgst is not None and sgst is not None:
+        if (cgst + sgst - target_dec).copy_abs() <= _GST_COMPONENT_EPS:
+            return True
+    return False
+
+
 def _money_grounded_in_ocr(
     value: Decimal | str | None,
     ocr_text: str | None,
@@ -136,6 +212,10 @@ def _money_grounded_in_ocr(
         return True
     digits = "".join(c for c in token if c.isdigit())
     if digits and re.search(rf"(?<!\d){re.escape(digits)}(?!\d)", ocr_compact):
+        return True
+    if (field_key or "").strip().lower() == "gst" and _gst_grounded_via_component_sum(
+        value, ocr_text
+    ):
         return True
     return _money_grounded_adjacent_line(value, ocr_text, field_key=field_key)
 

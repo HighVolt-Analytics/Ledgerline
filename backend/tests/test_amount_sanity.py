@@ -80,3 +80,44 @@ def test_sanitize_parsed_line_item_does_not_invent_unit_price() -> None:
     )
     assert cleaned.unit_price is None
     assert cleaned.amount == Decimal("100")
+
+
+def test_sanitize_clears_unit_price_when_qty_times_unit_mismatches_amount() -> None:
+    """Vision often drops the leading decimal (0.864 → 864); keep qty+amount."""
+    cleaned = sanitize_parsed_line_item(
+        ParsedLineItem(
+            description="STUSB1600AQTR",
+            qty=Decimal("4000"),
+            unit_price=Decimal("864"),
+            amount=Decimal("3456.00"),
+        )
+    )
+    assert cleaned.qty == Decimal("4000")
+    assert cleaned.amount == Decimal("3456.00")
+    assert cleaned.unit_price is None
+
+
+def test_sanitize_keeps_consistent_unit_price() -> None:
+    cleaned = sanitize_parsed_line_item(
+        ParsedLineItem(
+            description="LM3406HVMHX/NOPB",
+            qty=Decimal("2500"),
+            unit_price=Decimal("1.03"),
+            amount=Decimal("2575.00"),
+        )
+    )
+    assert cleaned.unit_price == Decimal("1.03")
+    assert cleaned.amount == Decimal("2575.00")
+
+
+def test_sanitize_keeps_three_decimal_unit_price() -> None:
+    cleaned = sanitize_parsed_line_item(
+        ParsedLineItem(
+            description="STUSB1600AQTR",
+            qty=Decimal("4000"),
+            unit_price=Decimal("0.864"),
+            amount=Decimal("3456.00"),
+        )
+    )
+    assert cleaned.unit_price == Decimal("0.864")
+    assert cleaned.amount == Decimal("3456.00")

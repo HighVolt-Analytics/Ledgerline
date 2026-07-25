@@ -56,7 +56,6 @@ from app.services.invoice.invoice_evaluation_service import (
     EVAL_NEEDS_RESCAN,
     EVAL_NEEDS_REVIEW,
     EVAL_PENDING_VENDOR,
-    EVAL_VISION_HEADER_REVIEW,
     EVAL_VISION_VAULTED,
     ROUTE_EXPENSES,
     ROUTE_PURCHASE,
@@ -152,6 +151,9 @@ from app.services.master_data.journal_counterparty_resolver import (
 )
 from app.services.shared.notifier import send_notification
 from app.services.reconciliation.reconciliation_service import reconcile_daily, save_reconciliation
+from app.services.reconciliation.stranded_journal_remediation import (
+    purge_accrual_journals_for_invoice,
+)
 from app.services.rule_book.validator import all_passed, results_to_json, run_all_validations
 from app.services.master_data.vendor_resolver import (
     UNKNOWN_SLUG,
@@ -289,9 +291,133 @@ async def _clear_purchase_awaiting_po_if_overridden(
     await session.flush()
 
 
+async def _halt_or_bypass_purchase_awaiting_po(
+    session: AsyncSession,
+    invoice: Invoice,
+    *,
+    bypass_review_gates: bool,
+    playbook_bypasses_po_hold: bool,
+) -> bool:
+    """After final ``sync_purchase_document``: hold or clear awaiting-PO.
+
+    ``sync_purchase_document`` sets ``EXCEPTION`` + ``awaiting_po`` when the PO
+    is missing. Callers that already marked the invoice ``PROCESSED`` must
+    either stop here or restore ``PROCESSED`` before ledger publish.
+
+    Returns True when the caller must return (held on awaiting PO).
+    """
+    from app.services.invoice.invoice_evaluation_service import EVAL_AUTO_CODED
+    from app.services.purchase.purchase_document_service import EVAL_AWAITING_PO
+
+    awaiting = invoice.evaluation_status == EVAL_AWAITING_PO
+    # Only purchase sync runs between _mark_invoice_processed and here, so an
+    # EXCEPTION status means missing-PO hold even if evaluation_status was
+    # cleared by an earlier bypass path.
+    missing_po_exception = invoice.status == InvoiceStatus.EXCEPTION
+    if not awaiting and not missing_po_exception:
+        return False
+    if bypass_review_gates or playbook_bypasses_po_hold:
+        if playbook_bypasses_po_hold and not bypass_review_gates:
+            await _log_processing_override_skip(session, invoice, "playbook")
+        invoice.evaluation_status = EVAL_AUTO_CODED
+        # Missing-PO sync flips status to EXCEPTION; restore PROCESSED so
+        # publish_invoice_to_ledger does not raise after a deliberate bypass.
+        invoice.status = InvoiceStatus.PROCESSED
+        await session.flush()
+        return False
+    invoice.status = InvoiceStatus.EXCEPTION
+    invoice.evaluation_status = EVAL_AWAITING_PO
+    await session.flush()
+    await _purge_accruals_after_incomplete_halt(
+        session, invoice, reason="awaiting_po_hold"
+    )
+    send_notification(invoice, InvoiceStatus.EXCEPTION)
+    return True
+
+
+async def _stop_if_not_processed_for_publish(
+    session: AsyncSession,
+    invoice: Invoice,
+) -> bool:
+    """Belt-and-suspenders: never auto-publish a non-PROCESSED invoice."""
+    if invoice.status == InvoiceStatus.PROCESSED:
+        return False
+    if invoice.status != InvoiceStatus.EXCEPTION:
+        invoice.status = InvoiceStatus.EXCEPTION
+    await session.flush()
+    await _purge_accruals_after_incomplete_halt(
+        session, invoice, reason="not_processed_for_publish"
+    )
+    send_notification(invoice, InvoiceStatus.EXCEPTION)
+    return True
+
+
+async def _purge_accruals_after_incomplete_halt(
+    session: AsyncSession,
+    invoice: Invoice,
+    *,
+    reason: str,
+) -> None:
+    """Drop accrual journals when an invoice halts after journaling.
+
+    Prevents stranded accruals (e.g. awaiting_po after journal write) from
+    remaining on the day ledger. Payment/collection settlements are kept.
+    """
+    await purge_accrual_journals_for_invoice(
+        session,
+        invoice,
+        reason=reason,
+    )
+
+
 def _mark_invoice_processed(invoice: Invoice) -> None:
     clear_processing_overrides(invoice)
     invoice.status = InvoiceStatus.PROCESSED
+    # Invariant: PROCESSED ⇒ coding review is closed. All blocking gates
+    # (validation, mapping review, vendor hold, variance, journal balance,
+    # reconciliation) run before this point; a surviving needs_review is a
+    # stale coding flag, not an open control hold. Vault / non-posting
+    # finishers already normalize the same way.
+    if (invoice.evaluation_status or "").strip() == EVAL_NEEDS_REVIEW:
+        invoice.evaluation_status = EVAL_STATUS_AUTO_CODED
+
+
+async def _mark_deterministic_mapping_auto_coded(
+    session: AsyncSession,
+    invoice: Invoice,
+    loaded: Invoice,
+    mapping_detail: MappingDetail,
+) -> bool:
+    """Close coding review after a deterministic Rule Book GL mapping.
+
+    ``needs_review`` is a coding-state flag, not a posting-state flag. Once a
+    non-fallback mapping has resolved a real GL account and all earlier review
+    gates have passed, leaving it set makes a successfully posted invoice look
+    operationally unresolved. Other control holds (vendor, approval, PO/SO)
+    are deliberately not overridden.
+    """
+    current = (loaded.evaluation_status or invoice.evaluation_status or "").strip()
+    if current != EVAL_NEEDS_REVIEW or is_fallback_mapping(mapping_detail):
+        return False
+    if not (mapping_detail.account_code or "").strip():
+        return False
+
+    loaded.evaluation_status = EVAL_STATUS_AUTO_CODED
+    invoice.evaluation_status = EVAL_STATUS_AUTO_CODED
+    await log_event(
+        session,
+        "evaluation_auto_coded",
+        invoice_id=invoice.id,
+        detail={
+            "reason": "deterministic_gl_mapping",
+            "document_type_code": loaded.document_type_code or invoice.document_type_code,
+            "account_code": mapping_detail.account_code,
+            "account_name": mapping_detail.account_name,
+            "rule_type": mapping_detail.rule_type,
+            "match_reason": mapping_detail.match_reason,
+        },
+    )
+    return True
 
 
 @dataclass
@@ -334,18 +460,16 @@ async def _replace_line_items(
     *,
     trace: object | None = None,
 ) -> None:
-    stale = list(invoice.line_items)
-    if stale:
-        for item in stale:
-            await session.delete(item)
-    else:
-        await session.execute(
-            delete(LineItem).where(
-                *line_items_for_invoice(invoice.tenant_id, invoice.id),
-            )
+    # Always delete via SQL — never lazy-load invoice.line_items (MissingGreenlet
+    # after clear_stale expires the collection on the async understood path).
+    await session.execute(
+        delete(LineItem).where(
+            *line_items_for_invoice(invoice.tenant_id, invoice.id),
         )
-    invoice.line_items.clear()
+    )
+    session.expire(invoice, ["line_items"])
     await session.flush()
+    await session.refresh(invoice, attribute_names=["line_items"])
     from app.services.extraction.line_item_trace import row_key_for_item
 
     for index, line in enumerate(lines):
@@ -1386,6 +1510,13 @@ async def resume_invoice_posting_pipeline(
         send_notification(invoice, InvoiceStatus.EXCEPTION)
         return
 
+    await _mark_deterministic_mapping_auto_coded(
+        session,
+        invoice,
+        loaded,
+        mapping_detail,
+    )
+
     if await apply_team_expense_approval_gate(session, invoice):
         send_notification(invoice, InvoiceStatus.EXCEPTION)
         return
@@ -1504,6 +1635,9 @@ async def resume_invoice_posting_pipeline(
                 invoice_id=invoice.id,
                 detail={"reason": recon.halt_reason, "resume": "variance_approval"},
             )
+            await _purge_accruals_after_incomplete_halt(
+                session, invoice, reason="reconciliation_halted"
+            )
             send_notification(invoice, InvoiceStatus.EXCEPTION)
             return
 
@@ -1517,9 +1651,14 @@ async def resume_invoice_posting_pipeline(
     if await _vendor_hold_unless_skipped(session, pre_post):
         invoice.status = InvoiceStatus.EXCEPTION
         invoice.evaluation_status = pre_post.evaluation_status
+        await _purge_accruals_after_incomplete_halt(
+            session, invoice, reason="vendor_registration_hold"
+        )
         send_notification(invoice, InvoiceStatus.EXCEPTION)
         return
 
+    # Capture before _mark_invoice_processed clears processing_overrides.
+    playbook_bypasses_po_hold = override_bypasses_purchase_hold(invoice)
     _mark_invoice_processed(invoice)
     await session.flush()
     await record_team_expense_processed(session, invoice)
@@ -1529,6 +1668,13 @@ async def resume_invoice_posting_pipeline(
     )
 
     await sync_purchase_document(session, invoice)
+    if await _halt_or_bypass_purchase_awaiting_po(
+        session,
+        invoice,
+        bypass_review_gates=bypass_review_gates,
+        playbook_bypasses_po_hold=playbook_bypasses_po_hold,
+    ):
+        return
     if is_commercial_purchase_invoice(invoice):
         from app.services.payments.settlement_service import ensure_payment_with_audit
 
@@ -1545,6 +1691,8 @@ async def resume_invoice_posting_pipeline(
 
         await ensure_receivable_with_audit(session, invoice)
     await _safe_auto_learn(session, invoice)
+    if await _stop_if_not_processed_for_publish(session, invoice):
+        return
     await log_event(
         session,
         "invoice_processed",
@@ -1695,22 +1843,12 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     )
 
     if understand.can_understand:
-        # Vision-native header extract; do not enter legacy OCR stack yet.
-        header = await phase_vision_header_extract(
-            session,
-            invoice,
-            org=org,
-            doc_provider=doc_provider,
-            document_ai_provider=provider_token,
-            vision_page_images=vision_page_images,
-        )
-        await session.flush()
-
-        # Understood path skips OCR → deferred full reset never runs. Drop stale
-        # not-understood line items / DT / full-extract fields so header-only
-        # vault state is path-consistent after reprocess.
+        # Drop stale OCR / full-extract leftovers BEFORE vision header persist so
+        # posting fields (amounts, tax ids, line items) are not wiped after write.
         from app.services.invoice.invoice_reset import (
             clear_stale_not_understood_for_understood_path,
+            restore_prior_document_type_if_unmapped,
+            restore_unrefilled_vision_stale_snapshot,
         )
 
         stale_clear = await clear_stale_not_understood_for_understood_path(
@@ -1723,12 +1861,115 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             or stale_clear.get("cleared_document_type")
             or stale_clear.get("stripped_extracted_field_keys")
         ):
+            # Audit omits bulky value snapshots (columns / extracted blobs).
             await log_event(
                 session,
                 "vision_path_stale_extract_cleared",
                 invoice_id=invoice.id,
-                detail=audit_document_detail(invoice, **stale_clear),
+                detail=audit_document_detail(
+                    invoice,
+                    cleared_line_item_count=stale_clear.get("cleared_line_item_count"),
+                    cleared_document_type=stale_clear.get("cleared_document_type"),
+                    stripped_extracted_field_keys=stale_clear.get(
+                        "stripped_extracted_field_keys"
+                    ),
+                    prior_document_type_code=stale_clear.get("prior_document_type_code"),
+                    snapshot_column_keys=sorted(
+                        (stale_clear.get("column_snapshot") or {}).keys()
+                    )
+                    if isinstance(stale_clear.get("column_snapshot"), dict)
+                    else [],
+                    snapshot_extracted_keys=sorted(
+                        (stale_clear.get("extracted_snapshot") or {}).keys()
+                    )
+                    if isinstance(stale_clear.get("extracted_snapshot"), dict)
+                    else [],
+                ),
             )
+
+        # Vision-native header extract; do not enter legacy OCR stack yet.
+        header = await phase_vision_header_extract(
+            session,
+            invoice,
+            org=org,
+            doc_provider=doc_provider,
+            document_ai_provider=provider_token,
+            vision_page_images=vision_page_images,
+        )
+        retained = restore_unrefilled_vision_stale_snapshot(invoice, stale_clear)
+        if retained.get("restored_columns") or retained.get("restored_extracted_keys"):
+            await log_event(
+                session,
+                "vision_path_stale_values_retained",
+                invoice_id=invoice.id,
+                detail=audit_document_detail(invoice, **retained),
+            )
+        await session.flush()
+
+        # Map vision heading/canonical label → Rule Book DT-xx (no posting yet).
+        # Rules → tenant classifiers (PO/total signals) → text LLM catalogue fallback.
+        from app.services.extraction.llm_document_service import apply_document_type_to_invoice
+        from app.services.invoice.vision_document_type_map import (
+            map_vision_label_to_document_type_with_llm_fallback,
+        )
+        from app.services.invoice.vision_header_extract import CANONICAL_DOCUMENT_TYPE_KEY
+        from app.services.rule_book.rule_book_mapper import load_classification_config
+
+        rb_config = await load_classification_config(session, invoice.tenant_id)
+        fields = invoice.extracted_fields if isinstance(invoice.extracted_fields, dict) else {}
+        dt_map = await map_vision_label_to_document_type_with_llm_fallback(
+            document_heading=invoice.document_heading or "",
+            canonical_document_type=str(fields.get(CANONICAL_DOCUMENT_TYPE_KEY) or ""),
+            document_types=rb_config.document_types or [],
+            human_locked_dt=human_locked_dt or "",
+            invoice=invoice,
+        )
+        if dt_map.reason != "human_locked" and dt_map.code:
+            apply_document_type_to_invoice(
+                invoice,
+                code=dt_map.code,
+                confidence=dt_map.confidence,
+                llm_suggested_dt=dt_map.code if dt_map.method == "llm_catalogue_fallback" else None,
+                llm_confidence=dt_map.confidence
+                if dt_map.method == "llm_catalogue_fallback"
+                else None,
+            )
+        await log_event(
+            session,
+            "vision_document_type_mapped",
+            invoice_id=invoice.id,
+            detail=audit_document_detail(
+                invoice,
+                code=dt_map.code,
+                confidence=dt_map.confidence,
+                heading_kind=dt_map.heading_kind,
+                reason=dt_map.reason,
+                method=dt_map.method,
+                rule_reason=dt_map.rule_reason,
+                llm_reasoning=dt_map.llm_reasoning,
+                runner_up_code=dt_map.runner_up_code,
+                runner_up_score=dt_map.runner_up_score,
+                document_heading=invoice.document_heading,
+                canonical_document_type=fields.get(CANONICAL_DOCUMENT_TYPE_KEY),
+                document_type_code=invoice.document_type_code,
+            ),
+        )
+        # Remap produced no code — put prior DT back so Fields / posting config
+        # do not go blank after the intentional clear above.
+        if not (invoice.document_type_code or "").strip() and not human_locked_dt:
+            dt_restore = restore_prior_document_type_if_unmapped(
+                invoice,
+                stale_clear,
+                preserve_document_type=False,
+            )
+            if dt_restore.get("restored"):
+                await log_event(
+                    session,
+                    "vision_document_type_restored_prior",
+                    invoice_id=invoice.id,
+                    detail=audit_document_detail(invoice, **dt_restore),
+                )
+        await session.flush()
 
         from app.services.dossier.vision_bundle_linkage import apply_vision_bundle_on_hold
         from app.tenant_settings import tenant_custom_bundle_field_key
@@ -1781,6 +2022,50 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                 ),
             )
 
+        header_ok = bool(header.success) and not bool(getattr(header, "needs_review", False))
+        from app.services.invoice.vision_posting_continue import (
+            continue_vision_understood_posting,
+            resolve_vision_posting_definition,
+            vision_hold_evaluation_status,
+            vision_posting_skip_reason,
+            vision_should_continue_posting,
+        )
+
+        posting_defn = resolve_vision_posting_definition(invoice, rb_config)
+        if vision_should_continue_posting(invoice, posting_defn, header_ok=header_ok):
+            assert posting_defn is not None
+            # Storage layout move is fine; catalogue route_target wins inside continue.
+            await sync_vision_header_vault_path(
+                session, invoice, parsed_vendor=invoice.vendor
+            )
+            await session.flush()
+            if (posting_defn.route_target or "").strip():
+                invoice.route_target = posting_defn.route_target
+            await continue_vision_understood_posting(
+                session,
+                invoice,
+                config=rb_config,
+                org=org,
+                definition=posting_defn,
+            )
+            return
+
+        skip_reason = vision_posting_skip_reason(
+            invoice, posting_defn, header_ok=header_ok
+        )
+        await log_event(
+            session,
+            "vision_posting_skipped",
+            invoice_id=invoice.id,
+            detail=audit_document_detail(
+                invoice,
+                reason=skip_reason,
+                document_type_code=invoice.document_type_code,
+                posting=(posting_defn.posting if posting_defn else None),
+                header_ok=header_ok,
+            ),
+        )
+
         # Vision-only vault layout: Unrouted/{type}/{vendor}/… (legacy sync untouched).
         moved = await sync_vision_header_vault_path(
             session, invoice, parsed_vendor=invoice.vendor
@@ -1805,10 +2090,12 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             )
 
         invoice.status = InvoiceStatus.EXCEPTION
-        invoice.evaluation_status = (
-            EVAL_VISION_HEADER_REVIEW
-            if (not header.success or getattr(header, "needs_review", False))
-            else EVAL_VISION_VAULTED
+        # Vault-only DTs (posting=No) vault cleanly even when money fields are
+        # empty — Air Waybills etc. never post, so header review is wrong.
+        invoice.evaluation_status = vision_hold_evaluation_status(
+            invoice,
+            posting_defn,
+            header_ok=header_ok,
         )
         await log_event(
             session,
@@ -1841,9 +2128,10 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                 total=str(invoice.total) if invoice.total is not None else None,
                 currency=invoice.currency,
                 evaluation_status=invoice.evaluation_status,
+                posting_skip_reason=skip_reason,
             ),
         )
-        # Understood path: bundle + vault only — do not emit routing_review_required
+        # Understood path vault-only: do not emit routing_review_required
         # (that event fails dossier Validate with “confirm document type”).
         send_notification(invoice, InvoiceStatus.EXCEPTION)
         return
@@ -3121,6 +3409,13 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     ) and should_skip(invoice, "mapping_review"):
         await _log_processing_override_skip(session, invoice, "mapping_review")
 
+    await _mark_deterministic_mapping_auto_coded(
+        session,
+        invoice,
+        loaded,
+        mapping_detail,
+    )
+
     from app.services.rule_book.rule_book_mapper import ROUTE_EXPENSES
 
     if (invoice.route_target or "").strip() == ROUTE_EXPENSES and is_staff_claim_sender(
@@ -3261,6 +3556,9 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                 invoice_id=invoice.id,
                 detail={"reason": recon.halt_reason},
             )
+            await _purge_accruals_after_incomplete_halt(
+                session, invoice, reason="reconciliation_halted"
+            )
             send_notification(invoice, InvoiceStatus.EXCEPTION)
             return
 
@@ -3274,9 +3572,14 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     if await _vendor_hold_unless_skipped(session, pre_post):
         invoice.status = InvoiceStatus.EXCEPTION
         invoice.evaluation_status = pre_post.evaluation_status
+        await _purge_accruals_after_incomplete_halt(
+            session, invoice, reason="vendor_registration_hold"
+        )
         send_notification(invoice, InvoiceStatus.EXCEPTION)
         return
 
+    # Capture before _mark_invoice_processed clears processing_overrides.
+    playbook_bypasses_po_hold = override_bypasses_purchase_hold(invoice)
     _mark_invoice_processed(invoice)
     await session.flush()
     await record_team_expense_processed(session, invoice)
@@ -3286,18 +3589,13 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     )
 
     await sync_purchase_document(session, invoice)
-    if invoice.evaluation_status == "awaiting_po":
-        if bypass_review_gates or override_bypasses_purchase_hold(invoice):
-            from app.services.invoice.invoice_evaluation_service import EVAL_AUTO_CODED
-
-            if override_bypasses_purchase_hold(invoice) and not bypass_review_gates:
-                await _log_processing_override_skip(session, invoice, "playbook")
-            invoice.evaluation_status = EVAL_AUTO_CODED
-        else:
-            invoice.status = InvoiceStatus.EXCEPTION
-            await session.flush()
-            send_notification(invoice, InvoiceStatus.EXCEPTION)
-            return
+    if await _halt_or_bypass_purchase_awaiting_po(
+        session,
+        invoice,
+        bypass_review_gates=bypass_review_gates,
+        playbook_bypasses_po_hold=playbook_bypasses_po_hold,
+    ):
+        return
     if is_commercial_purchase_invoice(invoice):
         from app.services.payments.settlement_service import ensure_payment_with_audit
 
@@ -3314,6 +3612,8 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
 
         await ensure_receivable_with_audit(session, invoice)
     await _safe_auto_learn(session, invoice)
+    if await _stop_if_not_processed_for_publish(session, invoice):
+        return
     await log_event(
         session,
         "invoice_processed",

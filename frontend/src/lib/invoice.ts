@@ -485,6 +485,22 @@ export function isNeedsReviewEvaluation(status: string | null | undefined): bool
   return (status ?? "").trim() === "needs_review";
 }
 
+/**
+ * A posted document cannot still require pre-posting coding review.
+ *
+ * New pipeline runs persist auto_coded after deterministic GL mapping. This
+ * fallback keeps legacy processed rows from presenting a contradictory
+ * "Needs review" badge while their database records are repaired.
+ */
+export function effectiveEvaluationStatus(
+  inv: Pick<Invoice, "status" | "evaluation_status">,
+): Invoice["evaluation_status"] {
+  if (inv.status === "processed" && inv.evaluation_status === "needs_review") {
+    return "auto_coded";
+  }
+  return inv.evaluation_status;
+}
+
 export function isPendingApprovalEvaluation(status: string | null | undefined): boolean {
   return (status ?? "").trim() === "pending_approval";
 }

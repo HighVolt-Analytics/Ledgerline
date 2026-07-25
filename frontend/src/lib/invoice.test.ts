@@ -10,6 +10,7 @@ import {
   counterpartyMatchLabel,
   counterpartyName,
   counterpartyUnknownLabel,
+  effectiveEvaluationStatus,
   evaluationReviewTooltip,
   evaluationStatusDescription,
   evaluationStatusLabel,
@@ -29,6 +30,26 @@ const baseInvoice = {
   status: "processed",
   validation_results: [{ rule: "VR03", passed: false, message: "fail", skipped: false }],
 } as Invoice;
+
+describe("effectiveEvaluationStatus", () => {
+  it("normalizes stale needs_review after successful posting", () => {
+    expect(
+      effectiveEvaluationStatus({
+        status: "processed",
+        evaluation_status: "needs_review",
+      }),
+    ).toBe("auto_coded");
+  });
+
+  it("preserves review while posting is incomplete", () => {
+    expect(
+      effectiveEvaluationStatus({
+        status: "exception",
+        evaluation_status: "needs_review",
+      }),
+    ).toBe("needs_review");
+  });
+});
 
 describe("validationPassApplicable", () => {
   it("returns false for vault route", () => {

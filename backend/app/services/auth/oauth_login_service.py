@@ -82,6 +82,14 @@ def parse_oauth_state(state: str) -> dict[str, Any]:
 def _microsoft_authority() -> str:
     settings = get_settings()
     tenant = settings.microsoft_oauth_authority_tenant.strip() or "common"
+    # Single-tenant Entra apps (AzureADMyOrg) reject /common (AADSTS50194).
+    # Prefer AZURE_TENANT_ID when authority was left at the "common" default.
+    if tenant.lower() == "common":
+        import os
+
+        azure_tid = (os.environ.get("AZURE_TENANT_ID") or "").strip()
+        if azure_tid and azure_tid.lower() != "common":
+            tenant = azure_tid
     return f"https://login.microsoftonline.com/{tenant}"
 
 

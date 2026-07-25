@@ -44,6 +44,7 @@ import { documentDisplayRef, normalizeCurrencyCode, vendorInvoiceNo } from "@/li
 import { COUNTRIES } from "@/lib/settingsData";
 import { fetchDossierById, type DossierSummaryWithInvoiceId } from "@/lib/dossierApi";
 import {
+  additionalExtractedFieldKeys,
   lineItemGridTemplateColumns,
   resolvePreviewLineItems,
   countPreviewLineItems,
@@ -1099,6 +1100,11 @@ export function InvoiceDetailDrawer({
     return [];
   }, [inv, ruleBook, resolvedDocumentTypeCode]);
 
+  const extraExtractedFieldKeys = useMemo(() => {
+    if (!inv) return [];
+    return additionalExtractedFieldKeys(inv, extractionFieldKeys);
+  }, [inv, extractionFieldKeys]);
+
   const documentTypeInCatalogue = useMemo(() => {
     const code = resolvedDocumentTypeCode;
     if (!code || !ruleBook) return false;
@@ -1717,6 +1723,34 @@ export function InvoiceDetailDrawer({
                         )}
                       </>
                     )}
+                    {extraExtractedFieldKeys.length > 0 ? (
+                      <div className="mt-4 space-y-2 border-t border-border pt-3">
+                        <p className="text-xs font-medium text-muted-foreground">
+                          Additional extracted fields
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Present on the document but not configured on this document type —
+                          shown for review only.
+                        </p>
+                        {extraExtractedFieldKeys.map((key) => (
+                          <FieldRow
+                            key={`extra-${key}`}
+                            label={extractionFieldDisplayLabel(key, inv, tax)}
+                            value={readExtractionFieldValue(
+                              key,
+                              inv,
+                              null,
+                              false,
+                              fmt,
+                              extractionFieldKeys,
+                              absentFields,
+                              sourceKind
+                            )}
+                            confidence={invoiceFieldConfidence(inv, key)}
+                          />
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                 )}
 

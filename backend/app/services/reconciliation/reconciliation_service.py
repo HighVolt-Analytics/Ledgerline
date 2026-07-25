@@ -20,6 +20,41 @@ from app.services.rule_book.rule_book_mapper import (
 
 _TOLERANCE = Decimal("0.01")
 
+# ---------------------------------------------------------------------------
+# RC1 countable invoice policy (exact include / exclude)
+#
+# Invoice side and journal side MUST use the same set.
+#
+# INCLUDE
+#   - InvoiceStatus.PROCESSED on the recon_date
+#   - Plus the ``current_invoice`` being reconciled right now (typically
+#     RECONCILING), so its own totals/journals count before status flips to
+#     PROCESSED
+#
+# EXCLUDE (never count totals or journals toward RC1/RC2)
+#   - PENDING, PARSING, VALIDATING, MAPPING, JOURNALING
+#   - RECONCILING when it is NOT the current_invoice (crash/orphan mid-flight)
+#   - EXCEPTION, REJECTED, DUPLICATE_SKIPPED
+#
+# "Not completed" for RC1 = any status other than PROCESSED, except the single
+# current_invoice argument passed into reconcile_daily.
+# ---------------------------------------------------------------------------
+RC1_COUNTABLE_STATUSES: frozenset[InvoiceStatus] = frozenset({InvoiceStatus.PROCESSED})
+
+RC1_EXCLUDED_STATUSES: frozenset[InvoiceStatus] = frozenset(
+    {
+        InvoiceStatus.PENDING,
+        InvoiceStatus.PARSING,
+        InvoiceStatus.VALIDATING,
+        InvoiceStatus.MAPPING,
+        InvoiceStatus.JOURNALING,
+        InvoiceStatus.RECONCILING,
+        InvoiceStatus.EXCEPTION,
+        InvoiceStatus.DUPLICATE_SKIPPED,
+        InvoiceStatus.REJECTED,
+    }
+)
+
 
 @dataclass
 class ReconciliationResult:
@@ -52,7 +87,7 @@ async def _sum_processed_invoice_totals(
 ) -> tuple[int, Decimal]:
     filters = [
         Invoice.tenant_id == tenant_id,
-        Invoice.status == InvoiceStatus.PROCESSED,
+        Invoice.status.in_(tuple(RC1_COUNTABLE_STATUSES)),
         Invoice.invoice_date == recon_date,
     ]
     if sales:
@@ -73,6 +108,27 @@ async def _sum_processed_invoice_totals(
         )
     ).one()
     return int(count or 0), Decimal(str(inv_sum or 0))
+
+
+def _countable_journal_filter(
+    *,
+    tenant_id: uuid.UUID | int,
+    current_invoice: Invoice | None,
+):
+    """Restrict journal sums to RC1_COUNTABLE_STATUSES (+ current_invoice).
+
+    See module-level RC1 include/exclude policy. Incomplete invoices
+    (EXCEPTION / REJECTED / mid-flight, etc.) are excluded so stranded
+    accrual rows cannot fail RC1 for every other invoice on that date.
+    """
+    countable = select(Invoice.id).where(
+        Invoice.tenant_id == tenant_id,
+        Invoice.status.in_(tuple(RC1_COUNTABLE_STATUSES)),
+    )
+    condition = JournalEntry.invoice_id.in_(countable)
+    if current_invoice is not None and current_invoice.id is not None:
+        condition = or_(condition, JournalEntry.invoice_id == current_invoice.id)
+    return condition
 
 
 def _include_current_invoice(
@@ -135,6 +191,11 @@ async def reconcile_daily(
         if exclude_id is not None:
             total_invoices += 1
 
+    countable_journal = _countable_journal_filter(
+        tenant_id=tenant_id,
+        current_invoice=current_invoice,
+    )
+
     ap_q = (
         select(func.coalesce(func.sum(JournalEntry.credit), 0))
         .select_from(JournalEntry)
@@ -143,6 +204,7 @@ async def reconcile_daily(
             JournalEntry.account_code == payable.account_code,
             JournalEntry.date == recon_date,
             JournalEntry.entry_type == EntryType.CREDIT,
+            countable_journal,
         )
     )
     ap_sum = Decimal(str((await session.execute(ap_q)).scalar() or 0))
@@ -155,6 +217,7 @@ async def reconcile_daily(
             JournalEntry.account_code == receivable.account_code,
             JournalEntry.date == recon_date,
             JournalEntry.entry_type == EntryType.DEBIT,
+            countable_journal,
         )
     )
     ar_sum = Decimal(str((await session.execute(ar_q)).scalar() or 0))
@@ -162,12 +225,20 @@ async def reconcile_daily(
     dr_q = (
         select(func.coalesce(func.sum(JournalEntry.debit), 0))
         .select_from(JournalEntry)
-        .where(JournalEntry.tenant_id == tenant_id, JournalEntry.date == recon_date)
+        .where(
+            JournalEntry.tenant_id == tenant_id,
+            JournalEntry.date == recon_date,
+            countable_journal,
+        )
     )
     cr_q = (
         select(func.coalesce(func.sum(JournalEntry.credit), 0))
         .select_from(JournalEntry)
-        .where(JournalEntry.tenant_id == tenant_id, JournalEntry.date == recon_date)
+        .where(
+            JournalEntry.tenant_id == tenant_id,
+            JournalEntry.date == recon_date,
+            countable_journal,
+        )
     )
     debits = Decimal(str((await session.execute(dr_q)).scalar() or 0))
     credits = Decimal(str((await session.execute(cr_q)).scalar() or 0))

@@ -1,0 +1,534 @@
+"""Unit tests for vision heading/canonical → Rule Book DT mapping."""
+
+from __future__ import annotations
+
+import pytest
+
+from app.schemas.document_type import DocumentTypeDefinition
+from app.services.invoice.vision_document_type_map import (
+    map_vision_label_to_document_type,
+    map_vision_label_to_document_type_with_llm_fallback,
+)
+from app.services.prompt_registry.catalog import catalog_default_body
+
+
+def _dt(
+    *,
+    code: str,
+    title: str,
+    short_title: str,
+    klass: str = "Transactional",
+    posting: str = "Yes",
+    recognition_mode: str = "signals",
+    recognition_signals: list[str] | None = None,
+    priority: int = 100,
+    enabled: bool = True,
+) -> DocumentTypeDefinition:
+    return DocumentTypeDefinition(
+        code=code,
+        title=title,
+        shortTitle=short_title,
+        klass=klass,
+        posting=posting,
+        recognitionMode=recognition_mode,
+        recognitionSignals=recognition_signals or [],
+        llmPrompt="",
+        routeTarget="Vault",
+        enabled=enabled,
+        classifier={"enabled": False, "priority": priority, "confidence": 0.85},
+    )
+
+
+def test_map_commercial_invoice_to_transactional_dt() -> None:
+    catalogue = [
+        _dt(
+            code="DT-07",
+            title="Supplier Tax Invoice",
+            short_title="Tax Invoice",
+            recognition_signals=["heading_invoice"],
+        ),
+        _dt(
+            code="DT-02",
+            title="Packing List",
+            short_title="Packing List",
+            klass="Non-transactional",
+            posting="No",
+        ),
+    ]
+    result = map_vision_label_to_document_type(
+        document_heading="COMMERCIAL INVOICE",
+        canonical_document_type="Commercial Invoice",
+        document_types=catalogue,
+    )
+    assert result.reason == "matched"
+    assert result.code == "DT-07"
+    assert result.confidence >= 0.82
+    assert result.heading_kind == "commercial_invoice"
+
+
+def test_map_tax_invoice_title_fallback() -> None:
+    catalogue = [
+        _dt(
+            code="DT-07",
+            title="Supplier Tax Invoice",
+            short_title="Tax Invoice",
+            recognition_mode="signals",
+            recognition_signals=[],  # force title fallback
+        ),
+        _dt(
+            code="DT-02",
+            title="Packing List",
+            short_title="Packing List",
+            klass="Non-transactional",
+            posting="No",
+        ),
+    ]
+    result = map_vision_label_to_document_type(
+        document_heading="TAX INVOICE",
+        canonical_document_type="Tax Invoice",
+        document_types=catalogue,
+    )
+    assert result.reason == "matched"
+    assert result.code == "DT-07"
+    assert result.heading_kind == "tax_invoice"
+
+
+def test_map_packing_list_to_supporting_dt() -> None:
+    catalogue = [
+        _dt(
+            code="DT-07",
+            title="Supplier Tax Invoice",
+            short_title="Tax Invoice",
+            recognition_signals=["heading_invoice"],
+        ),
+        _dt(
+            code="DT-02",
+            title="Packing List",
+            short_title="Packing List",
+            klass="Non-transactional",
+            posting="No",
+        ),
+    ]
+    result = map_vision_label_to_document_type(
+        document_heading="PACKING LIST",
+        canonical_document_type="Packing List",
+        document_types=catalogue,
+    )
+    assert result.reason == "matched"
+    assert result.code == "DT-02"
+    assert result.heading_kind == "packing_list"
+
+
+def test_map_unknown_heading_no_kind() -> None:
+    catalogue = [
+        _dt(
+            code="DT-07",
+            title="Supplier Tax Invoice",
+            short_title="Tax Invoice",
+            recognition_signals=["heading_invoice"],
+        ),
+    ]
+    result = map_vision_label_to_document_type(
+        document_heading="HANDOVER SLIP",
+        canonical_document_type="Handover Slip",
+        document_types=catalogue,
+    )
+    assert result.code is None
+    assert result.reason == "no_kind"
+
+
+def test_map_below_threshold_when_catalogue_unrelated() -> None:
+    catalogue = [
+        _dt(
+            code="DT-16",
+            title="Contract",
+            short_title="Contract",
+            klass="Non-transactional",
+            posting="No",
+            recognition_signals=[],
+        ),
+    ]
+    result = map_vision_label_to_document_type(
+        document_heading="TAX INVOICE",
+        canonical_document_type="Tax Invoice",
+        document_types=catalogue,
+    )
+    assert result.code is None
+    assert result.reason in {"below_threshold", "no_kind"}
+    # Kind is inferred; score against Contract should fail threshold.
+    if result.reason == "below_threshold":
+        assert result.heading_kind == "tax_invoice"
+
+
+def test_map_ambiguous_when_two_close_scores() -> None:
+    catalogue = [
+        _dt(
+            code="DT-A",
+            title="Packing List A",
+            short_title="Packing List",
+            klass="Non-transactional",
+            posting="No",
+            priority=50,
+        ),
+        _dt(
+            code="DT-B",
+            title="Packing List B",
+            short_title="Packing List",
+            klass="Non-transactional",
+            posting="No",
+            priority=60,
+        ),
+    ]
+    result = map_vision_label_to_document_type(
+        document_heading="PACKING LIST",
+        canonical_document_type="Packing List",
+        document_types=catalogue,
+    )
+    assert result.code is None
+    assert result.reason == "ambiguous"
+    assert result.runner_up_code is not None
+
+
+def test_map_human_locked_skips_scoring() -> None:
+    catalogue = [
+        _dt(
+            code="DT-07",
+            title="Supplier Tax Invoice",
+            short_title="Tax Invoice",
+            recognition_signals=["heading_invoice"],
+        ),
+    ]
+    result = map_vision_label_to_document_type(
+        document_heading="PACKING LIST",
+        canonical_document_type="Packing List",
+        document_types=catalogue,
+        human_locked_dt="DT-99",
+    )
+    assert result.reason == "human_locked"
+    assert result.code == "DT-99"
+    assert result.confidence == 1.0
+
+
+def test_map_empty_catalogue() -> None:
+    result = map_vision_label_to_document_type(
+        document_heading="TAX INVOICE",
+        canonical_document_type="Tax Invoice",
+        document_types=[],
+    )
+    assert result.code is None
+    assert result.reason == "empty_catalogue"
+
+
+def test_dt_map_fallback_prompt_is_robust() -> None:
+    body = catalog_default_body("vision.dt_map_fallback.system") or ""
+    assert "NEVER invent a DT code" in body
+    assert 'Prefer "" over a weak guess' in body or "Prefer \"\" over a weak guess" in body
+    assert "SELF-CHECK BEFORE RETURNING" in body
+    assert "catalogue[].code" in body
+
+
+@pytest.mark.asyncio
+async def test_llm_fallback_not_called_when_rules_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called = {"n": 0}
+
+    async def _boom(**_kwargs):
+        called["n"] += 1
+        raise AssertionError("LLM should not run when rules match")
+
+    monkeypatch.setattr(
+        "app.services.invoice.vision_document_type_map._llm_pick_catalogue_dt",
+        _boom,
+    )
+    catalogue = [
+        _dt(
+            code="DT-07",
+            title="Supplier Tax Invoice",
+            short_title="Tax Invoice",
+            recognition_signals=["heading_invoice"],
+        ),
+    ]
+    result = await map_vision_label_to_document_type_with_llm_fallback(
+        document_heading="COMMERCIAL INVOICE",
+        canonical_document_type="Commercial Invoice",
+        document_types=catalogue,
+    )
+    assert result.reason == "matched"
+    assert result.code == "DT-07"
+    assert called["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_llm_fallback_accepts_catalogue_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _fake_llm(**kwargs):
+        from app.services.invoice.vision_document_type_map import VisionDocumentTypeMapResult
+
+        return VisionDocumentTypeMapResult(
+            code="DT-16",
+            confidence=0.91,
+            heading_kind=kwargs.get("heading_kind"),
+            reason="llm_matched",
+            method="llm_catalogue_fallback",
+            rule_reason=kwargs.get("rule_fail_reason"),
+            llm_reasoning="Handover maps to ops supporting DT",
+        )
+
+    monkeypatch.setattr(
+        "app.services.invoice.vision_document_type_map._llm_pick_catalogue_dt",
+        _fake_llm,
+    )
+    catalogue = [
+        _dt(
+            code="DT-07",
+            title="Supplier Tax Invoice",
+            short_title="Tax Invoice",
+            recognition_signals=["heading_invoice"],
+        ),
+        _dt(
+            code="DT-16",
+            title="Handover Slip",
+            short_title="Handover",
+            klass="Non-transactional",
+            posting="No",
+        ),
+    ]
+    result = await map_vision_label_to_document_type_with_llm_fallback(
+        document_heading="HANDOVER SLIP",
+        canonical_document_type="Handover Slip",
+        document_types=catalogue,
+    )
+    assert result.reason == "llm_matched"
+    assert result.code == "DT-16"
+    assert result.method == "llm_catalogue_fallback"
+    assert result.rule_reason == "no_kind"
+
+
+@pytest.mark.asyncio
+async def test_llm_fallback_rejects_invalid_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _fake_chat(**_kwargs):
+        return {
+            "suggested_dt": "DT-FAKE",
+            "confidence": 0.99,
+            "reasoning": "invented",
+        }
+
+    monkeypatch.setattr(
+        "app.services.extraction.azure_openai_client.chat_json_async",
+        _fake_chat,
+    )
+    monkeypatch.setattr(
+        "app.services.prompt_registry.service.resolve_system_prompt_text",
+        lambda _key: "test prompt",
+    )
+    catalogue = [
+        _dt(
+            code="DT-07",
+            title="Supplier Tax Invoice",
+            short_title="Tax Invoice",
+            recognition_signals=["heading_invoice"],
+        ),
+    ]
+    result = await map_vision_label_to_document_type_with_llm_fallback(
+        document_heading="HANDOVER SLIP",
+        canonical_document_type="Handover Slip",
+        document_types=catalogue,
+    )
+    assert result.code is None
+    assert result.reason == "llm_rejected"
+    assert result.method == "llm_catalogue_fallback"
+
+
+@pytest.mark.asyncio
+async def test_llm_fallback_rejects_low_confidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _fake_chat(**_kwargs):
+        return {
+            "suggested_dt": "DT-07",
+            "confidence": 0.2,
+            "reasoning": "unsure",
+        }
+
+    monkeypatch.setattr(
+        "app.services.extraction.azure_openai_client.chat_json_async",
+        _fake_chat,
+    )
+    monkeypatch.setattr(
+        "app.services.prompt_registry.service.resolve_system_prompt_text",
+        lambda _key: "test prompt",
+    )
+    catalogue = [
+        _dt(
+            code="DT-07",
+            title="Supplier Tax Invoice",
+            short_title="Tax Invoice",
+            recognition_signals=["heading_invoice"],
+        ),
+    ]
+    result = await map_vision_label_to_document_type_with_llm_fallback(
+        document_heading="HANDOVER SLIP",
+        canonical_document_type="Handover Slip",
+        document_types=catalogue,
+    )
+    assert result.code is None
+    assert result.reason == "llm_rejected"
+
+
+@pytest.mark.asyncio
+async def test_classifier_fallback_picks_po_goods_via_playbook_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """playbookProfile=po_goods → recommended has_po_reference; no prompt scraping."""
+    from decimal import Decimal
+
+    from app.models.invoice import Invoice, InvoiceStatus
+    from app.tenant_ids import TESTING_TENANT_UUID
+
+    async def _boom(**_kwargs):
+        raise AssertionError("LLM must not run when classifier resolves")
+
+    monkeypatch.setattr(
+        "app.services.invoice.vision_document_type_map._llm_pick_catalogue_dt",
+        _boom,
+    )
+
+    catalogue = [
+        DocumentTypeDefinition(
+            code="DT-07",
+            title="PO-based goods invoice",
+            shortTitle="PO Goods Invoice",
+            klass="Transactional",
+            posting="Yes",
+            recognitionMode="prompt",
+            recognitionSignals=[],
+            llmPrompt="Prose description only — matching must use playbook signals.",
+            routeTarget="Purchase Management",
+            enabled=True,
+            playbookProfile="po_goods",
+            classifier={"enabled": False, "priority": 40, "confidence": 0.9},
+        ),
+        DocumentTypeDefinition(
+            code="DT-08",
+            title="Non-PO vendor invoice",
+            shortTitle="Non-PO Invoice",
+            klass="Transactional",
+            posting="Yes",
+            recognitionMode="prompt",
+            recognitionSignals=[],
+            llmPrompt="Prose for non-PO invoice.",
+            routeTarget="Purchase Management",
+            enabled=True,
+            playbookProfile="direct_expense",
+            classifier={"enabled": False, "priority": 50, "confidence": 0.85},
+        ),
+    ]
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PARSING,
+        document_heading="INVOICE",
+        invoice_no="82507681",
+        po_reference="PO-250742524",
+        total=Decimal("18864.00"),
+        vendor="Lexar Co., Limited",
+        extracted_fields={"canonical_document_type": "Invoice"},
+    )
+    result = await map_vision_label_to_document_type_with_llm_fallback(
+        document_heading="INVOICE",
+        canonical_document_type="Invoice",
+        document_types=catalogue,
+        invoice=inv,
+    )
+    assert result.code == "DT-07"
+    assert result.reason == "classifier_matched"
+    assert result.method == "config_classifier"
+
+
+@pytest.mark.asyncio
+async def test_signals_classifier_fallback_uses_has_po_reference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from decimal import Decimal
+
+    from app.models.invoice import Invoice, InvoiceStatus
+    from app.tenant_ids import TESTING_TENANT_UUID
+
+    async def _boom(**_kwargs):
+        raise AssertionError("LLM must not run when signals classifier resolves")
+
+    monkeypatch.setattr(
+        "app.services.invoice.vision_document_type_map._llm_pick_catalogue_dt",
+        _boom,
+    )
+    catalogue = [
+        _dt(
+            code="DT-07",
+            title="PO-based goods invoice",
+            short_title="PO Goods Invoice",
+            recognition_signals=[
+                "heading_invoice",
+                "text_invoice",
+                "has_po_reference",
+            ],
+            priority=40,
+        ),
+        _dt(
+            code="DT-08",
+            title="Non-PO vendor invoice",
+            short_title="Non-PO Invoice",
+            recognition_signals=["heading_invoice", "has_invoice_number"],
+            priority=80,
+        ),
+    ]
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PARSING,
+        document_heading="INVOICE",
+        invoice_no="82507681",
+        po_reference="PO-250742524",
+        total=Decimal("18864.00"),
+        vendor="Lexar",
+    )
+    result = await map_vision_label_to_document_type_with_llm_fallback(
+        document_heading="INVOICE",
+        canonical_document_type="Invoice",
+        document_types=catalogue,
+        invoice=inv,
+    )
+    assert result.code == "DT-07"
+    assert result.reason == "classifier_matched"
+
+
+def test_effective_signals_uses_playbook_recommended_identity() -> None:
+    from app.services.classification.document_type_rule_engine import (
+        effective_signals_mode_definition,
+    )
+    from app.services.classification.recognition_signal_registry import (
+        PLAYBOOK_RECOMMENDED_IDENTITY,
+    )
+
+    defn = DocumentTypeDefinition(
+        code="DT-07",
+        title="PO-based goods invoice",
+        shortTitle="PO Goods Invoice",
+        klass="Transactional",
+        posting="Yes",
+        recognitionMode="prompt",
+        recognitionSignals=[],
+        llmPrompt="Any prose",
+        routeTarget="Purchase Management",
+        enabled=True,
+        playbookProfile="po_goods",
+        classifier={"enabled": False, "priority": 40, "confidence": 0.9},
+    )
+    effective = effective_signals_mode_definition(defn)
+    assert effective is not None
+    assert set(effective.recognition_signals) == set(
+        PLAYBOOK_RECOMMENDED_IDENTITY["po_goods"]
+    )
+    assert "has_po_reference" in effective.recognition_signals
+    assert effective.classifier.enabled is True

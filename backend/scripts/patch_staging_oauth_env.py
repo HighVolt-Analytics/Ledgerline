@@ -70,7 +70,12 @@ def _staging_values(env: dict[str, str]) -> dict[str, str]:
     values["FRONTEND_URL"] = _STAGING_BASE
     if "MICROSOFT_OAUTH_PUBLIC_CLIENT" not in values:
         values["MICROSOFT_OAUTH_PUBLIC_CLIENT"] = "false"
-    if "MICROSOFT_OAUTH_AUTHORITY_TENANT" not in values:
+    # Prefer real AZURE_TENANT_ID for single-tenant Entra apps (AzureADMyOrg).
+    # Hardcoding "common" causes AADSTS50194.
+    tenant = (env.get("AZURE_TENANT_ID") or env.get("MICROSOFT_OAUTH_AUTHORITY_TENANT") or "").strip()
+    if tenant and tenant.lower() != "common":
+        values["MICROSOFT_OAUTH_AUTHORITY_TENANT"] = tenant
+    elif "MICROSOFT_OAUTH_AUTHORITY_TENANT" not in values:
         values["MICROSOFT_OAUTH_AUTHORITY_TENANT"] = "common"
     return values
 

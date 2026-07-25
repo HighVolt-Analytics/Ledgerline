@@ -87,7 +87,8 @@ def sanitize_parsed_line_item(
     Grounded-only: never invent missing unit_price/amount from qty×price math.
     """
     qty = plausible_qty(item.qty)
-    unit_price = plausible_money(item.unit_price)
+    # unit_price shares NUMERIC(12,4) with qty — do not clamp via money (2dp) semantics.
+    unit_price = plausible_qty(item.unit_price)
     amount = plausible_money(item.amount)
     tax_amount = plausible_money(item.tax_amount)
     if trace is not None and row_key:
@@ -103,7 +104,18 @@ def sanitize_parsed_line_item(
             and amount is not None
             and (qty * unit_price - amount).copy_abs() > Decimal("0.05")
         ):
-            trace.record(row_key, "amount_sanity", "kept", "printed_arithmetic_mismatch")
+            # Clear the inconsistent unit — never invent a "corrected" price.
+            trace.record(row_key, "amount_sanity", "adjusted", "cleared_mismatched_unit_price")
+    # When qty × unit_price disagrees with printed amount, drop unit_price and
+    # keep qty+amount (unit is the field most often hit by missing decimals,
+    # e.g. 864 vs 0.864). Never rewrite unit from amount/qty.
+    if (
+        qty is not None
+        and unit_price is not None
+        and amount is not None
+        and (qty * unit_price - amount).copy_abs() > Decimal("0.05")
+    ):
+        unit_price = None
     return ParsedLineItem(
         description=item.description,
         qty=qty,

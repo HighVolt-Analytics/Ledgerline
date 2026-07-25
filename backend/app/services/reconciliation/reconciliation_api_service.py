@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.invoice import Invoice, InvoiceStatus
+from app.models.invoice import Invoice
 from app.models.journal import JournalEntry
 from app.models.reconciliation import DailyReconciliation
 from app.schemas.reconciliation import (
@@ -19,10 +19,13 @@ from app.schemas.reconciliation import (
     ReconciliationJournalLine,
     ReconciliationResponse,
 )
-from app.services.reconciliation.reconciliation_service import reconcile_daily
+from app.services.reconciliation.reconciliation_service import (
+    RC1_COUNTABLE_STATUSES,
+    reconcile_daily,
+)
 from app.services.rule_book.rule_book_mapper import load_classification_config
 
-_PROCESSED = frozenset({InvoiceStatus.PROCESSED})
+_RC1_COUNTABLE = RC1_COUNTABLE_STATUSES
 
 
 def _round_money(value: Decimal) -> Decimal:
@@ -98,7 +101,7 @@ async def build_reconciliation_day_detail(
             select(Invoice)
             .where(
                 Invoice.tenant_id == tenant_id,
-                Invoice.status.in_(_PROCESSED),
+                Invoice.status.in_(_RC1_COUNTABLE),
                 Invoice.invoice_date == recon_date,
             )
             .order_by(Invoice.id)
@@ -112,6 +115,7 @@ async def build_reconciliation_day_detail(
             .where(
                 JournalEntry.tenant_id == tenant_id,
                 JournalEntry.date == recon_date,
+                Invoice.status.in_(_RC1_COUNTABLE),
             )
             .order_by(JournalEntry.id)
         )

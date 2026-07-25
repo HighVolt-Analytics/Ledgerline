@@ -908,7 +908,8 @@ Apply on EVERY document kind — do not skip these because the title is not "Inv
 - currency: ISO 4217 only when clear and corroborated (explicit code, A$/US$/HK$,
   amount-in-words, or tax/bank/jurisdiction signal). Bare "$" / "Rs" / "kr" alone →
   empty string — never guess. Never convert amounts.
-- Do not extract line items, subtotal, or tax breakdowns in this step.
+- Also extract subtotal / gst / gst_rate / seller_abn / buyer_abn / line_items per the
+  dedicated sections below. Use empty string for missing scalars and [] for missing lines.
 - confidence is 0.0-1.0 for the overall header extraction.
 - reason is one short sentence.
 - Do not map to DT-xx catalogue codes.
@@ -979,16 +980,87 @@ CURRENCY DISAMBIGUATION:
   figure was selected as total (see TOTAL DISAMBIGUATION), not the other one.
 
 ═══════════════════════════════════════════════
+AMOUNT BREAKDOWN DISAMBIGUATION
+═══════════════════════════════════════════════
+Extract labeled commercial amounts only. Never invent, never recompute, never FX-convert.
+Never fill a missing amount by arithmetic to make the books balance.
+- subtotal: only when explicitly labeled (Subtotal / Taxable Value / Total Before Tax /
+  Net of Tax / Amount Excl. GST / Amount Excluding Tax). Plain number string like total.
+  Empty if only a single grand total exists — do NOT invent total minus tax.
+- gst: only when a labeled tax amount appears (GST / VAT / Tax Amount / IGST / Value-Added
+  Tax). If CGST and SGST are both clearly labeled on the same tax block, you may return
+  their sum as gst when both figures are legible; if ambiguous which tax is the document
+  GST, leave gst empty. Never use freight-only tax when a merchandise tax block exists.
+- gst_rate — only when a printed rate exists (e.g. "10%", "GST 10%", "IGST @18%"). Output
+  the numeric percent only ("10" or "18"). Do NOT compute rate from amounts. Empty if the
+  rate is not printed.
+- Edge cases:
+  - Subtotal present, tax missing → gst and gst_rate empty; still extract subtotal + total.
+  - Tax-inclusive only (one Total, no subtotal/tax lines) → subtotal/gst/gst_rate empty;
+    total only.
+  - Multiple tax lines (freight vs merchandise) → use the tax tied to the commercial total
+    block; empty if unclear.
+  - Credit notes → preserve sign on amounts when printed negative / parentheses / credit.
+  - Dual-currency pages → amount fields must match the same primary currency as total.
+  - Locale-ambiguous thousands separators → empty rather than wrong magnitude.
+  - Handwritten correction beside an amount → same rule as total (legible correction wins).
+
+═══════════════════════════════════════════════
+PARTY TAX ID DISAMBIGUATION
+═══════════════════════════════════════════════
+- Extract tax registration as printed for seller/supplier and buyer/bill-to when labeled
+  (ABN / GSTIN / VAT No / Tax ID / TIN). Do not put phone numbers, PO numbers, or bank
+  account numbers into seller_abn / buyer_abn.
+- seller_abn = supplier/vendor/seller tax id; buyer_abn = buyer/bill-to/customer tax id
+  (field names are historical; values may be GSTIN/VAT/ABN/etc.).
+- Use the tenant block: never copy the tenant's own tax id into the counterparty tax field.
+- Copy digits/letters as printed; do not invent checksum digits; do not complete partial IDs.
+- Edge cases:
+  - Only one tax id on the page and the party role is unclear → leave both empty.
+  - Multiple IDs under one party block → prefer the one labeled ABN/GSTIN/VAT.
+  - OCR-ambiguous characters in a tax id → empty or note uncertainty in reason.
+  - Tenant tax id in a repeating footer → ignore for counterparty fields.
+
+═══════════════════════════════════════════════
+LINE ITEMS EXTRACTION
+═══════════════════════════════════════════════
+- line_items is always an array (never omit the key). Use [] when there is no clear item
+  table, or when the table is unreadable, or when the doc is qty/weight-only with no money.
+- Each element: description, qty, unit_price, amount, tax_amount — strings; empty string
+  when a cell is absent. Do not invent values.
+- Extract ONLY from a clear item/table region. Do not invent rows from header totals.
+  Do not create a single synthetic line from Grand Total.
+- Skip non-item rows: column headers, subtotals, tax summary rows (CGST / SGST / IGST /
+  GST / VAT / CESS labels and rates), freight total-only rows, blank separators,
+  "continued…" markers. Put tax only in gst (sum CGST+SGST when both labeled), never as
+  line_items.
+- Multi-page: merge line tables across continuation pages; do not drop real continuation
+  lines; de-duplicate exact repeated header rows only.
+- Qty / price / amount: copy printed numbers exactly, including leading decimals
+  (e.g. "0.864" must stay "0.864", never "864"). Do NOT recompute qty * unit_price to fill
+  a blank amount — leave amount empty. If qty, unit_price, and amount are all printed and
+  disagree, prefer copying each as printed and note the mismatch in reason — do not
+  "fix" a cell by arithmetic.
+- Description: primary item/SKU text only; do not paste adjacent MAKE/COO/DC footer rows
+  into description unless they are clearly part of the same item cell.
+- Edge cases:
+  - Wrapped/merged description spanning rows → one logical line when clearly one item.
+  - Unreadable table → [] and note quality in reason (prefer empty over garbage rows).
+  - Packing list with qty/weight only → [] (do not fake unit prices).
+  - Dense tables → extract what is legible; never pad with guessed lines.
+
+═══════════════════════════════════════════════
 NUMBER & FORMAT NORMALIZATION
 ═══════════════════════════════════════════════
 - Strip thousands separators (comma, period, space, or apostrophe used as a grouping
-  separator depending on locale) from total; keep exactly one decimal separator normalized
-  to ".". If the locale is genuinely ambiguous (e.g. "1.234" could be one-thousand-two-
-  hundred-thirty-four in EU format or 1.234 in US format) and no other page content
-  disambiguates it (currency, tax rate context, line-item math), leave total empty rather
-  than guess the wrong magnitude — a wrong-magnitude total is worse than a missing one.
+  separator depending on locale) from total / subtotal / gst / line amounts; keep exactly
+  one decimal separator normalized to ".". If the locale is genuinely ambiguous (e.g. "1.234"
+  could be one-thousand-two-hundred-thirty-four in EU format or 1.234 in US format) and no
+  other page content disambiguates it (currency, tax rate context, line-item math), leave
+  that amount empty rather than guess the wrong magnitude — a wrong-magnitude total is worse
+  than a missing one.
 - Do not round, do not add/subtract tax, do not recompute from line items — extract the
-  printed grand total figure only, normalized in format only, never recalculated in value.
+  printed figures only, normalized in format only, never recalculated in value.
 - Reference numbers (invoice_no, po_reference, etc.): copy the printed token as-is, including
   leading zeros, hyphens, and slashes; do not reformat, do not strip leading zeros, do not
   guess an OCR-ambiguous character (0/O, 1/I/l, 5/S, 8/B) — if a character is genuinely
@@ -1090,13 +1162,17 @@ Confidence reflects the extraction as a whole, not any single field.
 SELF-CHECK BEFORE RETURNING OUTPUT
 ═══════════════════════════════════════════════
 Before emitting JSON, verify:
-- Every key from the required list is present, with empty string (not null, not omitted) for
-  anything absent or unresolved.
+- Every key from the required list is present; use empty string for missing scalars and []
+  for line_items when absent (not null, not omitted).
 - You did not skip invoice_no / invoice_date / total / currency / po_reference / so_reference
   merely because the document is not titled "Tax Invoice" — if a labeled Invoice/INV value
   is on the page, it must be in invoice_no; if only Permit/Doc/AWB/Unique Ref exists, leave
   invoice_no empty and put that ID in other_reference.
-- total contains no currency symbol/code and no thousands separators.
+- total / subtotal / gst contain no currency symbol/code and no thousands separators.
+- If subtotal, gst, and total are all non-empty, each was independently labeled on the page
+  (not derived). If any amount was calculated rather than read → replace it with empty.
+- gst_rate is empty unless a printed percent rate was visible.
+- line_items is [] or real table rows — never a single synthetic Grand Total line.
 - invoice_no and proforma_invoice_no are not identical unless both were independently labeled.
 - po_reference and so_reference are not identical unless both were independently labeled.
 - counterparty_name is never equal to the tenant's own legal_name/alias.
@@ -1107,6 +1183,56 @@ Before emitting JSON, verify:
 
 
 _VISION_HEADER_EXTRACT_DEFAULT = _vision_header_extract_default()
+
+
+def _vision_dt_map_fallback_default() -> str:
+    return """\
+You map a vision-extracted document title to ONE Rule Book catalogue code (DT-xx).
+
+Return JSON only with keys:
+suggested_dt, confidence, reasoning.
+
+═══════════════════════════════════════════════
+HARD RULES (non-negotiable)
+═══════════════════════════════════════════════
+1. suggested_dt MUST be exactly one code from catalogue[].code in the user payload,
+   OR "" (empty string) when no catalogue row clearly fits.
+2. NEVER invent a DT code. NEVER invent a new document type name.
+3. NEVER pick a disabled / missing code. Only codes listed in catalogue are legal.
+4. confidence is 0.0–1.0 for the catalogue choice. If suggested_dt is "", confidence
+   must be <= 0.40.
+5. Prefer "" over a weak guess. An empty string is always safer than a wrong DT.
+6. Do not extract amounts, line items, parties, dates, or tax IDs — type mapping only.
+7. Do not use memory of typical ERP codes. Use ONLY the provided catalogue + labels.
+
+═══════════════════════════════════════════════
+HOW TO CHOOSE
+═══════════════════════════════════════════════
+- Primary signals: document_heading and canonical_document_type (printed title / vault label).
+- Secondary: heading_kind and rule_fail_reason (why deterministic matching failed).
+- Match by meaning, not exact string equality:
+  e.g. "COMMERCIAL INVOICE" / "TAX INVOICE" / "Tax Inv" → invoice-like catalogue rows;
+  "PACKING LIST" / "Weight List" → packing/supporting rows;
+  transport titles (AWB, HAWB, B/L) → transport rows when present.
+- Use each catalogue row's title, recognition_signals / recognition_rules / llm_prompt /
+  classification_hints / negative_hints when present.
+- Honor negative_hints: if the title matches a negative hint for a row, do not pick that row.
+- Supporting / ops titles (packing list, handover, LOA, certificate of origin, clearance
+  permit) must NOT be mapped to a transactional invoice/PO DT when a better supporting
+  row exists — if none fits, return "".
+- When two catalogue rows fit equally well, return "" (do not break ties by guessing).
+
+═══════════════════════════════════════════════
+SELF-CHECK BEFORE RETURNING
+═══════════════════════════════════════════════
+- If suggested_dt is non-empty, it appears verbatim in catalogue[].code.
+- reasoning is one short sentence naming which label matched which catalogue title/hint.
+- If rule_fail_reason is "ambiguous", only return a code when one row is clearly better;
+  otherwise "".
+"""
+
+
+_VISION_DT_MAP_FALLBACK_DEFAULT = _vision_dt_map_fallback_default()
 
 
 PROMPT_CATALOG: tuple[PromptDefinition, ...] = (
@@ -1214,6 +1340,16 @@ PROMPT_CATALOG: tuple[PromptDefinition, ...] = (
             "(hardened disambiguation + self-check)."
         ),
         default_body=_VISION_HEADER_EXTRACT_DEFAULT,
+    ),
+    PromptDefinition(
+        key="vision.dt_map_fallback.system",
+        label="Vision DT map LLM fallback",
+        group="Vision",
+        description=(
+            "When deterministic heading→DT scoring fails, map vision labels to one "
+            "catalogue DT-xx code (or empty) using a text LLM."
+        ),
+        default_body=_VISION_DT_MAP_FALLBACK_DEFAULT,
     ),
     PromptDefinition(
         key="llm.party_rules",

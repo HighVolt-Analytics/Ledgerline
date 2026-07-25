@@ -290,6 +290,72 @@ def _classifier_has_conditions(root: dict[str, Any]) -> bool:
     return classifier_has_actionable_conditions(root)
 
 
+def _iter_classifier_condition_fields(root: Any) -> list[str]:
+    """Collect condition field names from a classifier root tree."""
+    if root is None:
+        return []
+    if hasattr(root, "model_dump"):
+        root = root.model_dump()
+    if not isinstance(root, dict):
+        return []
+    node_type = (root.get("type") or "").strip().lower()
+    if node_type == "condition":
+        field = str(root.get("field") or "").strip()
+        return [field] if field else []
+    fields: list[str] = []
+    for child in root.get("children") or []:
+        fields.extend(_iter_classifier_condition_fields(child))
+    return fields
+
+
+def _definition_requires_po_reference(definition: DocumentTypeDefinition) -> bool:
+    signals = {
+        str(s).strip()
+        for s in (definition.recognition_signals or [])
+        if str(s).strip()
+    }
+    if "has_po_reference" in signals:
+        return True
+    fields = {
+        f.lower()
+        for f in _iter_classifier_condition_fields(
+            getattr(definition.classifier, "root", None)
+        )
+    }
+    return "has_po_reference" in fields or "po_reference" in fields
+
+
+def _definition_specificity(definition: DocumentTypeDefinition) -> int:
+    """Higher = more specific. Prefer richer identity over generic invoice matches."""
+    signals = [
+        str(s).strip()
+        for s in (definition.recognition_signals or [])
+        if str(s).strip()
+    ]
+    if signals:
+        return len(signals)
+    return len(_iter_classifier_condition_fields(getattr(definition.classifier, "root", None)))
+
+
+def _configured_match_sort_key(
+    definition: DocumentTypeDefinition,
+    *,
+    po_present: bool,
+) -> tuple[int, int, int]:
+    """Rank matches for long-term correctness across tenants.
+
+    1. When a PO is present, prefer DTs that require ``has_po_reference``
+       over generic Non-PO / invoice matches (priority must not beat specificity).
+    2. Prefer more specific signal sets.
+    3. Priority is only a tie-breaker (lowest first).
+    """
+    requires_po = _definition_requires_po_reference(definition)
+    po_mismatch = 1 if po_present and not requires_po else 0
+    specificity = _definition_specificity(definition)
+    priority = int(getattr(definition.classifier, "priority", 100) or 100)
+    return (po_mismatch, -specificity, priority)
+
+
 def recognition_mode_of(defn: DocumentTypeDefinition) -> str:
     mode = (defn.recognition_mode or "signals").strip().lower()
     return "prompt" if mode == "prompt" else "signals"
@@ -306,55 +372,91 @@ def is_prompt_recognition_mode(defn: DocumentTypeDefinition) -> bool:
 def effective_signals_mode_definition(
     definition: DocumentTypeDefinition,
 ) -> DocumentTypeDefinition | None:
-    """Resolve the classifier used for signals-mode matching.
+    """Resolve the classifier used for structured field matching.
 
-    Prefer recognition_signals when they compile to the stored tree. Keep a customized
+    Prefer explicit recognition_signals (signals mode). Keep a customized
     match-rules classifier when it differs from the pure signal compilation.
+    When signals are empty, fall back to ``PLAYBOOK_RECOMMENDED_IDENTITY`` for
+    the DT's playbook profile — so a prompt-mode \"PO-based goods invoice\" with
+    ``playbookProfile=po_goods`` still requires ``has_po_reference`` without
+    scraping English prompt text.
     """
     from app.services.classification.document_classifier_builder import (
         build_classifier_from_signals,
     )
+    from app.services.classification.document_type_playbook_profile_service import (
+        effective_playbook_profile,
+    )
     from app.services.classification.document_type_recognition_migration import (
         sync_classifier_from_recognition,
     )
-    from app.services.classification.recognition_signal_registry import SIGNAL_CONDITIONS
+    from app.services.classification.recognition_signal_registry import (
+        PLAYBOOK_RECOMMENDED_IDENTITY,
+        SIGNAL_CONDITIONS,
+    )
 
-    if not definition.enabled or not is_signals_recognition_mode(definition):
+    if not definition.enabled:
         return None
 
-    signals = [s for s in (definition.recognition_signals or []) if s in SIGNAL_CONDITIONS]
     classifier = definition.classifier
     has_actionable = bool(
         classifier.enabled and _classifier_has_conditions(classifier.root)
     )
 
-    if signals:
-        pure = build_classifier_from_signals(
-            signals,
-            "grouped",
-            priority=classifier.priority or 100,
-            confidence=classifier.confidence or 0.85,
-            enabled=True,
-        )
-        if has_actionable and classifier.model_dump() != pure.model_dump():
+    if is_signals_recognition_mode(definition):
+        signals = [
+            s for s in (definition.recognition_signals or []) if s in SIGNAL_CONDITIONS
+        ]
+        if signals:
+            pure = build_classifier_from_signals(
+                signals,
+                "grouped",
+                priority=classifier.priority or 100,
+                confidence=classifier.confidence or 0.85,
+                enabled=True,
+            )
+            if has_actionable and classifier.model_dump() != pure.model_dump():
+                return definition
+            return definition.model_copy(
+                update={
+                    "classifier": pure,
+                    "recognition_signals": signals,
+                    "llm_prompt": "",
+                    "recognition_mode": "signals",
+                }
+            )
+
+        if has_actionable:
             return definition
-        return definition.model_copy(
-            update={
-                "classifier": pure,
-                "recognition_signals": signals,
-                "llm_prompt": "",
-                "recognition_mode": "signals",
-            }
-        )
 
-    if has_actionable:
-        return definition
+        synced = sync_classifier_from_recognition(definition)
+        if synced.classifier.enabled and _classifier_has_conditions(
+            synced.classifier.root
+        ):
+            return synced
 
-    synced = sync_classifier_from_recognition(definition)
-    if synced.classifier.enabled and _classifier_has_conditions(synced.classifier.root):
-        return synced
-    return None
+    profile = (effective_playbook_profile(definition) or "").strip().lower()
+    recommended = [
+        signal_id
+        for signal_id in (PLAYBOOK_RECOMMENDED_IDENTITY.get(profile) or [])
+        if signal_id in SIGNAL_CONDITIONS
+    ]
+    if not recommended:
+        return None
 
+    pure = build_classifier_from_signals(
+        recommended,
+        "grouped",
+        priority=classifier.priority or 100,
+        confidence=classifier.confidence or 0.85,
+        enabled=True,
+    )
+    return definition.model_copy(
+        update={
+            "classifier": pure,
+            "recognition_signals": recommended,
+        }
+    )
 
 def prepare_signals_mode_definitions(
     document_types: Sequence[DocumentTypeDefinition] | list[DocumentTypeDefinition],
@@ -374,10 +476,15 @@ def list_configured_document_type_matches(
     invoice: Invoice,
     parsed: InvoiceData,
 ) -> list[tuple[DocumentTypeDefinition, str]]:
-    """All enabled signals-mode classifier matches, ordered by priority (lowest first)."""
+    """All enabled signals-mode classifier matches, ranked for specificity.
+
+    Ordering (durable across tenant priority configs):
+    1. When PO is present, prefer DTs that require a PO reference
+    2. Prefer more specific recognition signal sets
+    3. Classifier priority (lowest first) as tie-breaker only
+    """
     ctx = build_document_classifier_context(invoice=invoice, parsed=parsed)
     candidates = prepare_signals_mode_definitions(document_types)
-    candidates.sort(key=lambda item: item.classifier.priority)
     matches: list[tuple[DocumentTypeDefinition, str]] = []
     for definition in candidates:
         if eval_condition_group_generic(
@@ -385,6 +492,10 @@ def list_configured_document_type_matches(
             field_resolver=lambda field, _ctx=ctx: _document_field(_ctx, field),
         ):
             matches.append((definition, "config_classifier"))
+    po_present = ctx.has_po_reference == "true"
+    matches.sort(
+        key=lambda item: _configured_match_sort_key(item[0], po_present=po_present)
+    )
     return matches
 
 
@@ -394,7 +505,7 @@ def match_configured_document_type(
     invoice: Invoice,
     parsed: InvoiceData,
 ) -> tuple[DocumentTypeDefinition, str] | None:
-    """First enabled classifier match by priority wins."""
+    """Best enabled classifier match (specificity first, priority tie-break)."""
     matches = list_configured_document_type_matches(
         document_types,
         invoice=invoice,
@@ -455,8 +566,23 @@ def classifier_rules_match_ocr(
     invoice: Invoice,
     ocr: OcrArtifact,
 ) -> bool:
-    """True when signals-mode recognition rules match OCR (prompt mode always passes)."""
+    """True when explicit structured recognition rules match OCR.
+
+    Prompt-mode DTs and DTs without configured signals/match-rules always
+    pass. Playbook-inferred identity (used for catalogue matching) is not
+    enforced here — that would reject shipped DTs that only set
+    ``playbookProfile``.
+    """
     if is_prompt_recognition_mode(defn):
+        return True
+
+    has_explicit_signals = bool(
+        [s for s in (defn.recognition_signals or []) if str(s).strip()]
+    )
+    has_explicit_rules = bool(
+        defn.classifier.enabled and _classifier_has_conditions(defn.classifier.root)
+    )
+    if not has_explicit_signals and not has_explicit_rules:
         return True
 
     effective = effective_signals_mode_definition(defn)

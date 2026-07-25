@@ -434,3 +434,169 @@ def test_apply_reconcile_clears_ungrounded_total() -> None:
         "upgraded_subtotal_plus_tax",
         "unchanged",
     }
+
+
+def test_amount_consistency_clears_gst_never_invents_balance() -> None:
+    from app.services.invoice.vision_header_reconcile import (
+        apply_vision_header_amount_consistency,
+    )
+
+    result = VisionHeaderExtractResult(
+        success=True,
+        document_heading="TAX INVOICE",
+        subtotal=Decimal("100.00"),
+        gst=Decimal("50.00"),
+        total=Decimal("110.00"),
+        confidence=0.9,
+        provider="claude_vision",
+    )
+    updated, detail = apply_vision_header_amount_consistency(result)
+    assert "subtotal_gst_total_mismatch" in detail["flags"]
+    assert "gst" in detail["cleared"]
+    assert updated.gst is None
+    assert updated.subtotal == Decimal("100.00")
+    assert updated.total == Decimal("110.00")
+    assert updated.amount_inconsistency is True
+    assert updated.needs_review is True
+    # Never invent balancing gst = total - subtotal
+    assert updated.gst is None
+
+
+def test_amount_consistency_clears_tax_inclusive_subtotal() -> None:
+    """When subtotal ≈ total with positive gst, clear subtotal (not gst)."""
+    from app.services.invoice.vision_header_reconcile import (
+        apply_vision_header_amount_consistency,
+    )
+
+    result = VisionHeaderExtractResult(
+        success=True,
+        document_heading="TAX INVOICE",
+        subtotal=Decimal("9800.54"),
+        gst=Decimal("55.92"),
+        total=Decimal("9800.53"),
+        confidence=0.9,
+        provider="claude_vision",
+    )
+    updated, detail = apply_vision_header_amount_consistency(result)
+    assert "tax_inclusive_subtotal" in detail["flags"]
+    assert "subtotal" in detail["cleared"]
+    assert updated.subtotal is None
+    assert updated.gst == Decimal("55.92")
+    assert updated.total == Decimal("9800.53")
+
+
+def test_amount_consistency_ok_when_balanced() -> None:
+    from app.services.invoice.vision_header_reconcile import (
+        apply_vision_header_amount_consistency,
+    )
+
+    result = VisionHeaderExtractResult(
+        success=True,
+        subtotal=Decimal("100.00"),
+        gst=Decimal("10.00"),
+        total=Decimal("110.00"),
+        confidence=0.9,
+        provider="claude_vision",
+    )
+    updated, detail = apply_vision_header_amount_consistency(result)
+    assert detail["flags"] == []
+    assert detail["cleared"] == []
+    assert updated.gst == Decimal("10.00")
+    assert updated.amount_inconsistency is False
+
+
+def test_amount_consistency_line_sum_mismatch_flags_review() -> None:
+    from app.services.invoice.invoice_data import ParsedLineItem
+    from app.services.invoice.vision_header_reconcile import (
+        apply_vision_header_amount_consistency,
+    )
+
+    result = VisionHeaderExtractResult(
+        success=True,
+        subtotal=Decimal("100.00"),
+        total=Decimal("110.00"),
+        line_items=(
+            ParsedLineItem(description="A", amount=Decimal("10.00"), source="vision_header"),
+            ParsedLineItem(description="B", amount=Decimal("10.00"), source="vision_header"),
+        ),
+        confidence=0.9,
+        provider="claude_vision",
+    )
+    updated, detail = apply_vision_header_amount_consistency(result)
+    assert "line_items_amount_mismatch" in detail["flags"]
+    assert updated.line_items_amount_mismatch is True
+    assert updated.needs_review is True
+    # Lines are not auto-rewritten
+    assert len(updated.line_items) == 2
+
+
+def test_vision_header_should_review_on_amount_inconsistency() -> None:
+    result = VisionHeaderExtractResult(
+        success=True,
+        document_heading="TAX INVOICE",
+        confidence=0.95,
+        amount_inconsistency=True,
+        provider="claude_vision",
+    )
+    assert vision_header_should_review(result) is True
+
+
+def test_ground_clears_ungrounded_subtotal_and_tax_id() -> None:
+    result = VisionHeaderExtractResult(
+        success=True,
+        document_heading="TAX INVOICE",
+        subtotal=Decimal("88888.00"),
+        gst=Decimal("8.00"),
+        total=Decimal("110.00"),
+        seller_abn="51824753556",
+        confidence=0.9,
+        provider="claude_vision",
+    )
+    text = (
+        "TAX INVOICE Acme Pty Ltd\n"
+        "GST 8.00\n"
+        "Total 110.00\n"
+        "Enough body text so grounding length threshold is satisfied for money checks."
+    )
+    updated, detail = ground_vision_header_result(result, text)
+    assert "subtotal" in detail["cleared"]
+    assert updated.subtotal is None
+    assert updated.gst == Decimal("8.00")
+    assert "seller_abn" in detail["cleared"]
+    assert updated.seller_abn == ""
+
+
+def test_ground_keeps_gst_sum_of_cgst_sgst_components() -> None:
+    """Invoice 656 pattern: gst total is not a page token; CGST+SGST are."""
+    result = VisionHeaderExtractResult(
+        success=True,
+        document_heading="TAX INVOICE",
+        counterparty_name="MAKEMYTRIP (INDIA) PRIVATE LIMITED",
+        invoice_no="M06AI26115837637",
+        gst=Decimal("55.92"),
+        total=Decimal("9800.53"),
+        other_reference="NF7AI3JB48483693376",  # OCR near-miss vs NF7A13JB...
+        confidence=0.88,
+        provider="claude_vision",
+    )
+    text = (
+        "TAX INVOICE\n"
+        "MAKEMYTRIP (INDIA) PRIVATE LIMITED\n"
+        "CGST @9%\n"
+        "₹27.96\n"
+        "SGST @9%\n"
+        "₹27.96\n"
+        "Grand Total\n"
+        "₹9800.53\n"
+        "Booking ID\n"
+        "NF7A13JB48483693376\n"
+        "Invoice No\n"
+        "M06AI26115837637\n"
+        "Enough body text so grounding length threshold is satisfied for money checks."
+    )
+    updated, detail = ground_vision_header_result(result, text)
+    assert updated.gst == Decimal("55.92")
+    assert "gst" not in detail["cleared"]
+    assert "other_reference" in detail["cleared"]
+    # Only a secondary ref cleared → do not force needs_review via cleared-count.
+    assert updated.needs_review is False

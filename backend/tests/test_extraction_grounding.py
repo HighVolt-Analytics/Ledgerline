@@ -251,6 +251,33 @@ def test_money_grounded_rejects_ungrounded_amount() -> None:
     assert not _money_grounded_in_ocr(Decimal("999.99"), ocr, field_key="total")
 
 
+def test_gst_grounded_via_cgst_sgst_component_sum() -> None:
+    """MakeMyTrip-style: page shows CGST/SGST only; vision gst is their sum."""
+    ocr = (
+        "TAX INVOICE MAKEMYTRIP\n"
+        "Trip Assure Fee\n"
+        "₹310.62\n"
+        "CGST @9%\n"
+        "₹27.96\n"
+        "SGST @9%\n"
+        "₹27.96\n"
+        "Grand Total\n"
+        "₹9800.53\n"
+        "Booking ID\n"
+        "NF7A13JB48483693376\n"
+        "Invoice No\n"
+        "M06AI26115837637\n"
+    )
+    assert _money_grounded_in_ocr(Decimal("55.92"), ocr, field_key="gst")
+    assert not _money_grounded_in_ocr(Decimal("55.92"), ocr, field_key="total")
+    assert not _money_grounded_in_ocr(Decimal("99.00"), ocr, field_key="gst")
+
+
+def test_gst_grounded_via_igst_component() -> None:
+    ocr = "TAX INVOICE\nIGST @18%\n₹180.00\nGrand Total\n₹1180.00\nExtra body text."
+    assert _money_grounded_in_ocr(Decimal("180.00"), ocr, field_key="gst")
+
+
 def test_vendor_fuzzy_grounding_normalized_casing() -> None:
     ocr = "TAX INVOICE\nACME PTY LTD\nTotal: 100.00"
     assert value_grounded_in_ocr("Acme Pty Ltd", ocr)

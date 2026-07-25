@@ -28,7 +28,7 @@ class LineItem(Base):
     )
     description: Mapped[str | None] = mapped_column(Text)
     qty: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
-    unit_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    unit_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
     amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     tax_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     uom: Mapped[str | None] = mapped_column(String(32), nullable=True)

@@ -198,6 +198,8 @@ async def phase_vision_header_extract(
     vision_page_images: list[bytes] | None = None,
 ):
     """Vision header extract for can-understand path — never raises."""
+    from dataclasses import replace
+
     from app.services.invoice.vision_header_extract import (
         evaluate_vision_header_extract,
         persist_vision_header_to_invoice,
@@ -205,11 +207,22 @@ async def phase_vision_header_extract(
         vision_header_should_review,
     )
     from app.services.invoice.vision_header_reconcile import (
+        apply_vision_header_amount_consistency,
         apply_vision_header_text_reconcile,
         enrich_vision_header_refs_from_text,
         ground_vision_header_result,
         resolve_header_grounding_text,
     )
+
+    async def _persist_lines(result_obj) -> None:
+        # Lazy import avoids circular import with pipeline → phases.
+        from app.services.invoice.pipeline import _replace_line_items
+
+        await _replace_line_items(
+            session,
+            invoice,
+            list(result_obj.line_items or ()),
+        )
 
     with open_pdf_for_reading(invoice.raw_file_path, tenant_id=invoice.tenant_id) as path:
         result = await evaluate_vision_header_extract(
@@ -221,6 +234,7 @@ async def phase_vision_header_extract(
         reconcile_detail: dict[str, object] = {}
         grounding_detail: dict[str, object] = {}
         enrich_detail: dict[str, object] = {}
+        consistency_detail: dict[str, object] = {}
         if result.success:
             try:
                 text, text_source_detail = await asyncio.to_thread(
@@ -230,12 +244,15 @@ async def phase_vision_header_extract(
                 result, grounding_detail = ground_vision_header_result(result, text)
                 grounding_detail = {**grounding_detail, "text_source": text_source_detail}
                 result, enrich_detail = enrich_vision_header_refs_from_text(result, text)
+                result, consistency_detail = apply_vision_header_amount_consistency(result)
                 persist_vision_header_to_invoice(invoice, result)
+                await _persist_lines(result)
                 # Text grounding — fix ₹→INR / S$→SGD, clear bare-$, upgrade totals.
                 reconcile_detail = apply_vision_header_text_reconcile(invoice, text)
                 reconcile_detail = {
                     **reconcile_detail,
                     "text_source": text_source_detail,
+                    "amount_consistency": consistency_detail,
                 }
                 # Safety net: only fill from Invoice/INV labels — never Permit/Doc No.
                 if not (invoice.invoice_no or "").strip():
@@ -254,12 +271,15 @@ async def phase_vision_header_extract(
                         ]
             except Exception as exc:
                 persist_vision_header_to_invoice(invoice, result)
+                try:
+                    await _persist_lines(result)
+                except Exception:
+                    pass
                 reconcile_detail = {
                     "currency_reason": "text_reconcile_failed",
                     "error": str(exc),
                 }
                 grounding_detail = {"skipped": True, "reason": "text_extract_failed"}
-            from dataclasses import replace
 
             if vision_header_should_review(
                 result,
@@ -279,6 +299,12 @@ async def phase_vision_header_extract(
                 "text_enrich": enrich_detail,
                 "persisted_invoice_no": invoice.invoice_no,
                 "persisted_currency": invoice.currency,
+                "persisted_subtotal": str(invoice.subtotal)
+                if invoice.subtotal is not None
+                else None,
+                "persisted_gst": str(invoice.gst) if invoice.gst is not None else None,
+                "persisted_abn": invoice.abn,
+                "persisted_line_item_count": len(result.line_items or ()),
             },
         )
     else:
@@ -919,6 +945,22 @@ def apply_recognition_mode_gate(
         )
 
     if is_prompt_recognition_mode(defn):
+        return gate_result
+
+    # Only enforce OCR against explicit recognition_signals / match-rules.
+    # Playbook-inferred identity (via effective_signals_mode_definition) is for
+    # catalogue matching — applying it here rejects shipped DTs that only set
+    # a playbook profile or rely on code defaults.
+    has_explicit_signals = bool(
+        [s for s in (defn.recognition_signals or []) if str(s).strip()]
+    )
+    from app.services.rule_book.rule_engine import classifier_has_actionable_conditions
+
+    has_explicit_rules = bool(
+        defn.classifier.enabled
+        and classifier_has_actionable_conditions(defn.classifier.root)
+    )
+    if not has_explicit_signals and not has_explicit_rules:
         return gate_result
 
     effective = effective_signals_mode_definition(defn)

@@ -555,6 +555,43 @@ def ground_vision_header_result(
         else:
             kept.append("total")
 
+    if result.subtotal is not None:
+        money_forms = _ocr_money_forms(raw)
+        if money_forms and not _money_grounded_in_ocr(
+            result.subtotal, raw, field_key="subtotal"
+        ):
+            updates["subtotal"] = None
+            cleared.append("subtotal")
+        else:
+            kept.append("subtotal")
+
+    if result.gst is not None:
+        money_forms = _ocr_money_forms(raw)
+        if money_forms and not _money_grounded_in_ocr(result.gst, raw, field_key="gst"):
+            updates["gst"] = None
+            cleared.append("gst")
+        else:
+            kept.append("gst")
+
+    for tax_field in ("seller_abn", "buyer_abn"):
+        tax_val = (getattr(result, tax_field) or "").strip()
+        if not tax_val:
+            continue
+        # Require digit/alnum token to appear in OCR text when text is rich.
+        digits = re.sub(r"\D", "", tax_val)
+        token = re.sub(r"\s+", "", tax_val).upper()
+        hay = re.sub(r"\s+", "", raw).upper()
+        grounded = False
+        if digits and len(digits) >= 8 and digits in re.sub(r"\D", "", raw):
+            grounded = True
+        elif token and len(token) >= 6 and token in hay:
+            grounded = True
+        if grounded:
+            kept.append(tax_field)
+        else:
+            updates[tax_field] = ""
+            cleared.append(tax_field)
+
     # Currency: leave for reconcile_currency_from_text (ISO corroboration).
     if result.currency:
         kept.append("currency_deferred")
@@ -692,3 +729,61 @@ def apply_vision_header_text_reconcile(
             detail["total_reason"] = "cleared_ungrounded_total"
     detail["total_after"] = str(invoice.total) if invoice.total is not None else None
     return detail
+
+
+_AMOUNT_CONSISTENCY_EPS = Decimal("0.05")
+_LINE_SUM_MISMATCH_RATIO = Decimal("0.15")
+
+
+def apply_vision_header_amount_consistency(result: Any) -> tuple[Any, dict[str, Any]]:
+    """Flag / clear inconsistent amounts without inventing balancing figures.
+
+    If subtotal + gst differs from total beyond epsilon, clear the weaker field.
+    When subtotal ≈ total and gst > 0, subtotal is treated as tax-inclusive (or a
+    line dump that already includes CGST/SGST) — clear subtotal so journal can
+    use total − gst. Otherwise prefer clearing gst. Never write a computed
+    balancing amount into the cleared field.
+    """
+    from app.services.invoice.invoice_amounts import amounts_look_tax_inclusive_subtotal
+
+    detail: dict[str, Any] = {"cleared": [], "flags": []}
+    subtotal = result.subtotal
+    gst = result.gst
+    total = result.total
+    updates: dict[str, Any] = {}
+
+    if subtotal is not None and gst is not None and total is not None:
+        delta = (subtotal + gst - total).copy_abs()
+        if delta > _AMOUNT_CONSISTENCY_EPS:
+            detail["flags"].append("subtotal_gst_total_mismatch")
+            detail["delta"] = str(delta)
+            if amounts_look_tax_inclusive_subtotal(
+                subtotal=subtotal, gst=gst, total=total
+            ):
+                # Expense base was set to gross — drop it; keep gst + total.
+                updates["subtotal"] = None
+                detail["cleared"].append("subtotal")
+                detail["flags"].append("tax_inclusive_subtotal")
+            else:
+                # Prefer clearing gst (often confused with rate or partial tax).
+                updates["gst"] = None
+                detail["cleared"].append("gst")
+            updates["amount_inconsistency"] = True
+            updates["needs_review"] = True
+
+    lines = list(result.line_items or ())
+    if lines and (total is not None or subtotal is not None):
+        line_sum = sum((li.amount or Decimal("0")) for li in lines if li.amount is not None)
+        anchor = subtotal if subtotal is not None else total
+        if anchor is not None and anchor > 0 and line_sum > 0:
+            ratio = (line_sum - anchor).copy_abs() / anchor
+            if ratio > _LINE_SUM_MISMATCH_RATIO:
+                detail["flags"].append("line_items_amount_mismatch")
+                detail["line_sum"] = str(line_sum)
+                detail["anchor"] = str(anchor)
+                updates["line_items_amount_mismatch"] = True
+                updates["needs_review"] = True
+
+    if not updates:
+        return result, detail
+    return replace(result, **updates), detail

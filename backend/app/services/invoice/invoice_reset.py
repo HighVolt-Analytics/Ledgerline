@@ -22,6 +22,10 @@ _NOT_UNDERSTOOD_EXTRACTED_FIELD_KEYS: frozenset[str] = frozenset(
         "due_date",
         "line_items",
         "abn",
+        "seller_abn",
+        "buyer_abn",
+        "seller_tax_id",
+        "buyer_tax_id",
         "cost_centre",
         "billing_address",
         "bank_bsb",
@@ -42,6 +46,43 @@ _NOT_UNDERSTOOD_EXTRACTED_FIELD_KEYS: frozenset[str] = frozenset(
         "statement_period",
     }
 )
+
+# Header / tax-id scalars vision is expected to rewrite. OCR-only artifacts
+# (di_line_items, azure_di_*, document_text, GL codes) are never restored.
+_RESTORABLE_EXTRACTED_FIELD_KEYS: frozenset[str] = frozenset(
+    {
+        "subtotal",
+        "gst",
+        "gst_rate",
+        "due_date",
+        "abn",
+        "seller_abn",
+        "buyer_abn",
+        "seller_tax_id",
+        "buyer_tax_id",
+        "cost_centre",
+        "billing_address",
+        "bank_bsb",
+        "bank_account",
+        "bank_name",
+        "bank_details",
+    }
+)
+
+_RESTORABLE_INVOICE_COLUMNS: tuple[str, ...] = (
+    "due_date",
+    "subtotal",
+    "gst",
+    "gst_rate",
+    "abn",
+    "cost_centre",
+    "billing_address",
+    "bank_bsb",
+    "bank_account",
+)
+
+# Confidence ceiling when remapping fails and we keep the prior DT for display/posting.
+_PRIOR_DT_RESTORE_CONFIDENCE = 0.35
 
 
 async def reset_invoice_for_reprocess(
@@ -175,18 +216,38 @@ async def should_preserve_extracted_on_requeue(
     return manual_edits or payable_fields_complete(inv)
 
 
+def _column_empty(value: object) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str) and not value.strip():
+        return True
+    return False
+
+
+def _extracted_value_empty(value: object) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str) and not value.strip():
+        return True
+    return False
+
+
 async def clear_stale_not_understood_for_understood_path(
     session: AsyncSession,
     inv: Invoice,
     *,
     preserve_document_type: bool = False,
 ) -> dict[str, object]:
-    """Drop not-understood leftovers when the understood (vision) path vaults.
+    """Drop not-understood leftovers before vision header extract on understood path.
 
     Reprocess defers ``reset_invoice_for_reprocess`` until OCR quality gates pass.
-    The understood path returns earlier (header + vault), so prior line items,
-    DT-XX classification, and full-extract scalars would otherwise remain mixed
-    with the vision header (e.g. ₹79k lines vs ₹9.8k total).
+    Call this *before* vision header persist so prior OCR line items, DT-XX
+    classification, and full-extract scalars do not mix with the new header
+    (e.g. ₹79k OCR lines vs ₹9.8k vision total). Vision header then rewrites
+    posting fields (subtotal/gst/abn/line_items) that stick through vault.
+
+    Returns a snapshot of cleared header scalars / DT so the pipeline can restore
+    anything vision did not refill (and re-apply prior DT when remap yields nothing).
     """
     from app.services.invoice.processing_override_catalog import clear_deferred_full_reset
 
@@ -201,7 +262,18 @@ async def clear_stale_not_understood_for_understood_path(
     # Avoid touching inv.line_items (lazy load / MissingGreenlet); expire instead.
     session.expire(inv, ["line_items"])
 
-    # Full-extract / posting columns — not written by vision header.
+    column_snapshot: dict[str, object] = {}
+    for attr in _RESTORABLE_INVOICE_COLUMNS:
+        value = getattr(inv, attr, None)
+        if not _column_empty(value):
+            column_snapshot[attr] = value
+
+    prior_document_type_code = (inv.document_type_code or "").strip().upper() or None
+    prior_document_type_confidence = inv.document_type_confidence
+    prior_llm_suggested_dt = (inv.llm_suggested_dt or "").strip().upper() or None
+    prior_llm_confidence = inv.llm_confidence
+
+    # Clear OCR leftovers; vision header extract rewrites posting columns next.
     inv.due_date = None
     inv.subtotal = None
     inv.gst = None
@@ -230,8 +302,15 @@ async def clear_stale_not_understood_for_understood_path(
         inv.llm_confidence = None
 
     stripped_keys: list[str] = []
+    extracted_snapshot: dict[str, object] = {}
     fields = inv.extracted_fields if isinstance(inv.extracted_fields, dict) else None
     if fields:
+        for key, value in fields.items():
+            if (
+                key in _RESTORABLE_EXTRACTED_FIELD_KEYS
+                and not _extracted_value_empty(value)
+            ):
+                extracted_snapshot[key] = value
         kept = {
             key: value
             for key, value in fields.items()
@@ -247,6 +326,108 @@ async def clear_stale_not_understood_for_understood_path(
         "cleared_line_item_count": len(cleared_line_ids),
         "cleared_document_type": dt_cleared,
         "stripped_extracted_field_keys": stripped_keys,
+        "prior_document_type_code": prior_document_type_code,
+        "prior_document_type_confidence": prior_document_type_confidence,
+        "prior_llm_suggested_dt": prior_llm_suggested_dt,
+        "prior_llm_confidence": prior_llm_confidence,
+        "column_snapshot": column_snapshot,
+        "extracted_snapshot": extracted_snapshot,
+    }
+
+
+def restore_unrefilled_vision_stale_snapshot(
+    inv: Invoice,
+    stale_clear: dict[str, object] | None,
+) -> dict[str, object]:
+    """Re-apply prior header values for keys vision extract left empty.
+
+    Call after ``persist_vision_header_to_invoice`` / ``phase_vision_header_extract``.
+    Does not overwrite non-empty vision results.
+    """
+    if not stale_clear:
+        return {"restored_columns": [], "restored_extracted_keys": []}
+
+    restored_columns: list[str] = []
+    column_snapshot = stale_clear.get("column_snapshot")
+    if isinstance(column_snapshot, dict):
+        for attr, prior in column_snapshot.items():
+            if attr not in _RESTORABLE_INVOICE_COLUMNS:
+                continue
+            if _column_empty(getattr(inv, attr, None)) and not _column_empty(prior):
+                setattr(inv, attr, prior)
+                restored_columns.append(str(attr))
+
+    restored_extracted: list[str] = []
+    extracted_snapshot = stale_clear.get("extracted_snapshot")
+    if isinstance(extracted_snapshot, dict) and extracted_snapshot:
+        fields = dict(inv.extracted_fields or {})
+        changed = False
+        for key, prior in extracted_snapshot.items():
+            if key not in _RESTORABLE_EXTRACTED_FIELD_KEYS:
+                continue
+            if _extracted_value_empty(fields.get(key)) and not _extracted_value_empty(prior):
+                fields[key] = prior
+                restored_extracted.append(str(key))
+                changed = True
+        if changed:
+            inv.extracted_fields = fields
+
+    restored_columns.sort()
+    restored_extracted.sort()
+    return {
+        "restored_columns": restored_columns,
+        "restored_extracted_keys": restored_extracted,
+    }
+
+
+def restore_prior_document_type_if_unmapped(
+    inv: Invoice,
+    stale_clear: dict[str, object] | None,
+    *,
+    preserve_document_type: bool = False,
+) -> dict[str, object]:
+    """When vision DT remap yields nothing, put the cleared prior DT back.
+
+    Keeps Fields-tab / posting config from going blank. Caps confidence so the
+    UI can still treat the code as needing review when appropriate.
+    """
+    if preserve_document_type:
+        return {"restored": False, "reason": "human_locked"}
+    if (inv.document_type_code or "").strip():
+        return {"restored": False, "reason": "already_mapped"}
+    if not stale_clear:
+        return {"restored": False, "reason": "no_snapshot"}
+
+    prior_code = stale_clear.get("prior_document_type_code")
+    token = str(prior_code or "").strip().upper()
+    if not token:
+        return {"restored": False, "reason": "no_prior_dt"}
+
+    prior_conf = stale_clear.get("prior_document_type_confidence")
+    try:
+        conf = float(prior_conf) if prior_conf is not None else _PRIOR_DT_RESTORE_CONFIDENCE
+    except (TypeError, ValueError):
+        conf = _PRIOR_DT_RESTORE_CONFIDENCE
+    conf = min(max(conf, 0.0), _PRIOR_DT_RESTORE_CONFIDENCE)
+
+    from app.services.extraction.llm_document_service import apply_document_type_to_invoice
+
+    prior_llm = stale_clear.get("prior_llm_suggested_dt")
+    prior_llm_conf = stale_clear.get("prior_llm_confidence")
+    apply_document_type_to_invoice(
+        inv,
+        code=token,
+        confidence=conf,
+        llm_suggested_dt=str(prior_llm).strip().upper() if prior_llm else None,
+        llm_confidence=float(prior_llm_conf)
+        if isinstance(prior_llm_conf, (int, float))
+        else None,
+    )
+    return {
+        "restored": True,
+        "code": token,
+        "confidence": conf,
+        "reason": "prior_dt_after_unmap",
     }
 
 

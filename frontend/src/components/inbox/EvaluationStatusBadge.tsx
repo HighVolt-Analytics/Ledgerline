@@ -2,6 +2,7 @@ import type { Invoice } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
 import { approvalStatusChipClass, kpiStatusChipClass, needsReviewStatusChipClass } from "@/lib/kpiModuleColors";
 import {
+  effectiveEvaluationStatus,
   evaluationReviewTooltip,
   evaluationStatusLabel,
 } from "@/lib/invoice";
@@ -56,15 +57,26 @@ export function EvaluationStatusBadge({
   reviewReasons?: string[];
   invoice?: EvaluationStatusBadgeInvoice;
 }) {
-  const label = status ? evaluationStatusLabel(status, invoice?.route_target) : "—";
+  const effectiveStatus = invoice
+    ? effectiveEvaluationStatus({
+        status: invoice.status,
+        evaluation_status: status ?? invoice.evaluation_status,
+      })
+    : status;
+  const label = effectiveStatus
+    ? evaluationStatusLabel(effectiveStatus, invoice?.route_target)
+    : "—";
   const title = invoice
-    ? evaluationReviewTooltip({ ...invoice, evaluation_status: status ?? invoice.evaluation_status }, reviewReasons)
+    ? evaluationReviewTooltip(
+        { ...invoice, evaluation_status: effectiveStatus },
+        reviewReasons,
+      )
     : evaluationReviewTooltip(
-        { evaluation_status: status } as Parameters<typeof evaluationReviewTooltip>[0],
+        { evaluation_status: effectiveStatus } as Parameters<typeof evaluationReviewTooltip>[0],
         reviewReasons
       );
 
-  if (!status) {
+  if (!effectiveStatus) {
     return (
       <span className="text-muted-foreground text-xs" title={title}>
         —
@@ -73,7 +85,7 @@ export function EvaluationStatusBadge({
   }
 
   return (
-    <span className={cn(evaluationChipClass(status))} title={title}>
+    <span className={cn(evaluationChipClass(effectiveStatus))} title={title}>
       {label}
     </span>
   );

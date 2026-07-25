@@ -14,7 +14,7 @@ from app.services.extraction.vision_pdf import (
     HEADER_VISION_MAX_PAGES,
     resolve_header_vision_images,
 )
-from app.services.invoice.invoice_data import InvoiceData
+from app.services.invoice.invoice_data import InvoiceData, ParsedLineItem
 from app.services.tenant.tenant_org_context import OrgContext
 from app.utils.logger import get_logger
 
@@ -150,14 +150,22 @@ class VisionHeaderExtractResult:
     so_reference: str = ""
     other_reference: str = ""
     invoice_date: date | None = None
+    subtotal: Decimal | None = None
+    gst: Decimal | None = None
+    gst_rate: Decimal | None = None
     total: Decimal | None = None
     currency: str = ""
+    seller_abn: str = ""
+    buyer_abn: str = ""
+    line_items: tuple[ParsedLineItem, ...] = ()
     confidence: float = 0.0
     reason: str = ""
     provider: str = ""
     page_count: int = 0
     fail_reason: str | None = None
     needs_review: bool = False
+    amount_inconsistency: bool = False
+    line_items_amount_mismatch: bool = False
 
 
 def vision_header_has_commercial_identity(result: VisionHeaderExtractResult) -> bool:
@@ -173,6 +181,10 @@ def vision_header_has_commercial_identity(result: VisionHeaderExtractResult) -> 
         or (result.other_reference or "").strip()
         or result.invoice_date is not None
         or result.total is not None
+        or result.subtotal is not None
+        or (result.seller_abn or "").strip()
+        or (result.buyer_abn or "").strip()
+        or bool(result.line_items)
     )
 
 
@@ -185,6 +197,8 @@ def vision_header_should_review(
     if not result.success:
         return True
     if result.needs_review:
+        return True
+    if result.amount_inconsistency or result.line_items_amount_mismatch:
         return True
     if result.confidence < VISION_HEADER_REVIEW_CONFIDENCE:
         return True
@@ -206,14 +220,22 @@ def vision_header_extract_audit_detail(result: VisionHeaderExtractResult) -> dic
         "so_reference": result.so_reference,
         "other_reference": result.other_reference,
         "invoice_date": result.invoice_date.isoformat() if result.invoice_date else None,
+        "subtotal": str(result.subtotal) if result.subtotal is not None else None,
+        "gst": str(result.gst) if result.gst is not None else None,
+        "gst_rate": str(result.gst_rate) if result.gst_rate is not None else None,
         "total": str(result.total) if result.total is not None else None,
-        "currency": result.currency or None,
+        "currency": result.currency,
+        "seller_abn": result.seller_abn,
+        "buyer_abn": result.buyer_abn,
+        "line_item_count": len(result.line_items or ()),
         "confidence": result.confidence,
         "reason": result.reason,
         "provider": result.provider,
         "page_count": result.page_count,
         "fail_reason": result.fail_reason,
         "needs_review": result.needs_review,
+        "amount_inconsistency": result.amount_inconsistency,
+        "line_items_amount_mismatch": result.line_items_amount_mismatch,
     }
 
 
@@ -267,6 +289,18 @@ def _parse_header_total(raw: dict) -> Decimal | None:
     return normalize_amount(_raw_field(raw, "total"))
 
 
+def _parse_header_money(raw: dict, key: str) -> Decimal | None:
+    from app.services.extraction.field_validators import normalize_amount
+
+    return normalize_amount(_raw_field(raw, key))
+
+
+def _parse_header_gst_rate(raw: dict) -> Decimal | None:
+    from app.services.extraction.gst_rate import parse_gst_rate_percent
+
+    return parse_gst_rate_percent(_raw_field(raw, "gst_rate"))
+
+
 def _parse_header_currency(raw: dict) -> str:
     from app.services.extraction.field_validators import normalize_currency
 
@@ -277,6 +311,75 @@ def _parse_header_currency(raw: dict) -> str:
         if total_raw is not None:
             code = normalize_currency(str(total_raw))
     return (code or "")[:3]
+
+
+def _tax_id_clean(value: str) -> str:
+    return re.sub(r"\s+", "", (value or "").strip())[:64]
+
+
+def _parse_header_line_items(
+    raw: dict,
+    *,
+    total: Decimal | None,
+) -> tuple[ParsedLineItem, ...]:
+    from app.services.extraction.field_validators import normalize_amount
+    from app.services.shared.amount_sanity import sanitize_parsed_line_item
+
+    payload = _raw_field(raw, "line_items")
+    if payload is None:
+        payload = raw.get("line_items")
+    if not isinstance(payload, list):
+        return ()
+
+    from app.services.extraction.line_item_skip_patterns import should_skip_line_row
+
+    items: list[ParsedLineItem] = []
+    for row in payload:
+        if not isinstance(row, dict):
+            continue
+        description = str(
+            row.get("description") or row.get("desc") or row.get("item") or ""
+        ).strip()
+        # Tax / summary / metadata rows belong in header gst/total — not expense lines.
+        if description and should_skip_line_row(description):
+            continue
+        qty = normalize_amount(row.get("qty") if "qty" in row else row.get("quantity"))
+        unit_price = normalize_amount(
+            row.get("unit_price") if "unit_price" in row else row.get("unitPrice")
+        )
+        amount = normalize_amount(row.get("amount") if "amount" in row else row.get("line_amount"))
+        tax_amount = normalize_amount(
+            row.get("tax_amount") if "tax_amount" in row else row.get("taxAmount")
+        )
+        # Reject junk / synthetic grand-total-as-line rows.
+        if not description and qty is None and amount is None and unit_price is None:
+            continue
+        if (
+            not description
+            and amount is not None
+            and total is not None
+            and (amount - total).copy_abs() <= Decimal("0.01")
+        ):
+            continue
+        cleaned = sanitize_parsed_line_item(
+            ParsedLineItem(
+                description=description or None,
+                qty=qty,
+                unit_price=unit_price,
+                amount=amount,
+                tax_amount=tax_amount,
+                source="vision_header",
+            )
+        )
+        if (
+            not (cleaned.description or "").strip()
+            and cleaned.qty is None
+            and cleaned.amount is None
+            and cleaned.unit_price is None
+        ):
+            continue
+        items.append(cleaned)
+    return tuple(items)
 
 
 def parse_vision_header_raw(
@@ -302,6 +405,8 @@ def parse_vision_header_raw(
         document_heading=document_heading,
         canonical_document_type=_str_field(raw, CANONICAL_DOCUMENT_TYPE_KEY)[:200],
     )
+    total = _parse_header_money(raw, "total")
+    line_items = _parse_header_line_items(raw, total=total)
     return VisionHeaderExtractResult(
         success=True,
         document_heading=document_heading,
@@ -314,8 +419,14 @@ def parse_vision_header_raw(
         so_reference=_str_field(raw, "so_reference")[:128],
         other_reference=_str_field(raw, "other_reference")[:128],
         invoice_date=_parse_header_date(raw),
-        total=_parse_header_total(raw),
+        subtotal=_parse_header_money(raw, "subtotal"),
+        gst=_parse_header_money(raw, "gst"),
+        gst_rate=_parse_header_gst_rate(raw),
+        total=total,
         currency=_parse_header_currency(raw),
+        seller_abn=_tax_id_clean(_str_field(raw, "seller_abn")),
+        buyer_abn=_tax_id_clean(_str_field(raw, "buyer_abn")),
+        line_items=line_items,
         confidence=confidence,
         reason=_str_field(raw, "reason")[:500],
         provider=provider,
@@ -337,6 +448,7 @@ def persist_vision_header_to_invoice(
         sanitize_invoice_no_parts,
     )
     from app.services.shared.amount_sanity import plausible_money
+    from app.utils.abn_validator import is_valid_abn, storage_abn
 
     primary, secondary = sanitize_invoice_no_parts(result.invoice_no or None)
     if primary:
@@ -352,21 +464,50 @@ def persist_vision_header_to_invoice(
         invoice.vendor = result.counterparty_name
     if result.invoice_date is not None:
         invoice.invoice_date = result.invoice_date
+
     money = plausible_money(result.total)
     if money is not None:
         invoice.total = money
+    subtotal = plausible_money(result.subtotal)
+    if subtotal is not None:
+        invoice.subtotal = subtotal
+    gst = plausible_money(result.gst)
+    if gst is not None:
+        invoice.gst = gst
+    if result.gst_rate is not None:
+        invoice.gst_rate = result.gst_rate
+
     # Always write currency from vision — empty clears any ingest/tenant seed so
     # undetected currency shows blank (UI asks user) instead of inventing AUD.
     invoice.currency = (result.currency or "").strip().upper()[:3]
 
+    # Party tax ids: always keep opaque strings in extracted_fields; AU column only
+    # when storage_abn succeeds (and preferably checksum-valid).
+    counterparty_tax = ""
+    if result.perspective == "sales":
+        counterparty_tax = result.buyer_abn or result.seller_abn
+    else:
+        counterparty_tax = result.seller_abn or result.buyer_abn
+    abn_digits = storage_abn(counterparty_tax) if counterparty_tax else None
+    if abn_digits and is_valid_abn(abn_digits):
+        invoice.abn = abn_digits
+    elif abn_digits and len(abn_digits) == 11:
+        # Format OK but checksum fail — do not force invoices.abn
+        pass
+
     parsed = InvoiceData(
         vendor=result.counterparty_name or invoice.vendor,
+        abn=invoice.abn,
         invoice_no=primary or invoice.invoice_no,
         po_reference=invoice.po_reference,
         document_heading=result.document_heading or None,
         invoice_date=result.invoice_date or invoice.invoice_date,
+        subtotal=subtotal if subtotal is not None else invoice.subtotal,
+        gst=gst if gst is not None else invoice.gst,
+        gst_rate=result.gst_rate if result.gst_rate is not None else invoice.gst_rate,
         total=money if money is not None else invoice.total,
         currency=invoice.currency or "",
+        line_items=list(result.line_items or ()),
     )
     apply_parsed_extraction_fields(invoice, parsed)
 
@@ -395,8 +536,20 @@ def persist_vision_header_to_invoice(
         patch["invoice_date"] = result.invoice_date.isoformat()
     if money is not None:
         patch["total"] = format(money, "f")
+    if subtotal is not None:
+        patch["subtotal"] = format(subtotal, "f")
+    if gst is not None:
+        patch["gst"] = format(gst, "f")
+    if result.gst_rate is not None:
+        patch["gst_rate"] = format(result.gst_rate, "f")
     if invoice.currency:
         patch["currency"] = invoice.currency
+    if result.seller_abn:
+        patch["seller_abn"] = result.seller_abn
+    if result.buyer_abn:
+        patch["buyer_abn"] = result.buyer_abn
+    if invoice.abn:
+        patch["abn"] = invoice.abn
     if result.counterparty_name:
         if result.perspective == "sales":
             patch["buyer_name"] = result.counterparty_name

@@ -195,7 +195,17 @@ async def remap_invoices_for_tenant(
             inv.vendor_confidence,
             inv.evaluation_status,
         )
+        prior_eval = inv.evaluation_status
         await apply_invoice_evaluation(session, inv, config=config, enqueue_pending=False)
+        # Posted invoices are terminal for coding review: a rule-book change must
+        # not flip them back to needs_review with no gate to clear it. Recoding a
+        # posted document goes through the explicit reset/approval flow instead.
+        if (
+            inv.status == InvoiceStatus.PROCESSED
+            and (inv.evaluation_status or "").strip() == "needs_review"
+            and (prior_eval or "").strip() != "needs_review"
+        ):
+            inv.evaluation_status = prior_eval
         after = (
             inv.route_target,
             inv.matched_rule_ids,

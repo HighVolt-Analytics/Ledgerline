@@ -752,7 +752,16 @@ def _infer_purchase_bundle_role(definition: DocumentTypeDefinition | None) -> st
     label = f"{definition.short_title or ''} {definition.title or ''}".lower()
     if any(token in label for token in ("grn", "goods receipt", "delivery", "receipt note")):
         return "grn"
-    if any(token in label for token in ("purchase order", "po (", "po copy", " po")):
+    # Standalone PO *document* only — never PO-based / PO-goods *invoices*.
+    # Substring " po" falsely matched "…invoice PO-based…" titles.
+    if "invoice" in label or "tax inv" in label:
+        return ""
+    if "purchase order" in label:
+        return "po"
+    if re.search(r"\bpo\s*(copy|\(|document|form)\b", label):
+        return "po"
+    short = (definition.short_title or "").strip().lower()
+    if short in {"po", "p.o.", "p.o"}:
         return "po"
     return ""
 

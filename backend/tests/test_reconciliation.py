@@ -132,12 +132,115 @@ async def test_rc1_includes_current_invoice_before_processed(
     await db_session.flush()
 
     without = await reconcile_daily(db_session, d, tenant_id=TESTING_TENANT_UUID)
-    assert without.halted
+    assert without.total_ap_credits == Decimal("0")
+    assert not without.halted
 
     with_current = await reconcile_daily(db_session, d, tenant_id=TESTING_TENANT_UUID, current_invoice=inv)
+    assert with_current.total_ap_credits == Decimal("1100")
     assert with_current.rc1_passed
     assert with_current.is_balanced
     assert not with_current.halted
+
+
+@pytest.mark.asyncio
+async def test_incomplete_invoice_journal_does_not_halt_another_invoice(
+    db_session: AsyncSession,
+) -> None:
+    """Accruals left behind by a halted invoice must not fail RC1 for its date."""
+    d = date(2026, 5, 5)
+    stranded = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Lexar Co",
+        invoice_no="STRANDED-1",
+        invoice_date=d,
+        subtotal=Decimal("18864"),
+        total=Decimal("18864"),
+        status=InvoiceStatus.EXCEPTION,
+        currency="AUD",
+        file_hash="rc1-stranded",
+    )
+    current = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Betacarbon",
+        invoice_no="CURRENT-1",
+        invoice_date=d,
+        subtotal=Decimal("70000"),
+        total=Decimal("70000"),
+        status=InvoiceStatus.RECONCILING,
+        currency="AUD",
+        file_hash="rc1-current-ok",
+    )
+    db_session.add_all([stranded, current])
+    await db_session.flush()
+
+    for inv in (stranded, current):
+        for code, name, dr, cr, et in [
+            ("6100", "Operating Expenses", inv.total, Decimal("0"), EntryType.DEBIT),
+            ("2000", "Accounts Payable", Decimal("0"), inv.total, EntryType.CREDIT),
+        ]:
+            db_session.add(
+                JournalEntry(
+                    invoice_id=inv.id,
+                    date=d,
+                    account_code=code,
+                    account_name=name,
+                    debit=dr,
+                    credit=cr,
+                    entry_type=et,
+                )
+            )
+    await db_session.flush()
+
+    result = await reconcile_daily(
+        db_session, d, tenant_id=TESTING_TENANT_UUID, current_invoice=current
+    )
+    assert result.purchase_invoice_total == Decimal("70000")
+    assert result.total_ap_credits == Decimal("70000")
+    assert result.rc1_passed
+    assert not result.halted
+
+
+@pytest.mark.asyncio
+async def test_unbalanced_journal_on_current_invoice_still_halts(
+    db_session: AsyncSession,
+) -> None:
+    """Filtering by countable invoices must not hide a bad write on the current invoice."""
+    d = date(2026, 5, 6)
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        invoice_no="CURRENT-BAD",
+        invoice_date=d,
+        subtotal=Decimal("500"),
+        total=Decimal("500"),
+        status=InvoiceStatus.RECONCILING,
+        currency="AUD",
+        file_hash="rc1-current-bad",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+    for code, name, dr, cr, et in [
+        ("6100", "Operating Expenses", Decimal("500"), Decimal("0"), EntryType.DEBIT),
+        ("2000", "Accounts Payable", Decimal("0"), Decimal("400"), EntryType.CREDIT),
+    ]:
+        db_session.add(
+            JournalEntry(
+                invoice_id=inv.id,
+                date=d,
+                account_code=code,
+                account_name=name,
+                debit=dr,
+                credit=cr,
+                entry_type=et,
+            )
+        )
+    await db_session.flush()
+
+    result = await reconcile_daily(
+        db_session, d, tenant_id=TESTING_TENANT_UUID, current_invoice=inv
+    )
+    assert result.halted
+    assert not result.rc1_passed
 
 
 @pytest.mark.asyncio

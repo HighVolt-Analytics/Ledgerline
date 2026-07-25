@@ -173,6 +173,8 @@ Store in Kubernetes secrets or your secret manager — never in ConfigMap or git
 - [ ] DNS / TLS for `ledgerlink.highvolt.tech`
 - [ ] Azure Front Door routes apex host to production LoadBalancer origins (root `/`, not `/ledgerlink`)
 - [ ] Stripe Connect OAuth redirect: `https://ledgerlink.highvolt.tech/payments/stripe/oauth/callback`
+- [ ] Microsoft login OAuth redirect (Entra web URI): `https://ledgerlink.highvolt.tech/api/auth/oauth/microsoft/callback`
+- [ ] Google login OAuth redirect: `https://ledgerlink.highvolt.tech/api/auth/oauth/google/callback`
 - [ ] Stripe webhook: `https://ledgerlink.highvolt.tech/api/webhooks/stripe`
 - [ ] Migrations applied (`alembic upgrade head`)
 - [ ] Payments page shows **Production environment — live payout execution disabled**

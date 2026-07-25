@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { InvoiceDetails } from "@/api/types";
 import {
+  additionalExtractedFieldKeys,
   buildDocumentContentProfile,
   buildPartyBlocks,
   buildPreviewFooter,
@@ -948,5 +949,39 @@ describe("invoiceTaxMeta / resolveDocumentTaxRatePercent", () => {
   it("parses percent strings and fraction rates", () => {
     expect(parseDocumentTaxRatePercent("10%")).toBe(10);
     expect(parseDocumentTaxRatePercent("0.1")).toBe(10);
+  });
+});
+
+describe("additionalExtractedFieldKeys", () => {
+  it("returns vision extras not in the DT extraction field list", () => {
+    const inv = {
+      ...baseInvoice,
+      extracted_fields: {
+        seller_abn: "29AAACC1206D1ZM",
+        gst_rate: "18",
+        canonical_document_type: "Tax Invoice",
+        perspective: "purchase",
+        vision_header_confidence: "0.95",
+        vendor: "Acme",
+      },
+    } as InvoiceDetails;
+
+    expect(additionalExtractedFieldKeys(inv, ["vendor", "invoice_no", "total"])).toEqual([
+      "gst_rate",
+      "seller_abn",
+    ]);
+  });
+
+  it("returns empty when all extracted keys are configured or internal", () => {
+    const inv = {
+      ...baseInvoice,
+      extracted_fields: {
+        vendor: "Acme",
+        total: "100",
+        canonical_document_type: "Invoice",
+      },
+    } as InvoiceDetails;
+
+    expect(additionalExtractedFieldKeys(inv, ["vendor", "total"])).toEqual([]);
   });
 });

@@ -85,3 +85,10 @@ class ReconciliationOverview(BaseModel):
     balanced: bool
     base_currency: str = ""
     by_date: list[ReconDayOverviewRow]
+
+
+class StrandedJournalPurgeResponse(BaseModel):
+    invoice_ids: list[int]
+    entries_deleted: int
+    recon_date: date | None = None
+
