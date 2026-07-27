@@ -17,7 +17,6 @@ import type {
   AccountingIntegrationsStatus,
   XeroConnectionsResponse,
   XeroInvoiceStatus,
-  XeroPushResult,
   XeroReadiness,
   XeroSelectConnectionResult,
   XeroSyncContactsResult,
@@ -973,12 +972,6 @@ export const api = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(ref_id != null ? { ref_id } : {}),
-    });
-  },
-  pushXeroInvoice: (invoiceId: number) => {
-    bustGetCacheByPrefix("/api/integrations/xero");
-    return request<XeroPushResult>(`/api/integrations/xero/invoices/${invoiceId}/push`, {
-      method: "POST",
     });
   },
   validateXeroInvoiceExport: (invoiceId: number) => {
