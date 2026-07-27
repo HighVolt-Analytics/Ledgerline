@@ -51,8 +51,8 @@ export function SuperAdminLayout() {
       <aside className="primary-sidebar">
         <div className="primary-sidebar__header">
           <div className="primary-sidebar__logo">
-            <span className="shrink-0">
-              <Logo size={24} />
+            <span className="primary-sidebar__logo-mark">
+              <Logo size={18} />
             </span>
             <div className="primary-sidebar__logo-label flex flex-col min-w-0 leading-none">
               <span className="font-semibold text-[13px] tracking-tight truncate">Platform</span>
