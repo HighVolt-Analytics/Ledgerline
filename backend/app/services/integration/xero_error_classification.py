@@ -14,6 +14,8 @@ ERROR_TERMINAL = "TERMINAL"
 _TERMINAL_CODES = {
     "invalid_payload",
     "unsupported_currency",
+    "currency_not_supported",
+    "currency_missing",
     "currency_not_mapped",
     "invalid_tax_account_combination",
     "insufficient_permission",
