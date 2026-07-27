@@ -193,6 +193,34 @@ class XeroClient:
         response = await self.request("GET", path, params=params)
         return response.json()
 
+    async def get_currencies(self) -> list[dict[str, Any]]:
+        """Fetch organisation currencies from the Xero Currencies endpoint.
+
+        Organisation payloads often omit ``Currencies``; never treat a missing
+        nested array as an empty successful sync.
+        """
+        payload = await self.get_json("Currencies")
+        if not isinstance(payload, dict):
+            raise XeroApiError(
+                status_code=502,
+                error_code="invalid_currencies_response",
+                message="Xero Currencies response was not a JSON object",
+            )
+        currencies = payload.get("Currencies")
+        if currencies is None:
+            raise XeroApiError(
+                status_code=502,
+                error_code="currencies_missing",
+                message="Xero Currencies response did not include a Currencies array",
+            )
+        if not isinstance(currencies, list):
+            raise XeroApiError(
+                status_code=502,
+                error_code="invalid_currencies_response",
+                message="Xero Currencies response Currencies field was not a list",
+            )
+        return [c for c in currencies if isinstance(c, dict)]
+
     async def post_json(
         self,
         path: str,
