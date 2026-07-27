@@ -138,60 +138,63 @@ async def _run_settings_sync(db: AsyncSession, tenant_id: uuid.UUID) -> Settings
                 tenant_id=str(tenant_id),
                 error=str(exc),
             )
-        for currency in org.get("Currencies") or []:
-            code = str(currency.get("Code") or "").strip().upper()
-            if not code:
-                continue
-            result.currencies.fetched += 1
-            try:
-                seen_currency_codes.add(code)
-                hash_value = payload_hash(currency)
-                existing = (
-                    await db.execute(
-                        select(XeroCurrency).where(
-                            XeroCurrency.tenant_id == tenant_id,
-                            XeroCurrency.xero_tenant_id == xero_tenant_id,
-                            XeroCurrency.code == code,
-                        )
+
+    # Currencies live on GET Currencies — Organisation payloads typically omit them.
+    currencies_remote = await client.get_currencies()
+    for currency in currencies_remote:
+        code = str(currency.get("Code") or "").strip().upper()
+        if not code:
+            continue
+        result.currencies.fetched += 1
+        try:
+            seen_currency_codes.add(code)
+            hash_value = payload_hash(currency)
+            existing = (
+                await db.execute(
+                    select(XeroCurrency).where(
+                        XeroCurrency.tenant_id == tenant_id,
+                        XeroCurrency.xero_tenant_id == xero_tenant_id,
+                        XeroCurrency.code == code,
                     )
-                ).scalar_one_or_none()
-                if existing is None:
-                    db.add(
-                        XeroCurrency(
-                            tenant_id=tenant_id,
-                            accounting_integration_id=integration.id,
-                            xero_tenant_id=xero_tenant_id,
-                            code=code,
-                            description=str(currency.get("Description") or "")[:255] or None,
-                            source_system=SOURCE_SYSTEM_XERO,
-                            sync_status=_SYNC_ACTIVE,
-                            payload_hash=hash_value,
-                            raw_payload_json=json.dumps(currency, default=str),
-                            last_seen_at=now,
-                            last_synced_at=now,
-                        )
-                    )
-                    result.currencies.created += 1
-                elif existing.payload_hash == hash_value and existing.sync_status == _SYNC_ACTIVE:
-                    existing.last_seen_at = now
-                    existing.last_synced_at = now
-                    result.currencies.unchanged += 1
-                else:
-                    existing.description = str(currency.get("Description") or "")[:255] or None
-                    existing.sync_status = _SYNC_ACTIVE
-                    existing.payload_hash = hash_value
-                    existing.raw_payload_json = json.dumps(currency, default=str)
-                    existing.last_seen_at = now
-                    existing.last_synced_at = now
-                    result.currencies.updated += 1
-            except Exception as exc:
-                result.currencies.failed += 1
-                logger.warning(
-                    "xero_currency_upsert_failed",
-                    tenant_id=str(tenant_id),
-                    code=code,
-                    error=str(exc),
                 )
+            ).scalar_one_or_none()
+            if existing is None:
+                db.add(
+                    XeroCurrency(
+                        tenant_id=tenant_id,
+                        accounting_integration_id=integration.id,
+                        xero_tenant_id=xero_tenant_id,
+                        code=code,
+                        description=str(currency.get("Description") or "")[:255] or None,
+                        source_system=SOURCE_SYSTEM_XERO,
+                        sync_status=_SYNC_ACTIVE,
+                        payload_hash=hash_value,
+                        raw_payload_json=json.dumps(currency, default=str),
+                        last_seen_at=now,
+                        last_synced_at=now,
+                    )
+                )
+                result.currencies.created += 1
+            elif existing.payload_hash == hash_value and existing.sync_status == _SYNC_ACTIVE:
+                existing.last_seen_at = now
+                existing.last_synced_at = now
+                result.currencies.unchanged += 1
+            else:
+                existing.description = str(currency.get("Description") or "")[:255] or None
+                existing.sync_status = _SYNC_ACTIVE
+                existing.payload_hash = hash_value
+                existing.raw_payload_json = json.dumps(currency, default=str)
+                existing.last_seen_at = now
+                existing.last_synced_at = now
+                result.currencies.updated += 1
+        except Exception as exc:
+            result.currencies.failed += 1
+            logger.warning(
+                "xero_currency_upsert_failed",
+                tenant_id=str(tenant_id),
+                code=code,
+                error=str(exc),
+            )
 
     accounts_payload = await client.get_json("Accounts")
     for account in accounts_payload.get("Accounts") or []:
