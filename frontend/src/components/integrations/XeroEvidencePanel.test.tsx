@@ -39,6 +39,12 @@ vi.mock("@/api/client", () => ({
     })),
     getXeroTaxRates: vi.fn(async () => ({ total: 0, limit: 50, offset: 0, items: [] })),
     getXeroContactsList: vi.fn(async () => ({ total: 0, limit: 50, offset: 0, items: [] })),
+    listVendors: vi.fn(async () => []),
+    getChartOfAccounts: vi.fn(async () => ({ accounts: [] })),
+    getXeroReferenceContacts: vi.fn(async () => ({ total: 0, limit: 200, offset: 0, items: [] })),
+    getXeroReferenceAccounts: vi.fn(async () => ({ total: 0, limit: 200, offset: 0, items: [] })),
+    getXeroReferenceTaxRates: vi.fn(async () => ({ total: 0, limit: 200, offset: 0, items: [] })),
+    getXeroReferenceTrackingCategories: vi.fn(async () => ({ total: 0, items: [] })),
     getXeroMappings: vi.fn(async () => ({
       items: [{ mapping_type: "gl_account", source_key: "400", external_code: "400" }],
     })),
@@ -125,14 +131,15 @@ describe("XeroEvidencePanel", () => {
     });
   });
 
-  it("renders mappings and blocks export with structured errors", async () => {
+  it("renders mappings workspace and blocks export with structured errors", async () => {
     wrap(<XeroEvidencePanel enabled />);
     await waitFor(() => screen.getByText("Accounts stored"));
     const panel = screen.getByTestId("xero-evidence-panel");
     within(panel).getByRole("button", { name: "Mappings" }).click();
     await waitFor(() => {
       expect(screen.getByTestId("xero-mappings-panel")).toBeTruthy();
-      expect(screen.getByText(/gl_account/)).toBeTruthy();
+      expect(screen.getByTestId("mapping-tab-suppliers")).toBeTruthy();
+      expect(screen.getByTestId("mapping-save")).toBeTruthy();
     });
     within(panel).getByRole("button", { name: "Export queue" }).click();
     await waitFor(() => {
