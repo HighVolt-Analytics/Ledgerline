@@ -129,7 +129,9 @@ async def _seed_xero_ready(db_session):
     return integration
 
 
-async def _seed_invoice(db_session, *, vendor="Acme Supplies", abn="51824753556"):
+async def _seed_invoice(
+    db_session, *, vendor="Acme Supplies", abn="51824753556", currency="AUD"
+):
     inv = Invoice(
         tenant_id=TESTING_TENANT_UUID,
         vendor=vendor,
@@ -138,7 +140,7 @@ async def _seed_invoice(db_session, *, vendor="Acme Supplies", abn="51824753556"
         document_ref="DOC-100",
         invoice_date=date(2026, 1, 15),
         due_date=date(2026, 2, 15),
-        currency="AUD",
+        currency=currency,
         subtotal=Decimal("100.00"),
         gst=Decimal("10.00"),
         gst_rate=Decimal("10"),
@@ -178,7 +180,9 @@ async def _seed_invoice(db_session, *, vendor="Acme Supplies", abn="51824753556"
 async def test_canonical_transaction_validation(db_session):
     await _seed_xero_ready(db_session)
     inv = await _seed_invoice(db_session)
-    txn = build_canonical_supplier_invoice(inv, tenant_id=TESTING_TENANT_UUID)
+    txn = build_canonical_supplier_invoice(
+        inv, tenant_id=TESTING_TENANT_UUID, posting_currency="AUD"
+    )
     assert txn.transaction_type == "SUPPLIER_INVOICE"
     assert txn.payload_hash
     assert txn.idempotency_key
@@ -349,6 +353,74 @@ def test_error_classification_transient_and_terminal():
     term = classify_error(code="unsupported_currency", message="bad currency", status_code=400)
     assert term.bucket == ERROR_TERMINAL
     assert term.retryable is False
+    assert classify_error(code="currency_not_supported", message="x").bucket == ERROR_TERMINAL
+    assert classify_error(code="currency_missing", message="y").bucket == ERROR_TERMINAL
+
+
+@pytest.mark.asyncio
+async def test_export_currency_blank_source_uses_organisation_aud(db_session):
+    """Blank invoice.currency + organisation AUD => canonical/export AUD."""
+    await _seed_xero_ready(db_session)
+    inv = await _seed_invoice(db_session, currency="")
+    assert inv.currency == ""
+    with patch(
+        "app.services.integration.xero_export_service.require_xero_ready",
+        AsyncMock(return_value=(MagicMock(provider_tenant_id="xero-org-1"), "xero-org-1")),
+    ):
+        result = await validate_invoice_for_xero_export(
+            db_session, tenant_id=TESTING_TENANT_UUID, invoice_id=inv.id
+        )
+    codes = {e["code"] for e in result["blocking_errors"]}
+    assert "currency_missing" not in codes
+    assert "currency_not_supported" not in codes
+    assert "unsupported_currency" not in codes
+    assert result["canonical"] is not None
+    assert result["canonical"]["currency"] == "AUD"
+
+
+@pytest.mark.asyncio
+async def test_export_currency_foreign_source_uses_organisation_aud(db_session):
+    """Foreign source currency + organisation AUD => posted/export AUD."""
+    await _seed_xero_ready(db_session)
+    inv = await _seed_invoice(db_session, currency="USD")
+    with patch(
+        "app.services.integration.xero_export_service.require_xero_ready",
+        AsyncMock(return_value=(MagicMock(provider_tenant_id="xero-org-1"), "xero-org-1")),
+    ):
+        result = await validate_invoice_for_xero_export(
+            db_session, tenant_id=TESTING_TENANT_UUID, invoice_id=inv.id
+        )
+    codes = {e["code"] for e in result["blocking_errors"]}
+    assert "currency_missing" not in codes
+    assert "currency_not_supported" not in codes
+    assert result["canonical"] is not None
+    assert result["canonical"]["currency"] == "AUD"
+    assert inv.currency == "USD"
+
+
+@pytest.mark.asyncio
+async def test_export_currency_missing_org_currency_blocks_without_500(db_session):
+    """Tenant without organisation currency => controlled blocking error, not HTTP 500."""
+    await _seed_xero_ready(db_session)
+    inv = await _seed_invoice(db_session, currency="")
+    with (
+        patch(
+            "app.services.integration.xero_export_service.require_xero_ready",
+            AsyncMock(return_value=(MagicMock(provider_tenant_id="xero-org-1"), "xero-org-1")),
+        ),
+        patch(
+            "app.services.integration.canonical_transaction_builder.tenant_currency",
+            return_value="",
+        ),
+    ):
+        result = await validate_invoice_for_xero_export(
+            db_session, tenant_id=TESTING_TENANT_UUID, invoice_id=inv.id
+        )
+    codes = {e["code"] for e in result["blocking_errors"]}
+    assert "currency_missing" in codes
+    assert result["valid"] is False
+    assert result["canonical"] is not None
+    assert result["canonical"]["currency"] == ""
 
 
 @pytest.mark.asyncio

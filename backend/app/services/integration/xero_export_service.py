@@ -43,6 +43,7 @@ from app.services.integration.canonical_transaction_builder import (
     assert_canonical_valid,
     build_canonical_supplier_invoice,
     load_invoice_for_export,
+    resolve_organisation_posting_currency,
 )
 from app.services.integration.xero_accpay_adapter import (
     assert_draft_status,
@@ -327,29 +328,44 @@ async def validate_invoice_for_xero_export(
             }
         )
 
-    currency = (invoice.currency or "").strip().upper()
-    currency_row = (
-        await db.execute(
-            select(XeroCurrency).where(
-                XeroCurrency.tenant_id == tenant_id,
-                XeroCurrency.xero_tenant_id == xero_tenant_id,
-                XeroCurrency.code == currency,
-                XeroCurrency.sync_status == "active",
-            )
-        )
-    ).scalar_one_or_none()
-    if currency_row is None:
+    currency = await resolve_organisation_posting_currency(
+        db,
+        tenant_id=tenant_id,
+        xero_tenant_id=xero_tenant_id,
+        invoice_id=invoice_id,
+    )
+    if not currency:
         blocking.append(
             {
                 "field": "currency",
-                "code": "unsupported_currency",
-                "message": "currency not supported",
+                "code": "currency_missing",
+                "message": "Organisation currency is not configured",
             }
         )
+    else:
+        currency_row = (
+            await db.execute(
+                select(XeroCurrency).where(
+                    XeroCurrency.tenant_id == tenant_id,
+                    XeroCurrency.xero_tenant_id == xero_tenant_id,
+                    XeroCurrency.code == currency,
+                    XeroCurrency.sync_status == "active",
+                )
+            )
+        ).scalar_one_or_none()
+        if currency_row is None:
+            blocking.append(
+                {
+                    "field": "currency",
+                    "code": "currency_not_supported",
+                    "message": "currency not supported",
+                }
+            )
 
     txn = build_canonical_supplier_invoice(
         invoice,
         tenant_id=tenant_id,
+        posting_currency=currency or "",
         external_xero_contact_id=contact_match.contact_id,
         mapped_account_code=mapped_account,
         mapped_tax_type=mapped_tax,
