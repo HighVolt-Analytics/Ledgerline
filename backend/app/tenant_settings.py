@@ -112,6 +112,16 @@ def tenant_today(tenant: Tenant | None) -> date:
     return datetime.now(ZoneInfo(tenant_timezone(tenant))).date()
 
 
+def tenant_date_order(tenant: Tenant | None) -> str:
+    """Parse order for ambiguous numeric dates (finance locale)."""
+    country = tenant_country(tenant)
+    if country in {"US", "PH", "CA", "BZ", "FM", "MH", "PW"}:
+        return "MDY"
+    if country in {"JP", "CN", "KR", "TW", "HU", "LT"}:
+        return "YMD"
+    return "DMY"
+
+
 def tenant_custom_bundle_field_key(tenant: Tenant | None) -> str | None:
     """Optional extracted_fields key used as last-resort vision bundle linkage.
 

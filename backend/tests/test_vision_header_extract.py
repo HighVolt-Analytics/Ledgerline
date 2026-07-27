@@ -7,6 +7,7 @@ import pytest
 from app.models.invoice import Invoice, InvoiceStatus
 from app.services.extraction.document_ai_provider import DocumentAiProvider
 from app.services.invoice.vision_header_extract import (
+    VisionHeaderExtractResult,
     derive_canonical_document_type,
     evaluate_vision_header_extract,
     parse_vision_header_raw,
@@ -790,3 +791,55 @@ def test_restore_prior_dt_skips_when_already_mapped() -> None:
     assert out["restored"] is False
     assert out["reason"] == "already_mapped"
     assert inv.document_type_code == "DT-01"
+
+
+def test_restore_skips_inconsistent_subtotal_when_total_set() -> None:
+    from decimal import Decimal
+
+    from app.services.invoice.invoice_reset import restore_unrefilled_vision_stale_snapshot
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PARSING,
+        subtotal=None,
+        gst=Decimal("0"),
+        total=Decimal("6031.00"),
+        currency="USD",
+    )
+    stale = {
+        "column_snapshot": {"subtotal": Decimal("7712.47"), "gst": Decimal("0")},
+        "extracted_snapshot": {"subtotal": "7712.47", "gst": "0.00"},
+    }
+    retained = restore_unrefilled_vision_stale_snapshot(inv, stale)
+    assert "subtotal" not in retained["restored_columns"]
+    assert "subtotal" not in retained["restored_extracted_keys"]
+    assert inv.subtotal is None
+
+
+def test_persist_clears_subtotal_when_result_subtotal_none() -> None:
+    from decimal import Decimal
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PARSING,
+        subtotal=Decimal("7712.47"),
+        gst=Decimal("0"),
+        total=Decimal("6031.00"),
+        currency="USD",
+        extracted_fields={"subtotal": "7712.47", "gst": "0.00", "total": "6031.00"},
+    )
+    result = VisionHeaderExtractResult(
+        success=True,
+        counterparty_name="3B SEMICONDUCTOR PVT LTD",
+        invoice_no="SI-260571543",
+        subtotal=None,
+        gst=Decimal("0"),
+        total=Decimal("6031.00"),
+        currency="USD",
+        confidence=0.9,
+        provider="claude_vision",
+    )
+    persist_vision_header_to_invoice(inv, result)
+    assert inv.subtotal is None
+    assert inv.total == Decimal("6031.00")
+    assert "subtotal" not in (inv.extracted_fields or {})

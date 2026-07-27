@@ -300,6 +300,53 @@ async def test_reconciliation_scoped_per_org(db_session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
+async def test_rc1_excludes_undated_current_invoice_from_totals(
+    db_session: AsyncSession,
+) -> None:
+    """Undated invoices must not accrue — invoice side stays 0 even if journals exist."""
+    d = date.today()
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="MongoDB",
+        invoice_no="UNDATED-663",
+        invoice_date=None,
+        subtotal=Decimal("33.70"),
+        gst=Decimal("3.38"),
+        total=Decimal("37.08"),
+        status=InvoiceStatus.RECONCILING,
+        currency="USD",
+        file_hash="rc1-undated",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+    for code, name, dr, cr, et in [
+        ("6100", "Operating Expenses", Decimal("33.70"), Decimal("0"), EntryType.DEBIT),
+        ("1400", "GST Paid", Decimal("3.38"), Decimal("0"), EntryType.DEBIT),
+        ("2000", "Accounts Payable", Decimal("0"), Decimal("37.08"), EntryType.CREDIT),
+    ]:
+        db_session.add(
+            JournalEntry(
+                invoice_id=inv.id,
+                date=d,
+                account_code=code,
+                account_name=name,
+                debit=dr,
+                credit=cr,
+                entry_type=et,
+            )
+        )
+    await db_session.flush()
+
+    result = await reconcile_daily(
+        db_session, d, tenant_id=TESTING_TENANT_UUID, current_invoice=inv
+    )
+    assert result.purchase_invoice_total == Decimal("0")
+    assert result.total_ap_credits == Decimal("37.08")
+    assert result.halted
+    assert not result.rc1_passed
+
+
+@pytest.mark.asyncio
 async def test_rc1_uses_rule_book_payable_code(db_session: AsyncSession) -> None:
     d = date(2026, 6, 1)
     config = RuleBookConfigPayload(

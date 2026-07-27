@@ -33,6 +33,7 @@ export default defineConfig({
       "src/lib/format.test.ts",
       "src/lib/routePageAdapters.currency.test.ts",
       "src/lib/aggregateCurrencyCallSites.test.ts",
+      "src/lib/reconciliation.currency.test.ts",
       "src/lib/matrixIssue.test.ts",
       "src/lib/processingOverrides.test.ts",
       "src/lib/pipelineAuditPaths.test.ts",

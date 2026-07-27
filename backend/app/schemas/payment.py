@@ -52,6 +52,14 @@ class PaymentMarkPaidManualRequest(BaseModel):
         description="Proof of payment reference (file attachment integration planned)",
     )
     note: str | None = Field(default=None, max_length=2000)
+    bank_payment_amount: float | None = Field(
+        default=None,
+        description="Amount actually paid in tenant base currency (from payment app).",
+    )
+    payment_fx_rate: float | None = Field(
+        default=None,
+        description="Payment-app FX rate (base = txn_amount * rate).",
+    )
 
 
 class PaymentResponse(BaseModel):
@@ -74,6 +82,9 @@ class PaymentResponse(BaseModel):
     execution_readiness_status: str | None = None
     execution_blocking_reason: str | None = None
     execution_instruction: PaymentExecutionInstructionResponse | None = None
+    payment_fx_rate: float | None = None
+    bank_payment_amount: float | None = None
+    fx_variance: float | None = None
 
 
 class PaymentStatusUpdate(BaseModel):

@@ -44,6 +44,14 @@ class JournalEntry(Base):
     account_name: Mapped[str] = mapped_column(String(255))
     debit: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
     credit: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
+    # Dual-currency audit: debit/credit stay in transaction currency until payment
+    # converts; base_* hold functional-currency amounts when a rate is known.
+    txn_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    base_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    base_debit: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    base_credit: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    fx_rate: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
+    fx_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
     entry_type: Mapped[EntryType] = mapped_column(
         Enum(
             EntryType,

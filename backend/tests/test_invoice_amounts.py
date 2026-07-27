@@ -115,3 +115,37 @@ def test_line_items_subtotal_excludes_tax_rows_when_no_header_total() -> None:
     assert subtotal == Decimal("310.62")
     assert gst == Decimal("0")
     assert total == Decimal("310.62")
+
+
+def test_resolve_prefers_line_sum_when_header_subtotal_disagrees() -> None:
+    """Invoice 664 pattern: SGD subtotal on header, USD total + lines agree."""
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        invoice_date=date(2026, 5, 25),
+        subtotal=Decimal("7712.47"),
+        gst=Decimal("0"),
+        total=Decimal("6031.00"),
+        status=InvoiceStatus.JOURNALING,
+        currency="USD",
+        route_target="Purchase Management",
+    )
+    inv.line_items = [
+        LineItem(
+            tenant_id=TESTING_TENANT_UUID,
+            description="Item A",
+            amount=Decimal("3000.00"),
+        ),
+        LineItem(
+            tenant_id=TESTING_TENANT_UUID,
+            description="Item B",
+            amount=Decimal("3031.00"),
+        ),
+    ]
+    subtotal, gst, total = resolve_invoice_amounts(inv)
+    assert subtotal == Decimal("6031.00")
+    assert gst == Decimal("0")
+    assert total == Decimal("6031.00")
+
+    mapping = AccountMapping(account_code="6100", account_name="Operating Expenses")
+    lines = generate_entries(inv, mapping)
+    assert is_balanced(lines)

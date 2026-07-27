@@ -30,6 +30,58 @@ class JournalLine:
     entry_type: EntryType
     vendor_registry_id: int | None = None
     customer_registry_id: int | None = None
+    txn_currency: str | None = None
+    base_currency: str | None = None
+    base_debit: Decimal | None = None
+    base_credit: Decimal | None = None
+    fx_rate: Decimal | None = None
+    fx_source: str | None = None
+
+
+def _with_accrual_fx(
+    lines: list[JournalLine],
+    *,
+    invoice: Invoice,
+    base_currency: str | None = None,
+) -> list[JournalLine]:
+    from app.services.payments.journal_fx import (
+        apply_line_fx,
+        invoice_currency_code,
+        resolve_accrual_fx,
+    )
+
+    txn = invoice_currency_code(invoice)
+    base = (base_currency or "").strip().upper()
+    rate, _, source = resolve_accrual_fx(txn_currency=txn, base_currency=base)
+    enriched: list[JournalLine] = []
+    for line in lines:
+        fields = apply_line_fx(
+            debit=line.debit,
+            credit=line.credit,
+            txn_currency=txn,
+            base_currency=base,
+            fx_rate=rate,
+            fx_source=source,
+        )
+        enriched.append(
+            JournalLine(
+                date=line.date,
+                account_code=line.account_code,
+                account_name=line.account_name,
+                debit=line.debit,
+                credit=line.credit,
+                entry_type=line.entry_type,
+                vendor_registry_id=line.vendor_registry_id,
+                customer_registry_id=line.customer_registry_id,
+                txn_currency=fields["txn_currency"],  # type: ignore[arg-type]
+                base_currency=fields["base_currency"],  # type: ignore[arg-type]
+                base_debit=fields["base_debit"],  # type: ignore[arg-type]
+                base_credit=fields["base_credit"],  # type: ignore[arg-type]
+                fx_rate=fields["fx_rate"],  # type: ignore[arg-type]
+                fx_source=fields["fx_source"],  # type: ignore[arg-type]
+            )
+        )
+    return enriched
 
 
 def generate_entries(
@@ -41,11 +93,14 @@ def generate_entries(
     vendor_registry_id: int | None = None,
     customer_registry_id: int | None = None,
     control_mapping: AccountMapping | None = None,
+    base_currency: str | None = None,
 ) -> list[JournalLine]:
     from app.schemas.rule_book_config import RuleBookConfigPayload as ConfigPayload
 
     cfg = config or ConfigPayload()
-    entry_date = invoice.invoice_date or date.today()
+    if invoice.invoice_date is None:
+        return []
+    entry_date = invoice.invoice_date
     subtotal, gst, total = resolve_invoice_amounts(invoice)
 
     if (invoice.route_target or "").strip() == ROUTE_SALES:
@@ -56,7 +111,7 @@ def generate_entries(
         )
         receivable = control_mapping or resolve_category_for_config(recv_label, cfg)
         tax = resolve_category_for_config(tax_label, cfg)
-        return [
+        lines = [
             JournalLine(
                 entry_date,
                 receivable.account_code,
@@ -83,11 +138,12 @@ def generate_entries(
                 EntryType.CREDIT,
             ),
         ]
+        return _with_accrual_fx(lines, invoice=invoice, base_currency=base_currency)
 
     tax = get_tax_account_mapping(cfg)
     payable = control_mapping or get_payable_account_mapping(cfg)
 
-    return [
+    lines = [
         JournalLine(
             entry_date,
             mapping.account_code,
@@ -114,6 +170,8 @@ def generate_entries(
             vendor_registry_id=vendor_registry_id,
         ),
     ]
+    return _with_accrual_fx(lines, invoice=invoice, base_currency=base_currency)
+
 
 
 def is_balanced(lines: list[JournalLine]) -> bool:

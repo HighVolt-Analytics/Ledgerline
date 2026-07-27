@@ -7,7 +7,6 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from app.services.extraction.field_contracts import FieldType
-from app.services.shared.flexible_date import parse_flexible_date
 from app.utils.abn_validator import storage_abn
 
 
@@ -33,7 +32,7 @@ def normalize_amount(value: Any) -> Decimal | None:
     return plausible_money(parsed) if parsed is not None else None
 
 
-def normalize_date(value: Any) -> date | None:
+def normalize_date(value: Any, *, date_order: str = "DMY") -> date | None:
     if value is None or value == "":
         return None
     if isinstance(value, date) and not hasattr(value, "hour"):
@@ -41,9 +40,12 @@ def normalize_date(value: Any) -> date | None:
     if isinstance(value, dict):
         for key in ("value", "date", "text", "content"):
             if key in value:
-                return normalize_date(value.get(key))
+                return normalize_date(value.get(key), date_order=date_order)
         return None
-    return parse_flexible_date(str(value).strip() or None)
+    from app.services.shared.flexible_date import parse_flexible_date
+
+    order = date_order if date_order in {"DMY", "MDY", "YMD"} else "DMY"
+    return parse_flexible_date(str(value).strip() or None, date_order=order)  # type: ignore[arg-type]
 
 
 def normalize_currency(value: Any) -> str | None:

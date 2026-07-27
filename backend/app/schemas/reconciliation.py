@@ -30,6 +30,7 @@ class ReconciliationJournalLine(BaseModel):
     debit: Decimal
     credit: Decimal
     entry_type: str
+    currency: str = ""
 
 
 class ReconciliationDayInvoice(BaseModel):
@@ -37,6 +38,7 @@ class ReconciliationDayInvoice(BaseModel):
     vendor: str | None = None
     invoice_no: str | None = None
     total: Decimal | None = None
+    currency: str = ""
 
 
 class ReconciliationDayDetail(BaseModel):
@@ -50,6 +52,11 @@ class ReconciliationDayDetail(BaseModel):
     rc2_passed: bool
     is_balanced: bool
     halt_reason: str | None = None
+    has_mixed_currencies: bool = False
+    currencies: list[str] = Field(default_factory=list)
+    totals_by_currency: dict[str, Decimal] = Field(default_factory=dict)
+    dr_by_currency: dict[str, Decimal] = Field(default_factory=dict)
+    cr_by_currency: dict[str, Decimal] = Field(default_factory=dict)
     journal_lines: list[ReconciliationJournalLine]
     invoices: list[ReconciliationDayInvoice]
 
@@ -65,6 +72,10 @@ class ReconInvoiceOverviewRow(BaseModel):
     invoice_id: int
     vendor: str
     total: Decimal
+    currency: str = Field(
+        default="",
+        description="Invoice transaction currency (ISO). Blank when unknown.",
+    )
     postings: list[ReconPostingRow]
 
 
@@ -74,6 +85,11 @@ class ReconDayOverviewRow(BaseModel):
     sum_dr: Decimal
     sum_cr: Decimal
     delta: Decimal
+    has_mixed_currencies: bool = False
+    currencies: list[str] = Field(default_factory=list)
+    totals_by_currency: dict[str, Decimal] = Field(default_factory=dict)
+    dr_by_currency: dict[str, Decimal] = Field(default_factory=dict)
+    cr_by_currency: dict[str, Decimal] = Field(default_factory=dict)
     invoices: list[ReconInvoiceOverviewRow]
 
 
@@ -84,6 +100,10 @@ class ReconciliationOverview(BaseModel):
     delta_dr_cr: Decimal
     balanced: bool
     base_currency: str = ""
+    has_mixed_currencies: bool = False
+    totals_by_currency: dict[str, Decimal] = Field(default_factory=dict)
+    dr_by_currency: dict[str, Decimal] = Field(default_factory=dict)
+    cr_by_currency: dict[str, Decimal] = Field(default_factory=dict)
     by_date: list[ReconDayOverviewRow]
 
 

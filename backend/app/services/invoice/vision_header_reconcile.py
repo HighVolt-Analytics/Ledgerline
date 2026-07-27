@@ -284,6 +284,14 @@ def _recover_invoice_no_from_text(text: str | None) -> str:
     return (extract_commercial_invoice_no_from_text(text or "") or "").strip()
 
 
+def _recover_invoice_date_from_text(text: str | None, *, date_order: str = "DMY"):
+    """Recover issuance date from labeled PDF text; skip due/validity labels."""
+    from app.services.shared.flexible_date import recover_labeled_invoice_date_from_text
+
+    order = date_order if date_order in {"DMY", "MDY", "YMD"} else "DMY"
+    return recover_labeled_invoice_date_from_text(text, date_order=order)  # type: ignore[arg-type]
+
+
 _PERMIT_NO_LINE = re.compile(
     r"(?im)(?:Permit\s*(?:No\.?|Number|#))\s*[:\s#]*([A-Z0-9][A-Z0-9\-/_]{2,})"
 )
@@ -346,6 +354,8 @@ def _is_non_invoice_labeled_id(value: str | None, text: str | None) -> bool:
 def enrich_vision_header_refs_from_text(
     result: Any,
     text: str | None,
+    *,
+    date_order: str = "DMY",
 ) -> tuple[Any, dict[str, Any]]:
     """Fill invoice_no / other_reference from labeled PDF text when missing.
 
@@ -405,6 +415,12 @@ def enrich_vision_header_refs_from_text(
         updates["other_reference"] = unique_ref
         detail["filled"].append("other_reference")
 
+    if result.invoice_date is None:
+        recovered_date = _recover_invoice_date_from_text(text, date_order=date_order)
+        if recovered_date is not None:
+            updates["invoice_date"] = recovered_date
+            detail["filled"].append("invoice_date")
+
     if not updates:
         return result, detail
     return replace(result, **updates), detail
@@ -413,6 +429,8 @@ def enrich_vision_header_refs_from_text(
 def ground_vision_header_result(
     result: Any,
     text: str | None,
+    *,
+    date_order: str = "DMY",
 ) -> tuple[Any, dict[str, Any]]:
     """Clear header fields that cannot be verified in local PDF text.
 
@@ -544,8 +562,19 @@ def ground_vision_header_result(
         if _date_grounded_in_ocr(result.invoice_date, raw):
             kept.append("invoice_date")
         else:
-            updates["invoice_date"] = None
-            cleared.append("invoice_date")
+            recovered_date = _recover_invoice_date_from_text(raw, date_order=date_order)
+            if recovered_date is not None and _date_grounded_in_ocr(recovered_date, raw):
+                updates["invoice_date"] = recovered_date
+                recovered.append("invoice_date")
+                detail["invoice_date_vision_cleared"] = result.invoice_date.isoformat()
+            else:
+                updates["invoice_date"] = None
+                cleared.append("invoice_date")
+    else:
+        recovered_date = _recover_invoice_date_from_text(raw, date_order=date_order)
+        if recovered_date is not None:
+            updates["invoice_date"] = recovered_date
+            recovered.append("invoice_date")
 
     if result.total is not None:
         money_forms = _ocr_money_forms(raw)
@@ -735,10 +764,18 @@ _AMOUNT_CONSISTENCY_EPS = Decimal("0.05")
 _LINE_SUM_MISMATCH_RATIO = Decimal("0.15")
 
 
+def _amount_near(a: Decimal | None, b: Decimal | None) -> bool:
+    if a is None or b is None:
+        return False
+    return (a - b).copy_abs() <= _AMOUNT_CONSISTENCY_EPS
+
+
 def apply_vision_header_amount_consistency(result: Any) -> tuple[Any, dict[str, Any]]:
     """Flag / clear inconsistent amounts without inventing balancing figures.
 
     If subtotal + gst differs from total beyond epsilon, clear the weaker field.
+    When line items sum to total (not subtotal), clear the mismatched subtotal
+    (common dual-currency / wrong-box case) and treat the header as resolved.
     When subtotal ≈ total and gst > 0, subtotal is treated as tax-inclusive (or a
     line dump that already includes CGST/SGST) — clear subtotal so journal can
     use total − gst. Otherwise prefer clearing gst. Never write a computed
@@ -752,11 +789,44 @@ def apply_vision_header_amount_consistency(result: Any) -> tuple[Any, dict[str, 
     total = result.total
     updates: dict[str, Any] = {}
 
-    if subtotal is not None and gst is not None and total is not None:
-        delta = (subtotal + gst - total).copy_abs()
-        if delta > _AMOUNT_CONSISTENCY_EPS:
-            detail["flags"].append("subtotal_gst_total_mismatch")
-            detail["delta"] = str(delta)
+    lines = list(result.line_items or ())
+    line_sum: Decimal | None = None
+    if lines:
+        line_amounts = [li.amount for li in lines if li.amount is not None]
+        if line_amounts:
+            line_sum = sum(line_amounts, start=Decimal("0"))
+            detail["line_sum"] = str(line_sum)
+
+    def _header_amounts_disagree(
+        st: Decimal | None,
+        tax: Decimal | None,
+        tot: Decimal | None,
+    ) -> bool:
+        if st is None or tot is None:
+            return False
+        if tax is not None:
+            return (st + tax - tot).copy_abs() > _AMOUNT_CONSISTENCY_EPS
+        return (st - tot).copy_abs() > _AMOUNT_CONSISTENCY_EPS
+
+    if _header_amounts_disagree(subtotal, gst, total):
+        detail["flags"].append("subtotal_gst_total_mismatch")
+        if gst is not None and total is not None and subtotal is not None:
+            detail["delta"] = str((subtotal + gst - total).copy_abs())
+        elif subtotal is not None and total is not None:
+            detail["delta"] = str((subtotal - total).copy_abs())
+
+        line_picks_total = (
+            line_sum is not None
+            and line_sum > 0
+            and _amount_near(line_sum, total)
+            and not _amount_near(line_sum, subtotal)
+        )
+        if line_picks_total:
+            # Settlement total agrees with lines; drop foreign/wrong-box subtotal.
+            updates["subtotal"] = None
+            detail["cleared"].append("subtotal")
+            detail["flags"].append("line_sum_selected_total")
+        elif subtotal is not None and gst is not None and total is not None:
             if amounts_look_tax_inclusive_subtotal(
                 subtotal=subtotal, gst=gst, total=total
             ):
@@ -770,19 +840,26 @@ def apply_vision_header_amount_consistency(result: Any) -> tuple[Any, dict[str, 
                 detail["cleared"].append("gst")
             updates["amount_inconsistency"] = True
             updates["needs_review"] = True
+        else:
+            updates["amount_inconsistency"] = True
+            updates["needs_review"] = True
 
-    lines = list(result.line_items or ())
-    if lines and (total is not None or subtotal is not None):
-        line_sum = sum((li.amount or Decimal("0")) for li in lines if li.amount is not None)
-        anchor = subtotal if subtotal is not None else total
-        if anchor is not None and anchor > 0 and line_sum > 0:
-            ratio = (line_sum - anchor).copy_abs() / anchor
-            if ratio > _LINE_SUM_MISMATCH_RATIO:
-                detail["flags"].append("line_items_amount_mismatch")
-                detail["line_sum"] = str(line_sum)
+    remaining_subtotal = updates["subtotal"] if "subtotal" in updates else subtotal
+    remaining_total = updates["total"] if "total" in updates else total
+    if line_sum is not None and line_sum > 0 and (
+        remaining_total is not None or remaining_subtotal is not None
+    ):
+        anchor = remaining_subtotal if remaining_subtotal is not None else remaining_total
+        if anchor is not None and anchor > 0:
+            if _amount_near(line_sum, anchor):
                 detail["anchor"] = str(anchor)
-                updates["line_items_amount_mismatch"] = True
-                updates["needs_review"] = True
+            else:
+                ratio = (line_sum - anchor).copy_abs() / anchor
+                if ratio > _LINE_SUM_MISMATCH_RATIO:
+                    detail["flags"].append("line_items_amount_mismatch")
+                    detail["anchor"] = str(anchor)
+                    updates["line_items_amount_mismatch"] = True
+                    updates["needs_review"] = True
 
     if not updates:
         return result, detail

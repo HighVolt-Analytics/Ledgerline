@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { LedgerOverviewSkeleton } from "@/components/skeleton/PageSkeletons";
 import { cn } from "@/lib/cn";
-import { money } from "@/lib/format";
+import { formatMoneyByCurrencyMap, money } from "@/lib/format";
 import type { ReconSummary } from "@/lib/reconciliation";
 
 type LedgerOverviewProps = {
@@ -15,7 +15,10 @@ type LedgerOverviewProps = {
 
 export function LedgerOverview({ recon, loading = false, currency = "SGD" }: LedgerOverviewProps) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const fmt = (v: number) => money(v, currency);
+  const fmtBase = (v: number) => money(v, currency);
+  const fmtRow = (v: number, rowCurrency?: string | null) =>
+    money(v, rowCurrency?.trim() ? rowCurrency : null);
+  const fmtMap = (totals: Record<string, number>) => formatMoneyByCurrencyMap(totals);
 
   if (loading) {
     return <LedgerOverviewSkeleton />;
@@ -54,18 +57,27 @@ export function LedgerOverview({ recon, loading = false, currency = "SGD" }: Led
                 {recon.balanced ? "Ledger balanced" : "Out of balance"}
               </div>
               <div className="text-sm text-muted-foreground tnum">
-                Δ (Dr − Cr) = {fmt(recon.deltaDrCr)}
+                {recon.hasMixedCurrencies
+                  ? "Mixed currencies — totals shown by currency"
+                  : `Δ (Dr − Cr) = ${fmtBase(recon.deltaDrCr)}`}
+              </div>
+              <div className="text-xs text-muted-foreground mt-1">
+                Base currency totals ({currency})
               </div>
             </div>
           </div>
           <div className="flex gap-6 text-sm">
             <div className="text-right">
               <div className="text-xs text-muted-foreground">Total debits</div>
-              <div className="tnum font-semibold">{fmt(recon.sumDr)}</div>
+              <div className="tnum font-semibold">
+                {recon.hasMixedCurrencies ? fmtMap(recon.drByCurrency) : fmtBase(recon.sumDr)}
+              </div>
             </div>
             <div className="text-right">
               <div className="text-xs text-muted-foreground">Total credits</div>
-              <div className="tnum font-semibold">{fmt(recon.sumCr)}</div>
+              <div className="tnum font-semibold">
+                {recon.hasMixedCurrencies ? fmtMap(recon.crByCurrency) : fmtBase(recon.sumCr)}
+              </div>
             </div>
             <div className="text-right">
               <div className="text-xs text-muted-foreground">Documents</div>
@@ -73,6 +85,15 @@ export function LedgerOverview({ recon, loading = false, currency = "SGD" }: Led
             </div>
           </div>
         </div>
+        {recon.hasMixedCurrencies ? (
+          <div
+            className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300"
+            data-testid="ledger-mixed-currency-warning"
+          >
+            Mixed currencies detected. Document amounts stay in source currency until payment
+            conversion.
+          </div>
+        ) : null}
       </Card>
 
       <div className="space-y-3">
@@ -93,18 +114,29 @@ export function LedgerOverview({ recon, loading = false, currency = "SGD" }: Led
                 </Badge>
                 <div className="flex-1" />
                 <span className="text-sm text-muted-foreground tnum hidden sm:inline">
-                  Dr {fmt(day.sumDr)} · Cr {fmt(day.sumCr)}
+                  {day.hasMixedCurrencies
+                    ? `Dr ${fmtMap(day.drByCurrency)} · Cr ${fmtMap(day.crByCurrency)}`
+                    : `Dr ${fmtRow(day.sumDr, day.currencies[0] || currency)} · Cr ${fmtRow(day.sumCr, day.currencies[0] || currency)}`}
                 </span>
-                <Badge
-                  variant="outline"
-                  className={
-                    day.delta === 0
-                      ? "text-[hsl(var(--chart-1))] border-[hsl(var(--chart-1)/0.4)]"
-                      : "border-destructive/40 text-destructive"
-                  }
-                >
-                  Δ {fmt(day.delta)}
-                </Badge>
+                {day.hasMixedCurrencies ? (
+                  <Badge
+                    variant="outline"
+                    className="border-amber-500/40 text-amber-700 dark:text-amber-300"
+                  >
+                    Mixed FX
+                  </Badge>
+                ) : (
+                  <Badge
+                    variant="outline"
+                    className={
+                      day.delta === 0
+                        ? "text-[hsl(var(--chart-1))] border-[hsl(var(--chart-1)/0.4)]"
+                        : "border-destructive/40 text-destructive"
+                    }
+                  >
+                    Δ {fmtRow(day.delta, day.currencies[0] || currency)}
+                  </Badge>
+                )}
               </button>
 
               {open && (
@@ -114,7 +146,14 @@ export function LedgerOverview({ recon, loading = false, currency = "SGD" }: Led
                       <div className="flex items-center gap-2 mb-1.5 text-sm">
                         <span className="font-medium">{inv.id}</span>
                         <span className="text-muted-foreground">{inv.vendor}</span>
-                        <span className="tnum text-muted-foreground ml-auto">{fmt(inv.total)}</span>
+                        {inv.currency ? (
+                          <Badge variant="outline" className="tnum text-[10px]">
+                            {inv.currency}
+                          </Badge>
+                        ) : null}
+                        <span className="tnum text-muted-foreground ml-auto">
+                          {fmtRow(inv.total, inv.currency)}
+                        </span>
                       </div>
                       <div className="overflow-x-auto rounded-md border border-border">
                         <table className="w-full text-sm">
@@ -130,10 +169,10 @@ export function LedgerOverview({ recon, loading = false, currency = "SGD" }: Led
                               <tr key={idx} className="border-t border-border/60">
                                 <td className="px-3 py-1.5">{row.account}</td>
                                 <td className="px-3 py-1.5 text-right tnum">
-                                  {row.debit ? fmt(row.debit) : "—"}
+                                  {row.debit ? fmtRow(row.debit, inv.currency) : "—"}
                                 </td>
                                 <td className="px-3 py-1.5 text-right tnum">
-                                  {row.credit ? fmt(row.credit) : "—"}
+                                  {row.credit ? fmtRow(row.credit, inv.currency) : "—"}
                                 </td>
                               </tr>
                             ))}
@@ -151,7 +190,7 @@ export function LedgerOverview({ recon, loading = false, currency = "SGD" }: Led
 
       <p className="text-xs text-muted-foreground mt-4">
         Postings: each line subtotal debits its GL account, total GST debits the tax account, and the
-        document total credits Accounts Payable.
+        document total credits Accounts Payable. Source currency is kept until payment conversion.
       </p>
     </div>
   );

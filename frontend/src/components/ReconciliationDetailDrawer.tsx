@@ -4,7 +4,7 @@ import { AlertTriangle, CheckCircle2, X } from "lucide-react";
 import type { ReconciliationDayDetail } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { documentDisplayRef, money } from "@/lib/format";
+import { documentDisplayRef, formatMoneyByCurrencyMap, money } from "@/lib/format";
 import { cn } from "@/lib/cn";
 
 type ReconciliationDetailDrawerProps = {
@@ -48,7 +48,18 @@ export function ReconciliationDetailDrawer({
 
   if (!mounted || !detail) return null;
 
-  const fmt = (v: string) => money(v, currency);
+  const mixed = Boolean(detail.has_mixed_currencies);
+  const fmtBase = (v: string) => money(v, currency);
+  const fmtRow = (v: string | null | undefined, rowCurrency?: string | null) =>
+    money(v, rowCurrency?.trim() ? rowCurrency : null);
+  const fmtMap = (raw?: Record<string, string | number>) => {
+    if (!raw) return "—";
+    const mapped: Record<string, number> = {};
+    for (const [code, amount] of Object.entries(raw)) {
+      mapped[code] = typeof amount === "number" ? amount : parseFloat(amount) || 0;
+    }
+    return formatMoneyByCurrencyMap(mapped);
+  };
 
   return createPortal(
     <div className="pointer-events-none" data-testid="drawer-reconciliation-detail">
@@ -105,11 +116,24 @@ export function ReconciliationDetailDrawer({
           </div>
 
           <div className="grid grid-cols-2 gap-3 text-sm">
-            <Metric label="Σ Invoice totals" value={fmt(detail.invoices_total)} />
-            <Metric label="Σ Debits" value={fmt(detail.total_debits)} />
-            <Metric label="Σ Credits" value={fmt(detail.total_credits)} />
-            <Metric label="Δ Dr − Cr" value={fmt(detail.delta_dr_cr)} warn={detail.delta_dr_cr !== "0.00"} />
-            <Metric label="Δ vs invoices" value={fmt(detail.delta_vs_invoices)} />
+            <Metric
+              label="Σ Invoice totals"
+              value={mixed ? fmtMap(detail.totals_by_currency) : fmtBase(detail.invoices_total)}
+            />
+            <Metric
+              label="Σ Debits"
+              value={mixed ? fmtMap(detail.dr_by_currency) : fmtBase(detail.total_debits)}
+            />
+            <Metric
+              label="Σ Credits"
+              value={mixed ? fmtMap(detail.cr_by_currency) : fmtBase(detail.total_credits)}
+            />
+            <Metric
+              label="Δ Dr − Cr"
+              value={mixed ? "—" : fmtBase(detail.delta_dr_cr)}
+              warn={!mixed && detail.delta_dr_cr !== "0.00"}
+            />
+            <Metric label="Δ vs invoices" value={mixed ? "—" : fmtBase(detail.delta_vs_invoices)} />
             <div className="flex gap-2 items-end">
               <Badge variant="outline" className={detail.rc1_passed ? "text-[hsl(var(--chart-1))]" : "text-destructive"}>
                 RC1 {detail.rc1_passed ? "Pass" : "Fail"}
@@ -119,6 +143,13 @@ export function ReconciliationDetailDrawer({
               </Badge>
             </div>
           </div>
+
+          {mixed ? (
+            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+              Mixed currencies on this day. Row amounts keep their source currency; conversion happens
+              at payment.
+            </div>
+          ) : null}
 
           <section>
             <h3 className="text-sm font-semibold mb-2">Contributing invoices</h3>
@@ -141,8 +172,13 @@ export function ReconciliationDetailDrawer({
                       ) : null}
                       <span className="text-muted-foreground mx-1">·</span>
                       <span className="truncate">{inv.vendor ?? "—"}</span>
+                      {inv.currency ? (
+                        <Badge variant="outline" className="ml-2 tnum text-[10px]">
+                          {inv.currency}
+                        </Badge>
+                      ) : null}
                     </div>
-                    <span className="tnum shrink-0">{fmt(inv.total ?? "0")}</span>
+                    <span className="tnum shrink-0">{fmtRow(inv.total ?? "0", inv.currency)}</span>
                   </li>
                 ))}
               </ul>
@@ -177,10 +213,10 @@ export function ReconciliationDetailDrawer({
                           </div>
                         </td>
                         <td className="px-2 py-2 text-right tnum">
-                          {line.debit !== "0.00" ? fmt(line.debit) : "—"}
+                          {line.debit !== "0.00" ? fmtRow(line.debit, line.currency) : "—"}
                         </td>
                         <td className="px-2 py-2 text-right tnum">
-                          {line.credit !== "0.00" ? fmt(line.credit) : "—"}
+                          {line.credit !== "0.00" ? fmtRow(line.credit, line.currency) : "—"}
                         </td>
                       </tr>
                     ))

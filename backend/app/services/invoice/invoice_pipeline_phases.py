@@ -225,11 +225,17 @@ async def phase_vision_header_extract(
         )
 
     with open_pdf_for_reading(invoice.raw_file_path, tenant_id=invoice.tenant_id) as path:
+        from app.models.tenant import Tenant
+        from app.tenant_settings import tenant_date_order
+
+        tenant_row = await session.get(Tenant, invoice.tenant_id)
+        date_order = tenant_date_order(tenant_row)
         result = await evaluate_vision_header_extract(
             path,
             provider=doc_provider,
             org=org,
             vision_page_images=vision_page_images,
+            date_order=date_order,
         )
         reconcile_detail: dict[str, object] = {}
         grounding_detail: dict[str, object] = {}
@@ -241,9 +247,13 @@ async def phase_vision_header_extract(
                     resolve_header_grounding_text,
                     path,
                 )
-                result, grounding_detail = ground_vision_header_result(result, text)
+                result, grounding_detail = ground_vision_header_result(
+                    result, text, date_order=date_order
+                )
                 grounding_detail = {**grounding_detail, "text_source": text_source_detail}
-                result, enrich_detail = enrich_vision_header_refs_from_text(result, text)
+                result, enrich_detail = enrich_vision_header_refs_from_text(
+                    result, text, date_order=date_order
+                )
                 result, consistency_detail = apply_vision_header_amount_consistency(result)
                 persist_vision_header_to_invoice(invoice, result)
                 await _persist_lines(result)

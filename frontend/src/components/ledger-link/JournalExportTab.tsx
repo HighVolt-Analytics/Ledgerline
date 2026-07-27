@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/cn";
-import { money } from "@/lib/format";
+import { formatMoneyByCurrencyMap, money } from "@/lib/format";
 import { EXPORT_TARGETS } from "@/lib/v4MockData";
 import { ExportStatusBadge } from "./ExportStatusBadge";
 import { IntegrationBrandIcon } from "@/components/integrations/IntegrationBrandIcon";
@@ -42,6 +42,7 @@ type ExportPreviewRow = {
   credit: string;
   amount: number;
   status: string;
+  currency?: string;
 };
 
 const GROUPS: { key: keyof LedgerLinkExports; label: string }[] = [
@@ -76,10 +77,25 @@ export function JournalExportTab({
   const [loadingQueue, setLoadingQueue] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const fmt = (v: number) => money(v, currency);
+  const fmtRow = (v: number, rowCurrency?: string | null) =>
+    money(v, rowCurrency?.trim() ? rowCurrency : null);
 
   const rows = useMemo(() => flattenExports(exports), [exports]);
-  const total = rows.reduce((s, r) => s + r.amount, 0);
+  const totalsByCurrency = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const row of rows) {
+      const code = (row.currency || "").trim().toUpperCase() || "UNKNOWN";
+      out[code] = (out[code] ?? 0) + row.amount;
+    }
+    return out;
+  }, [rows]);
+  const totalLabel = useMemo(() => {
+    const codes = Object.keys(totalsByCurrency);
+    if (codes.length > 1) return formatMoneyByCurrencyMap(totalsByCurrency);
+    const only = codes[0];
+    const amount = rows.reduce((s, r) => s + r.amount, 0);
+    return money(amount, only && only !== "UNKNOWN" ? only : currency);
+  }, [totalsByCurrency, rows, currency]);
   const isXeroTarget = target === "Xero";
   const pending = isXeroTarget ? queue.length : 0;
   const readyCount = queue.filter((item) => item.valid).length;
@@ -121,7 +137,17 @@ export function JournalExportTab({
   }, [isXeroTarget, refreshXeroEvidence]);
 
   const downloadCsv = () => {
-    const header = ["Group", "Document", "Date", "Party", "DebitAccount", "CreditAccount", "Amount", "Status"];
+    const header = [
+      "Group",
+      "Document",
+      "Date",
+      "Party",
+      "DebitAccount",
+      "CreditAccount",
+      "Amount",
+      "Currency",
+      "Status",
+    ];
     const body = rows.map((r) =>
       [
         r.group,
@@ -131,6 +157,7 @@ export function JournalExportTab({
         `"${r.debit}"`,
         `"${r.credit}"`,
         r.amount.toFixed(2),
+        r.currency || "",
         r.status,
       ].join(",")
     );
@@ -218,7 +245,7 @@ export function JournalExportTab({
                 ? ` · ${pending} pending invoices · ${readyCount} ready`
                 : ""}
             </div>
-            <div className="tnum font-semibold">Total {fmt(total)}</div>
+            <div className="tnum font-semibold">Total {totalLabel}</div>
           </div>
         </div>
 
@@ -298,7 +325,9 @@ export function JournalExportTab({
                     <td className="px-3 py-2 font-medium">{row.doc}</td>
                     <td className="px-3 py-2">{row.debit}</td>
                     <td className="px-3 py-2">{row.credit}</td>
-                    <td className="px-3 py-2 text-right tnum">{fmt(row.amount)}</td>
+                    <td className="px-3 py-2 text-right tnum">
+                      {fmtRow(row.amount, row.currency)}
+                    </td>
                     <td className="px-4 py-2">
                       <ExportStatusBadge status={row.status} />
                     </td>

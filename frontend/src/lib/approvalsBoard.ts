@@ -4,7 +4,7 @@ import {
   invoiceCanAttemptReprocess,
   PIPELINE_STATUSES as PIPELINE_STATUS_LIST,
 } from "@/lib/invoiceActions";
-import { isNeedsReviewEvaluation, isPendingApprovalEvaluation } from "@/lib/invoice";
+import { effectiveEvaluationStatus, isNeedsReviewEvaluation, isPendingApprovalEvaluation } from "@/lib/invoice";
 
 export type ApprovalBoardColumnApi = "review" | "processing" | "approved" | "rejected";
 
@@ -89,7 +89,9 @@ export function needsReviewQueueCount(invoices: Invoice[]): number {
 }
 
 export function isNeedsReviewInvoice(inv: Invoice): boolean {
-  return isNeedsReviewEvaluation(inv.evaluation_status);
+  // Posted docs close coding review — never queue them as Needs review.
+  if (inv.status === "processed") return false;
+  return isNeedsReviewEvaluation(effectiveEvaluationStatus(inv));
 }
 
 export function isPendingApprovalInvoice(inv: Invoice): boolean {

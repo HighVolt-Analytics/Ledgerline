@@ -407,6 +407,43 @@ async def _sync_commercial_invoice(db: AsyncSession, invoice: Invoice, po_number
     return po
 
 
+async def _commercial_invoice_requires_po_sync(
+    db: AsyncSession,
+    invoice: Invoice,
+    *,
+    po_number: str,
+) -> bool:
+    """True when DT match policy requires PO register linkage for commercial invoices.
+
+    Non-PO profiles (``match_mode: none`` and peers) keep ``po_reference`` for
+    display/audit but must not halt on ``awaiting_po`` when the PO is missing.
+    """
+    from app.services.classification.document_type_match_service import resolve_match_mode
+    from app.services.classification.document_type_playbook_profile_service import (
+        match_mode_requires_po,
+    )
+
+    config = await load_classification_config(db, invoice.tenant_id)
+    match_mode = resolve_match_mode(
+        document_type_code=invoice.document_type_code,
+        document_types=list(config.document_types),
+        tenant_id=invoice.tenant_id,
+    )
+    if match_mode_requires_po(match_mode):
+        return True
+    await log_event(
+        db,
+        "purchase_po_reference_not_required",
+        invoice_id=invoice.id,
+        detail={
+            "po_number": po_number,
+            "match_mode": match_mode,
+            "document_type_code": (invoice.document_type_code or "").strip().upper() or None,
+        },
+    )
+    return False
+
+
 async def sync_purchase_document(
     db: AsyncSession,
     invoice: Invoice,
@@ -436,9 +473,13 @@ async def sync_purchase_document(
     if doc_type == PurchaseDocumentType.INVOICE.value:
         if not po_number:
             return None
+        if not await _commercial_invoice_requires_po_sync(db, invoice, po_number=po_number):
+            return None
         return await _sync_commercial_invoice(db, invoice, po_number)
 
     if not po_number:
+        return None
+    if not await _commercial_invoice_requires_po_sync(db, invoice, po_number=po_number):
         return None
     return await _sync_commercial_invoice(db, invoice, po_number)
 

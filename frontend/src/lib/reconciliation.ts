@@ -16,6 +16,7 @@ export type ReconInvoiceRow = {
   id: string;
   vendor: string;
   total: number;
+  currency: string;
   postings: ReconPosting[];
 };
 
@@ -25,6 +26,11 @@ export type ReconDay = {
   sumDr: number;
   sumCr: number;
   delta: number;
+  hasMixedCurrencies: boolean;
+  currencies: string[];
+  totalsByCurrency: Record<string, number>;
+  drByCurrency: Record<string, number>;
+  crByCurrency: Record<string, number>;
   invoices: ReconInvoiceRow[];
 };
 
@@ -34,6 +40,10 @@ export type ReconSummary = {
   sumCr: number;
   deltaDrCr: number;
   balanced: boolean;
+  hasMixedCurrencies: boolean;
+  totalsByCurrency: Record<string, number>;
+  drByCurrency: Record<string, number>;
+  crByCurrency: Record<string, number>;
   byDate: ReconDay[];
 };
 
@@ -158,6 +168,26 @@ function toNum(v: string | number | null | undefined): number {
   return Number.isNaN(n) ? 0 : n;
 }
 
+function mapCurrencyTotals(
+  raw: Record<string, string | number> | null | undefined
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!raw) return out;
+  for (const [code, amount] of Object.entries(raw)) {
+    out[code] = toNum(amount);
+  }
+  return out;
+}
+
+function accumulateCurrencyMap(
+  target: Record<string, number>,
+  source: Record<string, number>
+): void {
+  for (const [code, amount] of Object.entries(source)) {
+    target[code] = roundMoney((target[code] ?? 0) + amount);
+  }
+}
+
 /** v3 line-level rule match (PO → vendor → keyword on description → fallback). */
 export function mapLineAccount(
   invoice: MockSampleInvoice,
@@ -237,6 +267,7 @@ export function buildReconciliationFromApiInvoices(
       vendor: inv.vendor ?? "—",
       invoice_date: inv.invoice_date!,
       total: toNum(inv.total),
+      currency: (inv.currency || "").trim().toUpperCase(),
       postings: journalToPostings(inv.journal_entries),
     }));
   return buildReconciliation(rows);
@@ -249,10 +280,16 @@ export function mapReconciliationOverview(data: ReconciliationOverview): ReconSu
     sumDr: toNum(day.sum_dr),
     sumCr: toNum(day.sum_cr),
     delta: toNum(day.delta),
+    hasMixedCurrencies: Boolean(day.has_mixed_currencies),
+    currencies: day.currencies ?? [],
+    totalsByCurrency: mapCurrencyTotals(day.totals_by_currency),
+    drByCurrency: mapCurrencyTotals(day.dr_by_currency),
+    crByCurrency: mapCurrencyTotals(day.cr_by_currency),
     invoices: day.invoices.map((inv) => ({
       id: inv.id,
       vendor: inv.vendor,
       total: toNum(inv.total),
+      currency: (inv.currency || "").trim().toUpperCase(),
       postings: inv.postings.map((p) => ({
         account: p.account,
         debit: toNum(p.debit),
@@ -267,6 +304,10 @@ export function mapReconciliationOverview(data: ReconciliationOverview): ReconSu
     sumCr: toNum(data.sum_cr),
     deltaDrCr: toNum(data.delta_dr_cr),
     balanced: data.balanced,
+    hasMixedCurrencies: Boolean(data.has_mixed_currencies),
+    totalsByCurrency: mapCurrencyTotals(data.totals_by_currency),
+    drByCurrency: mapCurrencyTotals(data.dr_by_currency),
+    crByCurrency: mapCurrencyTotals(data.cr_by_currency),
     byDate,
   };
 }
@@ -276,6 +317,7 @@ type ReconSourceRow = {
   vendor: string;
   invoice_date: string;
   total: number;
+  currency?: string;
   postings: ReconPosting[];
 };
 
@@ -283,15 +325,22 @@ export function buildReconciliation(rows: ReconSourceRow[]): ReconSummary {
   let sumTotals = 0;
   let sumDr = 0;
   let sumCr = 0;
+  const totalsByCurrency: Record<string, number> = {};
+  const drByCurrency: Record<string, number> = {};
+  const crByCurrency: Record<string, number> = {};
   const byDateMap = new Map<string, ReconDay>();
 
   for (const row of rows) {
+    const currency = (row.currency || "").trim().toUpperCase() || "UNKNOWN";
     const rowDr = roundMoney(row.postings.reduce((s, p) => s + p.debit, 0));
     const rowCr = roundMoney(row.postings.reduce((s, p) => s + p.credit, 0));
 
     sumTotals = roundMoney(sumTotals + row.total);
     sumDr = roundMoney(sumDr + rowDr);
     sumCr = roundMoney(sumCr + rowCr);
+    totalsByCurrency[currency] = roundMoney((totalsByCurrency[currency] ?? 0) + row.total);
+    drByCurrency[currency] = roundMoney((drByCurrency[currency] ?? 0) + rowDr);
+    crByCurrency[currency] = roundMoney((crByCurrency[currency] ?? 0) + rowCr);
 
     const date = row.invoice_date;
     if (!byDateMap.has(date)) {
@@ -301,6 +350,11 @@ export function buildReconciliation(rows: ReconSourceRow[]): ReconSummary {
         sumDr: 0,
         sumCr: 0,
         delta: 0,
+        hasMixedCurrencies: false,
+        currencies: [],
+        totalsByCurrency: {},
+        drByCurrency: {},
+        crByCurrency: {},
         invoices: [],
       });
     }
@@ -309,25 +363,51 @@ export function buildReconciliation(rows: ReconSourceRow[]): ReconSummary {
     day.sumDr = roundMoney(day.sumDr + rowDr);
     day.sumCr = roundMoney(day.sumCr + rowCr);
     day.delta = roundMoney(day.sumDr - day.sumCr);
+    day.totalsByCurrency[currency] = roundMoney(
+      (day.totalsByCurrency[currency] ?? 0) + row.total
+    );
+    day.drByCurrency[currency] = roundMoney((day.drByCurrency[currency] ?? 0) + rowDr);
+    day.crByCurrency[currency] = roundMoney((day.crByCurrency[currency] ?? 0) + rowCr);
     day.invoices.push({
       id: row.id,
       vendor: row.vendor,
       total: row.total,
+      currency: currency === "UNKNOWN" ? "" : currency,
       postings: row.postings,
     });
   }
 
-  const byDate = Array.from(byDateMap.values()).sort((a, b) =>
-    a.date.localeCompare(b.date)
-  );
+  const byDate = Array.from(byDateMap.values())
+    .map((day) => {
+      const codes = Object.keys(day.drByCurrency);
+      const mixed = codes.length > 1;
+      return {
+        ...day,
+        hasMixedCurrencies: mixed,
+        currencies: codes.filter((c) => c !== "UNKNOWN"),
+        sumDr: mixed ? 0 : day.sumDr,
+        sumCr: mixed ? 0 : day.sumCr,
+        delta: mixed ? 0 : day.delta,
+      };
+    })
+    .sort((a, b) => a.date.localeCompare(b.date));
 
+  const currencyCodes = Object.keys(drByCurrency);
+  const hasMixedCurrencies = currencyCodes.length > 1;
   const deltaDrCr = roundMoney(sumDr - sumCr);
+  const balanced = currencyCodes.every(
+    (code) => roundMoney(drByCurrency[code] ?? 0) === roundMoney(crByCurrency[code] ?? 0)
+  );
   return {
     sumTotals,
-    sumDr,
-    sumCr,
-    deltaDrCr,
-    balanced: deltaDrCr === 0,
+    sumDr: hasMixedCurrencies ? 0 : sumDr,
+    sumCr: hasMixedCurrencies ? 0 : sumCr,
+    deltaDrCr: hasMixedCurrencies ? 0 : deltaDrCr,
+    balanced,
+    hasMixedCurrencies,
+    totalsByCurrency,
+    drByCurrency,
+    crByCurrency,
     byDate,
   };
 }
@@ -457,20 +537,37 @@ export function filterReconciliationByMonth(recon: ReconSummary, month: string):
   let sumTotals = 0;
   let sumDr = 0;
   let sumCr = 0;
+  const totalsByCurrency: Record<string, number> = {};
+  const drByCurrency: Record<string, number> = {};
+  const crByCurrency: Record<string, number> = {};
   for (const day of byDate) {
-    sumDr = roundMoney(sumDr + day.sumDr);
-    sumCr = roundMoney(sumCr + day.sumCr);
+    accumulateCurrencyMap(totalsByCurrency, day.totalsByCurrency);
+    accumulateCurrencyMap(drByCurrency, day.drByCurrency);
+    accumulateCurrencyMap(crByCurrency, day.crByCurrency);
+    if (!day.hasMixedCurrencies) {
+      sumDr = roundMoney(sumDr + day.sumDr);
+      sumCr = roundMoney(sumCr + day.sumCr);
+    }
     for (const inv of day.invoices) {
       sumTotals = roundMoney(sumTotals + inv.total);
     }
   }
+  const currencyCodes = Object.keys(drByCurrency);
+  const hasMixedCurrencies = currencyCodes.length > 1;
   const deltaDrCr = roundMoney(sumDr - sumCr);
+  const balanced = currencyCodes.every(
+    (code) => roundMoney(drByCurrency[code] ?? 0) === roundMoney(crByCurrency[code] ?? 0)
+  );
   return {
     sumTotals,
-    sumDr,
-    sumCr,
-    deltaDrCr,
-    balanced: deltaDrCr === 0,
+    sumDr: hasMixedCurrencies ? 0 : sumDr,
+    sumCr: hasMixedCurrencies ? 0 : sumCr,
+    deltaDrCr: hasMixedCurrencies ? 0 : deltaDrCr,
+    balanced,
+    hasMixedCurrencies,
+    totalsByCurrency,
+    drByCurrency,
+    crByCurrency,
     byDate,
   };
 }

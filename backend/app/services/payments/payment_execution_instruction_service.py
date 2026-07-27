@@ -385,6 +385,29 @@ async def mark_payment_paid_manual(
     payment.payment_intent = reference
     payment.paid_date = datetime.combine(body.paid_date, datetime.min.time(), tzinfo=timezone.utc)
 
+    from decimal import Decimal
+
+    from app.services.payments.journal_fx import resolve_payment_fx, round_money
+    from app.models.tenant import Tenant
+    from app.tenant_settings import tenant_currency
+
+    if body.bank_payment_amount is not None:
+        payment.bank_payment_amount = round_money(Decimal(str(body.bank_payment_amount)))
+    if body.payment_fx_rate is not None:
+        payment.payment_fx_rate = Decimal(str(body.payment_fx_rate))
+
+    tenant = await db.get(Tenant, tenant_id)
+    base_currency = tenant_currency(tenant)
+    rate, bank_amt, variance, _source = resolve_payment_fx(
+        payment, base_currency=base_currency
+    )
+    if rate is not None and payment.payment_fx_rate is None:
+        payment.payment_fx_rate = rate
+    if bank_amt is not None and payment.bank_payment_amount is None:
+        payment.bank_payment_amount = bank_amt
+    if variance is not None:
+        payment.fx_variance = variance
+
     instruction.proof_reference = proof_reference
     instruction.marked_paid_at = datetime.now(timezone.utc)
     actor_user_id = actor.get("user_id")

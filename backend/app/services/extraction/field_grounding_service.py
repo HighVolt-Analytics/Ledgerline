@@ -347,12 +347,9 @@ def _date_grounded_in_ocr(value: date | None, ocr_text: str | None) -> bool:
         return True
     if not ocr_text:
         return False
-    formats = _NUMERIC_FORMATS_DMY + _NUMERIC_FORMATS_MDY + _NAME_FORMATS
-    for fmt in formats:
-        try:
-            token = value.strftime(fmt)
-        except ValueError:
-            continue
+    from app.services.shared.flexible_date import date_ocr_match_tokens
+
+    for token in date_ocr_match_tokens(value):
         if value_grounded_in_ocr(token, ocr_text):
             return True
     return False

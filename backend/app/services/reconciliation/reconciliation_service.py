@@ -10,6 +10,7 @@ from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import EntryType, JournalEntry
 from app.models.reconciliation import DailyReconciliation
 from app.schemas.rule_book_config import RuleBookConfigPayload
+from app.services.invoice.invoice_accrual_date import effective_invoice_recon_date
 from app.services.invoice.invoice_amounts import invoice_payable_total
 from app.services.rule_book.rule_book_mapper import (
     ROUTE_SALES,
@@ -139,7 +140,8 @@ def _include_current_invoice(
 ) -> Decimal:
     if current_invoice is None:
         return Decimal("0")
-    if current_invoice.invoice_date != recon_date:
+    accrual_date = effective_invoice_recon_date(current_invoice)
+    if accrual_date is None or accrual_date != recon_date:
         return Decimal("0")
     if _is_sales_route(current_invoice) != sales:
         return Decimal("0")
@@ -187,8 +189,9 @@ async def reconcile_daily(
     sales_sum += _include_current_invoice(current_invoice, recon_date, sales=True)
 
     total_invoices = purchase_count + sales_count
-    if current_invoice is not None and current_invoice.invoice_date == recon_date:
-        if exclude_id is not None:
+    if current_invoice is not None:
+        accrual_date = effective_invoice_recon_date(current_invoice)
+        if accrual_date is not None and accrual_date == recon_date and exclude_id is not None:
             total_invoices += 1
 
     countable_journal = _countable_journal_filter(

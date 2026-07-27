@@ -189,6 +189,11 @@ def payment_to_response(
         execution_readiness_status=execution_readiness_status,
         execution_blocking_reason=execution_blocking_reason,
         execution_instruction=execution_instruction,
+        payment_fx_rate=float(row.payment_fx_rate) if row.payment_fx_rate is not None else None,
+        bank_payment_amount=(
+            float(row.bank_payment_amount) if row.bank_payment_amount is not None else None
+        ),
+        fx_variance=float(row.fx_variance) if row.fx_variance is not None else None,
     )
 
 
@@ -221,6 +226,9 @@ async def ensure_payment_for_invoice(db: AsyncSession, invoice: Invoice) -> Paym
     if existing:
         if existing.amount != invoice.total:
             existing.amount = invoice.total
+        invoice_currency = (invoice.currency or "").strip().upper()
+        if invoice_currency and existing.currency != invoice_currency:
+            existing.currency = invoice_currency
         if not existing.vendor:
             existing.vendor = invoice.vendor
         if not existing.due_date:
@@ -235,7 +243,7 @@ async def ensure_payment_for_invoice(db: AsyncSession, invoice: Invoice) -> Paym
         vendor_registry_id=vendor_registry_id,
         vendor=invoice.vendor,
         amount=invoice.total,
-        currency=invoice.currency or "",
+        currency=(invoice.currency or "").strip().upper(),
         due_date=invoice.due_date,
         status=PaymentStatus.QUEUE,
         approvers=_payment_tier_approvers(invoice.total),

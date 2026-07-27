@@ -123,12 +123,19 @@ async def post_payment_settlement_journal(
     if payment.vendor_registry_id is None and vendor_reg_id is not None:
         payment.vendor_registry_id = vendor_reg_id
 
+    from app.models.tenant import Tenant
+    from app.tenant_settings import tenant_currency
+
+    tenant = await session.get(Tenant, payment.tenant_id)
+    base_currency = tenant_currency(tenant)
+
     lines = generate_payment_settlement_entries(
         payment,
         invoice,
         config,
         control_mapping=control_mapping,
         vendor_registry_id=vendor_reg_id,
+        base_currency=base_currency,
     )
     if not is_balanced(lines):
         await log_event(
@@ -145,6 +152,7 @@ async def post_payment_settlement_journal(
         lines,
         entry_kind=JournalEntryKind.PAYMENT_SETTLEMENT,
         payment_id=payment.id,
+        base_currency=base_currency,
     )
     await log_event(
         session,
@@ -210,12 +218,19 @@ async def post_collection_settlement_journal(
     if collection.customer_registry_id is None and customer_reg_id is not None:
         collection.customer_registry_id = customer_reg_id
 
+    from app.models.tenant import Tenant
+    from app.tenant_settings import tenant_currency
+
+    tenant = await session.get(Tenant, collection.tenant_id)
+    base_currency = tenant_currency(tenant)
+
     lines = generate_collection_settlement_entries(
         collection,
         invoice,
         config,
         control_mapping=control_mapping,
         customer_registry_id=customer_reg_id,
+        base_currency=base_currency,
     )
     if not is_balanced(lines):
         await log_event(
@@ -236,6 +251,7 @@ async def post_collection_settlement_journal(
         lines,
         entry_kind=JournalEntryKind.COLLECTION_SETTLEMENT,
         collection_id=collection.id,
+        base_currency=base_currency,
     )
     await log_event(
         session,
