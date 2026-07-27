@@ -9,11 +9,11 @@ import type {
   XeroExportHistoryRow,
   XeroExportLedgerRow,
   XeroExportQueueItem,
-  XeroMappingRow,
   XeroMasterTotals,
   XeroSyncHistoryRow,
   XeroTaxRateRow,
 } from "@/api/types";
+import { XeroMappingWorkspace } from "@/components/integrations/XeroMappingWorkspace";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
@@ -59,7 +59,6 @@ export function XeroEvidencePanel({ enabled }: { enabled: boolean }) {
   const [accounts, setAccounts] = useState<XeroAccountRow[]>([]);
   const [taxRates, setTaxRates] = useState<XeroTaxRateRow[]>([]);
   const [contacts, setContacts] = useState<XeroContactRow[]>([]);
-  const [mappings, setMappings] = useState<XeroMappingRow[]>([]);
   const [queue, setQueue] = useState<XeroExportQueueItem[]>([]);
   const [ledger, setLedger] = useState<XeroExportLedgerRow[]>([]);
   const [syncHistory, setSyncHistory] = useState<XeroSyncHistoryRow[]>([]);
@@ -67,15 +66,12 @@ export function XeroEvidencePanel({ enabled }: { enabled: boolean }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
-  const [glDraft, setGlDraft] = useState({ source_key: "", external_code: "" });
-  const [taxDraft, setTaxDraft] = useState({ source_key: "", external_code: "" });
 
   useResetOnTenantChange(() => {
     setTotals(null);
     setAccounts([]);
     setTaxRates([]);
     setContacts([]);
-    setMappings([]);
     setQueue([]);
     setLedger([]);
     setSyncHistory([]);
@@ -88,12 +84,11 @@ export function XeroEvidencePanel({ enabled }: { enabled: boolean }) {
     const scope = captureTenantFetchScope();
     setLoading(true);
     try {
-      const [t, a, tr, c, m, q, led, sh, eh] = await Promise.all([
+      const [t, a, tr, c, q, led, sh, eh] = await Promise.all([
         api.getXeroMasterTotals(),
         api.getXeroAccounts({ limit: 50 }),
         api.getXeroTaxRates({ limit: 50 }),
         api.getXeroContactsList({ limit: 50 }),
-        api.getXeroMappings(),
         api.getXeroExportQueue({ limit: 25 }),
         api.getXeroExportLedger({ limit: 25 }),
         api.getXeroSyncHistory({ limit: 25 }),
@@ -104,7 +99,6 @@ export function XeroEvidencePanel({ enabled }: { enabled: boolean }) {
       setAccounts(a.items);
       setTaxRates(tr.items);
       setContacts(c.items);
-      setMappings(m.items);
       setQueue(q.items);
       setLedger(led.items);
       setSyncHistory(sh.items);
@@ -121,21 +115,6 @@ export function XeroEvidencePanel({ enabled }: { enabled: boolean }) {
   useEffect(() => {
     void reload();
   }, [reload]);
-
-  async function saveMapping(draft: {
-    mapping_type: string;
-    source_key: string;
-    external_code?: string;
-    external_id?: string;
-  }) {
-    setError(null);
-    try {
-      await api.putXeroMappings([draft]);
-      await reload();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save mapping");
-    }
-  }
 
   async function exportInvoice(invoiceId: number) {
     setBusyId(invoiceId);
@@ -299,79 +278,7 @@ export function XeroEvidencePanel({ enabled }: { enabled: boolean }) {
       )}
 
       {tab === "mappings" && (
-        <div className="space-y-4 text-xs" data-testid="xero-mappings-panel">
-          <div className="rounded-md border border-border p-3 space-y-2">
-            <p className="font-medium">LedgerLink GL → Xero AccountCode</p>
-            <div className="flex flex-wrap gap-2">
-              <input
-                className="border border-border rounded px-2 py-1 bg-background"
-                placeholder="QLL GL code"
-                value={glDraft.source_key}
-                onChange={(e) => setGlDraft((d) => ({ ...d, source_key: e.target.value }))}
-                data-testid="mapping-gl-source"
-              />
-              <input
-                className="border border-border rounded px-2 py-1 bg-background"
-                placeholder="Xero AccountCode"
-                value={glDraft.external_code}
-                onChange={(e) => setGlDraft((d) => ({ ...d, external_code: e.target.value }))}
-                data-testid="mapping-gl-external"
-              />
-              <Button
-                size="sm"
-                onClick={() =>
-                  void saveMapping({
-                    mapping_type: "gl_account",
-                    source_key: glDraft.source_key,
-                    external_code: glDraft.external_code,
-                  })
-                }
-              >
-                Save GL mapping
-              </Button>
-            </div>
-          </div>
-          <div className="rounded-md border border-border p-3 space-y-2">
-            <p className="font-medium">LedgerLink tax → Xero TaxType</p>
-            <div className="flex flex-wrap gap-2">
-              <input
-                className="border border-border rounded px-2 py-1 bg-background"
-                placeholder="e.g. GST:10"
-                value={taxDraft.source_key}
-                onChange={(e) => setTaxDraft((d) => ({ ...d, source_key: e.target.value }))}
-              />
-              <input
-                className="border border-border rounded px-2 py-1 bg-background"
-                placeholder="Xero TaxType"
-                value={taxDraft.external_code}
-                onChange={(e) => setTaxDraft((d) => ({ ...d, external_code: e.target.value }))}
-              />
-              <Button
-                size="sm"
-                onClick={() =>
-                  void saveMapping({
-                    mapping_type: "tax_code",
-                    source_key: taxDraft.source_key,
-                    external_code: taxDraft.external_code,
-                  })
-                }
-              >
-                Save tax mapping
-              </Button>
-            </div>
-          </div>
-          <ul className="space-y-2 max-h-56 overflow-auto">
-            {mappings.length === 0 && (
-              <li className="text-muted-foreground">No mappings saved. Export stays blocked until required mappings exist.</li>
-            )}
-            {mappings.map((row) => (
-              <li key={`${row.mapping_type}:${row.source_key}`} className="border border-border rounded px-3 py-2">
-                <span className="font-medium">{row.mapping_type}</span> · {row.source_key} →{" "}
-                {row.external_code || row.external_id || "—"}
-              </li>
-            ))}
-          </ul>
-        </div>
+        <XeroMappingWorkspace enabled={enabled} onMappingsSaved={reload} />
       )}
 
       {tab === "export_queue" && (

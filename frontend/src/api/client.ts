@@ -30,6 +30,7 @@ import type {
   XeroMasterTotals,
   XeroMasterListMeta,
   XeroMappingRow,
+  XeroTrackingCategoryRow,
   XeroExportLedgerRow,
   XeroExportQueueItem,
   AuthUser,
@@ -939,6 +940,70 @@ export const api = {
     const q = qs.toString();
     return request<XeroMasterListMeta & { items: XeroContactRow[] }>(
       `/api/integrations/xero/contacts${q ? `?${q}` : ""}`
+    );
+  },
+  getXeroReferenceAccounts: (params?: {
+    search?: string;
+    status?: string;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.search) qs.set("search", params.search);
+    if (params?.status) qs.set("status", params.status);
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    if (params?.offset != null) qs.set("offset", String(params.offset));
+    const q = qs.toString();
+    return request<XeroMasterListMeta & { items: XeroAccountRow[] }>(
+      `/api/integrations/xero/reference/accounts${q ? `?${q}` : ""}`
+    );
+  },
+  getXeroReferenceTaxRates: (params?: {
+    search?: string;
+    status?: string;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.search) qs.set("search", params.search);
+    if (params?.status) qs.set("status", params.status);
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    if (params?.offset != null) qs.set("offset", String(params.offset));
+    const q = qs.toString();
+    return request<XeroMasterListMeta & { items: XeroTaxRateRow[] }>(
+      `/api/integrations/xero/reference/tax-rates${q ? `?${q}` : ""}`
+    );
+  },
+  getXeroReferenceContacts: (params?: {
+    search?: string;
+    status?: string;
+    mapping_status?: string;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.search) qs.set("search", params.search);
+    if (params?.status) qs.set("status", params.status);
+    if (params?.mapping_status) qs.set("mapping_status", params.mapping_status);
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    if (params?.offset != null) qs.set("offset", String(params.offset));
+    const q = qs.toString();
+    return request<XeroMasterListMeta & { items: XeroContactRow[] }>(
+      `/api/integrations/xero/reference/contacts${q ? `?${q}` : ""}`
+    );
+  },
+  getXeroReferenceTrackingCategories: (params?: {
+    search?: string;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.search) qs.set("search", params.search);
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    if (params?.offset != null) qs.set("offset", String(params.offset));
+    const q = qs.toString();
+    return request<{ items: XeroTrackingCategoryRow[]; total: number }>(
+      `/api/integrations/xero/reference/tracking-categories${q ? `?${q}` : ""}`
     );
   },
   getXeroSyncHistory: (params?: { limit?: number; offset?: number }) => {
