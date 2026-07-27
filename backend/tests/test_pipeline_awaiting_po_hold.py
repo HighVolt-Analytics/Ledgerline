@@ -179,3 +179,27 @@ async def test_stop_if_not_processed_for_publish(
 
     invoice.status = InvoiceStatus.PROCESSED
     assert await _stop_if_not_processed_for_publish(db_session, invoice) is False
+
+
+@pytest.mark.asyncio
+async def test_stale_awaiting_po_cleared_when_dt_match_does_not_require_po(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    invoice = _invoice(evaluation_status=EVAL_AWAITING_PO)
+    invoice.document_type_code = "DT-01"
+    monkeypatch.setattr(
+        "app.services.invoice.pipeline._dt_match_mode_requires_po",
+        AsyncMock(return_value=False),
+    )
+
+    halted = await _halt_or_bypass_purchase_awaiting_po(
+        db_session,
+        invoice,
+        bypass_review_gates=False,
+        playbook_bypasses_po_hold=False,
+    )
+
+    assert halted is False
+    assert invoice.status == InvoiceStatus.PROCESSED
+    assert invoice.evaluation_status == EVAL_AUTO_CODED

@@ -151,6 +151,10 @@ from app.services.master_data.journal_counterparty_resolver import (
 )
 from app.services.shared.notifier import send_notification
 from app.services.reconciliation.reconciliation_service import reconcile_daily, save_reconciliation
+from app.services.invoice.invoice_accrual_date import (
+    effective_invoice_recon_date,
+    halt_if_missing_accrual_date,
+)
 from app.services.reconciliation.stranded_journal_remediation import (
     purge_accrual_journals_for_invoice,
 )
@@ -291,6 +295,27 @@ async def _clear_purchase_awaiting_po_if_overridden(
     await session.flush()
 
 
+async def _dt_match_mode_requires_po(session: AsyncSession, invoice: Invoice) -> bool:
+    """Whether the invoice document type's match policy requires PO linkage."""
+    from app.services.classification.document_type_match_service import resolve_match_mode
+    from app.services.classification.document_type_playbook_profile_service import (
+        match_mode_requires_po,
+    )
+    from app.services.rule_book.rule_book_mapper import load_classification_config
+
+    code = (invoice.document_type_code or "").strip()
+    if not code:
+        # Conservative default matches resolve_match_mode (three_way_po_grn).
+        return True
+    config = await load_classification_config(session, invoice.tenant_id)
+    match_mode = resolve_match_mode(
+        document_type_code=code,
+        document_types=list(config.document_types),
+        tenant_id=invoice.tenant_id,
+    )
+    return match_mode_requires_po(match_mode)
+
+
 async def _halt_or_bypass_purchase_awaiting_po(
     session: AsyncSession,
     invoice: Invoice,
@@ -316,8 +341,10 @@ async def _halt_or_bypass_purchase_awaiting_po(
     missing_po_exception = invoice.status == InvoiceStatus.EXCEPTION
     if not awaiting and not missing_po_exception:
         return False
-    if bypass_review_gates or playbook_bypasses_po_hold:
-        if playbook_bypasses_po_hold and not bypass_review_gates:
+    # Non-PO DTs must never stay on awaiting_po (stale hold / older sync path).
+    match_requires_po = await _dt_match_mode_requires_po(session, invoice)
+    if bypass_review_gates or playbook_bypasses_po_hold or not match_requires_po:
+        if playbook_bypasses_po_hold and not bypass_review_gates and match_requires_po:
             await _log_processing_override_skip(session, invoice, "playbook")
         invoice.evaluation_status = EVAL_AUTO_CODED
         # Missing-PO sync flips status to EXCEPTION; restore PROCESSED so
@@ -1540,6 +1567,8 @@ async def resume_invoice_posting_pipeline(
 
     invoice.status = InvoiceStatus.JOURNALING
     await session.flush()
+    if await halt_if_missing_accrual_date(session, invoice):
+        return
     existing_entries = (
         await session.execute(
             select(JournalEntry).where(
@@ -1569,6 +1598,10 @@ async def resume_invoice_posting_pipeline(
         vendor_registry_id=vendor_reg_id,
         customer_registry_id=customer_reg_id,
     )
+    from app.tenant_settings import tenant_currency
+
+    tenant = await session.get(Tenant, invoice.tenant_id)
+    base_currency = tenant_currency(tenant)
     journal_lines = generate_entries(
         invoice,
         mapping,
@@ -1577,6 +1610,7 @@ async def resume_invoice_posting_pipeline(
         vendor_registry_id=vendor_reg_id,
         customer_registry_id=customer_reg_id,
         control_mapping=control_mapping,
+        base_currency=base_currency,
     )
     if not is_balanced(journal_lines):
         invoice.status = InvoiceStatus.EXCEPTION
@@ -1611,11 +1645,16 @@ async def resume_invoice_posting_pipeline(
         )
         send_notification(invoice, InvoiceStatus.EXCEPTION)
         return
-    persist_journal_lines(session, invoice, journal_lines)
+    persist_journal_lines(
+        session, invoice, journal_lines, base_currency=base_currency
+    )
 
     invoice.status = InvoiceStatus.RECONCILING
     await session.flush()
-    recon_date = invoice.invoice_date or date.today()
+    recon_date = effective_invoice_recon_date(invoice)
+    if recon_date is None:
+        await halt_if_missing_accrual_date(session, invoice)
+        return
     recon = await reconcile_daily(
         session,
         recon_date,
@@ -3456,6 +3495,8 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
 
     invoice.status = InvoiceStatus.JOURNALING
     await session.flush()
+    if await halt_if_missing_accrual_date(session, invoice):
+        return
     existing_entries = (
         await session.execute(
             select(JournalEntry).where(
@@ -3485,6 +3526,10 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         vendor_registry_id=vendor_reg_id,
         customer_registry_id=customer_reg_id,
     )
+    from app.tenant_settings import tenant_currency
+
+    tenant = await session.get(Tenant, invoice.tenant_id)
+    base_currency = tenant_currency(tenant)
     journal_lines = generate_entries(
         invoice,
         mapping,
@@ -3493,6 +3538,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         vendor_registry_id=vendor_reg_id,
         customer_registry_id=customer_reg_id,
         control_mapping=control_mapping,
+        base_currency=base_currency,
     )
     if not is_balanced(journal_lines):
         invoice.status = InvoiceStatus.EXCEPTION
@@ -3525,11 +3571,16 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         )
         send_notification(invoice, InvoiceStatus.EXCEPTION)
         return
-    persist_journal_lines(session, invoice, journal_lines)
+    persist_journal_lines(
+        session, invoice, journal_lines, base_currency=base_currency
+    )
 
     invoice.status = InvoiceStatus.RECONCILING
     await session.flush()
-    recon_date = invoice.invoice_date or date.today()
+    recon_date = effective_invoice_recon_date(invoice)
+    if recon_date is None:
+        await halt_if_missing_accrual_date(session, invoice)
+        return
     recon = await reconcile_daily(
         session,
         recon_date,

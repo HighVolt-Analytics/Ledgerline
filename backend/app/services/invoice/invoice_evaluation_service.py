@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.invoice import Invoice
+from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.rule_book_config import RuleBookConfigPayload
 from app.services.master_data.master_data_service import (
     classification_config_with_db_masters,
@@ -281,6 +281,13 @@ def evaluate_invoice_routing(
         and vendor_match.vendor.default_ledger.strip()
     ) or (known_master and known_master.default_ledger.strip()):
         evaluation_status = EVAL_AUTO_CODED
+    elif mapping_rule_type:
+        # Deterministic Rule Book GL mapping (e.g. Document type → account) is
+        # enough coding confidence — same policy as pipeline
+        # ``_mark_deterministic_mapping_auto_coded``. Without this, remap /
+        # re-evaluate flips posted DT-coded invoices back to needs_review
+        # whenever the vendor is not on the master with a default ledger.
+        evaluation_status = EVAL_AUTO_CODED
     else:
         evaluation_status = EVAL_NEEDS_REVIEW
 
@@ -351,6 +358,10 @@ async def apply_invoice_evaluation(
         code = (invoice.document_type_code or "").strip().upper()
         if code:
             invoice.evaluation_status = None
+    # Capture before re-evaluate: remap / reclassify must not reopen coding review
+    # on an already-posted invoice (staging: auto_coded → needs_review after remap).
+    prior_eval = (invoice.evaluation_status or "").strip()
+    prior_invoice_status = invoice.status
     if config is None:
         config = await load_classification_config(session, invoice.tenant_id)
     config = await classification_config_with_db_masters(session, invoice.tenant_id, config)
@@ -397,6 +408,20 @@ async def apply_invoice_evaluation(
         )
 
     apply_evaluation_to_invoice(invoice, result)
+
+    if (
+        prior_invoice_status == InvoiceStatus.PROCESSED
+        and (invoice.evaluation_status or "").strip() == EVAL_NEEDS_REVIEW
+        and prior_eval
+        and prior_eval != EVAL_NEEDS_REVIEW
+    ):
+        invoice.evaluation_status = prior_eval
+        result = InvoiceEvaluationResult(
+            route_target=result.route_target,
+            matched_rule_ids=result.matched_rule_ids,
+            vendor_confidence=result.vendor_confidence,
+            evaluation_status=prior_eval,
+        )
 
     if result.evaluation_status == EVAL_PENDING_VENDOR:
         from app.services.master_data.vendor_hold_service import purchase_invoice_trusts_po_register

@@ -228,6 +228,55 @@ def test_enrich_sets_invoice_no_and_permit_other_ref() -> None:
     assert "other_reference" in detail["filled"]
 
 
+def test_ground_recovers_invoice_date_from_labeled_text() -> None:
+    from decimal import Decimal
+
+    from app.services.invoice.vision_header_extract import VisionHeaderExtractResult
+    from app.services.invoice.vision_header_reconcile import ground_vision_header_result
+
+    text = (
+        "COMMERCIAL INVOICE\n"
+        "RYANS COMPUTERS LIMITED\n"
+        "Invoice Date: 4/9/2025\n"
+        "Total USD 34410.95\n"
+        + ("padding " * 20)
+    )
+    result = VisionHeaderExtractResult(
+        success=True,
+        document_heading="COMMERCIAL INVOICE",
+        counterparty_name="RYANS COMPUTERS LIMITED",
+        invoice_no="250970286",
+        invoice_date=date(2099, 1, 1),
+        total=Decimal("34410.95"),
+        currency="USD",
+        confidence=0.9,
+        provider="test",
+    )
+    grounded, detail = ground_vision_header_result(result, text)
+    assert grounded.invoice_date == date(2025, 9, 4)
+    assert "invoice_date" in detail["recovered"]
+
+
+def test_enrich_fills_missing_invoice_date_from_text() -> None:
+    from app.services.invoice.vision_header_extract import VisionHeaderExtractResult
+    from app.services.invoice.vision_header_reconcile import enrich_vision_header_refs_from_text
+
+    text = (
+        "COMMERCIAL INVOICE\n"
+        "Date of issue: 15/03/2026\n"
+        + ("padding " * 20)
+    )
+    result = VisionHeaderExtractResult(
+        success=True,
+        document_heading="COMMERCIAL INVOICE",
+        confidence=0.8,
+        provider="test",
+    )
+    enriched, detail = enrich_vision_header_refs_from_text(result, text)
+    assert enriched.invoice_date == date(2026, 3, 15)
+    assert "invoice_date" in detail["filled"]
+
+
 def test_enrich_permit_only_leaves_invoice_no_empty() -> None:
     from app.services.invoice.vision_header_extract import VisionHeaderExtractResult
     from app.services.invoice.vision_header_reconcile import (
@@ -528,6 +577,64 @@ def test_amount_consistency_line_sum_mismatch_flags_review() -> None:
     assert updated.needs_review is True
     # Lines are not auto-rewritten
     assert len(updated.line_items) == 2
+
+
+def test_amount_consistency_line_sum_selects_total_clears_foreign_subtotal() -> None:
+    """Dual-currency: SGD taxable value as subtotal, USD total matches line sum."""
+    from app.services.invoice.invoice_data import ParsedLineItem
+    from app.services.invoice.vision_header_reconcile import (
+        apply_vision_header_amount_consistency,
+    )
+
+    result = VisionHeaderExtractResult(
+        success=True,
+        document_heading="COMMERCIAL INVOICE",
+        subtotal=Decimal("7712.47"),
+        gst=Decimal("0.00"),
+        total=Decimal("6031.00"),
+        currency="USD",
+        line_items=(
+            ParsedLineItem(description="Item A", amount=Decimal("3000.00"), source="vision_header"),
+            ParsedLineItem(description="Item B", amount=Decimal("3031.00"), source="vision_header"),
+        ),
+        confidence=0.9,
+        provider="claude_vision",
+    )
+    updated, detail = apply_vision_header_amount_consistency(result)
+    assert "line_sum_selected_total" in detail["flags"]
+    assert "subtotal" in detail["cleared"]
+    assert updated.subtotal is None
+    assert updated.total == Decimal("6031.00")
+    assert updated.gst == Decimal("0.00")
+    assert updated.amount_inconsistency is False
+    assert updated.line_items_amount_mismatch is False
+    assert updated.needs_review is False
+    assert detail["line_sum"] == "6031.00"
+
+
+def test_amount_consistency_line_sum_matches_neither_keeps_review() -> None:
+    from app.services.invoice.invoice_data import ParsedLineItem
+    from app.services.invoice.vision_header_reconcile import (
+        apply_vision_header_amount_consistency,
+    )
+
+    result = VisionHeaderExtractResult(
+        success=True,
+        subtotal=Decimal("7712.47"),
+        gst=Decimal("0.00"),
+        total=Decimal("6031.00"),
+        line_items=(
+            ParsedLineItem(description="A", amount=Decimal("100.00"), source="vision_header"),
+            ParsedLineItem(description="B", amount=Decimal("200.00"), source="vision_header"),
+        ),
+        confidence=0.9,
+        provider="claude_vision",
+    )
+    updated, detail = apply_vision_header_amount_consistency(result)
+    assert "line_sum_selected_total" not in detail["flags"]
+    assert updated.needs_review is True
+    assert updated.subtotal == Decimal("7712.47")
+    assert updated.total == Decimal("6031.00")
 
 
 def test_vision_header_should_review_on_amount_inconsistency() -> None:

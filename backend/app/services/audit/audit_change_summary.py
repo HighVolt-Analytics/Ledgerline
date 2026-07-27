@@ -485,6 +485,13 @@ def summarize_audit_change(
     if event == "purchase_awaiting_po":
         po_number = str(d.get("po_number") or "").strip()
         return f"Awaiting PO {po_number}" if po_number else "Purchase awaiting PO"
+    if event == "purchase_po_reference_not_required":
+        po_number = str(d.get("po_number") or "").strip()
+        return (
+            f"PO {po_number} noted — not required for document type"
+            if po_number
+            else "PO reference noted — not required for document type"
+        )
     if event == "vendor_registration_released":
         vendor = str(d.get("vendor") or "").strip()
         return f"Hold released for {vendor}" if vendor else "Vendor registration released"

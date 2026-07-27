@@ -303,7 +303,10 @@ export function UploadPage() {
 
   const filtered = useMemo(() => {
     if (evalFilter === "needs_review") {
-      return captured.filter((inv) => isNeedsReviewEvaluation(inv.evaluation_status));
+      return captured.filter(
+        (inv) =>
+          inv.status !== "processed" && isNeedsReviewEvaluation(inv.evaluation_status),
+      );
     }
     if (evalFilter === "possible_duplicate") {
       return captured.filter((inv) => inv.duplicate_review_suggested === true);

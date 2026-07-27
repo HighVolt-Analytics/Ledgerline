@@ -16,6 +16,7 @@ class LedgerExportRowResponse(BaseModel):
     credit: str
     amount: float
     status: str
+    currency: str = ""
 
 
 class LedgerLinkExports(BaseModel):

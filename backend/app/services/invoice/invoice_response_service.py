@@ -31,7 +31,6 @@ from app.services.shared.file_storage import (
     stored_file_available,
 )
 from app.services.invoice.invoice_evaluation_service import (
-    ROUTE_VAULT,
     load_config_for_tenant,
     parse_matched_rule_ids,
 )
@@ -177,9 +176,11 @@ def _inbox_display_fields(
     evaluation_status = parse_evaluation_status(inv.evaluation_status)
     if evaluation_status == EvaluationStatus.PENDING_VENDOR and vendor_confidence is None:
         vendor_confidence = 0.0
+    # PROCESSED ⇒ coding review is closed. Remap / stale rows may still store
+    # needs_review after a deterministic DT→GL post; never surface that as an
+    # open review hold (matches frontend effectiveEvaluationStatus).
     if (
         inv.status == InvoiceStatus.PROCESSED
-        and (inv.route_target or "").strip() == ROUTE_VAULT
         and evaluation_status == EvaluationStatus.NEEDS_REVIEW
     ):
         evaluation_status = EvaluationStatus.AUTO_CODED

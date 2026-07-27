@@ -1,5 +1,7 @@
 """Reset invoice rows for reprocess / approval."""
 
+from decimal import Decimal
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -335,6 +337,33 @@ async def clear_stale_not_understood_for_understood_path(
     }
 
 
+_AMOUNT_EPS = Decimal("0.05")
+
+
+def _money_restore_would_disagree(
+    inv: Invoice,
+    *,
+    attr: str,
+    prior: object,
+) -> bool:
+    """Skip stale restore when re-applying subtotal/gst would break header math."""
+    if attr not in {"subtotal", "gst"}:
+        return False
+    total = inv.total
+    if total is None:
+        return False
+    try:
+        restored = Decimal(str(prior))
+    except Exception:
+        return False
+    subtotal = restored if attr == "subtotal" else inv.subtotal
+    gst = restored if attr == "gst" else inv.gst
+    if subtotal is None:
+        return False
+    tax = gst if gst is not None else Decimal("0")
+    return (subtotal + tax - total).copy_abs() > _AMOUNT_EPS
+
+
 def restore_unrefilled_vision_stale_snapshot(
     inv: Invoice,
     stale_clear: dict[str, object] | None,
@@ -353,6 +382,8 @@ def restore_unrefilled_vision_stale_snapshot(
         for attr, prior in column_snapshot.items():
             if attr not in _RESTORABLE_INVOICE_COLUMNS:
                 continue
+            if _money_restore_would_disagree(inv, attr=attr, prior=prior):
+                continue
             if _column_empty(getattr(inv, attr, None)) and not _column_empty(prior):
                 setattr(inv, attr, prior)
                 restored_columns.append(str(attr))
@@ -364,6 +395,10 @@ def restore_unrefilled_vision_stale_snapshot(
         changed = False
         for key, prior in extracted_snapshot.items():
             if key not in _RESTORABLE_EXTRACTED_FIELD_KEYS:
+                continue
+            if key in {"subtotal", "gst"} and _money_restore_would_disagree(
+                inv, attr=key, prior=prior
+            ):
                 continue
             if _extracted_value_empty(fields.get(key)) and not _extracted_value_empty(prior):
                 fields[key] = prior

@@ -61,6 +61,21 @@ def resolve_invoice_amounts(invoice: Invoice) -> tuple[Decimal, Decimal, Decimal
     subtotal = invoice.subtotal
     total = invoice.total
 
+    if (
+        subtotal is not None
+        and total is not None
+        and (subtotal + gst - total).copy_abs() > _AMOUNT_EPS
+    ):
+        line_sub = _line_items_subtotal(invoice)
+        if line_sub is not None and (line_sub + gst - total).copy_abs() <= _AMOUNT_EPS:
+            subtotal = line_sub
+        elif invoice.gst is not None:
+            subtotal = max(total - gst, Decimal("0"))
+        elif line_sub is not None:
+            subtotal = line_sub
+        else:
+            subtotal = max(total - gst, Decimal("0"))
+
     if subtotal is None:
         if total is not None and invoice.gst is not None:
             # Finance identity for accrual: Cr AP = total, Dr tax = gst,

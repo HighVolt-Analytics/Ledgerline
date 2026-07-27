@@ -20,7 +20,11 @@ from app.services.invoice.invoice_evaluation_service import (
     ROUTE_TEAM,
 )
 from app.services.integration.publish_service import is_published_from_audit_logs
-from app.services.reconciliation.reconciliation_overview import build_reconciliation_overview
+from app.services.reconciliation.reconciliation_overview import (
+    build_reconciliation_overview,
+    invoice_txn_currency,
+)
+from app.services.shared.currency import UNKNOWN_CURRENCY
 
 _ROUTE_EXPENSES_MGMT = ROUTE_EXPENSES
 _ROUTE_TEAM = ROUTE_TEAM
@@ -77,6 +81,7 @@ def _invoice_export_row(
     date_str = inv_date.isoformat() if isinstance(inv_date, date) else "—"
     doc = (invoice.invoice_no or "").strip() or display_document_ref(invoice)
     amount = float(invoice.total or 0)
+    currency = invoice_txn_currency(invoice)
     return LedgerExportRowResponse(
         id=f"ll-inv-{invoice.id}",
         doc=doc,
@@ -86,6 +91,7 @@ def _invoice_export_row(
         credit=credit,
         amount=round(amount, 2),
         status=_export_status(logs),
+        currency="" if currency == UNKNOWN_CURRENCY else currency,
     )
 
 
@@ -103,6 +109,7 @@ def _payment_export_row(payment: Payment) -> LedgerExportRowResponse:
         if payment.due_date
         else "—"
     )
+    currency = (payment.currency or "").strip().upper()
     return LedgerExportRowResponse(
         id=f"ll-pay-{payment.id}",
         doc=f"PAY-{payment.id:04d}",
@@ -112,6 +119,7 @@ def _payment_export_row(payment: Payment) -> LedgerExportRowResponse:
         credit="Bank",
         amount=round(float(payment.amount), 2),
         status=status,
+        currency=currency,
     )
 
 

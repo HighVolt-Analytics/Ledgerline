@@ -150,7 +150,35 @@ async def test_po_first_then_commercial_invoice(db_session: AsyncSession) -> Non
 
 
 @pytest.mark.asyncio
-async def test_commercial_invoice_awaiting_po(db_session: AsyncSession) -> None:
+async def test_commercial_invoice_awaiting_po(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.schemas.document_type import DocumentTypeDefinition, DocumentTypePostTo
+    from tests.rule_book_test_helpers import demo_rule_book_config, patch_sync_load_classification_config
+
+    cfg = demo_rule_book_config()
+    po_dt = DocumentTypeDefinition(
+        code="DT-01",
+        title="PO-based goods invoice",
+        short_title="PO goods",
+        klass="Transactional",
+        posting="Yes",
+        recognition_mode="signals",
+        recognition_signals=["heading_invoice", "has_po_reference"],
+        llm_prompt="",
+        route_target=ROUTE_PURCHASE,
+        playbook_profile="po_goods",
+        post_to=DocumentTypePostTo(ledger="Operating Expenses"),
+    )
+    other = [dt for dt in cfg.document_types if dt.code.strip().upper() != "DT-01"]
+    cfg = cfg.model_copy(update={"document_types": [po_dt, *other]})
+    patch_sync_load_classification_config(
+        monkeypatch,
+        cfg,
+        module="app.services.purchase.purchase_document_service",
+    )
+
     inv = Invoice(
         tenant_id=TESTING_TENANT_UUID,
         vendor="Meta Platforms Ireland",
@@ -158,6 +186,7 @@ async def test_commercial_invoice_awaiting_po(db_session: AsyncSession) -> None:
         invoice_no="META-INV-999",
         route_target=ROUTE_PURCHASE,
         purchase_document_type=PurchaseDocumentType.INVOICE.value,
+        document_type_code="DT-01",
         subtotal=Decimal("100.00"),
         status=InvoiceStatus.MAPPING,
     )
@@ -174,3 +203,70 @@ async def test_commercial_invoice_awaiting_po(db_session: AsyncSession) -> None:
         await db_session.execute(select(PurchaseOrder).where(PurchaseOrder.po_number == "PO-MKT-2026-999"))
     ).scalar_one_or_none()
     assert po_count is None
+
+
+@pytest.mark.asyncio
+async def test_non_po_commercial_invoice_skips_awaiting_po(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.models.audit import AuditLog
+    from app.schemas.document_type import DocumentTypeDefinition, DocumentTypePostTo
+    from tests.rule_book_test_helpers import demo_rule_book_config, patch_sync_load_classification_config
+
+    cfg = demo_rule_book_config()
+    non_po_dt = DocumentTypeDefinition(
+        code="DT-01",
+        title="Non-PO vendor invoice",
+        short_title="Non-PO invoice",
+        klass="Transactional",
+        posting="Yes",
+        recognition_mode="prompt",
+        recognition_signals=["heading_invoice"],
+        llm_prompt="Non-PO vendor tax invoice",
+        route_target=ROUTE_PURCHASE,
+        playbook_profile="standard_transactional",
+        post_to=DocumentTypePostTo(ledger="Operating Expenses"),
+    )
+    other = [dt for dt in cfg.document_types if dt.code.strip().upper() != "DT-01"]
+    cfg = cfg.model_copy(update={"document_types": [non_po_dt, *other]})
+    patch_sync_load_classification_config(
+        monkeypatch,
+        cfg,
+        module="app.services.purchase.purchase_document_service",
+    )
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Meta Platforms Ireland",
+        po_reference="3B-PO-100027",
+        invoice_no="META-INV-664",
+        route_target=ROUTE_PURCHASE,
+        purchase_document_type=PurchaseDocumentType.INVOICE.value,
+        document_type_code="DT-01",
+        subtotal=Decimal("100.00"),
+        status=InvoiceStatus.MAPPING,
+    )
+    db_session.add(inv)
+    await db_session.flush()
+    await _add_line(db_session, inv)
+
+    result = await sync_purchase_document(db_session, inv)
+    assert result is None
+    assert inv.evaluation_status != EVAL_AWAITING_PO
+    assert inv.status == InvoiceStatus.MAPPING
+    assert inv.po_reference == "3B-PO-100027"
+
+    audit = (
+        await db_session.execute(
+            select(AuditLog)
+            .where(
+                AuditLog.invoice_id == inv.id,
+                AuditLog.event == "purchase_po_reference_not_required",
+            )
+            .order_by(AuditLog.id.desc())
+        )
+    ).scalars().first()
+    assert audit is not None
+    assert audit.detail.get("po_number") == "3B-PO-100027"
+    assert audit.detail.get("match_mode") == "none"

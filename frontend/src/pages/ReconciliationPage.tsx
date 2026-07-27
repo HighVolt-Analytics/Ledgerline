@@ -16,7 +16,7 @@ import {
   useReconciliationOverview,
 } from "@/hooks/useReconciliationOverview";
 import { useTenantTime } from "@/hooks/useTenantTime";
-import { money } from "@/lib/format";
+import { money, formatMoneyByCurrencyMap } from "@/lib/format";
 import { ruleBookConfigFromApi } from "@/lib/ruleBookConfigApi";
 import { DEFAULT_POSTING_DEFAULTS } from "@/lib/v4RuleBookMockData";
 import type { PostingDefaults } from "@/lib/v4RuleBookTypes";
@@ -62,8 +62,12 @@ export function ReconciliationPage() {
     return map;
   }, [dailyRows]);
 
-  const currency = overview?.base_currency ?? "SGD";
-  const fmt = (v: number) => money(v, currency, locale);
+  const baseCurrency = overview?.base_currency ?? "SGD";
+  const fmtBase = (v: number) => money(v, baseCurrency, locale);
+  const fmtRow = (v: number, currency?: string | null) =>
+    money(v, currency?.trim() ? currency : null, locale);
+  const fmtCurrencyMap = (totals: Record<string, number>) =>
+    formatMoneyByCurrencyMap(totals, locale);
 
   useLayoutEffect(() => {
     setPostingDefaults({ ...DEFAULT_POSTING_DEFAULTS });
@@ -241,20 +245,28 @@ export function ReconciliationPage() {
               </div>
               <div className="text-sm text-muted-foreground">
                 {periodLabel}
-                {periodDocumentCount > 0 && (
-                  <span className="tnum"> · Δ (Dr − Cr) = {fmt(e.deltaDrCr)}</span>
+                {periodDocumentCount > 0 && !e.hasMixedCurrencies && (
+                  <span className="tnum"> · Δ (Dr − Cr) = {fmtBase(e.deltaDrCr)}</span>
                 )}
+              </div>
+              <div className="text-xs text-muted-foreground mt-1">
+                Base currency totals ({baseCurrency})
+                {e.hasMixedCurrencies ? " · foreign amounts shown per document" : ""}
               </div>
             </div>
           </div>
           <div className="flex gap-6 text-sm">
             <div className="text-right">
               <div className="text-xs text-muted-foreground">Total debits</div>
-              <div className="tnum font-semibold">{fmt(e.sumDr)}</div>
+              <div className="tnum font-semibold">
+                {e.hasMixedCurrencies ? fmtCurrencyMap(e.drByCurrency) : fmtBase(e.sumDr)}
+              </div>
             </div>
             <div className="text-right">
               <div className="text-xs text-muted-foreground">Total credits</div>
-              <div className="tnum font-semibold">{fmt(e.sumCr)}</div>
+              <div className="tnum font-semibold">
+                {e.hasMixedCurrencies ? fmtCurrencyMap(e.crByCurrency) : fmtBase(e.sumCr)}
+              </div>
             </div>
             <div className="text-right">
               <div className="text-xs text-muted-foreground">Documents</div>
@@ -262,6 +274,15 @@ export function ReconciliationPage() {
             </div>
           </div>
         </div>
+        {e.hasMixedCurrencies ? (
+          <div
+            className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300"
+            data-testid="recon-mixed-currency-warning"
+          >
+            Mixed currencies in this period. Document amounts stay in their own currency;
+            conversion happens at payment. Do not treat foreign amounts as {baseCurrency}.
+          </div>
+        ) : null}
       </Card>
 
       {periodDocumentCount === 0 ? (
@@ -317,18 +338,30 @@ export function ReconciliationPage() {
                     ) : null}
                     <div className="flex-1" />
                     <span className="text-sm text-muted-foreground tnum hidden sm:inline">
-                      Dr {fmt(day.sumDr)} · Cr {fmt(day.sumCr)}
+                      {day.hasMixedCurrencies
+                        ? `Dr ${fmtCurrencyMap(day.drByCurrency)} · Cr ${fmtCurrencyMap(day.crByCurrency)}`
+                        : `Dr ${fmtRow(day.sumDr, day.currencies[0] || baseCurrency)} · Cr ${fmtRow(day.sumCr, day.currencies[0] || baseCurrency)}`}
                     </span>
-                    <Badge
-                      variant="outline"
-                      className={
-                        day.delta === 0
-                          ? "text-[hsl(var(--chart-1))] border-[hsl(var(--chart-1)/0.4)]"
-                          : "border-destructive/40 text-destructive"
-                      }
-                    >
-                      Δ {fmt(day.delta)}
-                    </Badge>
+                    {day.hasMixedCurrencies ? (
+                      <Badge
+                        variant="outline"
+                        className="border-amber-500/40 text-amber-700 dark:text-amber-300"
+                        data-testid={`recon-mixed-${day.date}`}
+                      >
+                        Mixed FX
+                      </Badge>
+                    ) : (
+                      <Badge
+                        variant="outline"
+                        className={
+                          day.delta === 0
+                            ? "text-[hsl(var(--chart-1))] border-[hsl(var(--chart-1)/0.4)]"
+                            : "border-destructive/40 text-destructive"
+                        }
+                      >
+                        Δ {fmtRow(day.delta, day.currencies[0] || baseCurrency)}
+                      </Badge>
+                    )}
                   </button>
                   <Button
                     type="button"
@@ -349,7 +382,21 @@ export function ReconciliationPage() {
                         <div className="flex items-center gap-2 mb-1.5 text-sm">
                           <span className="font-medium">{inv.id}</span>
                           <span className="text-muted-foreground">{inv.vendor}</span>
-                          <span className="tnum text-muted-foreground ml-auto">{fmt(inv.total)}</span>
+                          {inv.currency ? (
+                            <Badge variant="outline" className="tnum text-[10px]">
+                              {inv.currency}
+                            </Badge>
+                          ) : (
+                            <Badge
+                              variant="outline"
+                              className="border-amber-500/40 text-amber-700 dark:text-amber-300 text-[10px]"
+                            >
+                              Currency unknown
+                            </Badge>
+                          )}
+                          <span className="tnum text-muted-foreground ml-auto">
+                            {fmtRow(inv.total, inv.currency)}
+                          </span>
                         </div>
                         <div className="overflow-x-auto rounded-md border border-border">
                           <table className="w-full text-sm">
@@ -365,10 +412,10 @@ export function ReconciliationPage() {
                                 <tr key={idx} className="border-t border-border/60">
                                   <td className="px-3 py-1.5">{posting.account}</td>
                                   <td className="px-3 py-1.5 text-right tnum">
-                                    {posting.debit ? fmt(posting.debit) : "—"}
+                                    {posting.debit ? fmtRow(posting.debit, inv.currency) : "—"}
                                   </td>
                                   <td className="px-3 py-1.5 text-right tnum">
-                                    {posting.credit ? fmt(posting.credit) : "—"}
+                                    {posting.credit ? fmtRow(posting.credit, inv.currency) : "—"}
                                   </td>
                                 </tr>
                               ))}
@@ -389,13 +436,14 @@ export function ReconciliationPage() {
         Postings: each line subtotal debits its GL account, total {postingDefaults.taxAccount} debits the
         tax account, and the document total credits {postingDefaults.payableAccount}. RC1 checks invoice
         totals against payable/receivable control accounts; RC2 checks debits equal credits.
+        Document currency is kept until payment; FX conversion uses the payment application rate.
       </p>
 
       <ReconciliationDetailDrawer
         detail={dayDetail ?? null}
         open={detailDate != null}
         onClose={() => setDetailDate(null)}
-        currency={currency}
+        currency={baseCurrency}
       />
     </div>
   );

@@ -19,17 +19,27 @@ from app.schemas.reconciliation import (
     ReconciliationJournalLine,
     ReconciliationResponse,
 )
+from app.services.reconciliation.reconciliation_overview import invoice_txn_currency
 from app.services.reconciliation.reconciliation_service import (
     RC1_COUNTABLE_STATUSES,
     reconcile_daily,
 )
 from app.services.rule_book.rule_book_mapper import load_classification_config
+from app.services.shared.currency import UNKNOWN_CURRENCY
 
 _RC1_COUNTABLE = RC1_COUNTABLE_STATUSES
 
 
 def _round_money(value: Decimal) -> Decimal:
     return value.quantize(Decimal("0.01"))
+
+
+def _add_currency_amount(
+    bucket: dict[str, Decimal],
+    currency: str,
+    amount: Decimal,
+) -> None:
+    bucket[currency] = _round_money(bucket.get(currency, Decimal("0")) + amount)
 
 
 async def _enrich_response(
@@ -121,48 +131,97 @@ async def build_reconciliation_day_detail(
         )
     ).all()
 
-    journal_lines = [
-        ReconciliationJournalLine(
-            id=entry.id,
-            invoice_id=entry.invoice_id,
-            vendor=vendor,
-            account_code=entry.account_code,
-            account_name=entry.account_name,
-            debit=_round_money(Decimal(str(entry.debit or 0))),
-            credit=_round_money(Decimal(str(entry.credit or 0))),
-            entry_type=entry.entry_type.value,
+    inv_currency_by_id = {
+        inv.id: invoice_txn_currency(inv) for inv in invoices
+    }
+
+    totals_by_currency: dict[str, Decimal] = {}
+    dr_by_currency: dict[str, Decimal] = {}
+    cr_by_currency: dict[str, Decimal] = {}
+
+    journal_lines = []
+    for entry, vendor in journal_rows:
+        currency = inv_currency_by_id.get(entry.invoice_id, UNKNOWN_CURRENCY)
+        # Prefer persisted journal txn currency when dual-currency columns exist.
+        entry_currency = (getattr(entry, "txn_currency", None) or "").strip().upper()
+        if entry_currency:
+            currency = entry_currency
+        debit = _round_money(Decimal(str(entry.debit or 0)))
+        credit = _round_money(Decimal(str(entry.credit or 0)))
+        _add_currency_amount(dr_by_currency, currency, debit)
+        _add_currency_amount(cr_by_currency, currency, credit)
+        journal_lines.append(
+            ReconciliationJournalLine(
+                id=entry.id,
+                invoice_id=entry.invoice_id,
+                vendor=vendor,
+                account_code=entry.account_code,
+                account_name=entry.account_name,
+                debit=debit,
+                credit=credit,
+                entry_type=entry.entry_type.value,
+                currency="" if currency == UNKNOWN_CURRENCY else currency,
+            )
         )
-        for entry, vendor in journal_rows
-    ]
 
-    invoices_total = _round_money(
-        result.purchase_invoice_total + result.sales_invoice_total
-    )
-    delta_dr_cr = _round_money(result.total_debits - result.total_credits)
-    delta_vs_invoices = _round_money(
-        (result.purchase_invoice_total - result.total_ap_credits)
-        + (result.sales_invoice_total - result.total_ar_debits)
-    )
-
-    return ReconciliationDayDetail(
-        date=recon_date,
-        invoices_total=invoices_total,
-        total_debits=_round_money(result.total_debits),
-        total_credits=_round_money(result.total_credits),
-        delta_dr_cr=delta_dr_cr,
-        delta_vs_invoices=delta_vs_invoices,
-        rc1_passed=result.rc1_passed,
-        rc2_passed=result.rc2_passed,
-        is_balanced=result.is_balanced,
-        halt_reason=result.halt_reason,
-        journal_lines=journal_lines,
-        invoices=[
+    day_invoices: list[ReconciliationDayInvoice] = []
+    for inv in invoices:
+        currency = invoice_txn_currency(inv)
+        total = (
+            _round_money(Decimal(str(inv.total or 0))) if inv.total is not None else None
+        )
+        if total is not None:
+            _add_currency_amount(totals_by_currency, currency, total)
+        day_invoices.append(
             ReconciliationDayInvoice(
                 id=inv.id,
                 vendor=inv.vendor,
                 invoice_no=inv.invoice_no,
-                total=_round_money(Decimal(str(inv.total or 0))) if inv.total is not None else None,
+                total=total,
+                currency="" if currency == UNKNOWN_CURRENCY else currency,
             )
-            for inv in invoices
-        ],
+        )
+
+    currency_codes = sorted(
+        set(totals_by_currency) | set(dr_by_currency) | set(cr_by_currency)
+    )
+    has_mixed = len(currency_codes) > 1
+
+    # Scalar day totals stay for single-currency days; mixed days use *_by_currency maps.
+    if has_mixed:
+        invoices_total = Decimal("0.00")
+        total_debits = Decimal("0.00")
+        total_credits = Decimal("0.00")
+        delta_dr_cr = Decimal("0.00")
+        delta_vs_invoices = Decimal("0.00")
+    else:
+        invoices_total = _round_money(
+            result.purchase_invoice_total + result.sales_invoice_total
+        )
+        total_debits = _round_money(result.total_debits)
+        total_credits = _round_money(result.total_credits)
+        delta_dr_cr = _round_money(total_debits - total_credits)
+        delta_vs_invoices = _round_money(
+            (result.purchase_invoice_total - result.total_ap_credits)
+            + (result.sales_invoice_total - result.total_ar_debits)
+        )
+
+    return ReconciliationDayDetail(
+        date=recon_date,
+        invoices_total=invoices_total,
+        total_debits=total_debits,
+        total_credits=total_credits,
+        delta_dr_cr=delta_dr_cr,
+        delta_vs_invoices=delta_vs_invoices,
+        rc1_passed=result.rc1_passed,
+        rc2_passed=result.rc2_passed,
+        is_balanced=result.is_balanced and not has_mixed,
+        halt_reason=result.halt_reason,
+        has_mixed_currencies=has_mixed,
+        currencies=[c for c in currency_codes if c != UNKNOWN_CURRENCY],
+        totals_by_currency=totals_by_currency,
+        dr_by_currency=dr_by_currency,
+        cr_by_currency=cr_by_currency,
+        journal_lines=journal_lines,
+        invoices=day_invoices,
     )

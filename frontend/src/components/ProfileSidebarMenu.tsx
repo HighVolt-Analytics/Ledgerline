@@ -55,12 +55,18 @@ export function ProfileSidebarMenu({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
+  const [flyout, setFlyout] = useState<"theme" | "workspace" | null>(null);
   const [menuStyle, setMenuStyle] = useState({ top: 0, left: 0 });
   const [memberships, setMemberships] = useState<TenantAccountSummary[]>(() =>
     loadMembershipsFromSession()
   );
   const [switchingId, setSwitchingId] = useState<string | null>(null);
   const [switchError, setSwitchError] = useState<string | null>(null);
+
+  const closeMenu = useCallback(() => {
+    setOpen(false);
+    setFlyout(null);
+  }, []);
 
   const refreshMemberships = useCallback(async () => {
     const token = getAccessToken();
@@ -122,10 +128,10 @@ export function ProfileSidebarMenu({
     const onPointerDown = (event: MouseEvent) => {
       const target = event.target as Node;
       if (triggerRef.current?.contains(target) || menuRef.current?.contains(target)) return;
-      setOpen(false);
+      closeMenu();
     };
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") closeMenu();
     };
     document.addEventListener("mousedown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
@@ -133,7 +139,7 @@ export function ProfileSidebarMenu({
       document.removeEventListener("mousedown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [open]);
+  }, [open, closeMenu]);
 
   const handleSwitchTenant = async (tenantId: string) => {
     if (!tenantId || tenantId === user?.tenant_id) return;
@@ -141,7 +147,7 @@ export function ProfileSidebarMenu({
     setSwitchError(null);
     try {
       await switchTenant(tenantId);
-      setOpen(false);
+      closeMenu();
     } catch (err) {
       setSwitchError(err instanceof Error ? err.message : "Could not switch workspace.");
       setSwitchingId(null);
@@ -171,7 +177,12 @@ export function ProfileSidebarMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         data-sidebar-tip={variant === "sidebar" && collapsed ? "Profile" : undefined}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          setOpen((v) => {
+            if (v) setFlyout(null);
+            return !v;
+          });
+        }}
       >
         <span
           className={
@@ -198,7 +209,7 @@ export function ProfileSidebarMenu({
       {open &&
         createPortal(
           <>
-            <div className="fixed inset-0 z-[240]" aria-hidden onClick={() => setOpen(false)} />
+            <div className="fixed inset-0 z-[240]" aria-hidden onClick={closeMenu} />
             <div
               ref={menuRef}
               role="menu"
@@ -222,18 +233,32 @@ export function ProfileSidebarMenu({
               </div>
 
               <div className="profile-menu__section">
-                <div className="profile-menu__row profile-menu__row--flyout">
-                  <div className="profile-menu__row-main">
-                    <span className="profile-menu__row-label">Theme</span>
-                    <span className="profile-menu__row-value">{themeLabel}</span>
-                  </div>
-                  <ChevronRight className="profile-menu__row-chevron" />
-                  <div
-                    className="profile-menu__flyout"
-                    style={{ width: SUBMENU_WIDTH }}
-                    role="menu"
+                <div
+                  className={cn(
+                    "profile-menu__row profile-menu__row--flyout",
+                    flyout === "theme" && "profile-menu__row--flyout-open"
+                  )}
+                >
+                  <button
+                    type="button"
+                    className="profile-menu__row-trigger"
+                    aria-expanded={flyout === "theme"}
+                    aria-haspopup="menu"
+                    onClick={() => setFlyout((v) => (v === "theme" ? null : "theme"))}
                   >
-                    {themeOptions.map((opt) => (
+                    <div className="profile-menu__row-main">
+                      <span className="profile-menu__row-label">Theme</span>
+                      <span className="profile-menu__row-value">{themeLabel}</span>
+                    </div>
+                    <ChevronRight className="profile-menu__row-chevron" />
+                  </button>
+                  {flyout === "theme" && (
+                    <div
+                      className="profile-menu__flyout"
+                      style={{ width: SUBMENU_WIDTH }}
+                      role="menu"
+                    >
+                      {themeOptions.map((opt) => (
                         <button
                           key={opt.id}
                           type="button"
@@ -251,65 +276,81 @@ export function ProfileSidebarMenu({
                           )}
                         </button>
                       ))}
-                  </div>
+                    </div>
+                  )}
                 </div>
 
-                <div className="profile-menu__row profile-menu__row--flyout">
-                  <div className="profile-menu__row-main">
-                    <span className="profile-menu__row-label">Workspace</span>
-                    <span className="profile-menu__row-value truncate">{tenantName}</span>
-                  </div>
-                  <ChevronRight className="profile-menu__row-chevron" />
-                  <div
-                    className="profile-menu__flyout profile-menu__flyout--wide"
-                    style={{ width: Math.max(SUBMENU_WIDTH, MENU_WIDTH) }}
-                    role="menu"
+                <div
+                  className={cn(
+                    "profile-menu__row profile-menu__row--flyout",
+                    flyout === "workspace" && "profile-menu__row--flyout-open"
+                  )}
+                >
+                  <button
+                    type="button"
+                    className="profile-menu__row-trigger"
+                    aria-expanded={flyout === "workspace"}
+                    aria-haspopup="menu"
+                    onClick={() => setFlyout((v) => (v === "workspace" ? null : "workspace"))}
                   >
-                    {switchError && (
-                      <p className="px-3 py-2 text-xs text-destructive bg-destructive/10 border-b border-border">
-                        {switchError}
-                      </p>
-                    )}
-                    {visibleMemberships.length === 0 ? (
-                      <p className="px-3 py-2 text-xs text-muted-foreground">
-                        {tenantName}
-                      </p>
-                    ) : (
-                      visibleMemberships.map((m) => {
-                        const selected = m.tenant_id === user?.tenant_id;
-                        const busy = switchingId === m.tenant_id;
-                        return (
-                          <button
-                            key={m.tenant_id}
-                            type="button"
-                            role="menuitem"
-                            disabled={selected || busy}
-                            className="profile-menu__flyout-item profile-menu__flyout-item--tenant"
-                            onClick={() => void handleSwitchTenant(m.tenant_id)}
-                          >
-                            <span className="shrink-0">
-                              {m.is_platform ? (
-                                <Shield className="h-4 w-4 dropdown-accent" />
-                              ) : (
-                                <Building2 className="h-4 w-4 dropdown-accent" />
-                              )}
-                            </span>
-                            <span className="flex-1 min-w-0 text-left">
-                              <span className="block font-medium truncate">{m.tenant_name}</span>
-                              <span className="block text-xs text-muted-foreground capitalize truncate">
-                                {formatTenantRole(m.role)}
+                    <div className="profile-menu__row-main">
+                      <span className="profile-menu__row-label">Workspace</span>
+                      <span className="profile-menu__row-value truncate">{tenantName}</span>
+                    </div>
+                    <ChevronRight className="profile-menu__row-chevron" />
+                  </button>
+                  {flyout === "workspace" && (
+                    <div
+                      className="profile-menu__flyout profile-menu__flyout--wide"
+                      style={{ width: Math.max(SUBMENU_WIDTH, MENU_WIDTH) }}
+                      role="menu"
+                    >
+                      {switchError && (
+                        <p className="px-3 py-2 text-xs text-destructive bg-destructive/10 border-b border-border">
+                          {switchError}
+                        </p>
+                      )}
+                      {visibleMemberships.length === 0 ? (
+                        <p className="px-3 py-2 text-xs text-muted-foreground">
+                          {tenantName}
+                        </p>
+                      ) : (
+                        visibleMemberships.map((m) => {
+                          const selected = m.tenant_id === user?.tenant_id;
+                          const busy = switchingId === m.tenant_id;
+                          return (
+                            <button
+                              key={m.tenant_id}
+                              type="button"
+                              role="menuitem"
+                              disabled={selected || busy}
+                              className="profile-menu__flyout-item profile-menu__flyout-item--tenant"
+                              onClick={() => void handleSwitchTenant(m.tenant_id)}
+                            >
+                              <span className="shrink-0">
+                                {m.is_platform ? (
+                                  <Shield className="h-4 w-4 dropdown-accent" />
+                                ) : (
+                                  <Building2 className="h-4 w-4 dropdown-accent" />
+                                )}
                               </span>
-                            </span>
-                            {busy ? (
-                              <span className="text-xs text-muted-foreground">…</span>
-                            ) : selected ? (
-                              <Check className="dropdown-accent h-4 w-4" />
-                            ) : null}
-                          </button>
-                        );
-                      })
-                    )}
-                  </div>
+                              <span className="flex-1 min-w-0 text-left">
+                                <span className="block font-medium truncate">{m.tenant_name}</span>
+                                <span className="block text-xs text-muted-foreground capitalize truncate">
+                                  {formatTenantRole(m.role)}
+                                </span>
+                              </span>
+                              {busy ? (
+                                <span className="text-xs text-muted-foreground">…</span>
+                              ) : selected ? (
+                                <Check className="dropdown-accent h-4 w-4" />
+                              ) : null}
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -325,7 +366,7 @@ export function ProfileSidebarMenu({
                     className="profile-menu__link"
                     data-testid={`profile-menu-${tab.id}`}
                     onClick={() => {
-                      setOpen(false);
+                      closeMenu();
                       navigate(`/settings?tab=${tab.id}`);
                     }}
                   >
@@ -343,7 +384,7 @@ export function ProfileSidebarMenu({
                 className="profile-menu__logout"
                 data-testid="button-profile-logout"
                 onClick={() => {
-                  setOpen(false);
+                  closeMenu();
                   logout();
                   navigate("/login");
                 }}

@@ -150,6 +150,7 @@ class VisionHeaderExtractResult:
     so_reference: str = ""
     other_reference: str = ""
     invoice_date: date | None = None
+    invoice_date_raw: str = ""
     subtotal: Decimal | None = None
     gst: Decimal | None = None
     gst_rate: Decimal | None = None
@@ -220,6 +221,7 @@ def vision_header_extract_audit_detail(result: VisionHeaderExtractResult) -> dic
         "so_reference": result.so_reference,
         "other_reference": result.other_reference,
         "invoice_date": result.invoice_date.isoformat() if result.invoice_date else None,
+        "invoice_date_raw": result.invoice_date_raw or None,
         "subtotal": str(result.subtotal) if result.subtotal is not None else None,
         "gst": str(result.gst) if result.gst is not None else None,
         "gst_rate": str(result.gst_rate) if result.gst_rate is not None else None,
@@ -277,10 +279,10 @@ def _normalize_perspective(value: str) -> str:
     return "unknown"
 
 
-def _parse_header_date(raw: dict) -> date | None:
+def _parse_header_date(raw: dict, *, date_order: str = "DMY") -> date | None:
     from app.services.extraction.field_validators import normalize_date
 
-    return normalize_date(_raw_field(raw, "invoice_date"))
+    return normalize_date(_raw_field(raw, "invoice_date"), date_order=date_order)
 
 
 def _parse_header_total(raw: dict) -> Decimal | None:
@@ -387,6 +389,7 @@ def parse_vision_header_raw(
     *,
     provider: str,
     page_count: int = 0,
+    date_order: str = "DMY",
 ) -> VisionHeaderExtractResult:
     if not isinstance(raw, dict):
         return VisionHeaderExtractResult(
@@ -407,6 +410,7 @@ def parse_vision_header_raw(
     )
     total = _parse_header_money(raw, "total")
     line_items = _parse_header_line_items(raw, total=total)
+    invoice_date_raw = str(_raw_field(raw, "invoice_date") or "").strip()
     return VisionHeaderExtractResult(
         success=True,
         document_heading=document_heading,
@@ -418,7 +422,8 @@ def parse_vision_header_raw(
         po_reference=_str_field(raw, "po_reference")[:128],
         so_reference=_str_field(raw, "so_reference")[:128],
         other_reference=_str_field(raw, "other_reference")[:128],
-        invoice_date=_parse_header_date(raw),
+        invoice_date=_parse_header_date(raw, date_order=date_order),
+        invoice_date_raw=invoice_date_raw[:64],
         subtotal=_parse_header_money(raw, "subtotal"),
         gst=_parse_header_money(raw, "gst"),
         gst_rate=_parse_header_gst_rate(raw),
@@ -471,9 +476,13 @@ def persist_vision_header_to_invoice(
     subtotal = plausible_money(result.subtotal)
     if subtotal is not None:
         invoice.subtotal = subtotal
+    else:
+        invoice.subtotal = None
     gst = plausible_money(result.gst)
     if gst is not None:
         invoice.gst = gst
+    else:
+        invoice.gst = None
     if result.gst_rate is not None:
         invoice.gst_rate = result.gst_rate
 
@@ -502,10 +511,10 @@ def persist_vision_header_to_invoice(
         po_reference=invoice.po_reference,
         document_heading=result.document_heading or None,
         invoice_date=result.invoice_date or invoice.invoice_date,
-        subtotal=subtotal if subtotal is not None else invoice.subtotal,
-        gst=gst if gst is not None else invoice.gst,
+        subtotal=invoice.subtotal,
+        gst=invoice.gst,
         gst_rate=result.gst_rate if result.gst_rate is not None else invoice.gst_rate,
-        total=money if money is not None else invoice.total,
+        total=invoice.total,
         currency=invoice.currency or "",
         line_items=list(result.line_items or ()),
     )
@@ -534,12 +543,26 @@ def persist_vision_header_to_invoice(
             invoice.extracted_fields = fields
     if result.invoice_date is not None:
         patch["invoice_date"] = result.invoice_date.isoformat()
+    elif (result.invoice_date_raw or "").strip():
+        patch["invoice_date_raw"] = (result.invoice_date_raw or "").strip()[:64]
     if money is not None:
         patch["total"] = format(money, "f")
+    elif "total" in (invoice.extracted_fields or {}):
+        fields = dict(invoice.extracted_fields or {})
+        fields.pop("total", None)
+        invoice.extracted_fields = fields or None
     if subtotal is not None:
         patch["subtotal"] = format(subtotal, "f")
+    elif "subtotal" in (invoice.extracted_fields or {}):
+        fields = dict(invoice.extracted_fields or {})
+        fields.pop("subtotal", None)
+        invoice.extracted_fields = fields or None
     if gst is not None:
         patch["gst"] = format(gst, "f")
+    elif "gst" in (invoice.extracted_fields or {}):
+        fields = dict(invoice.extracted_fields or {})
+        fields.pop("gst", None)
+        invoice.extracted_fields = fields or None
     if result.gst_rate is not None:
         patch["gst_rate"] = format(result.gst_rate, "f")
     if invoice.currency:
@@ -578,6 +601,7 @@ async def evaluate_vision_header_extract(
     provider: DocumentAiProvider,
     org: OrgContext,
     vision_page_images: list[bytes] | None = None,
+    date_order: str = "DMY",
 ) -> VisionHeaderExtractResult:
     """Rasterize + call vision header extract; never raises."""
     from app.services.extraction.document_ai_provider import (
@@ -646,4 +670,5 @@ async def evaluate_vision_header_extract(
         raw,
         provider=provider_token,
         page_count=len(images),
+        date_order=date_order,
     )

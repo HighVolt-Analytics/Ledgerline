@@ -1739,6 +1739,7 @@ export interface ReconciliationJournalLine {
   debit: string;
   credit: string;
   entry_type: string;
+  currency?: string;
 }
 
 export interface ReconciliationDayDetail {
@@ -1752,12 +1753,18 @@ export interface ReconciliationDayDetail {
   rc2_passed: boolean;
   is_balanced: boolean;
   halt_reason: string | null;
+  has_mixed_currencies?: boolean;
+  currencies?: string[];
+  totals_by_currency?: Record<string, string | number>;
+  dr_by_currency?: Record<string, string | number>;
+  cr_by_currency?: Record<string, string | number>;
   journal_lines: ReconciliationJournalLine[];
   invoices: Array<{
     id: number;
     vendor: string | null;
     invoice_no: string | null;
     total: string | null;
+    currency?: string;
   }>;
 }
 
@@ -1772,6 +1779,7 @@ export interface ReconInvoiceOverviewRow {
   invoice_id: number;
   vendor: string;
   total: string | number;
+  currency?: string;
   postings: ReconPostingRow[];
 }
 
@@ -1781,6 +1789,11 @@ export interface ReconDayOverviewRow {
   sum_dr: string | number;
   sum_cr: string | number;
   delta: string | number;
+  has_mixed_currencies?: boolean;
+  currencies?: string[];
+  totals_by_currency?: Record<string, string | number>;
+  dr_by_currency?: Record<string, string | number>;
+  cr_by_currency?: Record<string, string | number>;
   invoices: ReconInvoiceOverviewRow[];
 }
 
@@ -1791,6 +1804,10 @@ export interface ReconciliationOverview {
   delta_dr_cr: string | number;
   balanced: boolean;
   base_currency: string;
+  has_mixed_currencies?: boolean;
+  totals_by_currency?: Record<string, string | number>;
+  dr_by_currency?: Record<string, string | number>;
+  cr_by_currency?: Record<string, string | number>;
   by_date: ReconDayOverviewRow[];
 }
 
@@ -1893,6 +1910,7 @@ export interface LedgerExportRow {
   credit: string;
   amount: number;
   status: string;
+  currency?: string;
 }
 
 export interface LedgerLinkExports {

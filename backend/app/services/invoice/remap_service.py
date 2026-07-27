@@ -85,6 +85,11 @@ async def _regenerate_journal_entries(
         vendor_registry_id=vendor_reg_id,
         customer_registry_id=customer_reg_id,
     )
+    from app.models.tenant import Tenant
+    from app.tenant_settings import tenant_currency
+
+    tenant = await session.get(Tenant, invoice.tenant_id)
+    base_currency = tenant_currency(tenant)
     lines = generate_entries(
         invoice,
         mapping,
@@ -92,6 +97,7 @@ async def _regenerate_journal_entries(
         vendor_registry_id=vendor_reg_id,
         customer_registry_id=customer_reg_id,
         control_mapping=control_mapping,
+        base_currency=base_currency,
     )
     # Remap skips keep PROCESSED status; audit log (context=remap_skip) is the trail —
     # Pipeline debug journal step only fails when status is EXCEPTION.
@@ -149,7 +155,7 @@ async def _regenerate_journal_entries(
         await session.delete(entry)
     await session.flush()
 
-    persist_journal_lines(session, invoice, lines)
+    persist_journal_lines(session, invoice, lines, base_currency=base_currency)
     return True
 
 
@@ -178,6 +184,9 @@ async def remap_invoices_for_tenant(
         mapping = map_invoice_to_account(inv, config=config)
         changed = False
         mapping_changed = False
+        # Capture before reclassify: that path also calls apply_invoice_evaluation
+        # and can flip auto_coded → needs_review before the guard below runs.
+        prior_eval = (inv.evaluation_status or "").strip()
         if await reclassify_invoice_document_type(session, inv, config=config):
             changed = True
         if (
@@ -195,7 +204,6 @@ async def remap_invoices_for_tenant(
             inv.vendor_confidence,
             inv.evaluation_status,
         )
-        prior_eval = inv.evaluation_status
         await apply_invoice_evaluation(session, inv, config=config, enqueue_pending=False)
         # Posted invoices are terminal for coding review: a rule-book change must
         # not flip them back to needs_review with no gate to clear it. Recoding a
@@ -203,7 +211,8 @@ async def remap_invoices_for_tenant(
         if (
             inv.status == InvoiceStatus.PROCESSED
             and (inv.evaluation_status or "").strip() == "needs_review"
-            and (prior_eval or "").strip() != "needs_review"
+            and prior_eval
+            and prior_eval != "needs_review"
         ):
             inv.evaluation_status = prior_eval
         after = (
