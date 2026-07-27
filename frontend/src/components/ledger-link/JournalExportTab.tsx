@@ -1,6 +1,15 @@
-import { useCallback, useMemo, useState } from "react";
-import { AlertCircle, CheckCircle2, Download, RefreshCw, Upload } from "lucide-react";
-import type { LedgerLinkExports } from "@/api/types";
+/**
+ * Journal export tab: workbook preview + Xero Accounting Export Pipeline.
+ * XeroEvidencePanel is the canonical pipeline UI; this tab mirrors its queue/export behaviour.
+ */
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { AlertCircle, Download, RefreshCw, Upload } from "lucide-react";
+import type {
+  LedgerLinkExports,
+  XeroExportHistoryRow,
+  XeroExportLedgerRow,
+  XeroExportQueueItem,
+} from "@/api/types";
 import { api } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -10,7 +19,11 @@ import { money } from "@/lib/format";
 import { EXPORT_TARGETS } from "@/lib/v4MockData";
 import { ExportStatusBadge } from "./ExportStatusBadge";
 import { IntegrationBrandIcon } from "@/components/integrations/IntegrationBrandIcon";
-import { parseLedgerLinkInvoiceId } from "@/hooks/useAccountingIntegrations";
+import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
+import {
+  captureTenantFetchScope,
+  isTenantFetchScopeCurrent,
+} from "@/lib/tenantSession";
 
 const TARGET_BRANDS: Record<string, Parameters<typeof IntegrationBrandIcon>[0]["id"] | null> = {
   Xero: "xero",
@@ -28,17 +41,6 @@ type ExportPreviewRow = {
   debit: string;
   credit: string;
   amount: number;
-  status: string;
-};
-
-type RowPushState = "idle" | "sending" | "sent" | "failed" | "skipped";
-
-type PushHistoryEntry = {
-  id: string;
-  ts: string;
-  target: string;
-  count: number;
-  failed: number;
   status: string;
 };
 
@@ -60,14 +62,6 @@ function flattenExports(exports?: LedgerLinkExports): ExportPreviewRow[] {
   );
 }
 
-function displayRowStatus(baseStatus: string, pushState: RowPushState, pushDetail?: string): string {
-  if (pushState === "sending") return "Sending to Xero";
-  if (pushState === "sent") return pushDetail || "Pushed to Xero";
-  if (pushState === "failed") return pushDetail || "Push failed";
-  if (pushState === "skipped") return pushDetail || "Skipped";
-  return baseStatus;
-}
-
 export function JournalExportTab({
   exports,
   currency = "SGD",
@@ -76,21 +70,55 @@ export function JournalExportTab({
   currency?: string;
 }) {
   const [target, setTarget] = useState<string>("Xero");
-  const [pushing, setPushing] = useState(false);
-  const [pushError, setPushError] = useState<string | null>(null);
-  const [rowPushStates, setRowPushStates] = useState<Record<string, RowPushState>>({});
-  const [rowPushDetails, setRowPushDetails] = useState<Record<string, string>>({});
-  const [history, setHistory] = useState<PushHistoryEntry[]>([]);
+  const [queue, setQueue] = useState<XeroExportQueueItem[]>([]);
+  const [ledger, setLedger] = useState<XeroExportLedgerRow[]>([]);
+  const [exportHistory, setExportHistory] = useState<XeroExportHistoryRow[]>([]);
+  const [loadingQueue, setLoadingQueue] = useState(false);
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const fmt = (v: number) => money(v, currency);
 
   const rows = useMemo(() => flattenExports(exports), [exports]);
-  const pendingRows = useMemo(
-    () => rows.filter((r) => r.status === "Pending Export" && parseLedgerLinkInvoiceId(r.id) != null),
-    [rows]
-  );
-  const pending = pendingRows.length;
   const total = rows.reduce((s, r) => s + r.amount, 0);
   const isXeroTarget = target === "Xero";
+  const pending = isXeroTarget ? queue.length : 0;
+  const readyCount = queue.filter((item) => item.valid).length;
+
+  useResetOnTenantChange(() => {
+    setQueue([]);
+    setLedger([]);
+    setExportHistory([]);
+    setError(null);
+    setBusyId(null);
+  });
+
+  const refreshXeroEvidence = useCallback(async () => {
+    if (!isXeroTarget) return;
+    const scope = captureTenantFetchScope();
+    setLoadingQueue(true);
+    try {
+      const [q, led, eh] = await Promise.all([
+        api.getXeroExportQueue({ limit: 50 }),
+        api.getXeroExportLedger({ limit: 50 }),
+        api.getXeroExportHistory({ limit: 50 }),
+      ]);
+      if (!isTenantFetchScopeCurrent(scope)) return;
+      setQueue(q.items);
+      setLedger(led.items);
+      setExportHistory(eh.items);
+      setError(null);
+    } catch (err) {
+      if (!isTenantFetchScopeCurrent(scope)) return;
+      setError(err instanceof Error ? err.message : "Failed to load Xero export queue");
+    } finally {
+      if (isTenantFetchScopeCurrent(scope)) setLoadingQueue(false);
+    }
+  }, [isXeroTarget]);
+
+  useEffect(() => {
+    if (!isXeroTarget) return;
+    void refreshXeroEvidence();
+  }, [isXeroTarget, refreshXeroEvidence]);
 
   const downloadCsv = () => {
     const header = ["Group", "Document", "Date", "Party", "DebitAccount", "CreditAccount", "Amount", "Status"];
@@ -103,7 +131,7 @@ export function JournalExportTab({
         `"${r.debit}"`,
         `"${r.credit}"`,
         r.amount.toFixed(2),
-        displayRowStatus(r.status, rowPushStates[r.id] ?? "idle", rowPushDetails[r.id]),
+        r.status,
       ].join(",")
     );
     const blob = new Blob([[header.join(","), ...body].join("\n")], {
@@ -119,135 +147,36 @@ export function JournalExportTab({
     URL.revokeObjectURL(url);
   };
 
-  const pushInvoiceRow = useCallback(async (row: ExportPreviewRow) => {
-    const invoiceId = parseLedgerLinkInvoiceId(row.id);
-    if (invoiceId == null) {
-      setRowPushStates((prev) => ({ ...prev, [row.id]: "skipped" }));
-      setRowPushDetails((prev) => ({
-        ...prev,
-        [row.id]: "Only invoice rows can be pushed to Xero",
-      }));
-      return { ok: false as const, skipped: true, detail: "Only invoice rows can be pushed to Xero" };
-    }
-
-    const applyOutcome = (
-      state: RowPushState,
-      detail: string,
-      ok: boolean,
-      skipped: boolean
-    ) => {
-      setRowPushStates((prev) => {
-        const next = { ...prev };
-        for (const candidate of rows) {
-          if (parseLedgerLinkInvoiceId(candidate.id) === invoiceId) {
-            next[candidate.id] = state;
-          }
-        }
-        return next;
-      });
-      setRowPushDetails((prev) => {
-        const next = { ...prev };
-        for (const candidate of rows) {
-          if (parseLedgerLinkInvoiceId(candidate.id) === invoiceId) {
-            next[candidate.id] = detail;
-          }
-        }
-        return next;
-      });
-      return { ok, skipped, detail };
-    };
-
-    setRowPushStates((prev) => {
-      const next = { ...prev };
-      for (const candidate of rows) {
-        if (parseLedgerLinkInvoiceId(candidate.id) === invoiceId) {
-          next[candidate.id] = "sending";
-        }
-      }
-      return next;
-    });
-
+  const exportInvoice = async (invoiceId: number) => {
+    setBusyId(invoiceId);
+    setError(null);
     try {
-      const result = await api.pushXeroInvoice(invoiceId);
-      if (result.skipped) {
-        return applyOutcome(
-          "skipped",
-          result.reason || "Skipped by server",
-          false,
-          true
-        );
-      }
-      if (!result.external_entity_id || result.committed === false) {
-        return applyOutcome(
-          "failed",
-          "Xero accepted the request but the reference was not committed",
-          false,
-          false
-        );
-      }
-      const label =
-        result.external_number != null
-          ? `Exported to Xero · ${result.external_number} · ${result.external_status || "DRAFT"}`
-          : `Exported to Xero · ${result.external_entity_id}`;
-      return applyOutcome("sent", label, true, false);
+      await api.exportXeroInvoice(invoiceId);
+      await refreshXeroEvidence();
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Push failed";
-      return applyOutcome("failed", message, false, false);
-    }
-  }, [rows]);
-
-  const pushToTarget = async () => {
-    if (!isXeroTarget) return;
-    if (pendingRows.length === 0) return;
-
-    setPushing(true);
-    setPushError(null);
-
-    const uniqueByInvoice = new Map<number, ExportPreviewRow>();
-    for (const row of pendingRows) {
-      const invoiceId = parseLedgerLinkInvoiceId(row.id);
-      if (invoiceId != null && !uniqueByInvoice.has(invoiceId)) {
-        uniqueByInvoice.set(invoiceId, row);
-      }
-    }
-
-    let sent = 0;
-    let failed = 0;
-    let skipped = 0;
-
-    for (const row of uniqueByInvoice.values()) {
-      const outcome = await pushInvoiceRow(row);
-      if (outcome.skipped) skipped += 1;
-      else if (outcome.ok) sent += 1;
-      else failed += 1;
-    }
-
-    setPushing(false);
-
-    const status =
-      failed > 0 ? "Partial failure" : sent > 0 ? "Success" : skipped > 0 ? "Skipped" : "No changes";
-
-    setHistory((h) => [
-      {
-        id: `ex-${Date.now()}`,
-        ts: new Date().toISOString().slice(0, 16).replace("T", " "),
-        target,
-        count: sent,
-        failed,
-        status,
-      },
-      ...h,
-    ]);
-
-    if (failed > 0) {
-      setPushError(`${failed} invoice${failed === 1 ? "" : "s"} failed to push. Retry failed rows below.`);
+      setError(err instanceof Error ? err.message : "Export failed");
+    } finally {
+      setBusyId(null);
     }
   };
 
-  const retryRow = async (row: ExportPreviewRow) => {
-    if (!isXeroTarget) return;
-    setPushError(null);
-    await pushInvoiceRow(row);
+  const exportAllReady = async () => {
+    const ready = queue.filter((item) => item.valid);
+    if (ready.length === 0) return;
+    setError(null);
+    for (const item of ready) {
+      setBusyId(item.invoice_id);
+      try {
+        await api.exportXeroInvoice(item.invoice_id);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Export failed");
+        setBusyId(null);
+        await refreshXeroEvidence();
+        return;
+      }
+    }
+    setBusyId(null);
+    await refreshXeroEvidence();
   };
 
   return (
@@ -284,7 +213,10 @@ export function JournalExportTab({
           </div>
           <div className="text-right text-sm">
             <div className="text-xs text-muted-foreground">
-              {rows.length} journal lines · {pending} pending invoices
+              {rows.length} journal lines
+              {isXeroTarget
+                ? ` · ${pending} pending invoices · ${readyCount} ready`
+                : ""}
             </div>
             <div className="tnum font-semibold">Total {fmt(total)}</div>
           </div>
@@ -292,14 +224,17 @@ export function JournalExportTab({
 
         {!isXeroTarget && (
           <p className="text-xs text-muted-foreground mt-3">
-            Live API push is available for Xero only. Other targets support CSV download.
+            Live API export is available for Xero only. Other targets support CSV download.
           </p>
         )}
 
-        {pushError && (
-          <p className="text-xs text-destructive mt-3 inline-flex items-center gap-1.5">
+        {error && (
+          <p
+            className="text-xs text-destructive mt-3 inline-flex items-center gap-1.5"
+            data-testid="journal-export-error"
+          >
             <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-            {pushError}
+            {error}
           </p>
         )}
 
@@ -307,15 +242,29 @@ export function JournalExportTab({
           <Button size="sm" variant="outline" onClick={downloadCsv} data-testid="button-download-csv">
             <Download className="h-4 w-4 mr-1.5" /> Download CSV
           </Button>
-          <Button
-            size="sm"
-            onClick={() => void pushToTarget()}
-            disabled={pushing || pending === 0 || !isXeroTarget}
-            data-testid="button-push"
-          >
-            <Upload className="h-4 w-4 mr-1.5" />
-            {pushing ? "Pushing to Xero…" : `Push to ${target}`}
-          </Button>
+          {isXeroTarget && (
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={loadingQueue || busyId != null}
+                onClick={() => void refreshXeroEvidence()}
+                data-testid="button-refresh-queue"
+              >
+                <RefreshCw className="h-4 w-4 mr-1.5" />
+                {loadingQueue ? "Refreshing…" : "Refresh queue"}
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => void exportAllReady()}
+                disabled={busyId != null || readyCount === 0}
+                data-testid="button-export-xero"
+              >
+                <Upload className="h-4 w-4 mr-1.5" />
+                {busyId != null ? "Exporting…" : `Export ready to Xero (${readyCount})`}
+              </Button>
+            </>
+          )}
         </div>
       </Card>
 
@@ -333,87 +282,141 @@ export function JournalExportTab({
                 <th className="px-3 py-2 font-medium">Credit</th>
                 <th className="px-3 py-2 font-medium text-right">Amount</th>
                 <th className="px-4 py-2 font-medium">Status</th>
-                <th className="px-4 py-2 font-medium w-20" />
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground text-sm">
+                  <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">
                     No journal lines ready for export yet.
                   </td>
                 </tr>
               ) : (
-                rows.map((row) => {
-                  const pushState = rowPushStates[row.id] ?? "idle";
-                  const displayStatus = displayRowStatus(
-                    row.status,
-                    pushState,
-                    rowPushDetails[row.id]
-                  );
-                  return (
-                    <tr key={row.id} className="row-band border-b border-border/60">
-                      <td className="px-4 py-2 text-muted-foreground">{row.group}</td>
-                      <td className="px-3 py-2 font-medium">{row.doc}</td>
-                      <td className="px-3 py-2">{row.debit}</td>
-                      <td className="px-3 py-2">{row.credit}</td>
-                      <td className="px-3 py-2 text-right tnum">{fmt(row.amount)}</td>
-                      <td className="px-4 py-2">
-                        <ExportStatusBadge status={displayStatus} />
-                      </td>
-                      <td className="px-4 py-2">
-                        {isXeroTarget && pushState === "failed" && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="h-7 text-xs"
-                            onClick={() => void retryRow(row)}
-                          >
-                            <RefreshCw className="h-3 w-3 mr-1" />
-                            Retry
-                          </Button>
-                        )}
-                        {pushState === "sent" && (
-                          <CheckCircle2 className="h-4 w-4 text-primary" aria-label="Sent" />
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })
+                rows.map((row) => (
+                  <tr key={row.id} className="row-band border-b border-border/60">
+                    <td className="px-4 py-2 text-muted-foreground">{row.group}</td>
+                    <td className="px-3 py-2 font-medium">{row.doc}</td>
+                    <td className="px-3 py-2">{row.debit}</td>
+                    <td className="px-3 py-2">{row.credit}</td>
+                    <td className="px-3 py-2 text-right tnum">{fmt(row.amount)}</td>
+                    <td className="px-4 py-2">
+                      <ExportStatusBadge status={row.status} />
+                    </td>
+                  </tr>
+                ))
               )}
             </tbody>
           </table>
         </div>
       </Card>
 
-      <Card className="overflow-hidden">
-        <div className="px-4 py-2.5 border-b border-border text-sm font-medium">Export history</div>
-        <div className="divide-y divide-border/60">
-          {history.length === 0 ? (
-            <p className="px-4 py-3 text-sm text-muted-foreground">No pushes yet.</p>
-          ) : (
-            history.map((h) => (
-              <div key={h.id} className="px-4 py-2.5 flex flex-wrap items-center gap-2 text-sm">
-                <span className="tnum text-muted-foreground">{h.ts}</span>
-                <span className="font-medium">{h.target}</span>
-                <span className="text-muted-foreground">
-                  {h.count} sent
-                  {h.failed > 0 ? ` · ${h.failed} failed` : ""}
-                </span>
-                <Badge
-                  variant="outline"
-                  className={cn(
-                    "ml-auto text-[10px]",
-                    h.status === "Partial failure" && "border-destructive/40 text-destructive"
-                  )}
+      {isXeroTarget && (
+        <Card className="overflow-hidden" data-testid="journal-xero-export-queue">
+          <div className="px-4 py-2.5 border-b border-border text-sm font-medium">
+            Xero export queue
+          </div>
+          <ul className="space-y-2 max-h-80 overflow-auto text-xs p-3" data-testid="xero-export-queue">
+            {loadingQueue && queue.length === 0 && (
+              <li className="text-muted-foreground">Loading export queue…</li>
+            )}
+            {!loadingQueue && queue.length === 0 && (
+              <li className="text-muted-foreground">No eligible supplier invoices.</li>
+            )}
+            {queue.map((item) => (
+              <li
+                key={item.invoice_id}
+                className="rounded-md border border-border px-3 py-2 space-y-2"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium">#{item.invoice_id}</span>
+                  <span>{item.invoice_no || "—"}</span>
+                  <span>{item.vendor}</span>
+                  <Badge variant={item.valid ? "secondary" : "destructive"}>
+                    {item.valid ? "Ready" : "Blocked"}
+                  </Badge>
+                </div>
+                {!item.valid && (
+                  <ul className="text-destructive space-y-1" data-testid="xero-blocking-errors">
+                    {item.blocking_errors.map((err) => (
+                      <li key={`${err.code}:${err.message}`}>{err.message}</li>
+                    ))}
+                  </ul>
+                )}
+                <Button
+                  size="sm"
+                  disabled={!item.valid || busyId === item.invoice_id}
+                  onClick={() => void exportInvoice(item.invoice_id)}
+                  data-testid="xero-export-action"
                 >
-                  {h.status}
-                </Badge>
-              </div>
-            ))
-          )}
-        </div>
-      </Card>
+                  {busyId === item.invoice_id ? "Exporting…" : "Export to Xero"}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
+      {isXeroTarget && (
+        <Card className="overflow-hidden" data-testid="journal-xero-export-ledger">
+          <div className="px-4 py-2.5 border-b border-border text-sm font-medium">
+            Xero export evidence
+          </div>
+          <ul className="space-y-2 max-h-80 overflow-auto text-xs p-3" data-testid="xero-export-ledger">
+            {ledger.length === 0 && (
+              <li className="text-muted-foreground">No export evidence yet.</li>
+            )}
+            {ledger.map((row) => (
+              <li key={row.sync_id} className="rounded-md border border-border px-3 py-2 space-y-1">
+                <div className="flex flex-wrap gap-2 items-center">
+                  <span className="font-medium">Invoice #{row.source_invoice_id}</span>
+                  <Badge variant="outline">{row.status}</Badge>
+                  <span data-testid="xero-attachment-status">
+                    <Badge variant="secondary">PDF: {row.attachment_status || "—"}</Badge>
+                  </span>
+                </div>
+                <p className="text-muted-foreground">
+                  Xero {row.external_number || "—"} · ID {row.external_id || "—"} · status{" "}
+                  {row.external_status || "—"} · amount {row.external_total ?? "—"} · attempts{" "}
+                  {row.attempt_count}
+                </p>
+                {row.error_message && (
+                  <p className="text-destructive">
+                    [{row.error_bucket}/{row.error_code}] {row.error_message}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
+      {isXeroTarget && (
+        <Card className="overflow-hidden" data-testid="journal-xero-export-history">
+          <div className="px-4 py-2.5 border-b border-border text-sm font-medium">
+            Export history
+          </div>
+          <div className="divide-y divide-border/60">
+            {exportHistory.length === 0 ? (
+              <p className="px-4 py-3 text-sm text-muted-foreground">No export history yet.</p>
+            ) : (
+              exportHistory.map((h) => (
+                <div
+                  key={h.id}
+                  className="px-4 py-2.5 flex flex-wrap items-center gap-2 text-sm"
+                >
+                  <span className="font-medium">Invoice {h.invoice_id ?? "—"}</span>
+                  <span className="text-muted-foreground">
+                    {h.external_number || h.external_entity_id || "—"} · {h.external_status || "—"}
+                  </span>
+                  <Badge variant="outline" className="ml-auto text-[10px]">
+                    {h.sync_status || "—"}
+                  </Badge>
+                </div>
+              ))
+            )}
+          </div>
+        </Card>
+      )}
     </div>
   );
 }
