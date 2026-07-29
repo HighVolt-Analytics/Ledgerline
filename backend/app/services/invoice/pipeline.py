@@ -1043,21 +1043,46 @@ async def _ingest_single_email(
     for att in attachments:
         capture_rule = evaluate_ingest_capture(email, att, capture_config)
         if not capture_rule:
-            capture_rule_blocked = True
-            log_ingest_capture_decision(email, att, capture_config, matched_rule=None)
-            await log_event(
-                session,
-                "email_skipped",
-                detail={
-                    "reason": "no_capture_rule_match",
-                    "message_id": email.message_id,
-                    "sender": email.sender,
-                    "subject": email.subject,
-                    "attachment": att.filename,
-                    "mailbox": email.mailbox_email,
-                },
+            # Employee senders bypass the capture-rule gate: the employee registry
+            # is the implicit allow-list for Team Expenses ingest on email/WA/Viber.
+            from app.services.ingest.ingest_capture_service import (
+                employee_bypass_capture_rule,
             )
-            continue
+            from app.services.purchase.team_expense_validator import (
+                find_employee_by_sender,
+            )
+
+            employees = list(capture_config.employee_masters or [])
+            if employees and find_employee_by_sender(employees, email.sender):
+                capture_rule = employee_bypass_capture_rule(email.mailbox_email or "")
+                await log_event(
+                    session,
+                    "email_employee_bypass",
+                    detail={
+                        "reason": "employee_registry_match",
+                        "message_id": email.message_id,
+                        "sender": email.sender,
+                        "subject": email.subject,
+                        "attachment": att.filename,
+                        "mailbox": email.mailbox_email,
+                    },
+                )
+            else:
+                capture_rule_blocked = True
+                log_ingest_capture_decision(email, att, capture_config, matched_rule=None)
+                await log_event(
+                    session,
+                    "email_skipped",
+                    detail={
+                        "reason": "no_capture_rule_match",
+                        "message_id": email.message_id,
+                        "sender": email.sender,
+                        "subject": email.subject,
+                        "attachment": att.filename,
+                        "mailbox": email.mailbox_email,
+                    },
+                )
+                continue
 
         log_ingest_capture_decision(email, att, capture_config, matched_rule=capture_rule)
 

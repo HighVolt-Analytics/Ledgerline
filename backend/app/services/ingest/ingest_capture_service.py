@@ -70,6 +70,43 @@ def _effective_capture_rules(
     ]
 
 
+EMPLOYEE_BYPASS_CAPTURE_RULE_ID = "ec-employee-bypass"
+
+
+def employee_bypass_capture_rule(mailbox_email: str) -> EmailCaptureRule:
+    """Synthetic rule used when sender matches an employee in the registry.
+
+    Employee senders on email/WhatsApp/Viber are always ingested regardless of
+    whether a human-authored capture rule exists — the employee registry is the
+    implicit allow-list for Team Expenses ingest.
+    """
+    mailbox = mailbox_email.strip() or "inbox"
+    return EmailCaptureRule(
+        id=EMPLOYEE_BYPASS_CAPTURE_RULE_ID,
+        name="Employee registry bypass",
+        enabled=True,
+        priority=0,
+        mailbox=mailbox,
+        root=RuleConditionGroup(
+            type="group",
+            operator="OR",
+            children=[
+                RuleCondition(
+                    type="condition",
+                    field="attachment_name",
+                    operator="contains",
+                    value=".",
+                ),
+            ],
+        ),
+        action=EmailCaptureAction(
+            save_attachment=True,
+            route_to="Team Expenses",
+            tags=[],
+        ),
+    )
+
+
 def default_catch_all_capture_rule(mailbox_email: str) -> EmailCaptureRule:
     """Synthetic rule used when no email capture rules are configured."""
     mailbox = mailbox_email.strip() or "inbox"

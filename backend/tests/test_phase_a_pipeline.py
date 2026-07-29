@@ -246,3 +246,76 @@ async def test_upload_routing_from_category_rules_after_parse(
 
     assert loaded.route_target == "Purchase Management"
     assert loaded.evaluation_status in {"auto_coded", "needs_review", "pending_vendor", "awaiting_po"}
+
+
+@pytest.mark.asyncio
+async def test_employee_sender_bypasses_capture_rule_gate(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Known employee sender must be ingested even when no email capture rule matches."""
+    from app.schemas.rule_book_config import EmployeeMaster
+
+    employee_config = validate_rule_book_config_payload(
+        {
+            "schema_version": 1,
+            "email_capture_rules": [],  # no rules configured
+            "purchase_rules": [],
+            "expense_rules": [],
+            "team_expense_rules": [],
+            "posting_defaults": {
+                "tax_account": "GST Paid",
+                "payable_account": "Accounts Payable",
+                "fallback_account": "Suspense Account",
+            },
+            "document_sets": [],
+            "legacy_cascade": {"enabled": False},
+            "employee_masters": [
+                {
+                    "id": "emp-1",
+                    "name": "Vishnu Dev",
+                    "email": "codevishnu321@gmail.com",
+                    "status": "Active",
+                }
+            ],
+        }
+    )
+
+    async def _employee_config(_session: AsyncSession, _tenant_id) -> RuleBookConfigPayload:
+        return employee_config
+
+    monkeypatch.setattr(
+        "app.services.invoice.pipeline.load_config_for_tenant",
+        _employee_config,
+    )
+    monkeypatch.setattr(
+        "app.services.ingest.ingest_fanout_service.store_invoice_pdf",
+        lambda *args, **kwargs: "uploads/test.pdf",
+    )
+    monkeypatch.setattr(
+        "app.services.invoice.pipeline._finish_email_message",
+        lambda *args, **kwargs: None,
+    )
+
+    employee_email = RawEmail(
+        message_id="msg-employee-bypass-1",
+        subject="TE",
+        sender="codevishnu321@gmail.com",
+        mailbox_email="vishnu@highvolt.tech",
+        attachments=[
+            EmailAttachment(
+                filename="EXPENSE_CLAIM_Vishnu.pdf",
+                content_type="application/pdf",
+                data=b"%PDF-1.4 test",
+            )
+        ],
+    )
+
+    result = await ingest_email_attachments(
+        db_session,
+        [employee_email],
+        tenant_id=TESTING_TENANT_UUID,
+        tenant_slug="hv-org",
+    )
+    assert result.ingested_count == 1, "Employee sender must bypass capture rule gate"
+    assert "msg-employee-bypass-1" not in result.preskip_exceptions
