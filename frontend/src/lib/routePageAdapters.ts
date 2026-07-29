@@ -255,13 +255,17 @@ export function salesNeedsVarianceApproval(
   );
 }
 
-export function invoiceToTeamClaim(inv: Invoice): ExpenseClaim {
+export function invoiceToTeamClaim(
+  inv: Invoice,
+  employees: EmployeeMaster[] = []
+): ExpenseClaim {
   const amount = parseAmount(inv.total);
   const gst = parseAmount(inv.gst);
+  const matched = matchEmployeeForSender(inv.email_sender, employees);
   return {
     id: String(inv.id),
     documentRef: documentDisplayRef(inv),
-    submitter: inferSubmitter(inv),
+    submitter: matched?.name ?? inferSubmitter(inv),
     channel: inferClaimChannel(inv.email_sender, inv.capture_source),
     category: inv.account_name ?? "Uncategorised",
     amount,
@@ -295,7 +299,9 @@ function matchEmployeeForSender(
   employees: EmployeeMaster[]
 ): EmployeeMaster | undefined {
   if (!sender?.trim()) return undefined;
-  const key = sender.trim().toLowerCase();
+  let key = sender.trim().toLowerCase();
+  const angle = key.match(/<([^>]+)>/);
+  if (angle?.[1]?.includes("@")) key = angle[1].trim();
   const phone = normalizePhone(sender);
   for (const emp of employees) {
     const email = (emp.email ?? "").trim().toLowerCase();

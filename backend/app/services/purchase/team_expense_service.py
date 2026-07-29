@@ -13,7 +13,42 @@ from app.services.master_data.master_data_service import (
     list_employee_masters,
     sync_masters_to_config_file,
 )
-from app.services.purchase.team_expense_validator import find_employee_by_sender
+from app.services.purchase.team_expense_validator import (
+    find_employee_by_sender,
+    resolve_employee_for_sender,
+)
+
+
+async def stamp_team_expense_employee_identity(
+    session: AsyncSession,
+    invoice: Invoice,
+) -> str | None:
+    """Fill empty TE counterparty with the matched employee registry name.
+
+    DT-03 labels ``vendor`` as Employee in the UI. Vision often leaves counterparty
+    empty on internal claim forms even when the sender matches the employee master
+    (VR-TE01 already passed) — without this stamp the drawer shows "Unknown employee".
+    """
+    if (invoice.route_target or "").strip() != ROUTE_TEAM:
+        return None
+    if (invoice.vendor or "").strip():
+        return (invoice.vendor or "").strip()
+
+    employee = await resolve_employee_for_sender(
+        session,
+        invoice.tenant_id,
+        invoice.email_sender,
+    )
+    name = (employee.name if employee else None) or ""
+    name = name.strip()
+    if not name:
+        return None
+
+    invoice.vendor = name
+    from app.services.extraction.extraction_field_values import merge_invoice_extracted_fields
+
+    merge_invoice_extracted_fields(invoice, {"vendor": name})
+    return name
 
 
 async def record_team_expense_processed(

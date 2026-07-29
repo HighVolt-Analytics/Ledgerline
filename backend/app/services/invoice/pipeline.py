@@ -1045,15 +1045,18 @@ async def _ingest_single_email(
         if not capture_rule:
             # Employee senders bypass the capture-rule gate: the employee registry
             # is the implicit allow-list for Team Expenses ingest on email/WA/Viber.
+            # Load from DB (not file-only config) so Creations → Employees always applies.
             from app.services.ingest.ingest_capture_service import (
                 employee_bypass_capture_rule,
             )
+            from app.services.master_data.master_data_service import list_employee_masters
             from app.services.purchase.team_expense_validator import (
                 find_employee_by_sender,
             )
 
-            employees = list(capture_config.employee_masters or [])
-            if employees and find_employee_by_sender(employees, email.sender):
+            employees = await list_employee_masters(session, tenant_id)
+            matched_employee = find_employee_by_sender(employees, email.sender)
+            if matched_employee is not None:
                 capture_rule = employee_bypass_capture_rule(email.mailbox_email or "")
                 await log_event(
                     session,
@@ -1062,6 +1065,7 @@ async def _ingest_single_email(
                         "reason": "employee_registry_match",
                         "message_id": email.message_id,
                         "sender": email.sender,
+                        "employee_name": matched_employee.name,
                         "subject": email.subject,
                         "attachment": att.filename,
                         "mailbox": email.mailbox_email,

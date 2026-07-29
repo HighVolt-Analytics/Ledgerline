@@ -121,6 +121,55 @@ def test_team_manual_approval_required_above_auto_threshold(
     assert not requires_manual_approval(inv_small, team_rule, manager_approved=False)
 
 
+def test_team_manual_approval_manager_gate_without_threshold_holds() -> None:
+    """Manager gate + empty Require approval at/above → always hold for manager."""
+    inv = Invoice(tenant_id=TESTING_TENANT_UUID, route_target=ROUTE_TEAM, total=Decimal("42.50"))
+    assert requires_manual_approval(inv, None, manager_approved=False)
+    assert requires_manual_approval(
+        inv, None, manager_approved=False, playbook_auto_approve_below=None
+    )
+    assert not requires_manual_approval(
+        inv, None, manager_approved=False, playbook_auto_approve_below=100.0
+    )
+    assert requires_manual_approval(
+        inv, None, manager_approved=False, playbook_auto_approve_below=40.0
+    )
+
+
+@pytest.mark.asyncio
+async def test_stamp_team_expense_employee_identity_fills_empty_vendor(
+    db_session: AsyncSession,
+) -> None:
+    from app.models.employee_master import EmployeeMasterRecord
+    from app.services.purchase.team_expense_service import stamp_team_expense_employee_identity
+
+    db_session.add(
+        EmployeeMasterRecord(
+            tenant_id=TESTING_TENANT_UUID,
+            master_id="em-stamp-1",
+            name="vishnu",
+            email="codevishnu321@gmail.com",
+            status="Active",
+        )
+    )
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        route_target=ROUTE_TEAM,
+        email_sender="codevishnu321@gmail.com",
+        vendor=None,
+        status=InvoiceStatus.MAPPING,
+        currency="SGD",
+        file_hash="te-stamp-employee",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    name = await stamp_team_expense_employee_identity(db_session, inv)
+    assert name == "vishnu"
+    assert inv.vendor == "vishnu"
+    assert (inv.extracted_fields or {}).get("vendor") == "vishnu"
+
+
 @pytest.mark.asyncio
 async def test_has_manager_approval_with_duplicate_audit_rows(db_session: AsyncSession) -> None:
     inv = Invoice(

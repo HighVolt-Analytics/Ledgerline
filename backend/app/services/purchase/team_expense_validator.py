@@ -24,13 +24,23 @@ async def resolve_employee_for_sender(
     return find_employee_by_sender(employees, sender)
 
 
+def _sender_email_key(sender: str) -> str:
+    """Normalize sender to a comparable email (handles ``Name <a@b.com>``)."""
+    raw = sender.strip().lower()
+    if "<" in raw and ">" in raw:
+        inner = raw.rsplit("<", 1)[-1].split(">", 1)[0].strip()
+        if "@" in inner:
+            return inner
+    return raw
+
+
 def find_employee_by_sender(
     employees: list[EmployeeMasterResponse] | list,
     sender: str | None,
 ) -> EmployeeMasterResponse | None:
     if not sender:
         return None
-    key = sender.strip().lower()
+    key = _sender_email_key(sender)
     phone = normalize_phone(sender)
     for employee in employees:
         email = (employee.email or "").strip().lower()

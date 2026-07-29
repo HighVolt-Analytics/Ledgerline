@@ -47,7 +47,10 @@ export function TeamExpensesPage() {
   const institutionCurrency = (institution?.currency || "SGD").trim().toUpperCase() || "SGD";
   const actions = useExpenseClaimActions(ROUTE_TARGET);
 
-  const claims = useMemo(() => routed.map(invoiceToTeamClaim), [routed]);
+  const claims = useMemo(
+    () => routed.map((inv) => invoiceToTeamClaim(inv, employees)),
+    [routed, employees]
+  );
   const invoiceById = useMemo(() => new Map(routed.map((inv) => [inv.id, inv])), [routed]);
   const budgets = useMemo(() => employeeBudgetRows(employees), [employees]);
   const categories = useMemo(

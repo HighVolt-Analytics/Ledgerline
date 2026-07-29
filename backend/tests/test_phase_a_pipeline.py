@@ -254,12 +254,38 @@ async def test_employee_sender_bypasses_capture_rule_gate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Known employee sender must be ingested even when no email capture rule matches."""
-    from app.schemas.rule_book_config import EmployeeMaster
+    from app.models.employee_master import EmployeeMasterRecord
 
-    employee_config = validate_rule_book_config_payload(
+    # Restrictive rule like staging: only invoices@pactifyai.com — employee must bypass.
+    restrictive_config = validate_rule_book_config_payload(
         {
             "schema_version": 1,
-            "email_capture_rules": [],  # no rules configured
+            "email_capture_rules": [
+                {
+                    "id": "ec-vendor-only",
+                    "name": "Vendor invoices only",
+                    "enabled": True,
+                    "priority": 1,
+                    "mailbox": "*",
+                    "root": {
+                        "type": "group",
+                        "operator": "AND",
+                        "children": [
+                            {
+                                "type": "condition",
+                                "field": "from",
+                                "operator": "contains",
+                                "value": "invoices@pactifyai.com",
+                            }
+                        ],
+                    },
+                    "action": {
+                        "save_attachment": True,
+                        "route_to": "Purchase Management",
+                        "tags": [],
+                    },
+                }
+            ],
             "purchase_rules": [],
             "expense_rules": [],
             "team_expense_rules": [],
@@ -270,23 +296,28 @@ async def test_employee_sender_bypasses_capture_rule_gate(
             },
             "document_sets": [],
             "legacy_cascade": {"enabled": False},
-            "employee_masters": [
-                {
-                    "id": "emp-1",
-                    "name": "Vishnu Dev",
-                    "email": "codevishnu321@gmail.com",
-                    "status": "Active",
-                }
-            ],
         }
     )
 
-    async def _employee_config(_session: AsyncSession, _tenant_id) -> RuleBookConfigPayload:
-        return employee_config
+    db_session.add(
+        EmployeeMasterRecord(
+            tenant_id=TESTING_TENANT_UUID,
+            master_id="emp-bypass-1",
+            name="Vishnu Dev",
+            email="codevishnu321@gmail.com",
+            status="Active",
+            bank={},
+            budget={},
+        )
+    )
+    await db_session.flush()
+
+    async def _restrictive_config(_session: AsyncSession, _tenant_id) -> RuleBookConfigPayload:
+        return restrictive_config
 
     monkeypatch.setattr(
         "app.services.invoice.pipeline.load_config_for_tenant",
-        _employee_config,
+        _restrictive_config,
     )
     monkeypatch.setattr(
         "app.services.ingest.ingest_fanout_service.store_invoice_pdf",
@@ -319,3 +350,87 @@ async def test_employee_sender_bypasses_capture_rule_gate(
     )
     assert result.ingested_count == 1, "Employee sender must bypass capture rule gate"
     assert "msg-employee-bypass-1" not in result.preskip_exceptions
+
+
+@pytest.mark.asyncio
+async def test_unknown_sender_still_blocked_by_restrictive_capture_rule(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-employee senders still require a matching capture rule."""
+    restrictive_config = validate_rule_book_config_payload(
+        {
+            "schema_version": 1,
+            "email_capture_rules": [
+                {
+                    "id": "ec-vendor-only",
+                    "name": "Vendor invoices only",
+                    "enabled": True,
+                    "priority": 1,
+                    "mailbox": "*",
+                    "root": {
+                        "type": "group",
+                        "operator": "AND",
+                        "children": [
+                            {
+                                "type": "condition",
+                                "field": "from",
+                                "operator": "contains",
+                                "value": "invoices@pactifyai.com",
+                            }
+                        ],
+                    },
+                    "action": {
+                        "save_attachment": True,
+                        "route_to": "Purchase Management",
+                        "tags": [],
+                    },
+                }
+            ],
+            "purchase_rules": [],
+            "expense_rules": [],
+            "team_expense_rules": [],
+            "posting_defaults": {
+                "tax_account": "GST Paid",
+                "payable_account": "Accounts Payable",
+                "fallback_account": "Suspense Account",
+            },
+            "document_sets": [],
+            "legacy_cascade": {"enabled": False},
+        }
+    )
+
+    async def _restrictive_config(_session: AsyncSession, _tenant_id) -> RuleBookConfigPayload:
+        return restrictive_config
+
+    monkeypatch.setattr(
+        "app.services.invoice.pipeline.load_config_for_tenant",
+        _restrictive_config,
+    )
+    monkeypatch.setattr(
+        "app.services.invoice.pipeline._finish_email_message",
+        lambda *args, **kwargs: None,
+    )
+
+    unknown = RawEmail(
+        message_id="msg-unknown-sender-1",
+        subject="Random",
+        sender="stranger@example.com",
+        mailbox_email="vishnu@highvolt.tech",
+        attachments=[
+            EmailAttachment(
+                filename="doc.pdf",
+                content_type="application/pdf",
+                data=b"%PDF-1.4 test",
+            )
+        ],
+    )
+
+    result = await ingest_email_attachments(
+        db_session,
+        [unknown],
+        tenant_id=TESTING_TENANT_UUID,
+        tenant_slug="hv-org",
+    )
+    assert result.ingested_count == 0
+    assert result.preskip_exceptions["msg-unknown-sender-1"] == "no_capture_rule_match"

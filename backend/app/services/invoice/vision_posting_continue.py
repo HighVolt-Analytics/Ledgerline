@@ -302,6 +302,12 @@ async def continue_vision_understood_posting(
     invoice.document_type_code = loaded.document_type_code
     invoice.document_type_confidence = loaded.document_type_confidence
     invoice.evaluation_status = loaded.evaluation_status
+    if (loaded.route_target or "").strip() == ROUTE_TEAM:
+        from app.services.purchase.team_expense_service import (
+            stamp_team_expense_employee_identity,
+        )
+
+        await stamp_team_expense_employee_identity(session, loaded)
     invoice.vendor = loaded.vendor
 
     if await _vendor_hold_unless_skipped(session, loaded):

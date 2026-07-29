@@ -68,20 +68,32 @@ def requires_manual_approval(
     team_rule: TeamExpenseRule | None,
     *,
     manager_approved: bool,
+    playbook_auto_approve_below: float | None = None,
 ) -> bool:
-    """Claims at/above auto_approve_below need manager approval before posting."""
+    """Claims at/above auto_approve_below need manager approval before posting.
+
+    Threshold preference:
+    1. Matched ``team_expense_rules`` policy (category rule)
+    2. DT playbook ``Require approval at/above ($)`` when Manager gate is active
+    3. No threshold configured → hold for manager (Manager gate default)
+    """
     if invoice.route_target != ROUTE_TEAM or manager_approved:
         return False
     if invoice.total is None:
         return True
 
     amount = float(invoice.total)
-    if team_rule is None:
-        return True
+    auto_below: float | None = None
+    if team_rule is not None:
+        auto_below = float(team_rule.policy.auto_approve_below or 0) or None
+        if auto_below is not None and auto_below <= 0:
+            auto_below = None
+    elif playbook_auto_approve_below is not None:
+        auto_below = float(playbook_auto_approve_below)
 
-    auto_below = team_rule.policy.auto_approve_below
-    if auto_below > 0 and amount < auto_below:
+    if auto_below is not None and auto_below > 0 and amount < auto_below:
         return False
+    # Manager gate with no auto-approve threshold (or amount at/above threshold) → hold.
     return True
 
 
@@ -101,12 +113,39 @@ async def apply_team_expense_approval_gate(
     team_rule = team_rule_for_invoice(invoice, config)
     approved = await has_manager_approval(session, invoice.id)
 
-    if not requires_manual_approval(invoice, team_rule, manager_approved=approved):
+    playbook_auto_approve_below: float | None = None
+    dt_code = (invoice.document_type_code or "").strip().upper()
+    if dt_code:
+        from app.services.classification.document_type_catalog import (
+            get_document_type_definition,
+        )
+        from app.services.classification.document_type_playbook_profile_service import (
+            effective_approval_policy,
+        )
+
+        definition = get_document_type_definition(
+            dt_code, document_types=config.document_types
+        )
+        if definition is not None:
+            policy = effective_approval_policy(definition)
+            if policy.mode == "manager_gate":
+                playbook_auto_approve_below = policy.auto_approve_below
+
+    if not requires_manual_approval(
+        invoice,
+        team_rule,
+        manager_approved=approved,
+        playbook_auto_approve_below=playbook_auto_approve_below,
+    ):
+        threshold = (
+            (team_rule.policy.auto_approve_below if team_rule else None)
+            or playbook_auto_approve_below
+        )
         if (
-            team_rule is not None
+            threshold is not None
+            and float(threshold) > 0
             and invoice.total is not None
-            and team_rule.policy.auto_approve_below > 0
-            and float(invoice.total) < team_rule.policy.auto_approve_below
+            and float(invoice.total) < float(threshold)
         ):
             from app.services.purchase.team_expense_validator import resolve_employee_for_sender
 
@@ -121,9 +160,10 @@ async def apply_team_expense_approval_gate(
                 invoice_id=invoice.id,
                 detail={
                     "amount": float(invoice.total),
-                    "threshold": team_rule.policy.auto_approve_below,
+                    "threshold": float(threshold),
                     "merchant": invoice.vendor,
                     "employee_name": employee.name if employee else None,
+                    "source": "team_rule" if team_rule else "playbook",
                 },
             )
             await session.flush()
@@ -137,7 +177,11 @@ async def apply_team_expense_approval_gate(
         invoice_id=invoice.id,
         detail={
             "amount": float(invoice.total) if invoice.total is not None else None,
-            "auto_approve_below": team_rule.policy.auto_approve_below if team_rule else None,
+            "auto_approve_below": (
+                team_rule.policy.auto_approve_below
+                if team_rule
+                else playbook_auto_approve_below
+            ),
             "rule_id": team_rule.id if team_rule else None,
         },
     )

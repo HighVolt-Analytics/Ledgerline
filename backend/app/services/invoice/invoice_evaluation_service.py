@@ -535,6 +535,13 @@ async def apply_invoice_evaluation(
 
     apply_evaluation_to_invoice(invoice, result)
 
+    if (invoice.route_target or "").strip() == ROUTE_TEAM:
+        from app.services.purchase.team_expense_service import (
+            stamp_team_expense_employee_identity,
+        )
+
+        await stamp_team_expense_employee_identity(session, invoice)
+
     if prior_eval in STICKY_WORKFLOW_HOLD_EVAL_STATUSES:
         # Remap / catalogue refresh must not clear approval or PO/SO holds.
         invoice.evaluation_status = prior_eval
