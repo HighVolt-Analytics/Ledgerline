@@ -31,9 +31,11 @@ BASE_CURRENCY = COUNTRY_CURRENCY[DEFAULT_COUNTRY]
 UNKNOWN_CURRENCY = "UNKNOWN"
 
 # Symbols that map to more than one ISO code — never invent a country.
-AMBIGUOUS_CURRENCY_SYMBOLS = frozenset({"$", "¥"})
+AMBIGUOUS_CURRENCY_SYMBOLS = frozenset({"¥"})
 # 1:1 glyph → ISO (safe to store without user confirm).
+# Bare "$" defaults to USD (common international convention for unprefixed dollar).
 UNAMBIGUOUS_SYMBOL_TO_ISO = {
+    "$": "USD",
     "€": "EUR",
     "£": "GBP",
     "₹": "INR",

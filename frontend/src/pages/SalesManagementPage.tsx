@@ -148,11 +148,22 @@ export function SalesManagementPage() {
 
       <SalesCaptureStrip activeRuleCount={activeRuleCount} />
 
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 mb-5">
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 mb-5">
         <KpiCard
           label="Open SOs"
           value={salesLoading ? "…" : kpis.openSos}
           testid="kpi-sales-open"
+        />
+        <KpiCard
+          label="Awaiting SO"
+          value={salesLoading ? "…" : kpis.awaitingSo}
+          testid="kpi-sales-awaiting-so"
+          onClick={kpis.awaitingSo > 0 ? () => setRegisterTab("action") : undefined}
+          delta={
+            !salesLoading && kpis.awaitingSo > 0
+              ? { dir: "down", text: "invoice before SO", good: false }
+              : undefined
+          }
         />
         <KpiCard
           label="Pending DN"
@@ -165,23 +176,22 @@ export function SalesManagementPage() {
           }
         />
         <KpiCard
+          label="Variances awaiting"
+          value={salesLoading ? "…" : kpis.variancesAwaiting}
+          testid="kpi-sales-variances"
+          delta={
+            !salesLoading && kpis.variancesAwaiting > 0
+              ? { dir: "down", text: "needs approval", good: false }
+              : undefined
+          }
+        />
+        <KpiCard
           label="3-Way match pass"
           value={salesLoading ? "…" : `${kpis.matchPct}%`}
           testid="kpi-sales-matchpct"
           delta={
             !salesLoading && threeWayRows.length > 0
               ? { dir: "up", text: "of 3-way SOs clean", good: true }
-              : undefined
-          }
-        />
-        <KpiCard
-          label="2-Way match pass"
-          value={salesLoading || twoWayLoading ? "…" : `${kpis.twoWayMatchPct}%`}
-          testid="kpi-sales-two-way-matchpct"
-          onClick={kpis.twoWayCount > 0 ? () => setRegisterTab("two_way") : undefined}
-          delta={
-            !salesLoading && kpis.twoWayCount > 0
-              ? { dir: "up", text: `${kpis.twoWayCount} DN↔Invoice`, good: true }
               : undefined
           }
         />

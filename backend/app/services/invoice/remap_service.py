@@ -208,6 +208,7 @@ async def remap_invoices_for_tenant(
         # Posted invoices are terminal for coding review: a rule-book change must
         # not flip them back to needs_review with no gate to clear it. Recoding a
         # posted document goes through the explicit reset/approval flow instead.
+        # Approval / awaiting-PO|SO holds are sticky inside apply_invoice_evaluation.
         if (
             inv.status == InvoiceStatus.PROCESSED
             and (inv.evaluation_status or "").strip() == "needs_review"

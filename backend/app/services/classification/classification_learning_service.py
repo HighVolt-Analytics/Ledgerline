@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Any
 
@@ -371,7 +372,11 @@ async def record_learning_from_resolution(
 ) -> ClassificationLearningEvent:
     """Persist a rich learning row after POST /classification/resolve."""
     detail = classification_detail or {}
-    heading = str(detail.get("document_heading") or "").strip()
+    heading = str(
+        detail.get("document_heading")
+        or getattr(invoice, "document_heading", None)
+        or ""
+    ).strip()
     if not heading and invoice.document_text:
         heading = _heading_from_text(invoice.document_text)
 
@@ -415,6 +420,84 @@ async def purge_learning_events_for_document_type(
     )
     await session.flush()
     return int(result.rowcount or 0)
+
+
+def normalize_heading_for_learning(heading: str | None) -> str:
+    """Normalize printed titles for tenant synonym / correction lookup."""
+    token = (heading or "").strip().lower()
+    if not token:
+        return ""
+    token = re.sub(r"[^\w\s/+.-]+", " ", token, flags=re.UNICODE)
+    token = re.sub(r"\s+", " ", token).strip()
+    return token[:_HEADING_MAX]
+
+
+def _heading_from_learning_row(row: ClassificationLearningEvent) -> str:
+    if isinstance(row.llm_response, dict):
+        return str(row.llm_response.get("document_heading") or "").strip()
+    return ""
+
+
+async def learned_document_type_for_heading(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    document_heading: str | None,
+    valid_dt_codes: set[str] | None = None,
+    vendor_key: str | None = None,
+    limit_scan: int = 40,
+) -> tuple[str, float] | None:
+    """Return (DT code, confidence) when reviewers previously confirmed this title.
+
+    Prefers vendor-scoped corrections, then tenant-wide. Requires exact normalized
+    heading match so "Despatch Advice" can teach a synonym without broad fuzzy risk.
+    """
+    needle = normalize_heading_for_learning(document_heading)
+    if len(needle) < 4:
+        return None
+
+    async def _scan(rows: list[ClassificationLearningEvent]) -> str | None:
+        counts: dict[str, int] = {}
+        for row in rows:
+            human = normalize_learning_dt_code(row.human_confirmed_dt)
+            if not human:
+                continue
+            if valid_dt_codes is not None and human not in valid_dt_codes:
+                continue
+            stored = normalize_heading_for_learning(_heading_from_learning_row(row))
+            if not stored or stored != needle:
+                continue
+            counts[human] = counts.get(human, 0) + 1
+        if not counts:
+            return None
+        # Prefer most frequent; ties break by first seen (recent-first scan order).
+        return max(counts.items(), key=lambda item: item[1])[0]
+
+    vendor_token = (vendor_key or "").strip().lower()
+    if vendor_token:
+        vendor_stmt = (
+            select(ClassificationLearningEvent)
+            .where(
+                ClassificationLearningEvent.tenant_id == tenant_id,
+                ClassificationLearningEvent.vendor_key == vendor_token,
+            )
+            .order_by(ClassificationLearningEvent.created_at.desc())
+            .limit(limit_scan)
+        )
+        vendor_hit = await _scan(list((await session.execute(vendor_stmt)).scalars().all()))
+        if vendor_hit:
+            return vendor_hit, 0.96
+
+    stmt = (
+        select(ClassificationLearningEvent)
+        .where(ClassificationLearningEvent.tenant_id == tenant_id)
+        .order_by(ClassificationLearningEvent.created_at.desc())
+        .limit(limit_scan)
+    )
+    hit = await _scan(list((await session.execute(stmt)).scalars().all()))
+    if hit:
+        return hit, 0.93
+    return None
 
 
 async def few_shot_examples_for_tenant(

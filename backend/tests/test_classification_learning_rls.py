@@ -118,6 +118,76 @@ async def test_record_learning_from_resolution_merges_invoice_text(
 
 
 @pytest.mark.asyncio
+async def test_learned_document_type_for_heading_exact_match(
+    db_session: AsyncSession,
+) -> None:
+    from app.services.classification.classification_learning_service import (
+        learned_document_type_for_heading,
+        normalize_heading_for_learning,
+    )
+
+    assert normalize_heading_for_learning("  Despatch Advice!! ") == "despatch advice"
+
+    await record_learning_event(
+        db_session,
+        tenant_id=TESTING_TENANT_UUID,
+        invoice_id=77,
+        file_hash="desp-hash",
+        human_confirmed_dt="DT-06",
+        llm_suggested_dt="DT-04",
+        document_heading="DESPATCH ADVICE",
+        text_excerpt="DESPATCH ADVICE\nSO-TEST-001",
+    )
+    await db_session.flush()
+
+    hit = await learned_document_type_for_heading(
+        db_session,
+        tenant_id=TESTING_TENANT_UUID,
+        document_heading="Despatch Advice",
+        valid_dt_codes={"DT-06", "DT-04"},
+    )
+    assert hit is not None
+    assert hit[0] == "DT-06"
+    assert hit[1] >= 0.9
+
+    miss = await learned_document_type_for_heading(
+        db_session,
+        tenant_id=TESTING_TENANT_UUID,
+        document_heading="Something Else Entirely",
+        valid_dt_codes={"DT-06"},
+    )
+    assert miss is None
+
+
+@pytest.mark.asyncio
+async def test_record_learning_prefers_invoice_document_heading(
+    db_session: AsyncSession,
+) -> None:
+    from app.models.invoice import Invoice, InvoiceStatus
+
+    inv = Invoice(
+        id=88,
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.EXCEPTION,
+        document_heading="DESPATCH ADVICE",
+        document_text="Noise first line that is not the title\nDESPATCH ADVICE",
+        file_hash="heading-pref-hash",
+        llm_suggested_dt="DT-04",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    event = await record_learning_from_resolution(
+        db_session,
+        tenant_id=TESTING_TENANT_UUID,
+        invoice=inv,
+        human_confirmed_dt="DT-06",
+        classification_detail={"llm_suggested_dt": "DT-04"},
+    )
+    assert event.llm_response.get("document_heading") == "DESPATCH ADVICE"
+
+
+@pytest.mark.asyncio
 async def test_purge_learning_events_for_deleted_document_type(
     db_session: AsyncSession,
 ) -> None:

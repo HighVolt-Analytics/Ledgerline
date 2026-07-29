@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { BookOpen, TrendingUp, Users } from "lucide-react";
+import { BookOpen, Landmark, TrendingUp, Users } from "lucide-react";
 import { Card } from "@/components/ui/card";
 
 export function SalesCaptureStrip({ activeRuleCount = 0 }: { activeRuleCount?: number }) {
@@ -20,6 +20,14 @@ export function SalesCaptureStrip({ activeRuleCount = 0 }: { activeRuleCount?: n
       >
         <Users className="h-3.5 w-3.5" />
         Customer capture
+      </Link>
+      <Link
+        to="/collections"
+        className="inline-flex items-center gap-1.5 text-primary hover:underline text-sm"
+        data-testid="link-sales-collections"
+      >
+        <Landmark className="h-3.5 w-3.5" />
+        Collections queue
       </Link>
       <Link
         to="/rules"

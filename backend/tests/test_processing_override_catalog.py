@@ -7,6 +7,7 @@ import pytest
 from app.services.invoice.processing_override_catalog import (
     normalise_processing_overrides,
     override_bypasses_purchase_hold,
+    override_bypasses_sales_hold,
     serialise_processing_overrides,
     should_skip,
     validate_skip_steps,
@@ -46,6 +47,17 @@ def test_override_bypasses_purchase_hold() -> None:
     assert override_bypasses_purchase_hold(inv)
     inv.processing_overrides = None
     assert not override_bypasses_purchase_hold(inv)
+
+
+def test_override_bypasses_sales_hold() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        currency="AUD",
+        processing_overrides={"skip_steps": ["playbook"]},
+    )
+    assert override_bypasses_sales_hold(inv)
+    inv.processing_overrides = None
+    assert not override_bypasses_sales_hold(inv)
 
 
 def test_serialise_empty_returns_none() -> None:

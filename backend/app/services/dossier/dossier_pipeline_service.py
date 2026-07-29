@@ -29,7 +29,7 @@ from app.services.invoice.pipeline_stages import (
 from app.services.integration.publish_service import is_published_from_audit_logs
 from app.services.invoice.processing_cycle_service import latest_cycle_reset_log_id_from_logs
 
-DossierStageState = Literal["pass", "fail", "waived", "pending"]
+DossierStageState = Literal["pass", "fail", "waived", "skipped", "pending"]
 
 _VAULT_ROUTE = "vault"
 
@@ -72,8 +72,16 @@ UNDERSTOOD_DOSSIER_STAGE_IDS: frozenset[str] = frozenset(
         "file_validity",
         "vision_understand",
         "extract",
+        "document_type",
         "bundle",
         "archive",
+        "validate",
+        "match",
+        "approve",
+        "map_gl",
+        "journal",
+        "reconcile",
+        "post",
     }
 )
 
@@ -84,8 +92,26 @@ UNDERSTOOD_DOSSIER_STAGE_ORDER: tuple[str, ...] = (
     "file_validity",
     "vision_understand",
     "extract",
+    "document_type",
     "bundle",
     "archive",
+    "validate",
+    "match",
+    "approve",
+    "map_gl",
+    "journal",
+    "reconcile",
+    "post",
+)
+
+_UNDERSTOOD_POST_VAULT_STAGE_IDS: tuple[str, ...] = (
+    "validate",
+    "match",
+    "approve",
+    "map_gl",
+    "journal",
+    "reconcile",
+    "post",
 )
 
 _STAGE_LABELS = {
@@ -144,6 +170,7 @@ _EVENT_STAGE.update(
         "parse_completed": 7,
         "invoice_parsed": 7,
         "vision_header_extracted": 7,
+        "vision_document_type_mapped": 8,
         "document_classified": 8,
         "classification_resolved": 8,
         "playbook_evaluated": 9,
@@ -157,6 +184,7 @@ _EVENT_STAGE.update(
         "validation_failed": 11,
         "validation_bypassed_after_human_approval": 11,
         "routing_review_required": 11,
+        "vision_posting_continued": 11,
         "three_way_match_evaluated": 12,
         "match_phase_evaluated": 12,
         "match_context_incomplete": 12,
@@ -181,6 +209,7 @@ _EVENT_STAGE.update(
         "blob_relocated": 19,
         "vault_layout_sync_skipped": 19,
         "vision_path_pending": 19,
+        "vision_posting_skipped": 19,
         "vault_stored": 19,
     }
 )
@@ -215,7 +244,21 @@ _REMEDIATION: dict[str, str] = {
     "ROUTING_REVIEW": "Confirm document type classification or adjust rule-book routing.",
     "DOCUMENT_UNCLASSIFIED": "Classify the document type in Rule Book or reclassify from the exception queue.",
     "MATCH_FAILED": "Link PO/GRN, approve variance, or update purchase register lines.",
-    "MATCH_FAILED_SALES": "Link SO/DN, approve variance, or update sales register lines.",
+    "MATCH_FAILED_SALES": (
+        "Link the commercial invoice (org AR / customer tax invoice DT) on this SO, "
+        "or link SO/DN, approve variance, or update sales register lines."
+    ),
+    "MATCH_VARIANCE": (
+        "Approve the price/qty variance, or correct register line prices and quantities, then reprocess."
+    ),
+    "MATCH_VARIANCE_SALES": (
+        "Approve the sales price/qty variance, or correct SO/DN/invoice line prices and quantities, then reprocess."
+    ),
+    "MATCH_MISSING_INVOICE_SALES": (
+        "Link the commercial invoice (org AR / customer tax invoice DT) on this SO."
+    ),
+    "MATCH_MISSING_SUPPORT_SALES": "Link the missing SO and/or delivery note on this SO reference.",
+    "MATCH_MISSING_SUPPORT": "Link the missing PO and/or GRN on this PO reference.",
     "APPROVAL_REQUIRED": "Route to the approver named in the playbook policy.",
     "MAP_SUSPENSE": "Map to a real GL account in the rule book or approve suspense mapping.",
     "MAP_CONFIG": "Set Post to ledger for this document type in Rule Book → Document types.",
@@ -625,6 +668,38 @@ def _playbook_routing_review(logs: list[AuditLog]) -> AuditLog | None:
 
 def _is_sales_route(inv: Invoice) -> bool:
     return (inv.route_target or "").strip() == ROUTE_SALES
+
+
+def _match_remediation_code(inv: Invoice, detail: dict | None) -> str:
+    """Pick MATCH remediation from audit detail — variance vs missing legs."""
+    sales = _is_sales_route(inv)
+    if not isinstance(detail, dict):
+        return "MATCH_FAILED_SALES" if sales else "MATCH_FAILED"
+
+    match_status = str(detail.get("match_status") or "").strip().lower()
+    if match_status in {"price variance", "qty variance"} or "variance" in match_status:
+        return "MATCH_VARIANCE_SALES" if sales else "MATCH_VARIANCE"
+
+    if sales:
+        so_ok = bool(detail.get("so_present"))
+        dn_ok = bool(detail.get("dn_present"))
+        inv_ok = bool(detail.get("invoice_present"))
+        if so_ok and dn_ok and inv_ok:
+            return "MATCH_VARIANCE_SALES"
+        if so_ok and dn_ok and not inv_ok:
+            return "MATCH_MISSING_INVOICE_SALES"
+        if not so_ok or not dn_ok:
+            return "MATCH_MISSING_SUPPORT_SALES"
+        return "MATCH_FAILED_SALES"
+
+    po_ok = bool(detail.get("po_present"))
+    grn_ok = bool(detail.get("grn_present"))
+    inv_ok = bool(detail.get("invoice_present"))
+    if po_ok and grn_ok and inv_ok:
+        return "MATCH_VARIANCE"
+    if not po_ok or not grn_ok:
+        return "MATCH_MISSING_SUPPORT"
+    return "MATCH_FAILED"
 
 
 def _remediation_for(
@@ -1259,7 +1334,7 @@ def _resolve_validate(
         return _step(
             "validate",
             state="skipped",
-            detail="Not run · understood path (bundle + vault only)",
+            detail="Not run · vault-only",
             at=pending.created_at if pending else None,
         )
 
@@ -1397,6 +1472,17 @@ def _resolve_match(
         match_checks_from_summary,
         match_summary_from_audit_detail,
     )
+    from app.services.invoice.pipeline_stages import is_register_supporting_doc
+
+    # SO/DN/PO/GRN carry commercial three_way_match_evaluated from register sync.
+    # Processing must not show Match failed on those supporting uploads.
+    if is_register_supporting_doc(inv):
+        return _step(
+            "match",
+            state="waived",
+            detail="Not required — supporting document",
+            at=inv.created_at,
+        )
 
     vr_checks = _validation_checks(inv, document_types)
     match_log = _latest_log(logs, "three_way_match_evaluated")
@@ -1421,11 +1507,14 @@ def _resolve_match(
         detail_dict = match_log.detail if isinstance(match_log.detail, dict) else {}
         audit_fail = _match_audit_indicates_fail(detail_dict)
         state: DossierStageState = "fail" if match_fail or audit_fail else "pass"
+        # Finished commercials keep variance audit history — do not keep Match red.
+        if state == "fail" and inv.status == InvoiceStatus.PROCESSED:
+            state = "pass"
         failure = None
         remediation = None
         if state == "fail":
             failure = detail
-            remediation = _remediation_for("MATCH_FAILED", inv)
+            remediation = _remediation_for(_match_remediation_code(inv, detail_dict), inv)
         merged_checks = match_checks
         if vr_checks:
             seen = {row.id for row in match_checks}
@@ -1445,6 +1534,13 @@ def _resolve_match(
         )
 
     if variance_hold is not None and not variance_cleared:
+        if inv.status == InvoiceStatus.PROCESSED:
+            return _step(
+                "match",
+                state="pass",
+                detail=_detail_from_log(variance_hold, fallback="three_way_match_variance_unapproved"),
+                at=variance_hold.created_at,
+            )
         detail = _detail_from_log(variance_hold, fallback="three_way_match_variance_unapproved")
         return _step(
             "match",
@@ -1468,6 +1564,14 @@ def _resolve_match(
         )
 
     if match_fail:
+        if inv.status == InvoiceStatus.PROCESSED:
+            return _step(
+                "match",
+                state="pass",
+                detail="Match complete",
+                at=match_log.created_at if match_log else None,
+                checks=match_checks,
+            )
         return _step(
             "match",
             state="fail",
@@ -1532,6 +1636,16 @@ def _resolve_map_gl(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipel
     if _is_vault_route(inv):
         return _step("map_gl", state="waived", detail="Not required — vault route")
 
+    from app.services.invoice.pipeline_stages import finance_posting_continuum_applies
+
+    if not finance_posting_continuum_applies(inv):
+        return _step(
+            "map_gl",
+            state="waived",
+            detail="Not required — non-posting document",
+            at=inv.created_at,
+        )
+
     map_log = _latest_log(logs, "mapping_applied")
     map_review = _latest_log(logs, "mapping_review_required")
     account = (inv.account_name or "").strip()
@@ -1580,6 +1694,16 @@ def _resolve_map_gl(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipel
 def _resolve_journal(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
     if _is_vault_route(inv):
         return _step("journal", state="waived", detail="Not required — vault route")
+
+    from app.services.invoice.pipeline_stages import finance_posting_continuum_applies
+
+    if not finance_posting_continuum_applies(inv):
+        return _step(
+            "journal",
+            state="waived",
+            detail="Not required — non-posting document",
+            at=inv.created_at,
+        )
 
     if not _map_gl_complete(inv, logs):
         return _step("journal", state="pending", detail="—")
@@ -1639,6 +1763,16 @@ def _resolve_reconcile(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPi
     if _is_vault_route(inv):
         return _step("reconcile", state="waived", detail="Not required — vault route")
 
+    from app.services.invoice.pipeline_stages import finance_posting_continuum_applies
+
+    if not finance_posting_continuum_applies(inv):
+        return _step(
+            "reconcile",
+            state="waived",
+            detail="Not required — non-posting document",
+            at=inv.created_at,
+        )
+
     if not _map_gl_complete(inv, logs):
         return _step("reconcile", state="pending", detail="—")
 
@@ -1669,19 +1803,17 @@ def _resolve_post(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelin
     if _is_vault_route(inv):
         return _step("post", state="waived", detail="Not required — vault route")
 
-    if not _map_gl_complete(inv, logs):
-        return _step("post", state="pending", detail="—")
+    from app.services.invoice.pipeline_stages import finance_posting_continuum_applies
 
-    doc_type = (inv.purchase_document_type or "").strip().lower()
-    if doc_type in ("po", "grn"):
-        purchase_log = _latest_log(logs, "purchase_document_processed")
-        if purchase_log or inv.status == InvoiceStatus.PROCESSED:
-            return _step(
-                "post",
-                state="pass",
-                detail=_detail_from_log(purchase_log, fallback="Supporting document processed"),
-                at=purchase_log.created_at if purchase_log else None,
-            )
+    if not finance_posting_continuum_applies(inv):
+        return _step(
+            "post",
+            state="waived",
+            detail="Not required — non-posting document",
+            at=inv.created_at,
+        )
+
+    if not _map_gl_complete(inv, logs):
         return _step("post", state="pending", detail="—")
 
     if is_published_from_audit_logs(logs):
@@ -1722,6 +1854,16 @@ def _resolve_archive(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipe
 def _resolve_pay(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
     if _is_vault_route(inv):
         return _step("pay", state="waived", detail="Not required — vault route")
+
+    from app.services.invoice.pipeline_stages import finance_posting_continuum_applies
+
+    if not finance_posting_continuum_applies(inv):
+        return _step(
+            "pay",
+            state="waived",
+            detail="Not required — non-posting document",
+            at=inv.created_at,
+        )
     return _step("pay", state="pending", detail="—")
 
 
@@ -1950,7 +2092,9 @@ def build_understood_dossier_pipeline(
     inv: Invoice,
     logs: list[AuditLog],
 ) -> list[DossierPipelineStepResponse]:
-    """Eight Audit-aligned stages for the vision understood path (incl. duplicate check)."""
+    """Understood path: capture → DT map → bundle → vault, then posting continuum when continue."""
+    from app.services.invoice.pipeline_stages import vision_posting_continues
+
     cycle_logs = _cycle_logs(logs)
     received = _latest_log(cycle_logs, "email_ingested", "invoice_uploaded", "invoice_file_attached")
     storage = _latest_log(cycle_logs, "storage_verified")
@@ -1964,6 +2108,7 @@ def build_understood_dossier_pipeline(
     else:
         vu = vu_pass or vu_fail
     vh = _latest_log(cycle_logs, "vision_header_extracted")
+    dt_map = _latest_log(cycle_logs, "vision_document_type_mapped")
     bundle_log = _latest_log(cycle_logs, "vision_bundle_linked", "vision_bundle_standalone")
     vault_log = (
         _latest_log(cycle_logs, "blob_relocated")
@@ -1974,6 +2119,7 @@ def build_understood_dossier_pipeline(
     fields = inv.extracted_fields if isinstance(inv.extracted_fields, dict) else {}
     heading = (inv.document_heading or "").strip() or str(fields.get("document_heading") or "").strip()
     canonical = str(fields.get("canonical_document_type") or "").strip()
+    dt_code = (inv.document_type_code or "").strip()
     has_file = bool((inv.raw_file_path or "").strip())
     has_bundle_snapshot = fields.get("vision_bundle_kind") is not None or bool(
         fields.get("vision_bundle_key")
@@ -2069,6 +2215,23 @@ def build_understood_dossier_pipeline(
     else:
         steps.append(_step("extract", state="pending", detail="—"))
 
+    if dt_map is not None:
+        steps.append(
+            _step(
+                "document_type",
+                state="pass",
+                detail=_detail_from_log(dt_map, fallback=dt_code or canonical or heading or "DT mapped"),
+                at=dt_map.created_at,
+            )
+        )
+    elif dt_code or canonical or heading:
+        label = dt_code or canonical or heading
+        steps.append(_step("document_type", state="pass", detail=f"Vision · {label}"))
+    elif vh is not None:
+        steps.append(_step("document_type", state="pending", detail="Document type pending"))
+    else:
+        steps.append(_step("document_type", state="pending", detail="—"))
+
     if bundle_log is not None:
         steps.append(
             _step(
@@ -2098,6 +2261,19 @@ def build_understood_dossier_pipeline(
     else:
         steps.append(_step("archive", state="pending", detail="—"))
 
+    if not vision_posting_continues(cycle_logs):
+        for sid in _UNDERSTOOD_POST_VAULT_STAGE_IDS:
+            steps.append(_step(sid, state="skipped", detail="Not run · vault-only"))
+        return steps
+
+    wm = _watermark(cycle_logs, inv)
+    steps.append(_resolve_validate(inv, cycle_logs, wm))
+    steps.append(_resolve_approve(inv, cycle_logs, wm))
+    steps.append(_resolve_map_gl(inv, cycle_logs, wm))
+    steps.append(_resolve_match(inv, cycle_logs, wm))
+    steps.append(_resolve_journal(inv, cycle_logs, wm))
+    steps.append(_resolve_reconcile(inv, cycle_logs, wm))
+    steps.append(_resolve_post(inv, cycle_logs, wm))
     return steps
 
 
@@ -2106,15 +2282,20 @@ def _apply_understood_path_overlay(
     logs: list[AuditLog],
     steps: list[DossierPipelineStepResponse],
 ) -> list[DossierPipelineStepResponse]:
-    """Vision understood path: only ingest→extract→bundle→vault; skip OCR/classify/posting."""
-    from app.services.invoice.pipeline_stages import resolve_pipeline_active_path
+    """Vision understood path: keep understood catalogue; skip OCR/classify; gate post-vault."""
+    from app.services.invoice.pipeline_stages import (
+        resolve_pipeline_active_path,
+        vision_posting_continues,
+    )
 
     if resolve_pipeline_active_path(logs) != "understood" and not _is_vision_understood_hold(
         inv, logs
     ):
         return steps
 
+    continues = vision_posting_continues(logs)
     vh = _latest_log(logs, "vision_header_extracted")
+    dt_map = _latest_log(logs, "vision_document_type_mapped")
     bundle_log = _latest_log(logs, "vision_bundle_linked", "vision_bundle_standalone")
     vault_log = (
         _latest_log(logs, "blob_relocated")
@@ -2139,6 +2320,16 @@ def _apply_understood_path_overlay(
                 )
             )
             continue
+        if sid in _UNDERSTOOD_POST_VAULT_STAGE_IDS and not continues:
+            out.append(
+                _step(
+                    sid,
+                    state="skipped",
+                    detail="Not run · vault-only",
+                    at=None,
+                )
+            )
+            continue
         if sid == "extract" and vh is not None:
             out.append(
                 _step(
@@ -2150,6 +2341,19 @@ def _apply_understood_path_overlay(
             )
             continue
         if sid == "document_type":
+            if dt_map is not None:
+                out.append(
+                    _step(
+                        "document_type",
+                        state="pass",
+                        detail=_detail_from_log(
+                            dt_map,
+                            fallback=canonical or heading or (inv.document_type_code or "").strip() or "DT mapped",
+                        ),
+                        at=dt_map.created_at,
+                    )
+                )
+                continue
             label = canonical or heading or (inv.document_type_code or "").strip()
             if label:
                 out.append(

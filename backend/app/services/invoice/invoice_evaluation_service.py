@@ -66,6 +66,9 @@ EVAL_PENDING_VENDOR = "pending_vendor"
 # Vision understood path (bundle + vault) — distinct from OCR classification hold.
 EVAL_VISION_VAULTED = "vision_vaulted"
 EVAL_VISION_HEADER_REVIEW = "vision_header_review"
+# Match-register holds (string tokens; owned by purchase/sales sync flows).
+EVAL_AWAITING_PO = "awaiting_po"
+EVAL_AWAITING_SO = "awaiting_so"
 
 # Evaluation statuses that mean the invoice stopped on the understood path.
 VISION_UNDERSTOOD_EVAL_STATUSES: frozenset[str] = frozenset(
@@ -74,6 +77,15 @@ VISION_UNDERSTOOD_EVAL_STATUSES: frozenset[str] = frozenset(
         EVAL_VISION_HEADER_REVIEW,
         # Legacy rows written before vision_* tags existed.
         EVAL_AWAITING_CLASSIFICATION,
+    }
+)
+
+# Workflow gates cleared only by their own resume path — never by remap/re-eval.
+STICKY_WORKFLOW_HOLD_EVAL_STATUSES: frozenset[str] = frozenset(
+    {
+        EVAL_PENDING_APPROVAL,
+        EVAL_AWAITING_PO,
+        EVAL_AWAITING_SO,
     }
 )
 
@@ -137,8 +149,26 @@ def evaluate_invoice_routing(
     mapping_rule_type: str | None = None,
     route_override: str | None = None,
     customer_masters: list | None = None,
+    force_dt_route: bool = False,
 ) -> InvoiceEvaluationResult:
-    """Evaluate email route, vendor/customer detection, and category rules for one invoice."""
+    """Evaluate email route, vendor/customer detection, and category rules for one invoice.
+
+    Team Expenses channel policy (highest priority for TE):
+    - Manual upload never routes to Team Expenses.
+    - Email / WhatsApp / Viber + employee registry match always forces Team Expenses
+      (wins over ``force_dt_route`` and catalogue DT).
+
+    When ``force_dt_route`` is True (understood-path continue) and TE is not forced by
+    employee identity, a mapped catalogue DT is the sole non-TE route source — email
+    capture and category rules cannot override it.
+    """
+    from app.services.purchase.team_expense_route_policy import (
+        ensure_team_expenses_document_type,
+        normalize_capture_source,
+        should_force_team_expenses,
+        team_expenses_allowed_capture,
+    )
+
     doc = invoice_to_eval_document(invoice)
     email = doc_to_sample_email(doc, default_mailbox="accounts@acme-hospitality.com.au")
     email_rule = match_email_capture_rule(email, config.email_capture_rules)
@@ -177,29 +207,57 @@ def evaluate_invoice_routing(
         if dt_code
         else DOCUMENT_TYPE_ROUTE_CONFIDENCE_MIN
     )
-    if dt_code and dt_confidence >= dt_min_confidence and dt_route:
-        route_target = dt_route
-        matched_rule_ids.append(f"dt:{dt_code}")
-    elif email_rule:
-        route_target = email_rule.action.route_to
-    elif sales:
-        route_target = ROUTE_SALES
-    elif _should_route_sales_by_perspective(invoice, config):
-        route_target = ROUTE_SALES
-        matched_rule_ids.append("perspective:sales")
-    elif purchase:
-        route_target = ROUTE_PURCHASE
-    elif expense:
-        route_target = ROUTE_EXPENSES
-    elif team:
-        route_target = ROUTE_TEAM
-    elif is_plausible_po_reference(doc.po):
-        route_target = ROUTE_PURCHASE
-    else:
-        from app.services.purchase.purchase_document_service import infer_purchase_document_type
+    capture_ok = team_expenses_allowed_capture(normalize_capture_source(invoice))
+    employees = list(config.employee_masters or [])
 
-        if infer_purchase_document_type(invoice):
-            route_target = ROUTE_PURCHASE
+    if should_force_team_expenses(invoice, employees):
+        ensure_team_expenses_document_type(invoice, config.document_types)
+        route_target = ROUTE_TEAM
+        matched_rule_ids.append("policy:te_employee_sender")
+    else:
+        use_dt_route = False
+        if force_dt_route and dt_code and dt_route:
+            use_dt_route = True
+        elif dt_code and dt_confidence >= dt_min_confidence and dt_route:
+            use_dt_route = True
+
+        if use_dt_route:
+            if dt_route == ROUTE_TEAM and not capture_ok:
+                matched_rule_ids.append("policy:te_blocked_upload")
+            else:
+                route_target = dt_route
+                matched_rule_ids.append(f"dt:{dt_code}")
+
+        if route_target is None:
+            if email_rule:
+                candidate = email_rule.action.route_to
+                if candidate == ROUTE_TEAM and not capture_ok:
+                    matched_rule_ids.append("policy:te_blocked_upload")
+                else:
+                    route_target = candidate
+            elif sales:
+                route_target = ROUTE_SALES
+            elif _should_route_sales_by_perspective(invoice, config):
+                route_target = ROUTE_SALES
+                matched_rule_ids.append("perspective:sales")
+            elif purchase:
+                route_target = ROUTE_PURCHASE
+            elif expense:
+                route_target = ROUTE_EXPENSES
+            elif team:
+                if capture_ok:
+                    route_target = ROUTE_TEAM
+                else:
+                    matched_rule_ids.append("policy:te_blocked_upload")
+            elif is_plausible_po_reference(doc.po):
+                route_target = ROUTE_PURCHASE
+            else:
+                from app.services.purchase.purchase_document_service import (
+                    infer_purchase_document_type,
+                )
+
+                if infer_purchase_document_type(invoice):
+                    route_target = ROUTE_PURCHASE
 
     is_fallback = mapping_rule_type == FALLBACK_RULE_TYPE
 
@@ -341,6 +399,7 @@ async def apply_invoice_evaluation(
     *,
     config: RuleBookConfigPayload | None = None,
     enqueue_pending: bool = True,
+    force_dt_route: bool = False,
 ) -> InvoiceEvaluationResult:
     """Evaluate and persist routing fields; optionally enqueue unknown vendors."""
     eval_status = (invoice.evaluation_status or "").strip()
@@ -392,16 +451,83 @@ async def apply_invoice_evaluation(
         mapping_rule_type=mapping_detail.rule_type,
         route_override=prior_route,
         customer_masters=customer_masters,
+        force_dt_route=force_dt_route,
     )
 
-    if (prior_route or "").strip() and not dt_confident:
-        merged_ids = list(dict.fromkeys([*existing_ids, *result.matched_rule_ids]))
-        # Ingest / email capture route is sticky; DT classification overrides when confident.
+    from app.services.purchase.team_expense_route_policy import (
+        ensure_team_expenses_document_type,
+        normalize_capture_source,
+        should_force_team_expenses,
+        team_expenses_allowed_capture,
+    )
+
+    employees = list(config.employee_masters or [])
+    capture_ok = team_expenses_allowed_capture(normalize_capture_source(invoice))
+
+    # Understood path: catalogue DT route wins over sticky email/ingest routes,
+    # except Team Expenses channel policy (employee force / upload block).
+    if should_force_team_expenses(invoice, employees):
+        ensure_team_expenses_document_type(invoice, config.document_types)
+        merged_ids = list(
+            dict.fromkeys([*existing_ids, *result.matched_rule_ids, "policy:te_employee_sender"])
+        )
         evaluation_status = result.evaluation_status
-        if prior_route.strip() == ROUTE_TEAM and evaluation_status == EVAL_PENDING_VENDOR:
+        if evaluation_status == EVAL_PENDING_VENDOR:
             evaluation_status = EVAL_AUTO_CODED
         result = InvoiceEvaluationResult(
-            route_target=prior_route,
+            route_target=ROUTE_TEAM,
+            matched_rule_ids=merged_ids,
+            vendor_confidence=result.vendor_confidence,
+            evaluation_status=evaluation_status,
+        )
+    elif force_dt_route and (invoice.document_type_code or "").strip():
+        dt_route = route_target_for_document_type(
+            (invoice.document_type_code or "").strip().upper(),
+            config.document_types,
+        )
+        if dt_route == ROUTE_TEAM and not capture_ok:
+            # Keep evaluate result (TE already blocked for upload).
+            merged_ids = list(
+                dict.fromkeys(
+                    [*existing_ids, *result.matched_rule_ids, "policy:te_blocked_upload"]
+                )
+            )
+            result = InvoiceEvaluationResult(
+                route_target=result.route_target
+                if (result.route_target or "").strip() != ROUTE_TEAM
+                else None,
+                matched_rule_ids=merged_ids,
+                vendor_confidence=result.vendor_confidence,
+                evaluation_status=result.evaluation_status,
+            )
+        elif dt_route:
+            merged_ids = list(dict.fromkeys([*existing_ids, *result.matched_rule_ids]))
+            evaluation_status = result.evaluation_status
+            if dt_route == ROUTE_TEAM and evaluation_status == EVAL_PENDING_VENDOR:
+                evaluation_status = EVAL_AUTO_CODED
+            result = InvoiceEvaluationResult(
+                route_target=dt_route,
+                matched_rule_ids=merged_ids,
+                vendor_confidence=result.vendor_confidence,
+                evaluation_status=evaluation_status,
+            )
+    elif (prior_route or "").strip() and not dt_confident:
+        sticky_route = prior_route.strip()
+        if sticky_route == ROUTE_TEAM and not capture_ok:
+            sticky_route = (result.route_target or "").strip() or None
+            merged_ids = list(
+                dict.fromkeys(
+                    [*existing_ids, *result.matched_rule_ids, "policy:te_blocked_upload"]
+                )
+            )
+        else:
+            merged_ids = list(dict.fromkeys([*existing_ids, *result.matched_rule_ids]))
+        # Ingest / email capture route is sticky; DT classification overrides when confident.
+        evaluation_status = result.evaluation_status
+        if sticky_route == ROUTE_TEAM and evaluation_status == EVAL_PENDING_VENDOR:
+            evaluation_status = EVAL_AUTO_CODED
+        result = InvoiceEvaluationResult(
+            route_target=sticky_route,
             matched_rule_ids=merged_ids,
             vendor_confidence=result.vendor_confidence,
             evaluation_status=evaluation_status,
@@ -409,7 +535,16 @@ async def apply_invoice_evaluation(
 
     apply_evaluation_to_invoice(invoice, result)
 
-    if (
+    if prior_eval in STICKY_WORKFLOW_HOLD_EVAL_STATUSES:
+        # Remap / catalogue refresh must not clear approval or PO/SO holds.
+        invoice.evaluation_status = prior_eval
+        result = InvoiceEvaluationResult(
+            route_target=result.route_target,
+            matched_rule_ids=result.matched_rule_ids,
+            vendor_confidence=result.vendor_confidence,
+            evaluation_status=prior_eval,
+        )
+    elif (
         prior_invoice_status == InvoiceStatus.PROCESSED
         and (invoice.evaluation_status or "").strip() == EVAL_NEEDS_REVIEW
         and prior_eval

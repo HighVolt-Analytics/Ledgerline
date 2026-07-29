@@ -47,6 +47,7 @@ from app.services.ingest.ingest_fanout_service import IngestSourceMetadata, inge
 from app.services.invoice.processing_override_catalog import (
     clear_processing_overrides,
     override_bypasses_purchase_hold,
+    override_bypasses_sales_hold,
     should_skip,
     skip_steps_for,
 )
@@ -234,18 +235,23 @@ async def _sync_counterparty_and_evaluate(
     parsed: object | None,
     config: object,
     org: object,
+    force_dt_route: bool = False,
 ) -> None:
     """Sync finance counterparty on invoice.vendor, then evaluate routing/match."""
     from app.services.sales.counterparty_service import sync_invoice_counterparty
 
     sync_invoice_counterparty(invoice, config=config, parsed=parsed, org=org)
     _finalize_vendor_counterparty(invoice, parsed=parsed, config=config)
-    await apply_invoice_evaluation(session, invoice, config=config)
+    await apply_invoice_evaluation(
+        session, invoice, config=config, force_dt_route=force_dt_route
+    )
     prior_vendor = invoice.vendor
     sync_invoice_counterparty(invoice, config=config, parsed=parsed, org=org)
     _finalize_vendor_counterparty(invoice, parsed=parsed, config=config)
     if (invoice.vendor or "") != (prior_vendor or ""):
-        await apply_invoice_evaluation(session, invoice, config=config)
+        await apply_invoice_evaluation(
+            session, invoice, config=config, force_dt_route=force_dt_route
+        )
 
 
 async def _sync_and_evaluate_invoice(
@@ -295,6 +301,26 @@ async def _clear_purchase_awaiting_po_if_overridden(
     await session.flush()
 
 
+async def _clear_sales_awaiting_so_if_overridden(
+    session: AsyncSession,
+    invoice: Invoice,
+    loaded: Invoice,
+) -> None:
+    from app.services.invoice.invoice_evaluation_service import EVAL_AUTO_CODED
+    from app.services.sales.sales_document_service import EVAL_AWAITING_SO
+
+    if not override_bypasses_sales_hold(invoice):
+        return
+    if loaded.evaluation_status != EVAL_AWAITING_SO:
+        return
+    await _log_processing_override_skip(session, invoice, "playbook")
+    loaded.evaluation_status = EVAL_AUTO_CODED
+    loaded.status = InvoiceStatus.PARSING
+    invoice.evaluation_status = EVAL_AUTO_CODED
+    invoice.status = InvoiceStatus.PARSING
+    await session.flush()
+
+
 async def _dt_match_mode_requires_po(session: AsyncSession, invoice: Invoice) -> bool:
     """Whether the invoice document type's match policy requires PO linkage."""
     from app.services.classification.document_type_match_service import resolve_match_mode
@@ -314,6 +340,26 @@ async def _dt_match_mode_requires_po(session: AsyncSession, invoice: Invoice) ->
         tenant_id=invoice.tenant_id,
     )
     return match_mode_requires_po(match_mode)
+
+
+async def _dt_match_mode_requires_sales(session: AsyncSession, invoice: Invoice) -> bool:
+    """Whether the invoice document type's match policy requires SO linkage."""
+    from app.services.classification.document_type_match_service import resolve_match_mode
+    from app.services.classification.document_type_playbook_profile_service import (
+        match_mode_requires_sales,
+    )
+    from app.services.rule_book.rule_book_mapper import load_classification_config
+
+    code = (invoice.document_type_code or "").strip()
+    if not code:
+        return True
+    config = await load_classification_config(session, invoice.tenant_id)
+    match_mode = resolve_match_mode(
+        document_type_code=code,
+        document_types=list(config.document_types),
+        tenant_id=invoice.tenant_id,
+    )
+    return match_mode_requires_sales(match_mode)
 
 
 async def _halt_or_bypass_purchase_awaiting_po(
@@ -357,6 +403,48 @@ async def _halt_or_bypass_purchase_awaiting_po(
     await session.flush()
     await _purge_accruals_after_incomplete_halt(
         session, invoice, reason="awaiting_po_hold"
+    )
+    send_notification(invoice, InvoiceStatus.EXCEPTION)
+    return True
+
+
+async def _halt_or_bypass_sales_awaiting_so(
+    session: AsyncSession,
+    invoice: Invoice,
+    *,
+    bypass_review_gates: bool,
+    playbook_bypasses_so_hold: bool,
+) -> bool:
+    """After final ``sync_sales_document``: hold or clear awaiting-SO.
+
+    ``sync_sales_document`` sets ``EXCEPTION`` + ``awaiting_so`` when the SO
+    is missing. Callers that already marked the invoice ``PROCESSED`` must
+    either stop here or restore ``PROCESSED`` before ledger publish.
+
+    Returns True when the caller must return (held on awaiting SO).
+    """
+    from app.services.invoice.invoice_evaluation_service import EVAL_AUTO_CODED, ROUTE_SALES
+    from app.services.sales.sales_document_service import EVAL_AWAITING_SO
+
+    if (invoice.route_target or "").strip() != ROUTE_SALES:
+        return False
+
+    awaiting = invoice.evaluation_status == EVAL_AWAITING_SO
+    if not awaiting:
+        return False
+    match_requires_so = await _dt_match_mode_requires_sales(session, invoice)
+    if bypass_review_gates or playbook_bypasses_so_hold or not match_requires_so:
+        if playbook_bypasses_so_hold and not bypass_review_gates and match_requires_so:
+            await _log_processing_override_skip(session, invoice, "playbook")
+        invoice.evaluation_status = EVAL_AUTO_CODED
+        invoice.status = InvoiceStatus.PROCESSED
+        await session.flush()
+        return False
+    invoice.status = InvoiceStatus.EXCEPTION
+    invoice.evaluation_status = EVAL_AWAITING_SO
+    await session.flush()
+    await _purge_accruals_after_incomplete_halt(
+        session, invoice, reason="awaiting_so_hold"
     )
     send_notification(invoice, InvoiceStatus.EXCEPTION)
     return True
@@ -1425,6 +1513,102 @@ async def _apply_parsed_to_invoice(
     return invoice.vendor
 
 
+async def prepare_route_register_before_posting(
+    session: AsyncSession,
+    invoice: Invoice,
+    *,
+    bypass_review_gates: bool,
+) -> bool:
+    """Infer PO/SO roles, sync registers, and finish supporting documents.
+
+    Returns True when the caller must stop (supporting doc processed or anchor hold).
+    """
+    from app.services.purchase.purchase_document_service import (
+        EVAL_AWAITING_PO,
+        apply_purchase_document_type_after_eval,
+        sync_purchase_document,
+    )
+    from app.services.sales.sales_document_service import (
+        EVAL_AWAITING_SO,
+        apply_sales_document_type_after_eval,
+        sync_sales_document,
+    )
+
+    loaded = (
+        await session.execute(
+            select(Invoice)
+            .where(Invoice.id == invoice.id)
+            .options(selectinload(Invoice.line_items))
+        )
+    ).scalar_one()
+
+    await apply_purchase_document_type_after_eval(session, loaded)
+    await apply_sales_document_type_after_eval(session, loaded)
+    invoice.purchase_document_type = loaded.purchase_document_type
+    invoice.sales_document_type = loaded.sales_document_type
+    invoice.po_reference = loaded.po_reference
+    invoice.so_reference = loaded.so_reference
+
+    route = (loaded.route_target or "").strip()
+    purchase_doc_type = (loaded.purchase_document_type or "").strip().lower()
+    if route == ROUTE_PURCHASE:
+        await sync_purchase_document(session, loaded)
+        invoice.purchase_document_type = loaded.purchase_document_type
+        invoice.po_reference = loaded.po_reference
+        invoice.evaluation_status = loaded.evaluation_status
+        if purchase_doc_type in ("po", "grn") and not bypass_review_gates:
+            await _finish_purchase_supporting_document(session, invoice)
+            return True
+        if (
+            loaded.status == InvoiceStatus.EXCEPTION
+            and loaded.evaluation_status == EVAL_AWAITING_PO
+        ):
+            hold_bypass = bypass_review_gates or override_bypasses_purchase_hold(invoice)
+            if hold_bypass:
+                from app.services.invoice.invoice_evaluation_service import EVAL_AUTO_CODED
+
+                if override_bypasses_purchase_hold(invoice) and not bypass_review_gates:
+                    await _log_processing_override_skip(session, invoice, "playbook")
+                loaded.evaluation_status = EVAL_AUTO_CODED
+                invoice.evaluation_status = EVAL_AUTO_CODED
+                loaded.status = InvoiceStatus.VALIDATING
+                invoice.status = InvoiceStatus.VALIDATING
+            else:
+                invoice.status = InvoiceStatus.EXCEPTION
+                send_notification(invoice, InvoiceStatus.EXCEPTION)
+                return True
+
+    sales_doc_type = (loaded.sales_document_type or "").strip().lower()
+    if route == ROUTE_SALES:
+        await sync_sales_document(session, loaded)
+        invoice.sales_document_type = loaded.sales_document_type
+        invoice.so_reference = loaded.so_reference
+        invoice.evaluation_status = loaded.evaluation_status
+        if sales_doc_type in ("so", "dn") and not bypass_review_gates:
+            await _finish_sales_supporting_document(session, invoice)
+            return True
+        if (
+            loaded.status == InvoiceStatus.EXCEPTION
+            and loaded.evaluation_status == EVAL_AWAITING_SO
+        ):
+            hold_bypass = bypass_review_gates or override_bypasses_sales_hold(invoice)
+            if hold_bypass:
+                from app.services.invoice.invoice_evaluation_service import EVAL_AUTO_CODED
+
+                if override_bypasses_sales_hold(invoice) and not bypass_review_gates:
+                    await _log_processing_override_skip(session, invoice, "playbook")
+                loaded.evaluation_status = EVAL_AUTO_CODED
+                invoice.evaluation_status = EVAL_AUTO_CODED
+                loaded.status = InvoiceStatus.VALIDATING
+                invoice.status = InvoiceStatus.VALIDATING
+            else:
+                invoice.status = InvoiceStatus.EXCEPTION
+                send_notification(invoice, InvoiceStatus.EXCEPTION)
+                return True
+
+    return False
+
+
 async def resume_invoice_posting_pipeline(
     session: AsyncSession,
     invoice: Invoice,
@@ -1449,17 +1633,58 @@ async def resume_invoice_posting_pipeline(
 
     route = (loaded.route_target or "").strip()
     if route == ROUTE_PURCHASE:
-        from app.services.purchase.purchase_document_service import sync_purchase_document
+        from app.services.purchase.purchase_document_service import (
+            EVAL_AWAITING_PO,
+            sync_purchase_document,
+        )
 
         await sync_purchase_document(session, loaded)
         invoice.purchase_document_type = loaded.purchase_document_type
         invoice.po_reference = loaded.po_reference
+        invoice.evaluation_status = loaded.evaluation_status
+        if (
+            loaded.status == InvoiceStatus.EXCEPTION
+            and loaded.evaluation_status == EVAL_AWAITING_PO
+        ):
+            purchase_hold_bypass = bypass_review_gates or override_bypasses_purchase_hold(invoice)
+            if purchase_hold_bypass:
+                from app.services.invoice.invoice_evaluation_service import EVAL_AUTO_CODED
+
+                if override_bypasses_purchase_hold(invoice) and not bypass_review_gates:
+                    await _log_processing_override_skip(session, invoice, "playbook")
+                loaded.evaluation_status = EVAL_AUTO_CODED
+                invoice.evaluation_status = EVAL_AUTO_CODED
+                loaded.status = InvoiceStatus.MAPPING
+                invoice.status = InvoiceStatus.MAPPING
+            else:
+                invoice.status = InvoiceStatus.EXCEPTION
+                send_notification(invoice, InvoiceStatus.EXCEPTION)
+                return
     elif route == ROUTE_SALES:
-        from app.services.sales.sales_document_service import sync_sales_document
+        from app.services.sales.sales_document_service import EVAL_AWAITING_SO, sync_sales_document
 
         await sync_sales_document(session, loaded)
         invoice.sales_document_type = loaded.sales_document_type
         invoice.so_reference = loaded.so_reference
+        invoice.evaluation_status = loaded.evaluation_status
+        if (
+            loaded.status == InvoiceStatus.EXCEPTION
+            and loaded.evaluation_status == EVAL_AWAITING_SO
+        ):
+            sales_hold_bypass = bypass_review_gates or override_bypasses_sales_hold(invoice)
+            if sales_hold_bypass:
+                from app.services.invoice.invoice_evaluation_service import EVAL_AUTO_CODED
+
+                if override_bypasses_sales_hold(invoice) and not bypass_review_gates:
+                    await _log_processing_override_skip(session, invoice, "playbook")
+                loaded.evaluation_status = EVAL_AUTO_CODED
+                invoice.evaluation_status = EVAL_AUTO_CODED
+                loaded.status = InvoiceStatus.MAPPING
+                invoice.status = InvoiceStatus.MAPPING
+            else:
+                invoice.status = InvoiceStatus.EXCEPTION
+                send_notification(invoice, InvoiceStatus.EXCEPTION)
+                return
 
     if await _vendor_hold_unless_skipped(session, loaded):
         invoice.status = InvoiceStatus.EXCEPTION
@@ -1665,7 +1890,7 @@ async def resume_invoice_posting_pipeline(
     await save_reconciliation(session, recon, tenant_id=invoice.tenant_id)
     if recon.halted:
         route_target = (invoice.route_target or "").strip()
-        non_blocking_recon = route_target in (ROUTE_TEAM, ROUTE_EXPENSES, ROUTE_SALES) or bypass_review_gates
+        non_blocking_recon = route_target in (ROUTE_TEAM, ROUTE_EXPENSES) or bypass_review_gates
         if not non_blocking_recon:
             invoice.status = InvoiceStatus.EXCEPTION
             await log_event(
@@ -1698,6 +1923,7 @@ async def resume_invoice_posting_pipeline(
 
     # Capture before _mark_invoice_processed clears processing_overrides.
     playbook_bypasses_po_hold = override_bypasses_purchase_hold(invoice)
+    playbook_bypasses_so_hold = override_bypasses_sales_hold(invoice)
     _mark_invoice_processed(invoice)
     await session.flush()
     await record_team_expense_processed(session, invoice)
@@ -1725,6 +1951,13 @@ async def resume_invoice_posting_pipeline(
     )
 
     await sync_sales_document(session, invoice)
+    if (invoice.route_target or "").strip() == ROUTE_SALES and await _halt_or_bypass_sales_awaiting_so(
+        session,
+        invoice,
+        bypass_review_gates=bypass_review_gates,
+        playbook_bypasses_so_hold=playbook_bypasses_so_hold,
+    ):
+        return
     if is_commercial_sales_invoice(invoice):
         from app.services.payments.settlement_service import ensure_receivable_with_audit
 
@@ -1946,7 +2179,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         await session.flush()
 
         # Map vision heading/canonical label → Rule Book DT-xx (no posting yet).
-        # Rules → tenant classifiers (PO/total signals) → text LLM catalogue fallback.
+        # Rules → tenant heading learning → classifiers → text LLM catalogue fallback.
         from app.services.extraction.llm_document_service import apply_document_type_to_invoice
         from app.services.invoice.vision_document_type_map import (
             map_vision_label_to_document_type_with_llm_fallback,
@@ -1956,12 +2189,30 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
 
         rb_config = await load_classification_config(session, invoice.tenant_id)
         fields = invoice.extracted_fields if isinstance(invoice.extracted_fields, dict) else {}
+        enabled_dt_codes = {
+            (dt.code or "").strip().upper()
+            for dt in (rb_config.document_types or [])
+            if getattr(dt, "enabled", True) and (dt.code or "").strip()
+        }
+        vendor_learning_key = resolve_vendor_learning_key(invoice)
+        vision_few_shots = await few_shot_examples_for_tenant(
+            session,
+            tenant_id=invoice.tenant_id,
+            valid_dt_codes=enabled_dt_codes,
+            vendor_key=vendor_learning_key,
+            vendor_limit=ai_cfg.vendor_few_shot_limit,
+        )
         dt_map = await map_vision_label_to_document_type_with_llm_fallback(
             document_heading=invoice.document_heading or "",
             canonical_document_type=str(fields.get(CANONICAL_DOCUMENT_TYPE_KEY) or ""),
             document_types=rb_config.document_types or [],
             human_locked_dt=human_locked_dt or "",
             invoice=invoice,
+            session=session,
+            tenant_id=invoice.tenant_id,
+            org=org,
+            few_shots=vision_few_shots,
+            vendor_key=vendor_learning_key,
         )
         if dt_map.reason != "human_locked" and dt_map.code:
             apply_document_type_to_invoice(
@@ -2078,8 +2329,13 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                 session, invoice, parsed_vendor=invoice.vendor
             )
             await session.flush()
-            if (posting_defn.route_target or "").strip():
-                invoice.route_target = posting_defn.route_target
+            from app.services.classification.document_type_catalog import (
+                resolved_route_for_definition,
+            )
+
+            catalogue_route = resolved_route_for_definition(posting_defn)
+            if catalogue_route:
+                invoice.route_target = catalogue_route
             await continue_vision_understood_posting(
                 session,
                 invoice,
@@ -2104,6 +2360,64 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                 header_ok=header_ok,
             ),
         )
+
+        from app.services.invoice.vision_posting_continue import vision_should_sync_register
+
+        # Supporting register docs (PO/GRN/SO/DN) have posting=No but must still
+        # sync the purchase/sales register — never leave them as vision_vaulted.
+        if skip_reason == "dt_not_posting" and vision_should_sync_register(posting_defn):
+            assert posting_defn is not None
+            await sync_vision_header_vault_path(
+                session, invoice, parsed_vendor=invoice.vendor
+            )
+            await session.flush()
+            if (posting_defn.route_target or "").strip():
+                invoice.route_target = posting_defn.route_target
+            from app.services.classification.document_type_playbook_service import (
+                _infer_purchase_bundle_role,
+                _infer_sales_bundle_role,
+            )
+            from app.models.invoice import PurchaseDocumentType, SalesDocumentType
+
+            purchase_role = _infer_purchase_bundle_role(posting_defn)
+            sales_role = _infer_sales_bundle_role(posting_defn)
+            if purchase_role in {
+                PurchaseDocumentType.PO.value,
+                PurchaseDocumentType.GRN.value,
+            }:
+                invoice.purchase_document_type = purchase_role
+                invoice.sales_document_type = None
+            elif sales_role in {
+                SalesDocumentType.SO.value,
+                SalesDocumentType.DN.value,
+            }:
+                invoice.sales_document_type = sales_role
+                invoice.purchase_document_type = None
+
+            from app.services.invoice.pipeline import (
+                _finish_purchase_supporting_document,
+                _finish_sales_supporting_document,
+            )
+
+            if purchase_role in {
+                PurchaseDocumentType.PO.value,
+                PurchaseDocumentType.GRN.value,
+            }:
+                await _finish_purchase_supporting_document(session, invoice)
+            else:
+                await _finish_sales_supporting_document(session, invoice)
+            await log_event(
+                session,
+                "vision_supporting_register_synced",
+                invoice_id=invoice.id,
+                detail=audit_document_detail(
+                    invoice,
+                    reason="dt_not_posting_register_sync",
+                    purchase_document_type=invoice.purchase_document_type,
+                    sales_document_type=invoice.sales_document_type,
+                ),
+            )
+            return
 
         # Vision-only vault layout: Unrouted/{type}/{vendor}/… (legacy sync untouched).
         moved = await sync_vision_header_vault_path(
@@ -2971,6 +3285,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     invoice.matched_rule_ids = loaded.matched_rule_ids
     invoice.vendor_confidence = loaded.vendor_confidence
     await _clear_purchase_awaiting_po_if_overridden(session, invoice, loaded)
+    await _clear_sales_awaiting_so_if_overridden(session, invoice, loaded)
 
     dt_definition = resolve_definition_for_invoice(loaded, list(config.document_types))
     skip_field_conf_review = False
@@ -3181,11 +3496,13 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             },
         )
         if loaded.status == InvoiceStatus.EXCEPTION:
-            sales_hold_bypass = bypass_review_gates
+            sales_hold_bypass = bypass_review_gates or override_bypasses_sales_hold(invoice)
             if sales_hold_bypass:
                 from app.services.invoice.invoice_evaluation_service import EVAL_AUTO_CODED
 
                 if loaded.evaluation_status == EVAL_AWAITING_SO:
+                    if override_bypasses_sales_hold(invoice) and not bypass_review_gates:
+                        await _log_processing_override_skip(session, invoice, "playbook")
                     loaded.evaluation_status = EVAL_AUTO_CODED
                     invoice.evaluation_status = EVAL_AUTO_CODED
                 loaded.status = InvoiceStatus.PARSING
@@ -3591,7 +3908,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     await save_reconciliation(session, recon, tenant_id=invoice.tenant_id)
     if recon.halted:
         route = (invoice.route_target or "").strip()
-        non_blocking_recon = route in (ROUTE_TEAM, ROUTE_EXPENSES, ROUTE_SALES) or bypass_review_gates
+        non_blocking_recon = route in (ROUTE_TEAM, ROUTE_EXPENSES) or bypass_review_gates
         if non_blocking_recon:
             await log_event(
                 session,
@@ -3631,6 +3948,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
 
     # Capture before _mark_invoice_processed clears processing_overrides.
     playbook_bypasses_po_hold = override_bypasses_purchase_hold(invoice)
+    playbook_bypasses_so_hold = override_bypasses_sales_hold(invoice)
     _mark_invoice_processed(invoice)
     await session.flush()
     await record_team_expense_processed(session, invoice)
@@ -3658,6 +3976,13 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     )
 
     await sync_sales_document(session, invoice)
+    if (invoice.route_target or "").strip() == ROUTE_SALES and await _halt_or_bypass_sales_awaiting_so(
+        session,
+        invoice,
+        bypass_review_gates=bypass_review_gates,
+        playbook_bypasses_so_hold=playbook_bypasses_so_hold,
+    ):
+        return
     if is_commercial_sales_invoice(invoice):
         from app.services.payments.settlement_service import ensure_receivable_with_audit
 

@@ -13,7 +13,7 @@ from app.services.master_data.master_data_service import (
     list_employee_masters,
     sync_masters_to_config_file,
 )
-from app.services.purchase.team_expense_validator import _find_employee_by_sender
+from app.services.purchase.team_expense_validator import find_employee_by_sender
 
 
 async def record_team_expense_processed(
@@ -29,7 +29,7 @@ async def record_team_expense_processed(
         return
 
     employees = await list_employee_masters(session, invoice.tenant_id)
-    employee = _find_employee_by_sender(employees, invoice.email_sender)
+    employee = find_employee_by_sender(employees, invoice.email_sender)
     if employee is None:
         return
 

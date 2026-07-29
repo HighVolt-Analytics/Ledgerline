@@ -9,14 +9,25 @@ import {
 describe("pipelineAuditPaths", () => {
   it("filters understood stages only", () => {
     const steps = [
+      { stage: "Duplicate" },
       { stage: "Storage" },
       { stage: "Vision header" },
+      { stage: "DT mapped" },
       { stage: "OCR" },
       { stage: "Validated" },
+      { stage: "Match" },
       { stage: "Bundle" },
     ];
     const filtered = filterPipelineStepsForPath(steps, "understood");
-    expect(filtered.map((s) => s.stage)).toEqual(["Storage", "Vision header", "Bundle"]);
+    expect(filtered.map((s) => s.stage)).toEqual([
+      "Duplicate",
+      "Storage",
+      "Vision header",
+      "DT mapped",
+      "Validated",
+      "Match",
+      "Bundle",
+    ]);
     for (const stage of filtered.map((s) => s.stage)) {
       expect(UNDERSTOOD_AUDIT_STAGES.has(stage)).toBe(true);
     }
@@ -24,13 +35,15 @@ describe("pipelineAuditPaths", () => {
 
   it("filters not-understood stages only", () => {
     const steps = [
+      { stage: "Duplicate" },
       { stage: "Vision header" },
       { stage: "OCR" },
       { stage: "Validated" },
       { stage: "Bundle" },
+      { stage: "Match" },
     ];
     const filtered = filterPipelineStepsForPath(steps, "not_understood");
-    expect(filtered.map((s) => s.stage)).toEqual(["OCR", "Validated"]);
+    expect(filtered.map((s) => s.stage)).toEqual(["Duplicate", "OCR", "Validated"]);
     for (const stage of filtered.map((s) => s.stage)) {
       expect(NOT_UNDERSTOOD_AUDIT_STAGES.has(stage)).toBe(true);
     }

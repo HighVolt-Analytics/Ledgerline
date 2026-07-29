@@ -127,8 +127,9 @@ def build_three_way_match_display(
     if inv is not None:
         inv_qty, inv_unit, _ = _invoice_qty_and_price(inv, invent_qty=False)
         inv_uom = None
-        if inv.line_items:
-            inv_uom = getattr(inv.line_items[0], "uom", None)
+        loaded_lines = _loaded_line_items(inv)
+        if loaded_lines:
+            inv_uom = getattr(loaded_lines[0], "uom", None)
         invoice_line = _amount_line(
             qty=inv_qty if inv_qty > 0 else 0,
             uom=inv_uom,
@@ -165,6 +166,18 @@ def _attach_match_display(
     return match.model_copy(update={"display": display})
 
 
+def _loaded_line_items(inv: Invoice) -> list:
+    """Async-safe line_items access — never lazy-load (MissingGreenlet)."""
+    try:
+        from sqlalchemy import inspect as sa_inspect
+
+        if "line_items" in sa_inspect(inv).unloaded:
+            return []
+    except Exception:
+        pass
+    return list(inv.line_items or [])
+
+
 def _invoice_qty_and_price(
     inv: Invoice,
     *,
@@ -173,7 +186,7 @@ def _invoice_qty_and_price(
     """Sum invoice line qtys. Never invent qty=1 for match unless invent_qty=True (legacy display)."""
     qty = Decimal("0")
     value = Decimal("0")
-    for line in inv.line_items or []:
+    for line in _loaded_line_items(inv):
         if line.qty is not None:
             qty += line.qty
         if line.amount is not None:
@@ -195,7 +208,7 @@ def _invoice_qty_and_price(
 
 def _sum_line_item_qty(inv: Invoice) -> Decimal:
     total = Decimal("0")
-    for line in inv.line_items or []:
+    for line in _loaded_line_items(inv):
         if line.qty is not None:
             total += line.qty
     return total
@@ -235,9 +248,17 @@ def _all_grn_lines(po: PurchaseOrder) -> list:
     first_key = first.id if first is not None and first.id is not None else (
         f"line-{first.line_no}" if first is not None else None
     )
+    from sqlalchemy import inspect as sa_inspect
+
     for grn in po.goods_receipts or []:
-        if grn.lines:
-            for gl in grn.lines:
+        # Async-safe: never lazy-load GRN lines (MissingGreenlet).
+        try:
+            lines_loaded = "lines" not in sa_inspect(grn).unloaded
+        except Exception:
+            lines_loaded = True
+        grn_lines = list(grn.lines or []) if lines_loaded else []
+        if grn_lines:
+            for gl in grn_lines:
                 if gl.purchase_order_line_id is None and first_key is not None and len(po.lines) == 1:
                     class _Linked:
                         purchase_order_line_id = first_key
@@ -407,10 +428,17 @@ async def persist_three_way_match_audit(
     rule_book_config: RuleBookConfigPayload | None = None,
 ) -> tuple[str, ThreeWayMatchResult]:
     """Compute match status, persist on PO, and audit when status is new or changed."""
-    from sqlalchemy.orm import attributes as orm_attributes
-
-    if "goods_receipts" in orm_attributes.instance_state(po).unloaded:
-        await session.refresh(po, attribute_names=["goods_receipts"])
+    # Always re-load nested GRN lines — never lazy-load in async (MissingGreenlet).
+    po = (
+        await session.execute(
+            select(PurchaseOrder)
+            .where(PurchaseOrder.id == po.id)
+            .options(
+                selectinload(PurchaseOrder.goods_receipts).selectinload(GoodsReceipt.lines),
+                selectinload(PurchaseOrder.lines),
+            )
+        )
+    ).scalar_one()
 
     cfg = match_config
     if cfg is None and rule_book_config is not None:
@@ -511,7 +539,10 @@ def _attach_purchase_two_way_display(
     po_qty = Decimal(str(po.po_qty or 0))
     po_unit = Decimal(str(po.po_unit_price or 0))
     inv_qty, inv_unit, _ = _invoice_qty_and_price(inv)
-    inv_uom = getattr(inv.line_items[0], "uom", None) if inv.line_items else None
+    inv_uom = None
+    loaded_lines = _loaded_line_items(inv)
+    if loaded_lines:
+        inv_uom = getattr(loaded_lines[0], "uom", None)
     po_line = _amount_line(
         qty=po_qty,
         uom=getattr(po, "po_uom", None),
@@ -801,6 +832,14 @@ async def resolve_purchase_match_context(
                 effective_mode="three_way_po_grn",
                 po=po,
                 grn=grn,
+                grn_invoice=None,
+            )
+        # Honor configured 3-way: missing GRN must surface as No GRN, not silent 2-way.
+        if mode == "three_way_po_grn":
+            return APMatchContext(
+                effective_mode="three_way_po_grn",
+                po=po,
+                grn=None,
                 grn_invoice=None,
             )
         return APMatchContext(

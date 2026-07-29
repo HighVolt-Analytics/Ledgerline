@@ -428,10 +428,17 @@ async def persist_three_way_match_audit(
     qty_tolerance_pct: float | None = None,
     rule_book_config: RuleBookConfigPayload | None = None,
 ) -> tuple[str, ThreeWayMatchResult]:
-    from sqlalchemy.orm import attributes as orm_attributes
-
-    if "delivery_notes" in orm_attributes.instance_state(so).unloaded:
-        await session.refresh(so, attribute_names=["delivery_notes"])
+    # Always re-load nested DN lines — never lazy-load in async (MissingGreenlet).
+    so = (
+        await session.execute(
+            select(SalesOrder)
+            .where(SalesOrder.id == so.id)
+            .options(
+                selectinload(SalesOrder.delivery_notes).selectinload(DeliveryNote.lines),
+                selectinload(SalesOrder.lines),
+            )
+        )
+    ).scalar_one()
 
     cfg = match_config
     if cfg is None and rule_book_config is not None:
@@ -1025,6 +1032,14 @@ async def resolve_ar_match_context(
                 effective_mode="three_way_so_dn",
                 so=so,
                 dn=dn,
+                dn_invoice=None,
+            )
+        # Honor configured 3-way: missing DN must surface as No DN, not silent 2-way.
+        if mode == "three_way_so_dn":
+            return ARMatchContext(
+                effective_mode="three_way_so_dn",
+                so=so,
+                dn=None,
                 dn_invoice=None,
             )
         return ARMatchContext(

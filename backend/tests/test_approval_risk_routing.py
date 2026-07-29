@@ -80,9 +80,12 @@ def _audit_reasons(log_event: AsyncMock) -> list[str]:
 
 
 @pytest.mark.asyncio
-async def test_backward_compat_po_goods_no_po_held_match_not_clean(
+async def test_po_goods_no_po_holds_awaiting_po_not_approval(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """P-hold: invoice before PO waits for register — not Approvals match_not_clean."""
+    from app.services.purchase.purchase_document_service import EVAL_AWAITING_PO
+
     mocks = _setup_gate_mocks(monkeypatch)
     definition = _definition(
         code="DT-09",
@@ -96,7 +99,51 @@ async def test_backward_compat_po_goods_no_po_held_match_not_clean(
     invoice.route_target = "Purchase Management"
     invoice.total = Decimal("2838.00")
     invoice.purchase_document_type = "invoice"
+    invoice.po_reference = "PO-MKT-2026-999"
+    invoice.sales_document_type = None
 
+    monkeypatch.setattr(
+        "app.services.classification.document_type_approval_service.load_purchase_order_for_invoice",
+        AsyncMock(return_value=None),
+    )
+
+    held = await apply_document_type_approval_gate(
+        mocks.session,
+        invoice,
+        definition=definition,
+        validation_results=[],
+    )
+    assert held is True
+    assert invoice.evaluation_status == EVAL_AWAITING_PO
+    assert mocks.log_event.await_args.args[1] == "purchase_awaiting_po"
+    assert _audit_reason(mocks.log_event) == "missing_po_before_approval"
+
+
+@pytest.mark.asyncio
+async def test_po_goods_with_po_no_grn_still_match_not_clean(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PO present but match unclean (e.g. No GRN) still goes to approval."""
+    mocks = _setup_gate_mocks(monkeypatch)
+    definition = _definition(
+        code="DT-09",
+        playbookProfile="po_goods",
+        matchPolicy={"mode": "three_way_po_grn"},
+        approvalPolicy={"mode": "touchless_on_clean_match"},
+    )
+    invoice = MagicMock()
+    invoice.id = 260
+    invoice.tenant_id = None
+    invoice.route_target = "Purchase Management"
+    invoice.total = Decimal("2838.00")
+    invoice.purchase_document_type = "invoice"
+    invoice.po_reference = "PO-MKT-2026-001"
+    invoice.sales_document_type = None
+
+    monkeypatch.setattr(
+        "app.services.classification.document_type_approval_service.load_purchase_order_for_invoice",
+        AsyncMock(return_value=MagicMock()),
+    )
     monkeypatch.setattr(
         "app.services.classification.document_type_approval_service._touchless_match_satisfied",
         AsyncMock(return_value=False),
@@ -182,7 +229,15 @@ async def test_backward_compat_ar_goods_2way_no_dn_held_match_not_clean(
     invoice.tenant_id = None
     invoice.route_target = "Sales Management"
     invoice.total = Decimal("1000.00")
+    invoice.sales_document_type = "invoice"
+    invoice.so_reference = "SO-2026-001"
+    invoice.purchase_document_type = None
 
+    # SO exists — missing DN is match_not_clean, not awaiting_so.
+    monkeypatch.setattr(
+        "app.services.sales.sales_match_service.load_sales_order_for_invoice",
+        AsyncMock(return_value=MagicMock()),
+    )
     monkeypatch.setattr(
         "app.services.classification.document_type_approval_service._touchless_match_satisfied",
         AsyncMock(return_value=False),
@@ -196,6 +251,46 @@ async def test_backward_compat_ar_goods_2way_no_dn_held_match_not_clean(
     )
     assert held is True
     assert _audit_reason(mocks.log_event) == "match_not_clean"
+
+
+@pytest.mark.asyncio
+async def test_ar_goods_no_so_holds_awaiting_so_not_approval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.sales.sales_document_service import EVAL_AWAITING_SO
+
+    mocks = _setup_gate_mocks(monkeypatch)
+    definition = _definition(
+        code="DT-12",
+        playbookProfile="ar_goods",
+        routeTarget="Sales Management",
+        matchPolicy={"mode": "three_way_so_dn"},
+        approvalPolicy={"mode": "touchless_on_clean_match"},
+    )
+    invoice = MagicMock()
+    invoice.id = 13
+    invoice.tenant_id = None
+    invoice.route_target = "Sales Management"
+    invoice.total = Decimal("1000.00")
+    invoice.sales_document_type = "invoice"
+    invoice.so_reference = "SO-2026-999"
+    invoice.purchase_document_type = None
+
+    monkeypatch.setattr(
+        "app.services.sales.sales_match_service.load_sales_order_for_invoice",
+        AsyncMock(return_value=None),
+    )
+
+    held = await apply_document_type_approval_gate(
+        mocks.session,
+        invoice,
+        definition=definition,
+        validation_results=[],
+    )
+    assert held is True
+    assert invoice.evaluation_status == EVAL_AWAITING_SO
+    assert mocks.log_event.await_args.args[1] == "sales_awaiting_so"
+    assert _audit_reason(mocks.log_event) == "missing_so_before_approval"
 
 
 @pytest.mark.asyncio

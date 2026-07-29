@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.invoice import Invoice, InvoiceStatus, SalesDocumentType
+from app.models.delivery_note import DeliveryNote
 from app.models.sales_order import SalesOrder
 from app.services.audit.audit_service import log_event
 from app.services.extraction.document_heading_utils import extract_document_heading_signals
@@ -151,6 +152,7 @@ def resolve_sales_document_type(
     invoice: Invoice,
     *,
     explicit: str | None = None,
+    document_types: list | None = None,
 ) -> str | None:
     normalized = normalize_sales_document_type(explicit)
     if normalized:
@@ -158,6 +160,27 @@ def resolve_sales_document_type(
     stored = normalize_sales_document_type(invoice.sales_document_type)
     if stored:
         return stored
+
+    code = (invoice.document_type_code or "").strip()
+    if code:
+        from app.services.classification.document_type_catalog import get_document_type_definition
+        from app.services.classification.document_type_register_roles import (
+            sales_register_role_for_definition,
+        )
+
+        definition = get_document_type_definition(
+            code,
+            document_types=document_types,
+            tenant_id=invoice.tenant_id,
+        )
+        register_role = sales_register_role_for_definition(definition)
+        if register_role in {
+            SalesDocumentType.SO.value,
+            SalesDocumentType.DN.value,
+            SalesDocumentType.INVOICE.value,
+        }:
+            return register_role
+
     if invoice.route_target != ROUTE_SALES:
         return None
     return infer_sales_document_type(invoice)
@@ -192,7 +215,7 @@ async def _get_or_load_so(
                 SalesOrder.so_number == so_number,
             )
             .options(
-                selectinload(SalesOrder.delivery_notes),
+                selectinload(SalesOrder.delivery_notes).selectinload(DeliveryNote.lines),
                 selectinload(SalesOrder.lines),
             )
         )
@@ -234,7 +257,10 @@ async def _create_or_update_so_from_invoice(
             await db.execute(
                 select(SalesOrder)
                 .where(SalesOrder.id == so.id)
-                .options(selectinload(SalesOrder.delivery_notes), selectinload(SalesOrder.lines))
+                .options(
+                    selectinload(SalesOrder.delivery_notes).selectinload(DeliveryNote.lines),
+                    selectinload(SalesOrder.lines),
+                )
             )
         ).scalar_one()
         replace_so_lines_from_invoice(so, invoice)
@@ -301,18 +327,19 @@ async def _sync_so_document(db: AsyncSession, invoice: Invoice, so_number: str) 
 
 
 async def _sync_dn_document(db: AsyncSession, invoice: Invoice, so_number: str) -> SalesOrder | None:
-    so, created = await _create_or_update_so_from_invoice(db, invoice, so_number)
-    if created:
+    so = await _get_or_load_so(db, invoice, so_number)
+    if so is None:
+        invoice.evaluation_status = EVAL_AWAITING_SO
+        invoice.status = InvoiceStatus.EXCEPTION
         await log_event(
             db,
-            "sales_so_auto_registered",
+            "sales_awaiting_so",
             invoice_id=invoice.id,
-            detail={
-                "so_number": so_number,
-                "sales_order_id": so.id,
-                "source": "dn",
-            },
+            detail={"so_number": so_number, "document_type": SalesDocumentType.DN.value},
         )
+        await db.flush()
+        return None
+
     if invoice.evaluation_status == EVAL_AWAITING_SO:
         invoice.evaluation_status = None
 
@@ -371,18 +398,19 @@ async def _sync_orphan_dn_document(db: AsyncSession, invoice: Invoice) -> None:
 
 
 async def _sync_commercial_invoice(db: AsyncSession, invoice: Invoice, so_number: str) -> SalesOrder | None:
-    so, created = await _create_or_update_so_from_invoice(db, invoice, so_number)
-    if created:
+    so = await _get_or_load_so(db, invoice, so_number)
+    if so is None:
+        invoice.evaluation_status = EVAL_AWAITING_SO
+        invoice.status = InvoiceStatus.EXCEPTION
         await log_event(
             db,
-            "sales_so_auto_registered",
+            "sales_awaiting_so",
             invoice_id=invoice.id,
-            detail={
-                "so_number": so_number,
-                "sales_order_id": so.id,
-                "source": "commercial_invoice",
-            },
+            detail={"so_number": so_number, "document_type": SalesDocumentType.INVOICE.value},
         )
+        await db.flush()
+        return None
+
     if invoice.evaluation_status == EVAL_AWAITING_SO:
         invoice.evaluation_status = None
 
@@ -421,20 +449,82 @@ async def _sync_commercial_invoice(db: AsyncSession, invoice: Invoice, so_number
     return so
 
 
+async def _commercial_invoice_requires_so_sync(
+    db: AsyncSession,
+    invoice: Invoice,
+    *,
+    so_number: str,
+) -> bool:
+    """True when DT match policy requires SO register linkage for commercial invoices.
+
+    Non-SO profiles (``match_mode: none`` and peers) keep ``so_reference`` for
+    display/audit but must not halt on ``awaiting_so`` when the SO is missing.
+    """
+    from app.services.classification.document_type_match_service import resolve_match_mode
+    from app.services.classification.document_type_playbook_profile_service import (
+        match_mode_requires_sales,
+    )
+
+    config = await load_classification_config(db, invoice.tenant_id)
+    match_mode = resolve_match_mode(
+        document_type_code=invoice.document_type_code,
+        document_types=list(config.document_types),
+        tenant_id=invoice.tenant_id,
+    )
+    if match_mode_requires_sales(match_mode):
+        return True
+    await log_event(
+        db,
+        "sales_so_reference_not_required",
+        invoice_id=invoice.id,
+        detail={
+            "so_number": so_number,
+            "match_mode": match_mode,
+            "document_type_code": (invoice.document_type_code or "").strip().upper() or None,
+        },
+    )
+    return False
+
+
 async def sync_sales_document(
     db: AsyncSession,
     invoice: Invoice,
     *,
     explicit_document_type: str | None = None,
 ) -> SalesOrder | None:
-    """SO-first sync: SO doc creates SO; DN/invoice auto-register SO when ref is plausible."""
+    """SO-first sync: SO doc creates SO; DN/invoice require existing SO when match policy requires it."""
     if invoice.route_target != ROUTE_SALES:
-        return None
+        # Org AR commercial DTs may still need Sales route — set from DT when missing.
+        code = (invoice.document_type_code or "").strip()
+        if code:
+            from app.services.classification.document_type_catalog import get_document_type_definition
+            from app.services.classification.document_type_register_roles import (
+                sales_register_role_for_definition,
+            )
+
+            config = await load_classification_config(db, invoice.tenant_id)
+            definition = get_document_type_definition(
+                code,
+                document_types=list(config.document_types),
+                tenant_id=invoice.tenant_id,
+            )
+            if sales_register_role_for_definition(definition) == SalesDocumentType.INVOICE.value:
+                invoice.route_target = ROUTE_SALES
+                await db.flush()
+            else:
+                return None
+        else:
+            return None
 
     ensure_invoice_so_reference(invoice)
     await db.flush()
 
-    doc_type = resolve_sales_document_type(invoice, explicit=explicit_document_type)
+    config = await load_classification_config(db, invoice.tenant_id)
+    doc_type = resolve_sales_document_type(
+        invoice,
+        explicit=explicit_document_type,
+        document_types=list(config.document_types),
+    )
     if doc_type:
         invoice.sales_document_type = doc_type
         invoice.purchase_document_type = None
@@ -456,9 +546,13 @@ async def sync_sales_document(
     if doc_type == SalesDocumentType.INVOICE.value:
         if not so_number:
             return None
+        if not await _commercial_invoice_requires_so_sync(db, invoice, so_number=so_number):
+            return None
         return await _sync_commercial_invoice(db, invoice, so_number)
 
     if not so_number:
+        return None
+    if not await _commercial_invoice_requires_so_sync(db, invoice, so_number=so_number):
         return None
     return await _sync_commercial_invoice(db, invoice, so_number)
 
@@ -467,8 +561,17 @@ async def apply_sales_document_type_after_eval(
     db: AsyncSession,
     invoice: Invoice,
 ) -> None:
-    """Set sales_document_type from attachment/heading/parsed signals when not already set."""
+    """Set sales_document_type from DT register role or attachment/heading signals."""
     if normalize_sales_document_type(invoice.sales_document_type):
+        return
+    config = await load_classification_config(db, invoice.tenant_id)
+    resolved = resolve_sales_document_type(
+        invoice,
+        document_types=list(config.document_types),
+    )
+    if resolved:
+        invoice.sales_document_type = resolved
+        await db.flush()
         return
     inferred = infer_sales_document_type(invoice)
     if inferred:

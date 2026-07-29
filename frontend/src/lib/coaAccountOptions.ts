@@ -125,14 +125,22 @@ export type CoaLedgerPurpose =
   | "expense_default"
   | "revenue_default"
   | "receivable_default"
-  | "tax_collected_default";
+  | "tax_collected_default"
+  | "document_type_post_to";
 
-const CONTROL_LEDGER_NAME = /\b(payable|creditor|suspense|bank|cash)\b/i;
+const CONTROL_LEDGER_NAME = /\b(payable|creditor|debtor|receivable|suspense|bank|cash)\b/i;
 const TAX_INPUT_ASSET_NAME = /\b(gst|tax|vat)\b/i;
 
 const REVENUE_LIKE_NAME = /\b(sales|revenue|income|turnover)\b/i;
 const RECEIVABLE_LIKE_NAME = /\b(receivable|debtor|debtors|trade)\b/i;
 const TAX_COLLECTED_LIKE_NAME = /\b(gst|tax|vat|output)\b/i;
+
+export function isControlLedgerAccountName(name: string): boolean {
+  const cleaned = name.trim();
+  if (!cleaned) return false;
+  if (isReceivableLikeAccountName(cleaned)) return true;
+  return CONTROL_LEDGER_NAME.test(cleaned);
+}
 
 export function isRevenueLikeAccountName(name: string): boolean {
   return REVENUE_LIKE_NAME.test(name.trim());
@@ -169,9 +177,32 @@ export function filterCoaAccountsForExpenseDefaultLedger(
   });
 }
 
+/** Main Post To picker for transactional document types — expense/revenue only, no control accounts. */
+export function filterCoaAccountsForDocumentTypePostTo(
+  accounts: ChartOfAccountRow[],
+  playbookProfile?: string,
+  routeTarget?: string
+): ChartOfAccountRow[] {
+  const profile = (playbookProfile ?? "").trim().toLowerCase();
+  const route = (routeTarget ?? "").trim();
+  const preferRevenue = profile === "ar_goods" || profile === "ar_goods_2way" || route === "Sales Management";
+  if (preferRevenue) {
+    return filterCoaAccountsForPostingRole(accounts, "revenue").filter(
+      (row) => !isControlLedgerAccountName(row.name)
+    );
+  }
+  const expenseLike = filterCoaAccountsForExpenseDefaultLedger(accounts);
+  if (expenseLike.length) return expenseLike;
+  return accounts.filter(
+    (row) =>
+      (row.type === "Expense" || row.type === "Revenue") && !isControlLedgerAccountName(row.name)
+  );
+}
+
 export function filterCoaAccountsForLedgerPurpose(
   accounts: ChartOfAccountRow[],
-  purpose: CoaLedgerPurpose
+  purpose: CoaLedgerPurpose,
+  opts?: { playbookProfile?: string; routeTarget?: string }
 ): ChartOfAccountRow[] {
   switch (purpose) {
     case "expense_default":
@@ -182,6 +213,12 @@ export function filterCoaAccountsForLedgerPurpose(
       return filterCoaAccountsForPostingRole(accounts, "receivable");
     case "tax_collected_default":
       return filterCoaAccountsForPostingRole(accounts, "tax_collected");
+    case "document_type_post_to":
+      return filterCoaAccountsForDocumentTypePostTo(
+        accounts,
+        opts?.playbookProfile,
+        opts?.routeTarget
+      );
     default:
       return accounts;
   }

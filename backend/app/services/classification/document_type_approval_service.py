@@ -247,6 +247,115 @@ async def _hold_for_approval(
     )
 
 
+def _plausible_ref(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text or None
+
+
+async def _hold_for_missing_purchase_anchor(
+    session: AsyncSession,
+    invoice: Invoice,
+    *,
+    match_mode: str,
+) -> bool:
+    """Invoice/GRN before PO: hold as awaiting_po — not pending_approval."""
+    if not match_mode_requires_po(match_mode):
+        return False
+    if (invoice.route_target or "").strip() != ROUTE_PURCHASE:
+        return False
+
+    from app.models.invoice import PurchaseDocumentType
+    from app.services.purchase.po_reference import (
+        effective_po_reference,
+        is_plausible_po_reference,
+    )
+    from app.services.purchase.purchase_document_service import EVAL_AWAITING_PO
+
+    doc_type = (invoice.purchase_document_type or "").strip().lower()
+    if doc_type == PurchaseDocumentType.PO.value:
+        # PO documents create the register — never wait for themselves.
+        return False
+
+    po_number = _plausible_ref(getattr(invoice, "po_reference", None))
+    if po_number:
+        po_number = effective_po_reference(po_number) or po_number
+    if not po_number or not is_plausible_po_reference(po_number):
+        return False
+
+    po = await load_purchase_order_for_invoice(session, invoice)
+    if po is not None:
+        return False
+
+    invoice.status = InvoiceStatus.EXCEPTION
+    invoice.evaluation_status = EVAL_AWAITING_PO
+    await log_event(
+        session,
+        "purchase_awaiting_po",
+        invoice_id=invoice.id,
+        detail={
+            "po_number": po_number,
+            "document_type": doc_type or PurchaseDocumentType.INVOICE.value,
+            "reason": "missing_po_before_approval",
+            "match_mode": match_mode,
+        },
+    )
+    return True
+
+
+async def _hold_for_missing_sales_anchor(
+    session: AsyncSession,
+    invoice: Invoice,
+    *,
+    match_mode: str,
+) -> bool:
+    """Invoice/DN before SO: hold as awaiting_so — not pending_approval."""
+    if not match_mode_requires_sales(match_mode):
+        return False
+    if (invoice.route_target or "").strip() != ROUTE_SALES:
+        return False
+
+    from app.models.invoice import SalesDocumentType
+    from app.services.sales.sales_document_service import EVAL_AWAITING_SO
+    from app.services.sales.sales_match_service import load_sales_order_for_invoice
+    from app.services.sales.so_reference import (
+        effective_so_reference,
+        is_plausible_so_reference,
+    )
+
+    doc_type = (invoice.sales_document_type or "").strip().lower()
+    if doc_type == SalesDocumentType.SO.value:
+        return False
+
+    # Prefer the stored SO field only — avoid filename OCR helpers that break on
+    # incomplete/mock invoice objects during gate evaluation.
+    so_number = _plausible_ref(getattr(invoice, "so_reference", None))
+    if so_number:
+        so_number = effective_so_reference(so_number) or so_number
+    if not so_number or not is_plausible_so_reference(so_number):
+        return False
+
+    so = await load_sales_order_for_invoice(session, invoice)
+    if so is not None:
+        return False
+
+    invoice.status = InvoiceStatus.EXCEPTION
+    invoice.evaluation_status = EVAL_AWAITING_SO
+    await log_event(
+        session,
+        "sales_awaiting_so",
+        invoice_id=invoice.id,
+        detail={
+            "so_number": so_number,
+            "document_type": doc_type or SalesDocumentType.INVOICE.value,
+            "reason": "missing_so_before_approval",
+            "match_mode": match_mode,
+        },
+    )
+    return True
+
+
 async def apply_document_type_approval_gate(
     session: AsyncSession,
     invoice: Invoice,
@@ -259,6 +368,8 @@ async def apply_document_type_approval_gate(
     Hold invoice for manual approval when the document-type policy requires it.
 
     Returns True when the invoice is held (status set to exception).
+    Missing PO/SO register anchors hold as awaiting_po / awaiting_so instead of
+    pending_approval (P-hold / S-hold before match approval).
     """
     if definition is None:
         return False
@@ -276,6 +387,14 @@ async def apply_document_type_approval_gate(
         return False
 
     match_mode = effective_match_policy(definition).mode
+
+    # Register-anchor holds beat approval: invoice-before-PO must wait for the PO,
+    # not land in Approvals as match_not_clean.
+    if await _hold_for_missing_purchase_anchor(session, invoice, match_mode=match_mode):
+        return True
+    if await _hold_for_missing_sales_anchor(session, invoice, match_mode=match_mode):
+        return True
+
     resolved_tier: str | None = None
     if policy.require_approval_for_unmatched:
         resolved_tier = await _resolve_effective_match_tier(session, invoice, match_mode)

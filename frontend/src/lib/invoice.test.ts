@@ -15,6 +15,7 @@ import {
   evaluationStatusDescription,
   evaluationStatusLabel,
   invoiceCounterpartyConfidence,
+  invoiceMatchesCaptureChannel,
   invoiceSourceKind,
   invoiceSourceLabel,
   invoiceValidationConfidence,
@@ -46,6 +47,15 @@ describe("effectiveEvaluationStatus", () => {
       effectiveEvaluationStatus({
         status: "exception",
         evaluation_status: "needs_review",
+      }),
+    ).toBe("needs_review");
+  });
+
+  it("surfaces exception auto_coded as needs review", () => {
+    expect(
+      effectiveEvaluationStatus({
+        status: "exception",
+        evaluation_status: "auto_coded",
       }),
     ).toBe("needs_review");
   });
@@ -120,6 +130,53 @@ describe("invoiceSourceKind", () => {
       } as Invoice),
     ).toBe("upload");
     expect(invoiceSourceLabel("upload")).toBe("Direct upload");
+  });
+
+  it("keeps explicit upload when claimant/sender is set", () => {
+    expect(
+      invoiceSourceKind({
+        capture_source: "upload",
+        email_sender: "priya@acme-hospitality.com.au",
+        connected_mailbox_id: null,
+      } as Invoice),
+    ).toBe("upload");
+    expect(
+      invoiceMatchesCaptureChannel(
+        {
+          capture_source: "upload",
+          email_sender: "priya@acme-hospitality.com.au",
+          connected_mailbox_id: null,
+        } as Invoice,
+        "upload",
+      ),
+    ).toBe(true);
+    expect(
+      invoiceMatchesCaptureChannel(
+        {
+          capture_source: "upload",
+          email_sender: "priya@acme-hospitality.com.au",
+          connected_mailbox_id: null,
+        } as Invoice,
+        "email",
+      ),
+    ).toBe(false);
+  });
+
+  it("uses mailbox connection for legacy email rows without capture_source", () => {
+    expect(
+      invoiceSourceKind({
+        capture_source: null,
+        email_sender: "vendor@example.com",
+        connected_mailbox_id: 3,
+      } as Invoice),
+    ).toBe("email");
+    expect(
+      invoiceSourceKind({
+        capture_source: null,
+        email_sender: "claimant@example.com",
+        connected_mailbox_id: null,
+      } as Invoice),
+    ).toBe("upload");
   });
 });
 
@@ -306,6 +363,19 @@ describe("evaluationReviewTooltip", () => {
     expect(
       evaluationReviewTooltip({ evaluation_status: "needs_review" } as Invoice, ["LLM_LOW_CONF"]),
     ).toBe("LLM confidence below auto-route threshold");
+  });
+
+  it("prefers API resolution_hint when present", () => {
+    expect(
+      evaluationReviewTooltip({
+        evaluation_status: "needs_review",
+        validation_results: [
+          { rule: "VR03", passed: false, message: "GST does not reconcile", skipped: false },
+        ],
+        resolution_hint: "Audit tab — reconciliation blocked posting",
+        status: "exception",
+      } as Invoice),
+    ).toBe("Audit tab — reconciliation blocked posting");
   });
 });
 

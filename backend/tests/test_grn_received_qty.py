@@ -81,3 +81,98 @@ async def test_attach_grn_refreshes_qty_on_relink(db_session: AsyncSession) -> N
         )
     ).scalars().all()
     assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_attach_grn_no_missing_greenlet_after_flush(db_session: AsyncSession) -> None:
+    """New GRN after flush has unloaded .lines — populate must not lazy-load (async)."""
+    from sqlalchemy.orm import attributes
+
+    from app.models.purchase_order_line import PurchaseOrderLine
+    from app.services.matching.line_sync import populate_grn_lines_from_invoice
+
+    po = PurchaseOrder(
+        tenant_id=TESTING_TENANT_UUID,
+        po_number="PO-GREENLET-001",
+        vendor="Sysco Australia Pty Ltd",
+        po_qty=Decimal("20"),
+        po_unit_price=Decimal("50"),
+    )
+    db_session.add(po)
+    await db_session.flush()
+    attributes.set_committed_value(
+        po,
+        "lines",
+        [
+            PurchaseOrderLine(
+                tenant_id=TESTING_TENANT_UUID,
+                line_no=1,
+                description="Fresh produce",
+                qty=Decimal("20"),
+                unit_price=Decimal("50"),
+                line_value=Decimal("1000"),
+            )
+        ],
+    )
+    await db_session.flush()
+
+    grn_doc = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Sysco Australia Pty Ltd",
+        po_reference="PO-GREENLET-001",
+        route_target=ROUTE_PURCHASE,
+        purchase_document_type=PurchaseDocumentType.GRN.value,
+        document_text=GRN_BODY,
+    )
+    db_session.add(grn_doc)
+    await db_session.flush()
+
+    # Mimic attach_grn path: persist header, then populate lines while .lines is unloaded.
+    grn = GoodsReceipt(
+        tenant_id=TESTING_TENANT_UUID,
+        purchase_order_id=po.id,
+        grn_qty=Decimal("0"),
+        grn_invoice_id=grn_doc.id,
+    )
+    db_session.add(grn)
+    await db_session.flush()
+    db_session.expire(grn, ["lines"])
+
+    populate_grn_lines_from_invoice(
+        grn, po=po, invoice=grn_doc, fallback_qty=Decimal("20")
+    )
+    await db_session.flush()
+    assert grn.grn_qty == Decimal("20")
+    assert len(grn.lines) == 1
+
+    # Full attach path must also succeed without MissingGreenlet.
+    po2 = PurchaseOrder(
+        tenant_id=TESTING_TENANT_UUID,
+        po_number="PO-GREENLET-002",
+        vendor="Sysco Australia Pty Ltd",
+        po_qty=Decimal("20"),
+        po_unit_price=Decimal("50"),
+    )
+    db_session.add(po2)
+    await db_session.flush()
+    po2 = (
+        await db_session.execute(
+            select(PurchaseOrder)
+            .where(PurchaseOrder.id == po2.id)
+            .options(selectinload(PurchaseOrder.lines))
+        )
+    ).scalar_one()
+
+    grn_doc2 = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Sysco Australia Pty Ltd",
+        po_reference="PO-GREENLET-002",
+        route_target=ROUTE_PURCHASE,
+        purchase_document_type=PurchaseDocumentType.GRN.value,
+        document_text=GRN_BODY,
+    )
+    db_session.add(grn_doc2)
+    await db_session.flush()
+
+    linked = await attach_grn_invoice_to_po(db_session, grn_invoice=grn_doc2, po=po2)
+    assert linked.grn_qty == Decimal("20")

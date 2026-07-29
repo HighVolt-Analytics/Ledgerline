@@ -82,9 +82,7 @@ def test_validate_rule_book_config_for_save_rejects_missing_post_to() -> None:
         validate_rule_book_config_for_save(
             {
                 "schema_version": 1,
-                "chart_of_accounts": [
-                    {"code": "6100", "name": "Operating Expenses", "type": "Expense"},
-                ],
+                "chart_of_accounts": [],
                 "document_types": [
                     {
                         "code": "DT-BAD",
@@ -100,3 +98,218 @@ def test_validate_rule_book_config_for_save_rejects_missing_post_to() -> None:
                 ],
             }
         )
+
+
+def test_validate_rule_book_rejects_control_account_post_to() -> None:
+    import pytest
+
+    from app.schemas.rule_book_config import RuleBookPostToValidationError, validate_rule_book_config_for_save
+    from app.services.classification.document_type_post_to_service import (
+        is_control_post_to_ledger,
+    )
+
+    assert is_control_post_to_ledger("Accounts Payable") is True
+
+    with pytest.raises(RuleBookPostToValidationError, match="control account"):
+        validate_rule_book_config_for_save(
+            {
+                "schema_version": 1,
+                "chart_of_accounts": [
+                    {"code": "2000", "name": "Accounts Payable", "type": "Liability"},
+                    {"code": "6100", "name": "Operating Expenses", "type": "Expense"},
+                ],
+                "posting_defaults": {"payable_account": "Accounts Payable"},
+                "document_types": [
+                    {
+                        "code": "DT-AP",
+                        "title": "PO goods",
+                        "shortTitle": "PO goods",
+                        "klass": "Transactional",
+                        "posting": "Yes",
+                        "playbookProfile": "po_goods",
+                        "recognition_mode": "signals",
+                        "recognition_signals": ["heading_invoice"],
+                        "llm_prompt": "",
+                        "routeTarget": "Purchase Management",
+                        "enabled": True,
+                        "postTo": {"ledger": "Accounts Payable"},
+                    }
+                ],
+            }
+        )
+
+
+def test_validate_rule_book_rejects_commercial_with_bundle_role() -> None:
+    import pytest
+
+    from app.schemas.rule_book_config import (
+        RuleBookDocumentTypeInvariantError,
+        validate_rule_book_config_for_save,
+    )
+
+    with pytest.raises(RuleBookDocumentTypeInvariantError, match="bundle role"):
+        validate_rule_book_config_for_save(
+            {
+                "schema_version": 1,
+                "chart_of_accounts": [
+                    {"code": "6100", "name": "Operating Expenses", "type": "Expense"},
+                ],
+                "document_types": [
+                    {
+                        "code": "DT-MIX",
+                        "title": "Bad mix",
+                        "shortTitle": "Bad mix",
+                        "klass": "Transactional",
+                        "posting": "Yes",
+                        "playbookProfile": "po_goods",
+                        "purchaseBundleRole": "grn",
+                        "recognition_mode": "signals",
+                        "recognition_signals": ["heading_invoice"],
+                        "llm_prompt": "",
+                        "routeTarget": "Purchase Management",
+                        "enabled": True,
+                        "postTo": {"ledger": "Operating Expenses"},
+                    }
+                ],
+            }
+        )
+
+
+def test_validate_rule_book_allows_duplicate_po_roles_as_catalogue_warning() -> None:
+    from app.schemas.rule_book_config import validate_rule_book_config_for_save
+
+    payload = validate_rule_book_config_for_save(
+        {
+            "schema_version": 1,
+            "chart_of_accounts": [
+                {"code": "6100", "name": "Operating Expenses", "type": "Expense"},
+            ],
+            "document_types": [
+                {
+                    "code": "DT-PO-A",
+                    "title": "PO A",
+                    "shortTitle": "PO A",
+                    "klass": "Non-transactional",
+                    "posting": "No",
+                    "playbookProfile": "supporting",
+                    "purchaseBundleRole": "po",
+                    "recognition_mode": "signals",
+                    "recognition_signals": ["heading_purchase_order"],
+                    "llm_prompt": "",
+                    "routeTarget": "Purchase Management",
+                    "enabled": True,
+                    "postTo": {"ledger": ""},
+                },
+                {
+                    "code": "DT-PO-B",
+                    "title": "PO B",
+                    "shortTitle": "PO B",
+                    "klass": "Non-transactional",
+                    "posting": "No",
+                    "playbookProfile": "supporting",
+                    "purchaseBundleRole": "po",
+                    "recognition_mode": "signals",
+                    "recognition_signals": ["heading_purchase_order"],
+                    "llm_prompt": "",
+                    "routeTarget": "Purchase Management",
+                    "enabled": True,
+                    "postTo": {"ledger": ""},
+                },
+            ],
+        }
+    )
+    assert len(payload.document_types) == 2
+
+
+def test_validate_rule_book_scrubs_ledger_on_supporting_role() -> None:
+    from app.schemas.rule_book_config import validate_rule_book_config_for_save
+
+    payload = validate_rule_book_config_for_save(
+        {
+            "schema_version": 1,
+            "chart_of_accounts": [
+                {"code": "4000", "name": "Sales Revenue", "type": "Revenue"},
+            ],
+            "document_types": [
+                {
+                    "code": "DT-DN",
+                    "title": "Delivery note",
+                    "shortTitle": "DN",
+                    "klass": "Non-transactional",
+                    "posting": "No",
+                    "playbookProfile": "supporting",
+                    "salesBundleRole": "dn",
+                    "recognition_mode": "signals",
+                    "recognition_signals": ["heading_delivery_note"],
+                    "llm_prompt": "",
+                    "routeTarget": "Sales Management",
+                    "enabled": True,
+                    "postTo": {"ledger": "Sales Revenue"},
+                }
+            ],
+        }
+    )
+    assert payload.document_types[0].post_to.ledger == ""
+
+
+def test_validate_rule_book_allows_matrix_playbook_drift_as_catalogue_warning() -> None:
+    from app.schemas.rule_book_config import validate_rule_book_config_for_save
+
+    payload = validate_rule_book_config_for_save(
+        {
+            "schema_version": 1,
+            "chart_of_accounts": [
+                {"code": "6100", "name": "Operating Expenses", "type": "Expense"},
+            ],
+            "document_types": [
+                {
+                    "code": "DT-ORG",
+                    "matrixTemplateCode": "DT-01",
+                    "title": "PO-based goods invoice",
+                    "shortTitle": "PO goods invoice",
+                    "klass": "Transactional",
+                    "posting": "Yes",
+                    "playbookProfile": "direct_expense",
+                    "recognition_mode": "signals",
+                    "recognition_signals": ["heading_invoice"],
+                    "llm_prompt": "",
+                    "routeTarget": "Purchase Management",
+                    "enabled": True,
+                    "postTo": {"ledger": "Operating Expenses"},
+                }
+            ],
+        }
+    )
+    assert payload.document_types[0].playbook_profile == "direct_expense"
+
+
+def test_commercial_due_date_forced_on_save() -> None:
+    from app.schemas.rule_book_config import validate_rule_book_config_for_save
+
+    payload = validate_rule_book_config_for_save(
+        {
+            "schema_version": 1,
+            "chart_of_accounts": [
+                {"code": "6100", "name": "Operating Expenses", "type": "Expense"},
+            ],
+            "document_types": [
+                {
+                    "code": "DT-DUE",
+                    "title": "PO goods",
+                    "shortTitle": "PO goods",
+                    "klass": "Transactional",
+                    "posting": "Yes",
+                    "playbookProfile": "po_goods",
+                    "recognition_mode": "signals",
+                    "recognition_signals": ["heading_invoice"],
+                    "llm_prompt": "",
+                    "routeTarget": "Purchase Management",
+                    "enabled": True,
+                    "requiredFields": ["vendor", "total"],
+                    "extractionFields": ["vendor", "total", "due_date"],
+                    "postTo": {"ledger": "Operating Expenses"},
+                }
+            ],
+        }
+    )
+    assert "due_date" in payload.document_types[0].required_fields

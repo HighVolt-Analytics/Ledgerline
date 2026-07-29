@@ -67,6 +67,7 @@ async def test_so_first_then_commercial_invoice(db_session: AsyncSession) -> Non
         invoice_no="INV-100",
         route_target=ROUTE_SALES,
         sales_document_type=SalesDocumentType.INVOICE.value,
+        document_type_code="DT-26",
         subtotal=Decimal("500.00"),
         gst=Decimal("50.00"),
         total=Decimal("550.00"),
@@ -83,7 +84,9 @@ async def test_so_first_then_commercial_invoice(db_session: AsyncSession) -> Non
 
 
 @pytest.mark.asyncio
-async def test_commercial_invoice_auto_registers_so(db_session: AsyncSession) -> None:
+async def test_commercial_invoice_holds_awaiting_so_without_register(
+    db_session: AsyncSession,
+) -> None:
     inv = Invoice(
         tenant_id=TESTING_TENANT_UUID,
         vendor="Harbour View Hotel",
@@ -91,6 +94,7 @@ async def test_commercial_invoice_auto_registers_so(db_session: AsyncSession) ->
         invoice_no="INV-200",
         route_target=ROUTE_SALES,
         sales_document_type=SalesDocumentType.INVOICE.value,
+        document_type_code="DT-26",
         subtotal=Decimal("100.00"),
         status=InvoiceStatus.MAPPING,
     )
@@ -99,20 +103,18 @@ async def test_commercial_invoice_auto_registers_so(db_session: AsyncSession) ->
     await _add_line(db_session, inv)
 
     result = await sync_sales_document(db_session, inv)
-    assert result is not None
-    assert result.so_number == "SO-200"
-    assert result.invoice_id == inv.id
-    assert inv.evaluation_status != EVAL_AWAITING_SO
-    assert inv.status != InvoiceStatus.EXCEPTION
+    assert result is None
+    assert inv.evaluation_status == EVAL_AWAITING_SO
+    assert inv.status == InvoiceStatus.EXCEPTION
 
     so_count = (
         await db_session.execute(select(SalesOrder).where(SalesOrder.so_number == "SO-200"))
     ).scalar_one_or_none()
-    assert so_count is not None
+    assert so_count is None
 
 
 @pytest.mark.asyncio
-async def test_dn_auto_registers_so_when_missing(db_session: AsyncSession) -> None:
+async def test_dn_holds_awaiting_so_without_register(db_session: AsyncSession) -> None:
     dn_doc = Invoice(
         tenant_id=TESTING_TENANT_UUID,
         vendor="Harbour View Hotel",
@@ -120,6 +122,7 @@ async def test_dn_auto_registers_so_when_missing(db_session: AsyncSession) -> No
         invoice_no="DN-300",
         route_target=ROUTE_SALES,
         sales_document_type=SalesDocumentType.DN.value,
+        document_type_code="DT-26",
         subtotal=Decimal("80.00"),
         status=InvoiceStatus.MAPPING,
     )
@@ -128,11 +131,11 @@ async def test_dn_auto_registers_so_when_missing(db_session: AsyncSession) -> No
     await _add_line(db_session, dn_doc, "8", "10")
 
     result = await sync_sales_document(db_session, dn_doc)
-    assert result is not None
-    assert result.so_number == "SO-300"
-    assert dn_doc.evaluation_status != EVAL_AWAITING_SO
+    assert result is None
+    assert dn_doc.evaluation_status == EVAL_AWAITING_SO
+    assert dn_doc.status == InvoiceStatus.EXCEPTION
 
     so_row = (
         await db_session.execute(select(SalesOrder).where(SalesOrder.so_number == "SO-300"))
     ).scalar_one_or_none()
-    assert so_row is not None
+    assert so_row is None

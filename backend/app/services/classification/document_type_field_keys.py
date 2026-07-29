@@ -54,6 +54,7 @@ CANONICAL_EXTRACTION_FIELD_KEYS: frozenset[str] = frozenset(
         "currency",
         "billing_address",
         "email_subject",
+        "email_sender",
         "account_code",
         "account_name",
         "document_text",

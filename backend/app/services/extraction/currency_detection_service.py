@@ -197,13 +197,24 @@ def apply_currency_detection_to_parsed(
         extracted.pop("currency_symbol", None)
         extracted.pop("currency_review_required", None)
         extracted.pop("currency_review_reason", None)
-    elif detection.get("symbol_seen") and not (parsed.currency or "").strip():
-        extracted["currency_symbol"] = str(detection["symbol_seen"]).strip()
-        if detection.get("human_review_required") or not applied:
-            extracted["currency_review_required"] = True
-            reason = audit.get("review_reason") or detection.get("review_reason")
-            if reason:
-                extracted["currency_review_reason"] = reason
+    elif not (parsed.currency or "").strip():
+        text = ocr_text if ocr_text is not None else (parsed.document_text or "")
+        from app.services.shared.currency import resolve_currency_from_ocr
+
+        iso_fallback, symbol = resolve_currency_from_ocr(text, existing_currency=None)
+        if iso_fallback:
+            updates["currency"] = iso_fallback
+            extracted.pop("currency_symbol", None)
+            extracted.pop("currency_review_required", None)
+            extracted.pop("currency_review_reason", None)
+            audit["fallback_iso"] = iso_fallback
+        elif detection.get("symbol_seen"):
+            extracted["currency_symbol"] = str(detection["symbol_seen"]).strip()
+            if detection.get("human_review_required") or not applied:
+                extracted["currency_review_required"] = True
+                reason = audit.get("review_reason") or detection.get("review_reason")
+                if reason:
+                    extracted["currency_review_reason"] = reason
 
     if extracted != (parsed.extracted_fields or {}):
         updates["extracted_fields"] = extracted

@@ -15,6 +15,7 @@ HeadingKind = Literal[
     "purchase_order",
     "sales_order",
     "grn",
+    "delivery_note",
     "credit_note",
     "quote",
     "remittance",
@@ -75,7 +76,10 @@ _PAGE_KIND_KEYWORDS: list[tuple[re.Pattern[str], HeadingKind]] = [
     (re.compile(r"\bG\.?\s*R\.?\s*N\.?\b", re.I), "grn"),
     (re.compile(r"\bPROOF\s+OF\s+DELIVERY\b", re.I), "grn"),
     (re.compile(r"\bPOD\b", re.I), "grn"),
-    (re.compile(r"\bDELIVERY\s+(?:NOTE|RECEIPT|DOCKET)\b", re.I), "grn"),
+    (re.compile(r"\bDELIVERY\s+RECEIPT\b", re.I), "grn"),
+    # Outbound sales delivery note / dispatch — not inbound GRN.
+    (re.compile(r"\bDELIVERY\s+(?:NOTE|DOCKET)\b", re.I), "delivery_note"),
+    (re.compile(r"\bDISPATCH\s+(?:NOTE|DOCKET)\b", re.I), "delivery_note"),
     (re.compile(r"\bDEBIT\s+NOTE\b", re.I), "credit_note"),
 ]
 
@@ -90,6 +94,7 @@ _STRONG_PAGE_KINDS: frozenset[HeadingKind] = frozenset(
         "purchase_order",
         "sales_order",
         "grn",
+        "delivery_note",
         "credit_note",
         "customs_permit",
         "certificate_of_origin",
@@ -159,7 +164,9 @@ _KIND_FROM_LABEL: list[tuple[re.Pattern[str], HeadingKind]] = [
     (re.compile(r"^sales\s+order$", re.I), "sales_order"),
     (re.compile(r"^goods\s+receipt", re.I), "grn"),
     (re.compile(r"^g\.?\s*r\.?\s*n\.?$", re.I), "grn"),
-    (re.compile(r"^delivery\s+(?:note|receipt|docket)", re.I), "grn"),
+    (re.compile(r"^delivery\s+receipt", re.I), "grn"),
+    (re.compile(r"^delivery\s+(?:note|docket)", re.I), "delivery_note"),
+    (re.compile(r"^dispatch\s+(?:note|docket)", re.I), "delivery_note"),
     (re.compile(r"^proof\s+of\s+delivery$", re.I), "grn"),
     (re.compile(r"^pod$", re.I), "grn"),
     (re.compile(r"^credit\s+note$", re.I), "credit_note"),
@@ -492,6 +499,8 @@ def document_role_from_heading(kind: HeadingKind | str | None) -> str | None:
         return "sales_order"
     if token == "grn":
         return "grn"
+    if token == "delivery_note":
+        return "delivery_note"
     if token == "packing_list":
         return "packing_list"
     if token == "transport_doc":
@@ -530,6 +539,11 @@ def _expected_heading_kinds(
         return frozenset({"purchase_order"})
     if role == "grn":
         return frozenset({"grn"})
+    sales_role = (definition.sales_bundle_role or "").strip().lower()
+    if sales_role == "so":
+        return frozenset({"sales_order"})
+    if sales_role == "dn":
+        return frozenset({"delivery_note"})
     profile = (definition.playbook_profile or "").strip().lower()
     if profile == "reconciliation":
         return frozenset({"statement"})

@@ -65,18 +65,19 @@ async def approve_invoice(
     """
     require_privilege(ctx, "Approve")
     try:
-        response = await approve_invoice_action(db, ctx, invoice_id=invoice_id)
+        result = await approve_invoice_action(db, ctx, invoice_id=invoice_id)
     except LookupError as exc:
         raise http_not_found(exc) from exc
     except ValueError as exc:
         raise http_bad_request(exc) from exc
     await db.commit()
-    enqueue_invoice_pipelines(
-        [invoice_id],
-        tenant_id=ctx.tenant_id,
-        background_tasks=background_tasks,
-    )
-    return ApiEnvelope(data=response)
+    if result.enqueue_pipeline:
+        enqueue_invoice_pipelines(
+            [invoice_id],
+            tenant_id=ctx.tenant_id,
+            background_tasks=background_tasks,
+        )
+    return ApiEnvelope(data=result.response)
 
 
 @router.post("/{invoice_id}/reject", response_model=ApiEnvelope[InvoiceResponse])

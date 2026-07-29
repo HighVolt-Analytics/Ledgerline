@@ -53,7 +53,8 @@ HEADING_KIND_TOKENS: dict[str, tuple[str, ...]] = {
         "clearance permit",
     ),
     "purchase_order": ("purchase order", " po "),
-    "grn": ("goods receipt", "grn", "delivery note", "delivery docket"),
+    "grn": ("goods receipt", "grn", "delivery receipt", "proof of delivery"),
+    "delivery_note": ("delivery note", "delivery docket", "dispatch note", "dispatch docket"),
     "credit_note": ("credit note", "debit note"),
     "quote": ("quotation", "quote", "estimate"),
     "contract": ("contract", "sow", "statement of work", "rate card", "agreement"),
@@ -344,7 +345,14 @@ def heading_conflicts_with_definition(
     heading_kind: HeadingKind,
     definition: DocumentTypeDefinition,
 ) -> bool:
-    # Hard role conflicts — do not let negative prompt text fake a metadata match.
+    # Hard role conflicts — do not let high title/metadata scores bypass these.
+    from app.services.classification.document_role_resolve_service import (
+        heading_role_conflicts_with_definition,
+    )
+
+    if heading_role_conflicts_with_definition(str(heading_kind), definition):
+        return True
+
     role = _resolved_bundle_role(definition)
     if heading_kind in _INVOICE_HEADING_KINDS and role in _RECEIPT_BUNDLE_ROLES:
         return True
@@ -353,17 +361,26 @@ def heading_conflicts_with_definition(
     if heading_kind == "grn" and role == "po":
         return True
 
-    metadata_score = score_document_type_for_heading(definition, heading_kind)
-    if metadata_score >= 0.82:
-        return False
-
     from app.services.classification.document_type_playbook_profile_service import (
         effective_playbook_profile,
     )
 
-    if heading_kind in _SUPPORTING_DOC_HEADING_KINDS:
+    # Supporting / register headings must never map to transactional playbooks.
+    # Do not early-exit on metadata_score — titles like "PO-based goods invoice"
+    # score highly against purchase_order and must still conflict.
+    register_headings = _SUPPORTING_DOC_HEADING_KINDS | {
+        "purchase_order",
+        "grn",
+        "sales_order",
+        "delivery_note",
+    }
+    if heading_kind in register_headings:
         if effective_playbook_profile(definition) in _TRANSACTIONAL_PLAYBOOK_PROFILES:
             return True
+
+    metadata_score = score_document_type_for_heading(definition, heading_kind)
+    if metadata_score >= 0.82:
+        return False
 
     meta = _definition_metadata_blob(definition)
     if heading_kind == "transport_doc" and any(

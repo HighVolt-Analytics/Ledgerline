@@ -124,6 +124,9 @@ def _catalog_upgrade_markers() -> dict[str, tuple[str, ...]]:
             "NEVER invent a DT code",
             "Prefer \"\" over a weak guess",
             "When two catalogue rows fit equally well, return \"\"",
+            "few_shot_examples",
+            "human_confirmed_dt",
+            "DESPATCH ADVICE",
             "SELF-CHECK BEFORE RETURNING",
         ),
         "vision.understand.system": (

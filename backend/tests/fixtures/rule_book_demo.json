@@ -783,7 +783,9 @@
   "posting_defaults": {
     "tax_account": "GST Paid",
     "payable_account": "Accounts Payable",
-    "fallback_account": "Suspense Account"
+    "receivable_account": "Accounts Receivable",
+    "fallback_account": "Suspense Account",
+    "bank_account": "Bank Account"
   },
   "chart_of_accounts": [
     { "code": "6130", "name": "Marketing Expense", "type": "Expense" },
@@ -793,8 +795,12 @@
     { "code": "6300", "name": "Professional Services Expense", "type": "Expense" },
     { "code": "6400", "name": "Travel Expense", "type": "Expense" },
     { "code": "6100", "name": "Operating Expenses", "type": "Expense" },
+    { "code": "4100", "name": "Operating Revenue", "type": "Revenue" },
+    { "code": "1200", "name": "Accounts Receivable", "type": "Asset" },
     { "code": "1400", "name": "GST Paid", "type": "Asset" },
+    { "code": "2300", "name": "GST Collected", "type": "Liability" },
     { "code": "2000", "name": "Accounts Payable", "type": "Liability" },
+    { "code": "1000", "name": "Bank Account", "type": "Asset" },
     { "code": "9999", "name": "Suspense Account", "type": "Liability" }
   ],
   "legacy_cascade": {

@@ -418,6 +418,16 @@ Source: `validation_rule_catalog.py`
 
 ### 7.4 Team expense rules (route = `Team Expenses`)
 
+Team Expenses is **employee-channel driven**, not selected by manual upload:
+
+| Capture | Behavior |
+|---------|----------|
+| **Email / WhatsApp / Viber** | If `email_sender` matches employee master `email` / `whatsapp_number` / `viber_number` → **always** `route_target = Team Expenses` (wins over catalogue DT). Catalogue TE DT (`route_target = Team Expenses` or `playbook_profile = employee_claim`) is assigned when needed. |
+| **Manual upload** | **Never** Team Expenses — even if the document type is `employee_claim`. |
+| Non-employee on email/WA/Viber | Normal catalogue / rule routing (not forced to TE). |
+
+DT-12 is only a shipped template example; any tenant TE DT code works.
+
 | Code | Fail when |
 |------|-----------|
 | **VR-TE01** | No sender **or** no employee master match |
@@ -427,7 +437,9 @@ Source: `validation_rule_catalog.py`
 | **VR-TE05** | Employee suspended / pending verification / non-active |
 | **VR-TE06** | Amount &gt; category ledger cap |
 
-Source: `backend/app/services/purchase/team_expense_validator.py`
+**Understood path:** Vision maps to a tenant catalogue DT. Upload captures exclude TE DTs from the classifier pool. After evaluate, employee-channel policy forces or blocks Team Expenses as above. VR-TE* still run when route is Team Expenses. Category `team_expense_rules` do not force TE on upload.
+
+Source: `backend/app/services/purchase/team_expense_route_policy.py`, `team_expense_validator.py`, `invoice_evaluation_service.py`, `vision_posting_continue.py`
 
 ### 7.5 VR10 (tax invoice wording)
 

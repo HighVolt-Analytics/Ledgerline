@@ -137,12 +137,12 @@ SIGNAL_CONDITIONS: dict[RecognitionSignalId, dict[str, Any]] = {
     "text_claim": {
         "field": "document_text",
         "operator": "regex",
-        "value": "(?i)(expense[_-]?claim|reimburse|team\\s+lunch|\\bmeal\\b)",
+        "value": "(?i)(expense[_\\s-]?claim|reimburse(?:ment)?|claim[_\\s-]?form|team[_\\s-]?expense)",
     },
     "filename_claim": {
         "field": "attachment_name",
         "operator": "regex",
-        "value": "(?i)(expense[_-]?claim|claim[_-]?receipt|team[_-]?meal|reimburse)",
+        "value": "(?i)(expense[_\\s-]?claim|claim[_\\s-]?receipt|claim[_\\s-]?form|team[_\\s-]?meal|team[_\\s-]?expense|reimburse)",
     },
     "text_quote": {
         "field": "document_text",

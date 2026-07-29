@@ -13,7 +13,20 @@ from app.models.invoice import Invoice, InvoiceStatus
 from app.services.dossier.document_ref_service import display_document_ref
 from app.services.integration.publish_service import is_published_from_audit_logs
 
-MATRIX_STAGES = ("Received", "Parsed", "Validated", "Mapped", "Approved", "Posted")
+MATRIX_STAGES = ("Received", "Parsed", "Validated", "Approved", "Mapped", "Posted")
+# Compact Summary grid follows finance continuum:
+# Validate → Match/Approve → Map GL → Post (Match folds onto Approved).
+_INBOX_STAGE_WALK = (
+    "Received",
+    "Parsed",
+    "Validated",
+    "Match",
+    "Approved",
+    "Mapped",
+    "Journal",
+    "Reconcile",
+    "Posted",
+)
 StageState = Literal["done", "pending", "fail", "skipped"]
 PipelineActivePath = Literal["understood", "not_understood", "unknown"]
 
@@ -26,8 +39,17 @@ UNDERSTOOD_AUDIT_STAGES: frozenset[str] = frozenset(
         "File validity",
         "Vision understand",
         "Vision header",
+        "DT mapped",
         "Bundle",
         "Vault",
+        "Parsed",
+        "Validated",
+        "Approved",
+        "Mapped",
+        "Match",
+        "Journal",
+        "Reconcile",
+        "Posted",
     }
 )
 NOT_UNDERSTOOD_AUDIT_STAGES: frozenset[str] = frozenset(
@@ -331,7 +353,7 @@ def _early_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineS
             )
         )
 
-    # --- Understood branch: header → bundle → vault (no legacy IQ/OCR/classify) ---
+    # --- Understood branch: header → DT map → bundle → vault (no legacy IQ/OCR/classify) ---
     if vision_can:
         if vh_log and _on_current_branch(vh_log):
             passed = vh_log.event == "vision_header_extracted"
@@ -354,6 +376,30 @@ def _early_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineS
                     stage="Vision header",
                     at=vision_pending.created_at,
                     detail="Header extract pending",
+                    state="pending",
+                )
+            )
+
+        dt_map = _latest_log(logs, "vision_document_type_mapped")
+        if dt_map and _on_current_branch(dt_map):
+            detail = dt_map.detail if isinstance(dt_map.detail, dict) else {}
+            code = str(detail.get("code") or detail.get("document_type_code") or "—").strip()
+            reason = str(detail.get("reason") or detail.get("method") or "").strip()
+            dt_detail = f"{code}" + (f" · {reason}" if reason else "")
+            stages.append(
+                PipelineStage(
+                    stage="DT mapped",
+                    at=dt_map.created_at,
+                    detail=dt_detail or "Document type mapped",
+                    state="done" if code and code != "—" else "pending",
+                )
+            )
+        elif vh_log and _on_current_branch(vh_log) and vh_log.event == "vision_header_extracted":
+            stages.append(
+                PipelineStage(
+                    stage="DT mapped",
+                    at=None,
+                    detail="Document type pending",
                     state="pending",
                 )
             )
@@ -535,6 +581,183 @@ def _vision_path_active(logs: list[AuditLog]) -> bool:
     return vu_pass is not None
 
 
+_VISION_POSTING_CONTINUE_EVENTS = (
+    "vision_posting_continued",
+    "validation_passed",
+    "validation_failed",
+    "validation_bypassed_after_human_approval",
+    "mapping_applied",
+    "invoice_approved",
+    "three_way_match_evaluated",
+    "match_phase_evaluated",
+    "journal_unbalanced",
+    "journal_control_account_unresolved",
+    "reconciliation_halted",
+    "reconciliation_skipped",
+    "invoice_processed",
+    "invoice_published_to_ledger",
+)
+
+
+def vision_posting_continues(logs: list[AuditLog]) -> bool:
+    """True when Understood posting continued past vault (or post-vault work is evident)."""
+    if not _vision_path_active(logs):
+        return False
+    if _latest_log(logs, "vision_posting_continued") is not None:
+        return True
+    skipped = _latest_log(logs, "vision_posting_skipped")
+    if skipped is not None and _latest_log(logs, "vision_posting_continued") is None:
+        # Explicit vault-only skip wins unless a later continue event exists (checked above).
+        continue_after_skip = _latest_event_log(logs, _VISION_POSTING_CONTINUE_EVENTS)
+        if continue_after_skip is None or not _is_after(continue_after_skip, skipped):
+            return False
+    return _latest_event_log(logs, _VISION_POSTING_CONTINUE_EVENTS) is not None
+
+
+def _vision_vault_only(inv: Invoice, logs: list[AuditLog]) -> bool:
+    """Understood path stopped at vault — post-vault stages should be skipped, not pending."""
+    if not _vision_path_active(logs):
+        return False
+    if vision_posting_continues(logs):
+        return False
+    if _latest_log(logs, "vision_posting_skipped") is not None:
+        return True
+    vision_pending_log = _latest_log(logs, "vision_path_pending")
+    vu_pass = _latest_log(logs, "vision_understand_passed")
+    if (
+        vision_pending_log
+        and vu_pass
+        and _is_after(vision_pending_log, vu_pass)
+        and (inv.evaluation_status or "").strip().lower()
+        in {"awaiting_classification", "vision_vaulted", "vision_header_review"}
+    ):
+        return True
+    return False
+
+
+def is_register_supporting_doc(inv: Invoice) -> bool:
+    """PO/GRN/SO/DN uploads finish at register sync — commercial Match is not their gate."""
+    purchase = (inv.purchase_document_type or "").strip().lower()
+    if purchase in {"po", "grn"}:
+        return True
+    sales = (inv.sales_document_type or "").strip().lower()
+    return sales in {"so", "dn"}
+
+
+def finance_posting_continuum_applies(inv: Invoice) -> bool:
+    """Whether Map GL → Journal → Reconcile → Post apply (posting commercials only)."""
+    if is_register_supporting_doc(inv):
+        return False
+    return _gl_posting_applicable(inv)
+
+
+def _match_audit_stage(inv: Invoice, logs: list[AuditLog]) -> tuple[str, StageState, datetime | None]:
+    # Supporting register docs may carry three_way_match_evaluated from sync
+    # (audited on the SO/DN/PO/GRN id). That commercial outcome must not mark
+    # the supporting upload itself as Match-failed in Upload/Processing.
+    if is_register_supporting_doc(inv):
+        if inv.status == InvoiceStatus.PROCESSED or _processing_finished(inv, logs):
+            terminal = _processing_complete_log(logs)
+            return (
+                "Not required · supporting document",
+                "skipped",
+                terminal.created_at if terminal else inv.created_at,
+            )
+        return ("Not required · supporting document", "skipped", None)
+
+    match_log = _latest_log(logs, "three_way_match_evaluated", "match_phase_evaluated")
+    variance_hold = _latest_log(logs, "three_way_match_variance_unapproved")
+    variance_ok = _latest_log(logs, "purchase_variance_approved", "sales_variance_approved")
+    if variance_hold and (variance_ok is None or _is_after(variance_hold, variance_ok)):
+        return (
+            "Variance unapproved",
+            "fail",
+            variance_hold.created_at,
+        )
+    if match_log:
+        detail = match_log.detail if isinstance(match_log.detail, dict) else {}
+        match_status = str(detail.get("match_status") or "").strip()
+        register = str(detail.get("status") or "").strip()
+        status = match_status or register or match_log.event
+        if match_status and register.lower() in {
+            "",
+            "partial",
+            "match",
+            "mismatch",
+            "full_match",
+        }:
+            status = match_status
+        register_l = register.lower()
+        failed = register_l == "mismatch" or "fail" in status.lower() or "mismatch" in status.lower()
+        if status.lower() in {
+            "qty variance",
+            "price variance",
+            "no dn",
+            "no grn",
+            "no so",
+            "no po",
+            "routed for approval",
+        }:
+            failed = True
+        # Finished commercials: register sync may leave a variance audit trail
+        # after approval — do not keep Upload Stage stuck on Match.
+        if failed and inv.status == InvoiceStatus.PROCESSED:
+            return ("Match complete", "done", match_log.created_at)
+        return (status or "Match evaluated", "fail" if failed else "done", match_log.created_at)
+    if variance_ok:
+        return ("Variance approved", "done", variance_ok.created_at)
+    if inv.status in (
+        InvoiceStatus.MAPPING,
+        InvoiceStatus.JOURNALING,
+        InvoiceStatus.RECONCILING,
+        InvoiceStatus.PROCESSED,
+    ):
+        return ("Match complete", "done", None)
+
+    # Approval gate held for match without a three_way audit on this invoice
+    # (e.g. pre-sync race) — still surface Match as the blocked step.
+    approval = _latest_log(logs, "approval_required")
+    if approval is not None:
+        detail = approval.detail if isinstance(approval.detail, dict) else {}
+        if str(detail.get("reason") or "").strip().lower() == "match_not_clean":
+            eval_status = (inv.evaluation_status or "").strip().lower()
+            if eval_status == "pending_approval" or inv.status == InvoiceStatus.EXCEPTION:
+                return ("Routed for approval", "fail", approval.created_at)
+
+    return ("Pending", "pending", None)
+
+
+def _journal_audit_stage(inv: Invoice, logs: list[AuditLog]) -> tuple[str, StageState, datetime | None]:
+    if not finance_posting_continuum_applies(inv):
+        return ("Not required · non-posting document", "skipped", None)
+    unbalanced = _latest_log(logs, "journal_unbalanced")
+    control = _latest_log(logs, "journal_control_account_unresolved")
+    if unbalanced and inv.status == InvoiceStatus.EXCEPTION:
+        return ("Journal unbalanced", "fail", unbalanced.created_at)
+    if control and inv.status == InvoiceStatus.EXCEPTION:
+        return ("Control account unresolved", "fail", control.created_at)
+    if inv.status in (InvoiceStatus.JOURNALING, InvoiceStatus.RECONCILING, InvoiceStatus.PROCESSED):
+        processed = _latest_log(logs, "invoice_processed", "purchase_document_processed")
+        return ("Balanced journal", "done", processed.created_at if processed else None)
+    return ("Pending", "pending", None)
+
+
+def _reconcile_audit_stage(inv: Invoice, logs: list[AuditLog]) -> tuple[str, StageState, datetime | None]:
+    if not finance_posting_continuum_applies(inv):
+        return ("Not required · non-posting document", "skipped", None)
+    halted = _latest_log(logs, "reconciliation_halted")
+    skipped = _latest_log(logs, "reconciliation_skipped")
+    if halted and inv.status == InvoiceStatus.EXCEPTION:
+        return ("Reconciliation halted", "fail", halted.created_at)
+    if skipped or inv.status in (InvoiceStatus.RECONCILING, InvoiceStatus.PROCESSED):
+        return (
+            "Reconcile cleared" if not skipped else "Reconciliation skipped",
+            "done",
+            skipped.created_at if skipped else None,
+        )
+    return ("Pending", "pending", None)
+
+
 def resolve_pipeline_active_path(logs: list[AuditLog]) -> PipelineActivePath:
     """Which Processing sub-tab should be selected by default."""
     vu_pass = _latest_log(logs, "vision_understand_passed")
@@ -599,29 +822,19 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
         and parsed_log.event != "parsing_failed"
     )
 
-    vision_hold = False
-    if _vision_path_active(logs):
-        vision_pending_log = _latest_log(logs, "vision_path_pending")
-        vu_pass = _latest_log(logs, "vision_understand_passed")
-        if (
-            vision_pending_log
-            and vu_pass
-            and _is_after(vision_pending_log, vu_pass)
-            and (inv.evaluation_status or "").strip().lower()
-            in {"awaiting_classification", "vision_vaulted", "vision_header_review"}
-        ):
-            vision_hold = True
+    vision_hold = _vision_vault_only(inv, logs)
+    vault_only_detail = "Not run · vault-only"
 
     validation_text, validation_state = _validation_detail(inv, logs)
     if awaiting_reparse:
         validation_text, validation_state = "Pending", "pending"
     if vision_hold:
-        # Understood path stops at bundle + vault — no tax/totals validation.
-        validation_text, validation_state = "Not run · understood path", "skipped"
+        # Vault-only Understood path — no tax/totals validation.
+        validation_text, validation_state = vault_only_detail, "skipped"
     validated_at = validated_log.created_at if validated_log else None
     if validated_at is None and _stage_index(inv.status) >= 2 and not awaiting_reparse and not vision_hold:
         validated_at = parsed_at or inv.created_at
-    if processing_finished:
+    if processing_finished and not vision_hold:
         if terminal_log and terminal_log.event == "vault_stored":
             validation_text, validation_state = "Stored in document vault", "done"
         elif terminal_log and terminal_log.event == "purchase_document_processed":
@@ -637,7 +850,7 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
 
     gl_applicable = _gl_posting_applicable(inv)
     if vision_hold:
-        account = "Not run · understood path"
+        account = vault_only_detail
     elif not gl_applicable:
         account = "Not posted — reference document"
     else:
@@ -659,7 +872,7 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
     approved_detail = "Pending policy"
     approved_state: StageState = "pending"
     if vision_hold:
-        approved_detail = "Not run · understood path"
+        approved_detail = vault_only_detail
         approved_state = "skipped"
     elif approved_log:
         approved_at = approved_log.created_at
@@ -701,7 +914,11 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
     published_state: StageState = "pending"
     doc_ref = display_document_ref(inv)
     if vision_hold:
-        published_detail = "Not run · understood path (vault only)"
+        published_detail = "Not run · vault-only"
+        published_state = "skipped"
+    elif not finance_posting_continuum_applies(inv):
+        published_at = terminal_log.created_at if terminal_log else inv.created_at
+        published_detail = f"{doc_ref} · reference only (no ledger post)"
         published_state = "skipped"
     elif is_published_from_audit_logs(logs):
         published_log = _latest_log(logs, "invoice_published_to_ledger")
@@ -718,9 +935,6 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
         if terminal_log and terminal_log.event == "vault_stored":
             published_detail = f"{doc_ref} · archived in vault"
             published_state = "pending"
-        elif not gl_applicable:
-            published_detail = f"{doc_ref} · reference only (no ledger post)"
-            published_state = "skipped"
         else:
             published_detail = f"{doc_ref} · ready to post"
             published_state = "pending"
@@ -805,13 +1019,29 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
         "skipped"
         if vision_hold
         else "skipped"
-        if not gl_applicable and processing_finished
+        if not finance_posting_continuum_applies(inv)
         else "fail"
         if mapped_suspense and inv.status == InvoiceStatus.EXCEPTION and not processing_finished
         else "done"
         if processing_finished or (gl_applicable and _stage_index(inv.status) >= 3)
         else "pending"
     )
+
+    # Understood continue: Validated → Match → Approved → Mapped → Journal → Reconcile → Posted
+    # Vault-only / non-posting: skip Match/Journal/Reconcile (and Map/Post when not posting).
+    show_post_vault_continuum = _vision_path_active(logs)
+    if show_post_vault_continuum and vision_hold:
+        match_detail, match_state, match_at = vault_only_detail, "skipped", None
+        journal_detail, journal_state, journal_at = vault_only_detail, "skipped", None
+        reconcile_detail, reconcile_state, reconcile_at = vault_only_detail, "skipped", None
+    elif show_post_vault_continuum:
+        match_detail, match_state, match_at = _match_audit_stage(inv, logs)
+        journal_detail, journal_state, journal_at = _journal_audit_stage(inv, logs)
+        reconcile_detail, reconcile_state, reconcile_at = _reconcile_audit_stage(inv, logs)
+    else:
+        match_detail = journal_detail = reconcile_detail = ""
+        match_state = journal_state = reconcile_state = "pending"
+        match_at = journal_at = reconcile_at = None
 
     stages = [
         PipelineStage(
@@ -844,44 +1074,75 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
                 detail=parsed_detail,
                 state=parsed_state,
             ),
-            PipelineStage(
-                stage="Validated",
-                at=validated_at,
-                detail=(
-                    validation_text
-                    if vision_hold
-                    else f"Tax & totals checked · {validation_text}"
-                ),
-                state=validation_state,
-            ),
-            PipelineStage(
-                stage="Mapped",
-                at=mapped_at,
-                detail=(
-                    account
-                    if vision_hold
-                    else f"Rule book applied · {account}"
-                ),
-                state=mapped_state,
-            ),
-            PipelineStage(
-                stage="Approved",
-                at=approved_at,
-                detail=approved_detail,
-                state=approved_state,
-            ),
-            PipelineStage(
-                stage="Posted",
-                at=published_at,
-                detail=(
-                    published_detail
-                    if vision_hold
-                    else f"Ledger · {published_detail}"
-                ),
-                state=published_state,
-            ),
         ]
     )
+
+    validated_stage = PipelineStage(
+        stage="Validated",
+        at=validated_at,
+        detail=(
+            validation_text
+            if vision_hold
+            else f"Tax & totals checked · {validation_text}"
+        ),
+        state=validation_state,
+    )
+    mapped_stage = PipelineStage(
+        stage="Mapped",
+        at=mapped_at,
+        detail=(account if vision_hold else f"Rule book applied · {account}"),
+        state=mapped_state,
+    )
+    approved_stage = PipelineStage(
+        stage="Approved",
+        at=approved_at,
+        detail=approved_detail,
+        state=approved_state,
+    )
+    posted_stage = PipelineStage(
+        stage="Posted",
+        at=published_at,
+        detail=(published_detail if vision_hold else f"Ledger · {published_detail}"),
+        state=published_state,
+    )
+
+    # Understood continue: Validated → Match → Approved → Mapped → Journal → Reconcile → Posted
+    if show_post_vault_continuum:
+        stages.extend(
+            [
+                validated_stage,
+                PipelineStage(
+                    stage="Match",
+                    at=match_at,
+                    detail=match_detail,
+                    state=match_state,
+                ),
+                approved_stage,
+                mapped_stage,
+                PipelineStage(
+                    stage="Journal",
+                    at=journal_at,
+                    detail=journal_detail,
+                    state=journal_state,
+                ),
+                PipelineStage(
+                    stage="Reconcile",
+                    at=reconcile_at,
+                    detail=reconcile_detail,
+                    state=reconcile_state,
+                ),
+                posted_stage,
+            ]
+        )
+    else:
+        stages.extend(
+            [
+                validated_stage,
+                mapped_stage,
+                approved_stage,
+                posted_stage,
+            ]
+        )
 
     dup_log = _latest_log(logs, "duplicate_in_progress", "duplicate_skipped")
     if dup_log is not None:
@@ -944,10 +1205,94 @@ def derive_list_stage(inv: Invoice) -> tuple[str, StageState]:
         if eval_status == "awaiting_classification":
             # OCR path — classification gate, not vault.
             return "Parsed", "pending"
+        if eval_status in {"awaiting_po", "awaiting_so"}:
+            label = "Awaiting PO" if eval_status == "awaiting_po" else "Awaiting SO"
+            return label, "pending"
+        if eval_status == "pending_approval":
+            return "Approved", "pending"
+        # Past validate (mapping / recon halt with auto_coded): not a validation fail.
+        if (inv.account_code or "").strip() or eval_status == "auto_coded":
+            return "Mapped", "fail"
         return "Validated", "fail"
     if status == InvoiceStatus.PROCESSED:
         return "Processed", "done"
     return "Received", "pending"
+
+
+_RESOLUTION_HINT_BY_EVAL: dict[str, str] = {
+    "awaiting_classification": "Fields tab — confirm document type",
+    "vision_header_review": "Fields tab — complete header fields, then Confirm & process",
+    "vision_vaulted": "Understood path complete — document is vaulted",
+    "needs_rescan": "Ask sender for a clearer scan or PDF, then reprocess",
+    "pending_vendor": "Creations — register counterparty, then reprocess",
+    "awaiting_po": "Purchase register — link or upload the PO, then reprocess",
+    "awaiting_so": "Sales register — link or upload the SO / DN, then reprocess",
+    "pending_approval": "Approvals board — review and approve this document",
+    "needs_review": "Open document drawer — check Fields, Audit, or Lines",
+}
+
+# Newest matching event wins; order is priority when timestamps tie.
+_RESOLUTION_HINT_AUDIT_EVENTS: tuple[tuple[str, str], ...] = (
+    ("reconciliation_halted", "Audit tab — reconciliation blocked posting"),
+    ("validation_failed", "Audit tab — fix failed validation rules"),
+    ("journal_control_account_unresolved", "Lines tab — resolve control account mapping"),
+    ("vendor_registration_hold", "Creations → Vendors — register vendor, then reprocess"),
+    ("customer_registration_hold", "Creations → Customers — register customer, then reprocess"),
+    ("mapping_review_required", "Lines tab — review GL mapping"),
+    ("routing_review_required", "Fields tab — confirm document type / route"),
+    ("approval_requested", "Approvals board — waiting for approver sign-off"),
+)
+
+
+def derive_resolution_hint(
+    inv: Invoice,
+    logs: list[AuditLog] | None = None,
+) -> str | None:
+    """Actionable next step for Upload / inbox when a document is blocked."""
+    status = inv.status
+    if status in (InvoiceStatus.PROCESSED, InvoiceStatus.REJECTED, InvoiceStatus.DUPLICATE_SKIPPED):
+        return None
+    if status not in (InvoiceStatus.EXCEPTION, InvoiceStatus.PENDING, InvoiceStatus.PARSING):
+        # Mid-flight statuses — list already shows pending stage.
+        if status in (
+            InvoiceStatus.VALIDATING,
+            InvoiceStatus.MAPPING,
+            InvoiceStatus.JOURNALING,
+            InvoiceStatus.RECONCILING,
+        ):
+            return None
+
+    eval_status = (inv.evaluation_status or "").strip().lower()
+    if eval_status in _RESOLUTION_HINT_BY_EVAL:
+        hint = _RESOLUTION_HINT_BY_EVAL[eval_status]
+        if eval_status == "pending_vendor":
+            route = (inv.route_target or "").strip()
+            if route == "Sales Management":
+                return "Creations → Customers — register customer, then reprocess"
+            return "Creations → Vendors — register vendor, then reprocess"
+        return hint
+
+    logs = logs or []
+    best: AuditLog | None = None
+    best_template = ""
+    for event, template in _RESOLUTION_HINT_AUDIT_EVENTS:
+        entry = _latest_log(logs, event)
+        if entry is None:
+            continue
+        if best is None or entry.created_at > best.created_at:
+            best = entry
+            best_template = template
+    if best is not None:
+        detail = best.detail if isinstance(best.detail, dict) else {}
+        reason = str(detail.get("reason") or "").strip()
+        if reason and best.event == "reconciliation_halted":
+            short = reason if len(reason) <= 120 else reason[:117] + "…"
+            return f"{best_template} ({short})"
+        return best_template
+
+    if status == InvoiceStatus.EXCEPTION:
+        return "Open document drawer — check Fields, Audit, or Lines tabs"
+    return None
 
 
 def derive_current_stage(inv: Invoice, logs: list[AuditLog]) -> tuple[str, StageState]:
@@ -971,11 +1316,33 @@ def derive_current_stage(inv: Invoice, logs: list[AuditLog]) -> tuple[str, Stage
     if posted and posted.state == "done":
         return "Posted", "done"
 
-    if _processing_finished(inv, logs):
+    # Terminal processed docs (including supporting register uploads) never stay
+    # on Match — sync may have written commercial variance audits onto SO/DN/PO/GRN.
+    if inv.status == InvoiceStatus.PROCESSED or (
+        _processing_finished(inv, logs) and is_register_supporting_doc(inv)
+    ):
         return "Processed", "done"
 
+    if _processing_finished(inv, logs):
+        # vault_stored is terminal for vault-only paths.
+        # Understood posting continuum still walks Match → Approve → Map after vault.
+        match = by_name.get("Match")
+        approved = by_name.get("Approved")
+        continuum_blocked = match is not None and match.state in ("fail", "pending")
+        approval_blocked = (
+            match is not None
+            and match.state == "done"
+            and approved is not None
+            and approved.state in ("fail", "pending")
+        )
+        if not continuum_blocked and not approval_blocked:
+            return "Processed", "done"
+
     last_done: tuple[str, StageState] | None = None
-    for name in MATRIX_STAGES:
+    # Understood posting continuum: Match → Approve → Map.
+    # Classic path uses the same finance order via MATRIX_STAGES.
+    walk = _INBOX_STAGE_WALK if "Match" in by_name else MATRIX_STAGES
+    for name in walk:
         step = by_name.get(name)
         if not step or step.state == "skipped":
             continue
@@ -1069,9 +1436,28 @@ def build_matrix_cells(inv: Invoice, logs: list[AuditLog]) -> list[dict[str, str
                 cells.append(_matrix_cell(stage, state="pending", detail="Blocked — rejected"))
         return cells
 
+    # Fold Match onto Approved in the Summary grid (Match is not a MATRIX column).
+    # Only for commercial docs still open — supporting sync audits must not fail Approved.
+    match = by_name.get("Match")
     cells = []
     for stage in MATRIX_STAGES:
         step = by_name.get(stage)
+        if (
+            stage == "Approved"
+            and match is not None
+            and match.state in ("fail", "pending")
+            and not is_register_supporting_doc(inv)
+            and inv.status != InvoiceStatus.PROCESSED
+        ):
+            cells.append(
+                _matrix_cell(
+                    stage,
+                    state=match.state,
+                    at=match.at or (step.at if step else None),
+                    detail=match.detail,
+                )
+            )
+            continue
         if step:
             cells.append(
                 _matrix_cell(

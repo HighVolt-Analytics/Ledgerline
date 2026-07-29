@@ -17,6 +17,8 @@ type UseCoaAccountOptionsArgs = {
   types?: ChartOfAccountType[];
   postingRole?: CoaPostingRole;
   ledgerPurpose?: CoaLedgerPurpose;
+  playbookProfile?: string;
+  routeTarget?: string;
   excludeNames?: string[];
   includeEmpty?: boolean;
   emptyLabel?: string;
@@ -27,6 +29,8 @@ export function useCoaAccountOptions({
   types,
   postingRole,
   ledgerPurpose,
+  playbookProfile,
+  routeTarget,
   excludeNames = [],
   includeEmpty = true,
   emptyLabel = "— Select account —",
@@ -36,7 +40,10 @@ export function useCoaAccountOptions({
 
   const filtered = useMemo(() => {
     if (ledgerPurpose) {
-      let rows = filterCoaAccountsForLedgerPurpose(accounts, ledgerPurpose);
+      let rows = filterCoaAccountsForLedgerPurpose(accounts, ledgerPurpose, {
+        playbookProfile,
+        routeTarget,
+      });
       rows = excludeCoaAccountNames(rows, excludeNames);
       return rows;
     }
@@ -44,7 +51,7 @@ export function useCoaAccountOptions({
     rows = filterCoaAccountsForPostingRole(rows, postingRole);
     rows = excludeCoaAccountNames(rows, excludeNames);
     return rows;
-  }, [accounts, excludeNames, ledgerPurpose, postingRole, types]);
+  }, [accounts, excludeNames, ledgerPurpose, playbookProfile, postingRole, routeTarget, types]);
 
   const options: CoaSelectOption[] = useMemo(
     () => coaAccountsToSelectOptions(filtered, { includeEmpty, emptyLabel }),

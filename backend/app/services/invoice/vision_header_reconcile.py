@@ -98,10 +98,9 @@ def reconcile_currency_from_text(
 ) -> tuple[str, str | None, str]:
     """Return (iso_or_empty, currency_symbol_or_none, reason).
 
-    Unambiguous OCR evidence wins over a wrong vision ISO. Ungrounded ISO
-    codes (e.g. invented AUD on bare ``$``) are cleared so the UI asks the user
-    — but only when text is rich enough to judge. Thin/junk text must not wipe a
-    vision ISO that the page images actually supported.
+    Unambiguous OCR evidence wins over a wrong vision ISO (e.g. bare ``$`` → USD).
+    Ungrounded ISO codes are cleared when text is rich enough to judge.
+    Thin/junk text must not wipe a vision ISO that the page images actually supported.
     """
     current = (current_currency or "").strip().upper()
     if current and not is_iso4217_currency(current):

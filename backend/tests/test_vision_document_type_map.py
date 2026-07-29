@@ -154,9 +154,11 @@ def test_map_below_threshold_when_catalogue_unrelated() -> None:
         document_types=catalogue,
     )
     assert result.code is None
-    assert result.reason in {"below_threshold", "no_kind"}
-    # Kind is inferred; score against Contract should fail threshold.
+    assert result.reason in {"below_threshold", "no_kind", "no_dt_for_role_invoice"}
+    # Kind is inferred; score against Contract should fail threshold or role filter.
     if result.reason == "below_threshold":
+        assert result.heading_kind == "tax_invoice"
+    if result.reason == "no_dt_for_role_invoice":
         assert result.heading_kind == "tax_invoice"
 
 
@@ -225,6 +227,9 @@ def test_dt_map_fallback_prompt_is_robust() -> None:
     assert 'Prefer "" over a weak guess' in body or "Prefer \"\" over a weak guess" in body
     assert "SELF-CHECK BEFORE RETURNING" in body
     assert "catalogue[].code" in body
+    assert "few_shot_examples" in body
+    assert "human_confirmed_dt" in body
+    assert "DESPATCH ADVICE" in body
 
 
 @pytest.mark.asyncio
@@ -257,6 +262,124 @@ async def test_llm_fallback_not_called_when_rules_match(
     assert result.reason == "matched"
     assert result.code == "DT-07"
     assert called["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_tenant_heading_learning_overrides_rules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exact prior reviewer heading → DT wins over deterministic score."""
+    llm_called = {"n": 0}
+
+    async def _boom(**_kwargs):
+        llm_called["n"] += 1
+        raise AssertionError("LLM must not run when learning resolves")
+
+    async def _fake_learn(_session, **_kwargs):
+        return ("DT-06", 0.93)
+
+    monkeypatch.setattr(
+        "app.services.invoice.vision_document_type_map._llm_pick_catalogue_dt",
+        _boom,
+    )
+    monkeypatch.setattr(
+        "app.services.classification.classification_learning_service.learned_document_type_for_heading",
+        _fake_learn,
+    )
+    catalogue = [
+        _dt(
+            code="DT-04",
+            title="Goods Received Note",
+            short_title="GRN",
+            klass="Non-transactional",
+            posting="No",
+            recognition_signals=["heading_grn"],
+        ),
+        _dt(
+            code="DT-06",
+            title="Delivery Note",
+            short_title="DN",
+            klass="Non-transactional",
+            posting="No",
+            recognition_signals=["heading_delivery_note"],
+        ),
+    ]
+    result = await map_vision_label_to_document_type_with_llm_fallback(
+        document_heading="DESPATCH ADVICE",
+        canonical_document_type="Despatch Advice",
+        document_types=catalogue,
+        session=object(),
+        tenant_id=__import__("uuid").UUID("00000000-0000-0000-0000-000000000001"),
+    )
+    assert result.reason == "learning_matched"
+    assert result.method == "tenant_heading_learning"
+    assert result.code == "DT-06"
+    assert llm_called["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_llm_fallback_passes_few_shots_and_org(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict = {}
+
+    async def _fake_chat(*, system, user, **_kwargs):
+        captured["user"] = user
+        return {
+            "suggested_dt": "DT-16",
+            "confidence": 0.88,
+            "reasoning": "few-shot match",
+        }
+
+    monkeypatch.setattr(
+        "app.services.extraction.azure_openai_client.chat_json_async",
+        _fake_chat,
+    )
+    monkeypatch.setattr(
+        "app.services.prompt_registry.service.resolve_system_prompt_text",
+        lambda _key: "test prompt",
+    )
+    catalogue = [
+        _dt(
+            code="DT-07",
+            title="Supplier Tax Invoice",
+            short_title="Tax Invoice",
+            recognition_signals=["heading_invoice"],
+        ),
+        _dt(
+            code="DT-16",
+            title="Handover Slip",
+            short_title="Handover",
+            klass="Non-transactional",
+            posting="No",
+        ),
+    ]
+    from app.services.tenant.tenant_org_context import OrgContext
+
+    org = OrgContext(
+        legal_name="Highvolt Industries Pty Ltd",
+        classification_hints="Outbound DN titles may say Despatch Advice",
+        default_perspective="seller",
+    )
+    result = await map_vision_label_to_document_type_with_llm_fallback(
+        document_heading="HANDOVER SLIP",
+        canonical_document_type="Handover Slip",
+        document_types=catalogue,
+        org=org,
+        few_shots=[
+            {
+                "document_heading": "HANDOVER SLIP",
+                "human_confirmed_dt": "DT-16",
+                "llm_suggested_dt": "DT-07",
+                "note": "Reviewer corrected DT-07 → DT-16",
+            }
+        ],
+    )
+    assert result.reason == "llm_matched"
+    assert result.code == "DT-16"
+    assert captured["user"]["few_shot_examples"][0]["human_confirmed_dt"] == "DT-16"
+    assert captured["user"]["tenant"]["legal_name"] == "Highvolt Industries Pty Ltd"
+    assert "Despatch" in captured["user"]["tenant"]["classification_hints"]
 
 
 @pytest.mark.asyncio

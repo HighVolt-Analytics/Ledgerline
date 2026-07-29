@@ -123,3 +123,105 @@ async def test_apply_evaluation_does_not_reopen_processed_auto_coded(
 
     assert inv.evaluation_status == EVAL_AUTO_CODED
     assert result.evaluation_status == EVAL_AUTO_CODED
+
+
+@pytest.mark.asyncio
+async def test_apply_evaluation_preserves_pending_approval_hold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.invoice import invoice_evaluation_service as ies
+
+    inv = _invoice(
+        status=InvoiceStatus.EXCEPTION,
+        vendor="Everest Furnishings",
+        document_type_confidence=0.95,
+        evaluation_status=ies.EVAL_PENDING_APPROVAL,
+        matched_rule_ids='["dt:DT-03"]',
+        currency="AUD",
+        account_code="6100",
+        account_name="Operating Expenses",
+    )
+
+    monkeypatch.setattr(
+        ies,
+        "load_classification_config",
+        AsyncMock(return_value=_empty_config()),
+    )
+    monkeypatch.setattr(
+        ies,
+        "classification_config_with_db_masters",
+        AsyncMock(side_effect=lambda _s, _t, cfg: cfg),
+    )
+    monkeypatch.setattr(
+        ies,
+        "map_invoice_with_details",
+        lambda _inv, config=None: type(
+            "D",
+            (),
+            {"rule_type": DOCUMENT_TYPE_RULE_TYPE, "account_code": "6100"},
+        )(),
+    )
+    monkeypatch.setattr(
+        "app.services.master_data.customer_master_service.list_customer_masters",
+        AsyncMock(return_value=[]),
+    )
+
+    result = await ies.apply_invoice_evaluation(
+        AsyncMock(),
+        inv,
+        config=_empty_config(),
+        enqueue_pending=False,
+    )
+
+    assert inv.evaluation_status == ies.EVAL_PENDING_APPROVAL
+    assert result.evaluation_status == ies.EVAL_PENDING_APPROVAL
+
+
+@pytest.mark.asyncio
+async def test_apply_evaluation_preserves_awaiting_po_hold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.invoice import invoice_evaluation_service as ies
+
+    inv = _invoice(
+        status=InvoiceStatus.EXCEPTION,
+        vendor="Everest Furnishings",
+        document_type_confidence=0.95,
+        evaluation_status=ies.EVAL_AWAITING_PO,
+        matched_rule_ids='["dt:DT-03"]',
+        currency="AUD",
+    )
+
+    monkeypatch.setattr(
+        ies,
+        "load_classification_config",
+        AsyncMock(return_value=_empty_config()),
+    )
+    monkeypatch.setattr(
+        ies,
+        "classification_config_with_db_masters",
+        AsyncMock(side_effect=lambda _s, _t, cfg: cfg),
+    )
+    monkeypatch.setattr(
+        ies,
+        "map_invoice_with_details",
+        lambda _inv, config=None: type(
+            "D",
+            (),
+            {"rule_type": DOCUMENT_TYPE_RULE_TYPE, "account_code": "6100"},
+        )(),
+    )
+    monkeypatch.setattr(
+        "app.services.master_data.customer_master_service.list_customer_masters",
+        AsyncMock(return_value=[]),
+    )
+
+    result = await ies.apply_invoice_evaluation(
+        AsyncMock(),
+        inv,
+        config=_empty_config(),
+        enqueue_pending=False,
+    )
+
+    assert inv.evaluation_status == ies.EVAL_AWAITING_PO
+    assert result.evaluation_status == ies.EVAL_AWAITING_PO

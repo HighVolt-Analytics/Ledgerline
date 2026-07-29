@@ -212,6 +212,7 @@ export function salesKpisFromRegister(salesRows: SalesOrderApi[], routed: Invoic
   const variancesAwaiting = salesRows.filter((r) =>
     salesNeedsVarianceApproval(r.match.status, r.variance_approved)
   ).length;
+  const awaitingSo = routed.filter((inv) => inv.evaluation_status === "awaiting_so").length;
   const needsAction = salesActionRequiredInvoices(routed, salesRows).length;
   const rows = routed.map(invoiceToSalesRow);
   const open = rows.filter((r) => r.state === "New" || r.state === "In Review").length;
@@ -232,6 +233,7 @@ export function salesKpisFromRegister(salesRows: SalesOrderApi[], routed: Invoic
     twoWayMatchPct,
     twoWayCount: twoWayRows.length,
     variancesAwaiting,
+    awaitingSo,
     needsAction,
     open,
     pending,
@@ -460,6 +462,7 @@ export function purchaseKpisFromRegister(rows: PurchaseOrderApi[], routed: Invoi
   const variancesAwaiting = rows.filter((r) =>
     purchaseNeedsVarianceApproval(r.match.status, r.variance_approved)
   ).length;
+  const awaitingPo = routed.filter((inv) => inv.evaluation_status === "awaiting_po").length;
   const needsAction = purchaseActionRequiredInvoices(routed, rows).length;
   const withoutPoRef = routed.filter((inv) => !inv.po_reference?.trim()).length;
 
@@ -470,6 +473,7 @@ export function purchaseKpisFromRegister(rows: PurchaseOrderApi[], routed: Invoi
     twoWayMatchPct,
     twoWayCount: twoWayRows.length,
     variancesAwaiting,
+    awaitingPo,
     needsAction,
     withoutPoRef,
   };

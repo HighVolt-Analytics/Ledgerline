@@ -114,7 +114,7 @@ const TAB_LABELS: Record<Exclude<Tab, "po">, string> = {
   fields: "Fields",
   lines: "Line items",
   tax: "Tax",
-  audit: "Audit log",
+  audit: "Processing",
   overrides: "Processing overrides",
   pipeline: "Pipeline (dev)",
 };
@@ -264,6 +264,8 @@ function updateDraftExtractionField(
       return { ...draft, total: value };
     case "currency":
       return { ...draft, currency: value.trim().toUpperCase() };
+    case "email_sender":
+      return { ...draft, email_sender: value };
     default:
       if (!isPresetExtractionFieldKey(key)) {
         return {
@@ -318,6 +320,7 @@ type InvoiceEditDraft = {
   gst: string;
   total: string;
   currency: string;
+  email_sender: string;
   line_items: LineItemDraft[];
   skip_steps: ProcessingOverrideStepId[];
   extractedFields: Record<string, string>;
@@ -392,6 +395,7 @@ function draftFromInvoice(inv: InvoiceDetails, extractionFieldKeys: string[] = [
     gst: strField(inv.gst),
     total: strField(inv.total),
     currency: strField(inv.currency).toUpperCase(),
+    email_sender: strField(inv.email_sender),
     line_items: inv.line_items.map((line) => ({
       id: line.id,
       description: strField(line.description),
@@ -652,6 +656,7 @@ function payloadFromDraft(draft: InvoiceEditDraft, inv?: InvoiceDetails): Invoic
     gst: optionalText(draft.gst),
     total: optionalText(draft.total),
     currency: optionalText(draft.currency)?.toUpperCase() ?? null,
+    email_sender: optionalText(draft.email_sender),
     line_items: draft.line_items.map((line) => ({
       id: line.id,
       description: optionalText(line.description),
@@ -816,6 +821,7 @@ export function InvoiceDetailDrawer({
   const [sheetState, setSheetState] = useState<"open" | "closed">("closed");
   const [pipelineSteps, setPipelineSteps] = useState<PipelineAuditStep[]>([]);
   const [pipelineActivePath, setPipelineActivePath] = useState<PipelineActivePath>("unknown");
+  const [auditPathTab, setAuditPathTab] = useState<"understood" | "not_understood">("understood");
   const [auditLoading, setAuditLoading] = useState(false);
   const [classificationAudit, setClassificationAudit] = useState<InvoiceClassificationAudit | null>(null);
   const [classificationLoading, setClassificationLoading] = useState(false);
@@ -1028,10 +1034,12 @@ export function InvoiceDetailDrawer({
       .then((res) => {
         setPipelineSteps(res.steps);
         setPipelineActivePath(res.active_path);
+        setAuditPathTab(defaultAuditPathTab(res.active_path));
       })
       .catch(() => {
         setPipelineSteps([]);
         setPipelineActivePath("unknown");
+        setAuditPathTab("understood");
       })
       .finally(() => setAuditLoading(false));
   }, [inv, tab]);
@@ -1093,11 +1101,20 @@ export function InvoiceDetailDrawer({
   const extractionFieldKeys = useMemo(() => {
     if (!inv) return [];
     const fromApi = normalizeExtractionFieldKeys(inv.document_type_extraction_fields ?? undefined);
-    if (fromApi.length) return fromApi;
-    if (ruleBook && resolvedDocumentTypeCode) {
-      return extractionFieldsForDocumentType(ruleBook.documentTypes, resolvedDocumentTypeCode);
+    let keys =
+      fromApi.length > 0
+        ? fromApi
+        : ruleBook && resolvedDocumentTypeCode
+          ? extractionFieldsForDocumentType(ruleBook.documentTypes, resolvedDocumentTypeCode)
+          : [];
+    // Team Expenses identity comes from the capture channel sender; keep it visible for review.
+    if (
+      (inv.route_target || "").trim() === "Team Expenses" &&
+      !keys.includes("email_sender")
+    ) {
+      keys = ["email_sender", ...keys];
     }
-    return [];
+    return keys;
   }, [inv, ruleBook, resolvedDocumentTypeCode]);
 
   const extraExtractedFieldKeys = useMemo(() => {
@@ -1179,8 +1196,8 @@ export function InvoiceDetailDrawer({
   }, [inv, editing, draft, absentFields, extractionFieldKeys]);
 
   const filteredAuditSteps = useMemo(
-    () => filterPipelineStepsForPath(pipelineSteps, defaultAuditPathTab(pipelineActivePath)),
-    [pipelineSteps, pipelineActivePath]
+    () => filterPipelineStepsForPath(pipelineSteps, auditPathTab),
+    [pipelineSteps, auditPathTab]
   );
 
   if (!mounted) return null;
@@ -1203,6 +1220,7 @@ export function InvoiceDetailDrawer({
       if (!isStillViewing(id)) return;
       setPipelineSteps(res.steps);
       setPipelineActivePath(res.active_path);
+      setAuditPathTab(defaultAuditPathTab(res.active_path));
     }
   }
 
@@ -1398,7 +1416,7 @@ export function InvoiceDetailDrawer({
     const fresh = await api.getInvoice(targetId, { fresh: true });
     if (!isStillViewing(targetId)) return;
     setInv(fresh);
-    if (!canApproveFromDrawer(fresh.status)) {
+    if (!canApproveFromDrawer(fresh)) {
       alert(
         fresh.status === "processed"
           ? "This invoice is already processed. Use Reprocess to run the pipeline again."
@@ -1633,7 +1651,7 @@ export function InvoiceDetailDrawer({
                       <p className="text-sm text-muted-foreground">
                         {isVisionHeaderPipelineSummary(inv)
                           ? (inv.evaluation_status ?? "").trim() === "vision_header_review"
-                            ? "Vision header needs review — complete Fields, then reprocess if needed."
+                            ? "Vision header needs review — complete Fields, save, then Confirm & process."
                             : (inv.evaluation_status ?? "").trim() === "vision_vaulted"
                               ? "Understood path complete — vaulted with header fields only (no OCR / DT extract)."
                               : "Vision header path — open Summary for extracted header fields, or reprocess if they are empty."
@@ -1861,11 +1879,51 @@ export function InvoiceDetailDrawer({
                 )}
 
                 {tab === "audit" && (
-                  <div className="mt-4">
+                  <div className="mt-4 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div
+                        className="inline-flex rounded-md border border-border p-0.5"
+                        role="tablist"
+                        aria-label="Processing path"
+                      >
+                        {(
+                          [
+                            ["understood", "Understood"],
+                            ["not_understood", "Not understood"],
+                          ] as const
+                        ).map(([value, label]) => (
+                          <button
+                            key={value}
+                            type="button"
+                            role="tab"
+                            aria-selected={auditPathTab === value}
+                            data-testid={`processing-path-${value}`}
+                            onClick={() => setAuditPathTab(value)}
+                            className={cn(
+                              "rounded px-2.5 py-1 text-xs font-medium transition-colors",
+                              auditPathTab === value
+                                ? "bg-primary text-primary-foreground"
+                                : "text-muted-foreground hover:text-foreground"
+                            )}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        {auditPathTab === "understood"
+                          ? pipelineActivePath === "understood"
+                            ? "Active path — capture → vault, then posting when continue runs."
+                            : "Vision path stages (may be inactive for this document)."
+                          : pipelineActivePath === "not_understood"
+                            ? "Active path — OCR / classify → validate → post."
+                            : "Legacy OCR path stages (may be inactive for this document)."}
+                      </p>
+                    </div>
                     {auditLoading ? (
-                      <p className="text-sm text-muted-foreground">Loading audit log…</p>
+                      <p className="text-sm text-muted-foreground">Loading processing stages…</p>
                     ) : filteredAuditSteps.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">No pipeline stages yet.</p>
+                      <p className="text-sm text-muted-foreground">No pipeline stages on this path yet.</p>
                     ) : (
                       <ol className="relative border-l border-border ml-2 space-y-4">
                         {filteredAuditSteps.map((step) => (
@@ -1941,7 +1999,7 @@ export function InvoiceDetailDrawer({
             </div>
 
             <div className="shrink-0 border-t border-border">
-              {inv && settlementHint && canApproveFromDrawer(inv.status) ? (
+              {inv && settlementHint && canApproveFromDrawer(inv) ? (
                 <p
                   className="px-5 pt-2.5 text-xs text-muted-foreground"
                   data-testid="settlement-approval-hint"
@@ -1980,7 +2038,7 @@ export function InvoiceDetailDrawer({
                         Reprocess
                       </Button>
                     )}
-                    {canApproveFromDrawer(inv.status) && (
+                    {canApproveFromDrawer(inv) && (
                       <Button
                         size="sm"
                         data-testid="button-approve-process"
@@ -2040,7 +2098,7 @@ export function InvoiceDetailDrawer({
                       <Clock className="h-4 w-4 mr-1" />
                       Request approval
                     </Button>
-                    {canApproveFromDrawer(inv.status) && (
+                    {canApproveFromDrawer(inv) && (
                       <Button
                         size="sm"
                         data-testid="button-approve-process"

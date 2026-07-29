@@ -182,6 +182,63 @@ def min_route_confidence_for_document_type(
     return float(definition.min_route_confidence)
 
 
+def resolved_route_for_definition(
+    definition: DocumentTypeDefinition | None,
+) -> str | None:
+    """Catalogue route for a DT: employee_claim playbook, else route_target, else inference.
+
+    Never keys on a fixed code (e.g. DT-12). Custom tenant DTs with
+    ``playbook_profile=employee_claim`` resolve to Team Expenses the same way.
+    """
+    if definition is None:
+        return None
+    if not getattr(definition, "enabled", True):
+        return None
+    playbook = (definition.playbook_profile or "").strip().lower()
+    if playbook == "employee_claim":
+        return ROUTE_TEAM
+    route = (definition.route_target or "").strip()
+    if route:
+        return route
+    if playbook:
+        from app.services.classification.document_type_recognition_signals import (
+            infer_document_metadata,
+        )
+
+        bundle_role = (getattr(definition, "purchase_bundle_role", None) or "").strip()
+        _klass, _posting, inferred = infer_document_metadata(
+            playbook, bundle_role=bundle_role
+        )
+        if (inferred or "").strip():
+            return inferred.strip()
+    code = (definition.code or "").strip().upper()
+    return DEFAULT_DOCUMENT_TYPE_ROUTE_TARGETS.get(code) if code else None
+
+
+def is_team_expenses_document_type(
+    definition: DocumentTypeDefinition | None,
+) -> bool:
+    """True when the DT is configured for Team Expenses (route or employee_claim playbook)."""
+    if definition is None:
+        return False
+    if (definition.playbook_profile or "").strip().lower() == "employee_claim":
+        return True
+    return resolved_route_for_definition(definition) == ROUTE_TEAM
+
+
+def team_expenses_document_types(
+    document_types: Sequence[DocumentTypeDefinition] | None,
+) -> list[DocumentTypeDefinition]:
+    """Enabled catalogue rows that route to Team Expenses (any tenant code)."""
+    if not document_types:
+        return []
+    return [
+        dt
+        for dt in document_types
+        if getattr(dt, "enabled", True) and is_team_expenses_document_type(dt)
+    ]
+
+
 def route_target_for_document_type(
     code: str,
     document_types: Sequence[DocumentTypeDefinition] | None = None,
@@ -196,9 +253,12 @@ def route_target_for_document_type(
         document_types=document_types,
         tenant_id=tenant_id,
     )
-    if definition is None or not definition.enabled:
+    if definition is None:
         return DEFAULT_DOCUMENT_TYPE_ROUTE_TARGETS.get(normalized)
-    return definition.route_target
+    resolved = resolved_route_for_definition(definition)
+    if resolved:
+        return resolved
+    return DEFAULT_DOCUMENT_TYPE_ROUTE_TARGETS.get(normalized)
 
 
 def resolve_document_type_for_purchase_kind(

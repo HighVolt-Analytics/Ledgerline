@@ -114,7 +114,12 @@ async def process_invoice_by_id(
         except Exception as exc:
             await session.rollback()
             error_message = _pipeline_error_message(exc)
-            logger.error("pipeline_error", error=error_message, invoice_id=invoice_id)
+            logger.error(
+                "pipeline_error",
+                error=error_message,
+                invoice_id=invoice_id,
+                exc_info=True,
+            )
             async with db_session_with_rls(resolved_tid) as err_session:
                 inv = await get_for_tenant(err_session, Invoice, invoice_id, resolved_tid)
                 if (

@@ -44,14 +44,18 @@ export function DossierApprovalPanel({
   pipelinePath?: DossierPipelinePath | null;
 }) {
   const understood = pipelinePath === "understood";
+  const vaultOnly =
+    understood &&
+    (chain.policyMode === "no_posting" ||
+      chain.steps.every((step) => step.state === "not_required"));
   const { complete, total } = approvalChainProgress(chain);
 
   return (
     <SectionBlock
       label="Approval chain"
       description={
-        understood
-          ? "Understood path ends at vault — no Approvals queue, ledger post, or payment."
+        vaultOnly
+          ? "Vault-only understood path — no Approvals queue, ledger post, or payment."
           : "Policy checks, manual approvals, ledger posting, and payment."
       }
     >

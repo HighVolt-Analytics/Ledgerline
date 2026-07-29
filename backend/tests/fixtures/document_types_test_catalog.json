@@ -47,7 +47,7 @@
     "absentFields": [],
     "minRouteConfidence": 0.65,
     "validationProfile": "",
-    "playbookProfile": "",
+    "playbookProfile": "po_goods",
     "matchPolicy": null,
     "approvalPolicy": null,
     "validationRules": [],
@@ -1309,5 +1309,158 @@
     "bundleMandatory": [],
     "bundleConditional": [],
     "purchaseBundleRole": ""
+  },
+  {
+    "code": "DT-26",
+    "title": "Customer tax invoice (outbound AR)",
+    "shortTitle": "Customer invoice",
+    "klass": "Transactional",
+    "posting": "Yes",
+    "oneLine": "Customer invoice for 3-way SO+DN match and AR accrual.",
+    "routeTarget": "Sales Management",
+    "enabled": true,
+    "classifier": {
+      "enabled": false,
+      "priority": 100,
+      "confidence": 0.85,
+      "root": {
+        "type": "group",
+        "operator": "AND",
+        "children": []
+      }
+    },
+    "classifierCustomized": false,
+    "requiredFields": [
+      "vendor",
+      "invoice_no",
+      "total",
+      "due_date"
+    ],
+    "absentFields": [],
+    "minRouteConfidence": 0.65,
+    "validationProfile": "",
+    "playbookProfile": "ar_goods",
+    "matchPolicy": null,
+    "approvalPolicy": null,
+    "validationRules": [],
+    "customValidationRules": [],
+    "extractionFields": [
+      "vendor",
+      "invoice_no",
+      "so_reference",
+      "total",
+      "due_date",
+      "line_items"
+    ],
+    "extraction": [],
+    "checks": [],
+    "match": [],
+    "approval": [],
+    "accounting": [],
+    "special": [],
+    "bundleMandatory": [
+      "DT-27",
+      "DT-28"
+    ],
+    "bundleConditional": [],
+    "salesBundleRole": "",
+    "postTo": {
+      "ledger": "Sales Revenue",
+      "subLedger": "",
+      "taxAccount": "GST Collected",
+      "receivableAccount": "Accounts Receivable"
+    }
+  },
+  {
+    "code": "DT-27",
+    "title": "Sales order (copy)",
+    "shortTitle": "Sales order",
+    "klass": "Supporting",
+    "posting": "No",
+    "oneLine": "Supporting bundle member — SO PDF that anchors the 3-way match dossier.",
+    "routeTarget": "Sales Management",
+    "enabled": true,
+    "classifier": {
+      "enabled": false,
+      "priority": 100,
+      "confidence": 0.85,
+      "root": {
+        "type": "group",
+        "operator": "AND",
+        "children": []
+      }
+    },
+    "classifierCustomized": false,
+    "requiredFields": [
+      "so_reference"
+    ],
+    "absentFields": [
+      "invoice_no"
+    ],
+    "minRouteConfidence": 0.65,
+    "validationProfile": "non_actionable",
+    "playbookProfile": "",
+    "matchPolicy": null,
+    "approvalPolicy": null,
+    "validationRules": [],
+    "customValidationRules": [],
+    "extractionFields": [
+      "so_reference"
+    ],
+    "extraction": [],
+    "checks": [],
+    "match": [],
+    "approval": [],
+    "accounting": [],
+    "special": [],
+    "bundleMandatory": [],
+    "bundleConditional": [],
+    "salesBundleRole": "so"
+  },
+  {
+    "code": "DT-28",
+    "title": "Delivery note / dispatch docket (outbound)",
+    "shortTitle": "Delivery note",
+    "klass": "Supporting",
+    "posting": "No",
+    "oneLine": "Supporting bundle member — DN PDF that completes the 3-way match.",
+    "routeTarget": "Sales Management",
+    "enabled": true,
+    "classifier": {
+      "enabled": false,
+      "priority": 100,
+      "confidence": 0.85,
+      "root": {
+        "type": "group",
+        "operator": "AND",
+        "children": []
+      }
+    },
+    "classifierCustomized": false,
+    "requiredFields": [
+      "so_reference"
+    ],
+    "absentFields": [
+      "invoice_no"
+    ],
+    "minRouteConfidence": 0.65,
+    "validationProfile": "non_actionable",
+    "playbookProfile": "",
+    "matchPolicy": null,
+    "approvalPolicy": null,
+    "validationRules": [],
+    "customValidationRules": [],
+    "extractionFields": [
+      "so_reference"
+    ],
+    "extraction": [],
+    "checks": [],
+    "match": [],
+    "approval": [],
+    "accounting": [],
+    "special": [],
+    "bundleMandatory": [],
+    "bundleConditional": [],
+    "salesBundleRole": "dn"
   }
 ]

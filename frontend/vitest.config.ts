@@ -24,6 +24,7 @@ export default defineConfig({
       "src/lib/documentMatchRules.test.ts",
       "src/lib/documentTypePostTo.test.ts",
       "src/lib/documentTypeResolve.test.ts",
+      "src/lib/documentTypeRegisterRoles.test.ts",
       "src/lib/invoice.test.ts",
       "src/lib/invoiceActions.test.ts",
       "src/lib/invoiceDrawerSync.test.ts",

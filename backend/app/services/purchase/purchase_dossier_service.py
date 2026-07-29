@@ -80,6 +80,61 @@ async def _latest_uploads_for_roles(
     return latest
 
 
+async def _latest_commercial_upload_for_po(
+    session: AsyncSession,
+    *,
+    tenant_id,
+    po_reference: str,
+    document_types: list | None,
+) -> Invoice | None:
+    """Find commercial invoice on PO via purchase_document_type or org PO/goods DTs."""
+    from app.services.classification.document_type_catalog import get_document_type_definition
+    from app.services.classification.document_type_register_roles import (
+        purchase_commercial_invoice_dt_codes,
+        purchase_register_role_for_definition,
+    )
+
+    role_hit = await _latest_uploads_for_roles(
+        session,
+        tenant_id=tenant_id,
+        po_reference=po_reference,
+        roles=(PurchaseDocumentType.INVOICE.value,),
+    )
+    typed = role_hit.get(PurchaseDocumentType.INVOICE.value)
+    if typed is not None:
+        return typed
+
+    codes = purchase_commercial_invoice_dt_codes(document_types)
+    if not codes:
+        return None
+    rows = (
+        await session.execute(
+            select(Invoice)
+            .where(
+                Invoice.tenant_id == tenant_id,
+                invoice_po_reference_equals(po_reference),
+                Invoice.document_type_code.in_(codes),
+                Invoice.status.not_in(_ACTIVE_STATUSES),
+            )
+            .order_by(Invoice.id.desc())
+        )
+    ).scalars().all()
+    for row in rows:
+        purchase_dt = (row.purchase_document_type or "").strip().lower()
+        if purchase_dt in {PurchaseDocumentType.PO.value, PurchaseDocumentType.GRN.value}:
+            continue
+        definition = get_document_type_definition(
+            row.document_type_code or "",
+            document_types=document_types,
+            tenant_id=tenant_id,
+        )
+        if purchase_register_role_for_definition(definition) == "invoice":
+            return row
+        if not purchase_dt:
+            return row
+    return None
+
+
 async def _invoices_by_id(
     session: AsyncSession,
     invoice_ids: set[int],
@@ -151,6 +206,11 @@ async def build_purchase_dossier(
         if grn is not None:
             grn_doc_id = grn.grn_invoice_id
 
+    from app.services.invoice.invoice_evaluation_service import load_posting_config_for_tenant
+
+    config = await load_posting_config_for_tenant(session, invoice.tenant_id)
+    document_types = list(config.document_types)
+
     role_uploads = await _latest_uploads_for_roles(
         session,
         tenant_id=invoice.tenant_id,
@@ -164,6 +224,13 @@ async def build_purchase_dossier(
     po_upload = role_uploads.get(PurchaseDocumentType.PO.value)
     grn_upload = role_uploads.get(PurchaseDocumentType.GRN.value)
     invoice_upload = role_uploads.get(PurchaseDocumentType.INVOICE.value)
+    if invoice_upload is None:
+        invoice_upload = await _latest_commercial_upload_for_po(
+            session,
+            tenant_id=invoice.tenant_id,
+            po_reference=po_reference,
+            document_types=document_types,
+        )
 
     if po_doc_id is None and po_upload is not None:
         po_doc_id = po_upload.id
@@ -173,6 +240,21 @@ async def build_purchase_dossier(
         commercial_id = invoice_upload.id
 
     current_role = _current_role(invoice)
+    if current_role is None:
+        from app.services.classification.document_type_catalog import get_document_type_definition
+        from app.services.classification.document_type_register_roles import (
+            purchase_register_role_for_definition,
+        )
+
+        definition = get_document_type_definition(
+            invoice.document_type_code or "",
+            document_types=document_types,
+            tenant_id=invoice.tenant_id,
+        )
+        inferred = purchase_register_role_for_definition(definition)
+        if inferred in _ROLE_LABELS:
+            current_role = inferred
+
     if current_role == PurchaseDocumentType.PO.value and po_doc_id is None:
         po_doc_id = invoice.id
     elif current_role == PurchaseDocumentType.GRN.value and grn_doc_id is None:

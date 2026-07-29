@@ -21,11 +21,11 @@ async def resolve_employee_for_sender(
     sender: str | None,
 ) -> EmployeeMasterResponse | None:
     employees = await list_employee_masters(session, tenant_id)
-    return _find_employee_by_sender(employees, sender)
+    return find_employee_by_sender(employees, sender)
 
 
-def _find_employee_by_sender(
-    employees: list[EmployeeMasterResponse],
+def find_employee_by_sender(
+    employees: list[EmployeeMasterResponse] | list,
     sender: str | None,
 ) -> EmployeeMasterResponse | None:
     if not sender:
@@ -216,7 +216,7 @@ async def run_team_expense_validations(
         config = await load_config_for_tenant(session, tenant_id)
 
     employees = await list_employee_masters(session, tenant_id)
-    employee = _find_employee_by_sender(employees, email_sender)
+    employee = find_employee_by_sender(employees, email_sender)
     amount = _invoice_amount(data)
 
     doc = invoice_to_eval_document_from_data(data, email_sender)

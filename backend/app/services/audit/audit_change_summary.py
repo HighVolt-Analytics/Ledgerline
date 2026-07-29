@@ -392,8 +392,18 @@ def summarize_audit_change(
             return f"Manual approval required — {_format_money(amount)}"
         return "Team expense approval required"
     if event == "three_way_match_evaluated":
-        status = str(d.get("status") or d.get("match_status") or "").strip()
-        po_number = str(d.get("po_number") or "").strip()
+        register_status = str(d.get("status") or "").strip()
+        match_status = str(d.get("match_status") or "").strip()
+        # Prefer engine match_status over register badge (partial/mismatch/match).
+        register_l = register_status.lower()
+        if match_status and (
+            not register_status
+            or register_l in {"partial", "match", "mismatch", "full_match"}
+        ):
+            status = match_status
+        else:
+            status = register_status or match_status
+        po_number = str(d.get("po_number") or d.get("so_number") or "").strip()
         if po_number and status:
             return f"{po_number}: {status}"
         return status or "Three-way match evaluated"

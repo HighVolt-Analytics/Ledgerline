@@ -46,6 +46,7 @@ export type EvaluationStatusBadgeInvoice = Pick<
   | "route_target"
   | "llm_suggested_dt"
   | "status"
+  | "resolution_hint"
 >;
 
 export function EvaluationStatusBadge({

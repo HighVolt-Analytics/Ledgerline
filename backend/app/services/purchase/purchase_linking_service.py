@@ -45,7 +45,10 @@ def invoice_no_link_token_set(invoice: Invoice) -> set[str]:
 async def grn_linked_to_po(session: AsyncSession, grn_invoice_id: int) -> GoodsReceipt | None:
     return (
         await session.execute(
-            select(GoodsReceipt).where(GoodsReceipt.grn_invoice_id == grn_invoice_id).limit(1)
+            select(GoodsReceipt)
+            .where(GoodsReceipt.grn_invoice_id == grn_invoice_id)
+            .options(selectinload(GoodsReceipt.lines))
+            .limit(1)
         )
     ).scalar_one_or_none()
 
@@ -140,7 +143,15 @@ async def attach_grn_invoice_to_po(
             existing.purchase_order_id = po.id
         if qty > 0 and qty != existing.grn_qty:
             existing.grn_qty = qty
-        if not existing.lines:
+        from sqlalchemy import inspect as sa_inspect
+
+        try:
+            lines_empty = (
+                "lines" in sa_inspect(existing).unloaded or not list(existing.lines or [])
+            )
+        except Exception:
+            lines_empty = not list(existing.lines or [])
+        if lines_empty:
             populate_grn_lines_from_invoice(
                 existing, po=po, invoice=grn_invoice, fallback_qty=qty if qty > 0 else None
             )

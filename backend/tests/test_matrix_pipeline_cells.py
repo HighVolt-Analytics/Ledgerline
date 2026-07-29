@@ -78,6 +78,10 @@ def test_matrix_cells_preserve_skipped_mapped_for_reference_document() -> None:
     assert "reference" in by_stage["Mapped"]["detail"].lower() or "not posted" in by_stage[
         "Mapped"
     ]["detail"].lower()
+    assert by_stage["Posted"]["state"] == "skipped"
+    assert "reference" in by_stage["Posted"]["detail"].lower() or "no ledger" in by_stage[
+        "Posted"
+    ]["detail"].lower()
 
 
 def test_derive_matrix_flag_awaiting_classification() -> None:

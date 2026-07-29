@@ -246,7 +246,16 @@ def effective_document_type_code(
 
 def effective_required_fields(definition: DocumentTypeDefinition) -> list[str]:
     """Compulsory field keys — explicit subset of extraction_fields (empty = none compulsory)."""
-    return list(definition.required_fields or [])
+    from app.services.classification.document_type_field_keys import normalize_extraction_field_keys
+    from app.services.classification.document_type_playbook_profile_service import (
+        effective_playbook_profile,
+    )
+
+    keys = normalize_extraction_field_keys(list(definition.required_fields or []))
+    profile = effective_playbook_profile(definition)
+    if profile in {"po_goods", "ar_goods", "ar_goods_2way"} and "due_date" not in keys:
+        keys.append("due_date")
+    return keys
 
 
 def approval_enforced_required_fields(definition: DocumentTypeDefinition | None) -> list[str]:
@@ -382,6 +391,12 @@ def _dt_codes_for_bundle_role(
     *,
     bundle_field: str = "purchase",
 ) -> list[str]:
+    """Supporting bundle roles only (po|grn / so|dn) from org catalogue inference."""
+    from app.services.classification.document_type_register_roles import (
+        infer_purchase_supporting_role,
+        infer_sales_supporting_role,
+    )
+
     token = (role or "").strip().lower()
     if not token or not document_types:
         return []
@@ -391,9 +406,9 @@ def _dt_codes_for_bundle_role(
         if not row.enabled:
             continue
         if bundle_field == "sales":
-            row_role = (row.sales_bundle_role or "").strip().lower()
+            row_role = infer_sales_supporting_role(row)
         else:
-            row_role = (row.purchase_bundle_role or "").strip().lower()
+            row_role = infer_purchase_supporting_role(row)
         if row_role != token:
             continue
         code = (row.code or "").strip().upper()
@@ -476,18 +491,33 @@ async def _invoice_any_bundle_role_present(
     exclude_invoice_id: int | None,
     document_types: list[DocumentTypeDefinition] | None,
 ) -> bool:
-    """Sibling upload classified to any enabled DT with this purchase bundle role."""
+    """Sibling upload classified to any enabled DT with this purchase register role."""
+    from app.services.classification.document_type_register_roles import (
+        purchase_commercial_invoice_dt_codes,
+    )
+
     token = (role or "").strip().lower()
-    if token not in {"po", "grn"}:
+    if token not in {"po", "grn", "invoice"}:
         return False
-    if await _purchase_document_upload_present(
-        session,
-        tenant_id=tenant_id,
-        po_reference=po_reference,
-        purchase_document_type=token,
-    ):
-        return True
-    for code in _dt_codes_for_bundle_role(document_types, token):
+    if token in {"po", "grn"}:
+        if await _purchase_document_upload_present(
+            session,
+            tenant_id=tenant_id,
+            po_reference=po_reference,
+            purchase_document_type=token,
+        ):
+            return True
+        codes = _dt_codes_for_bundle_role(document_types, token)
+    else:
+        if await _purchase_document_upload_present(
+            session,
+            tenant_id=tenant_id,
+            po_reference=po_reference,
+            purchase_document_type="invoice",
+        ):
+            return True
+        codes = purchase_commercial_invoice_dt_codes(document_types)
+    for code in codes:
         if await _invoice_dt_present(
             session,
             tenant_id=tenant_id,
@@ -622,16 +652,27 @@ async def _invoice_any_sales_bundle_role_present(
     document_types: list[DocumentTypeDefinition] | None,
 ) -> bool:
     token = (role or "").strip().lower()
-    if token not in {"so", "dn"}:
+    if token not in {"so", "dn", "invoice"}:
         return False
-    if await _sales_document_upload_present(
-        session,
-        tenant_id=tenant_id,
-        so_reference=so_reference,
-        sales_document_type=token,
-    ):
-        return True
-    for code in _dt_codes_for_bundle_role(document_types, token, bundle_field="sales"):
+    if token in {"so", "dn"}:
+        if await _sales_document_upload_present(
+            session,
+            tenant_id=tenant_id,
+            so_reference=so_reference,
+            sales_document_type=token,
+        ):
+            return True
+        codes = _dt_codes_for_bundle_role(document_types, token, bundle_field="sales")
+    else:
+        if await _sales_document_upload_present(
+            session,
+            tenant_id=tenant_id,
+            so_reference=so_reference,
+            sales_document_type="invoice",
+        ):
+            return True
+        codes = sales_commercial_invoice_dt_codes(document_types)
+    for code in codes:
         if await _invoice_dt_present_on_so(
             session,
             tenant_id=tenant_id,
@@ -680,17 +721,46 @@ async def _sales_dn_present(
 
 
 def _infer_sales_bundle_role(definition: DocumentTypeDefinition | None) -> str:
-    if definition is None:
-        return ""
-    explicit = (definition.sales_bundle_role or "").strip().lower()
-    if explicit in {"so", "dn"}:
-        return explicit
-    label = f"{definition.short_title or ''} {definition.title or ''}".lower()
-    if any(token in label for token in ("delivery note", "dispatch", "dn ")):
-        return "dn"
-    if any(token in label for token in ("sales order", "so ", "so-")):
-        return "so"
-    return ""
+    """Supporting sales bundle roles only: so | dn.
+
+    Commercial AR invoices are not sales_bundle_role values (schema is so/dn only);
+    use ``sales_register_role_for_definition`` for so|dn|invoice register membership.
+    """
+    from app.services.classification.document_type_register_roles import (
+        infer_sales_supporting_role,
+    )
+
+    return infer_sales_supporting_role(definition)
+
+
+def sales_register_role_for_definition(definition: DocumentTypeDefinition | None) -> str:
+    """Sales register role for an org DT: so | dn | invoice | ''."""
+    from app.services.classification.document_type_register_roles import (
+        sales_register_role_for_definition as _sales_register_role,
+    )
+
+    return _sales_register_role(definition)
+
+
+def sales_commercial_invoice_definitions(
+    document_types: list[DocumentTypeDefinition] | None,
+) -> list[DocumentTypeDefinition]:
+    """Org DTs that act as the sales commercial-invoice register leg."""
+    from app.services.classification.document_type_register_roles import (
+        sales_commercial_invoice_definitions as _sales_commercial_defs,
+    )
+
+    return _sales_commercial_defs(document_types)
+
+
+def sales_commercial_invoice_dt_codes(
+    document_types: list[DocumentTypeDefinition] | None,
+) -> list[str]:
+    from app.services.classification.document_type_register_roles import (
+        sales_commercial_invoice_dt_codes as _sales_commercial_codes,
+    )
+
+    return _sales_commercial_codes(document_types)
 
 
 async def _sales_bundle_dt_satisfied(
@@ -704,7 +774,7 @@ async def _sales_bundle_dt_satisfied(
 ) -> bool:
     code = dt_code.strip().upper()
     member = get_document_type_definition(code, document_types=document_types, tenant_id=tenant_id)
-    role = _infer_sales_bundle_role(member)
+    role = sales_register_role_for_definition(member) or _infer_sales_bundle_role(member)
 
     if role == "so":
         if await _sales_so_present(session, tenant_id=tenant_id, so_reference=so_reference):
@@ -730,6 +800,16 @@ async def _sales_bundle_dt_satisfied(
             document_types=document_types,
         ):
             return True
+    elif role == "invoice":
+        if await _invoice_any_sales_bundle_role_present(
+            session,
+            tenant_id=tenant_id,
+            so_reference=so_reference,
+            role="invoice",
+            exclude_invoice_id=exclude_invoice_id,
+            document_types=document_types,
+        ):
+            return True
 
     if await _invoice_dt_present_on_so(
         session,
@@ -744,26 +824,40 @@ async def _sales_bundle_dt_satisfied(
 
 
 def _infer_purchase_bundle_role(definition: DocumentTypeDefinition | None) -> str:
-    if definition is None:
-        return ""
-    explicit = (definition.purchase_bundle_role or "").strip().lower()
-    if explicit in {"po", "grn"}:
-        return explicit
-    label = f"{definition.short_title or ''} {definition.title or ''}".lower()
-    if any(token in label for token in ("grn", "goods receipt", "delivery", "receipt note")):
-        return "grn"
-    # Standalone PO *document* only — never PO-based / PO-goods *invoices*.
-    # Substring " po" falsely matched "…invoice PO-based…" titles.
-    if "invoice" in label or "tax inv" in label:
-        return ""
-    if "purchase order" in label:
-        return "po"
-    if re.search(r"\bpo\s*(copy|\(|document|form)\b", label):
-        return "po"
-    short = (definition.short_title or "").strip().lower()
-    if short in {"po", "p.o.", "p.o"}:
-        return "po"
-    return ""
+    from app.services.classification.document_type_register_roles import (
+        infer_purchase_supporting_role,
+    )
+
+    return infer_purchase_supporting_role(definition)
+
+
+def purchase_register_role_for_definition(definition: DocumentTypeDefinition | None) -> str:
+    """Purchase register role for an org DT: po | grn | invoice | ''."""
+    from app.services.classification.document_type_register_roles import (
+        purchase_register_role_for_definition as _purchase_register_role,
+    )
+
+    return _purchase_register_role(definition)
+
+
+def purchase_commercial_invoice_definitions(
+    document_types: list[DocumentTypeDefinition] | None,
+) -> list[DocumentTypeDefinition]:
+    from app.services.classification.document_type_register_roles import (
+        purchase_commercial_invoice_definitions as _purchase_commercial_defs,
+    )
+
+    return _purchase_commercial_defs(document_types)
+
+
+def purchase_commercial_invoice_dt_codes(
+    document_types: list[DocumentTypeDefinition] | None,
+) -> list[str]:
+    from app.services.classification.document_type_register_roles import (
+        purchase_commercial_invoice_dt_codes as _purchase_commercial_codes,
+    )
+
+    return _purchase_commercial_codes(document_types)
 
 
 async def _bundle_dt_satisfied(
@@ -777,7 +871,7 @@ async def _bundle_dt_satisfied(
 ) -> bool:
     code = dt_code.strip().upper()
     member = get_document_type_definition(code, document_types=document_types, tenant_id=tenant_id)
-    role = _infer_purchase_bundle_role(member)
+    role = purchase_register_role_for_definition(member) or _infer_purchase_bundle_role(member)
 
     if role == "po":
         if await _purchase_po_present(session, tenant_id=tenant_id, po_reference=po_reference):
@@ -799,6 +893,16 @@ async def _bundle_dt_satisfied(
             tenant_id=tenant_id,
             po_reference=po_reference,
             role="grn",
+            exclude_invoice_id=exclude_invoice_id,
+            document_types=document_types,
+        ):
+            return True
+    elif role == "invoice":
+        if await _invoice_any_bundle_role_present(
+            session,
+            tenant_id=tenant_id,
+            po_reference=po_reference,
+            role="invoice",
             exclude_invoice_id=exclude_invoice_id,
             document_types=document_types,
         ):

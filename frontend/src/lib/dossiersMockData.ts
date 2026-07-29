@@ -134,8 +134,8 @@ function fullPass(detailPrefix: string): DossierPipelineStep[] {
       at: "2026-02-03 08:12:12",
       actor: "Playbook service",
       checks: [
-        { id: "bun-1", label: "DT-14 PO present", state: "pass", ruleRef: "VR-PB02" },
-        { id: "bun-2", label: "DT-15 GRN present", state: "pass", ruleRef: "VR-PB02" },
+        { id: "bun-1", label: "DT-02 PO present", state: "pass", ruleRef: "VR-PB02" },
+        { id: "bun-2", label: "DT-03 GRN present", state: "pass", ruleRef: "VR-PB02" },
       ],
     },
     {
@@ -528,20 +528,20 @@ export const DOSSIER_MOCK_CATALOG: DossierSummary[] = [
         actor: "Playbook service",
         exceptionCode: "BUNDLE_INCOMPLETE",
         failureReason:
-          "Playbook DT-01 requires PO + goods receipt before posting. GRN member DT-15 is missing.",
+          "Playbook DT-01 requires PO + goods receipt before posting. GRN member DT-03 is missing.",
         remediation:
           "Upload or link goods receipt GRN for PO-44890, or request buyer to confirm receipt in ERP.",
         checks: [
           {
             id: "bun-po",
-            label: "DT-14 Purchase order linked",
+            label: "DT-02 Purchase order linked",
             state: "pass",
             ruleRef: "VR-PB02",
             detail: "PO-44890 found in dossier",
           },
           {
             id: "bun-grn",
-            label: "DT-15 Goods receipt linked",
+            label: "DT-03 Goods receipt linked",
             state: "fail",
             ruleRef: "VR-PB02",
             expected: "GRN for PO-44890",
@@ -551,7 +551,7 @@ export const DOSSIER_MOCK_CATALOG: DossierSummary[] = [
         ],
         evidence: [
           { label: "PO", ref: "PO-44890" },
-          { label: "Missing", ref: "DT-15 GRN" },
+          { label: "Missing", ref: "DT-03 GRN" },
         ],
       },
       {
@@ -793,8 +793,8 @@ export const DOSSIER_MOCK_CATALOG: DossierSummary[] = [
         at: "2026-02-03 14:02:09",
         actor: "Playbook service",
         checks: [
-          { id: "b-po", label: "DT-14 Purchase order", state: "pass", ruleRef: "VR-PB02", actual: "PO-44910" },
-          { id: "b-grn", label: "DT-15 Goods receipt", state: "pass", ruleRef: "VR-PB02", actual: "GRN-90255" },
+          { id: "b-po", label: "DT-02 Purchase order", state: "pass", ruleRef: "VR-PB02", actual: "PO-44910" },
+          { id: "b-grn", label: "DT-03 Goods receipt", state: "pass", ruleRef: "VR-PB02", actual: "GRN-90255" },
         ],
       },
       {

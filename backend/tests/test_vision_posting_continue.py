@@ -148,6 +148,43 @@ def test_gate_false_when_approval_mode_no_posting() -> None:
     assert vision_posting_skip_reason(inv, defn, header_ok=True) == "dt_not_posting"
 
 
+def test_vision_header_ok_from_invoice_requires_payable_fields() -> None:
+    from datetime import date
+    from decimal import Decimal
+
+    from app.services.invoice.vision_posting_continue import vision_header_ok_from_invoice
+
+    defn = _dt(posting="Yes")
+    complete = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.EXCEPTION,
+        document_type_code="DT-07",
+        vendor="Acme",
+        total=Decimal("100"),
+        due_date=date(2026, 6, 1),
+    )
+    assert vision_header_ok_from_invoice(complete, defn) is True
+
+    incomplete = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.EXCEPTION,
+        document_type_code="DT-07",
+        vendor="Acme",
+    )
+    assert vision_header_ok_from_invoice(incomplete, defn) is False
+
+    needs_review = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.EXCEPTION,
+        document_type_code="DT-07",
+        vendor="Acme",
+        total=Decimal("100"),
+        due_date=date(2026, 6, 1),
+        extracted_fields={"needs_review": True},
+    )
+    assert vision_header_ok_from_invoice(needs_review, defn) is False
+
+
 @pytest.mark.asyncio
 async def test_continue_clears_vision_eval_and_sets_route(
     monkeypatch: pytest.MonkeyPatch,
@@ -196,6 +233,9 @@ async def test_continue_clears_vision_eval_and_sets_route(
     async def _fake_approval(*_a, **_k):
         return False
 
+    async def _fake_prepare(*_a, **_k):
+        return False
+
     resume_called = {"n": 0}
 
     async def _fake_resume(session, invoice, *, config=None):
@@ -213,6 +253,10 @@ async def test_continue_clears_vision_eval_and_sets_route(
     monkeypatch.setattr(
         "app.services.invoice.pipeline._vendor_hold_unless_skipped",
         _noop_vendor,
+    )
+    monkeypatch.setattr(
+        "app.services.invoice.pipeline.prepare_route_register_before_posting",
+        _fake_prepare,
     )
     monkeypatch.setattr(
         "app.services.invoice.pipeline.resume_invoice_posting_pipeline",
@@ -238,3 +282,139 @@ async def test_continue_clears_vision_eval_and_sets_route(
     assert resume_called["n"] == 1
     assert inv.route_target == "Purchase Management"
     assert inv.evaluation_status is None or inv.evaluation_status == ""
+
+
+@pytest.mark.asyncio
+async def test_continue_syncs_register_before_approval_hold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Commercial docs held for match_not_clean must still sync SO/PO register first."""
+    from app.services.invoice import vision_posting_continue as vpc
+    from app.services.tenant.tenant_org_context import OrgContext
+    from app.schemas.rule_book_config import RuleBookConfigPayload
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PARSING,
+        document_type_code="DT-07",
+        evaluation_status=EVAL_VISION_VAULTED,
+        route_target="Sales Management",
+        so_reference="SO-TEST-003",
+        vendor="Harbour",
+    )
+    defn = _dt(route="Sales Management", approval_mode="touchless_on_clean_match")
+    config = RuleBookConfigPayload(document_types=[defn])
+
+    class _Session:
+        async def execute(self, _stmt):
+            class _R:
+                def scalar_one(self_inner):
+                    return inv
+
+            return _R()
+
+        async def flush(self):
+            return None
+
+        async def get(self, *_a, **_k):
+            return None
+
+    order: list[str] = []
+
+    async def _noop(*_a, **_k):
+        return None
+
+    async def _noop_false(*_a, **_k):
+        return False
+
+    async def _fake_prepare(session, invoice, *, bypass_review_gates=False):
+        order.append("prepare")
+        invoice.sales_document_type = "invoice"
+        return False
+
+    async def _fake_approval(session, invoice, **_k):
+        order.append("approval")
+        assert (invoice.sales_document_type or "") == "invoice"
+        invoice.status = InvoiceStatus.EXCEPTION
+        invoice.evaluation_status = "pending_approval"
+        return True
+
+    async def _fake_resume(*_a, **_k):
+        order.append("resume")
+        return None
+
+    monkeypatch.setattr(
+        "app.services.invoice.pipeline._sync_counterparty_and_evaluate",
+        _noop,
+    )
+    monkeypatch.setattr(
+        "app.services.invoice.pipeline._vendor_hold_unless_skipped",
+        _noop_false,
+    )
+    monkeypatch.setattr(
+        "app.services.invoice.pipeline.prepare_route_register_before_posting",
+        _fake_prepare,
+    )
+    monkeypatch.setattr(
+        "app.services.invoice.pipeline.resume_invoice_posting_pipeline",
+        _fake_resume,
+    )
+    monkeypatch.setattr(vpc, "log_event", _noop)
+    async def _fake_validations(*_a, **_k):
+        return []
+
+    monkeypatch.setattr(vpc, "run_all_validations", _fake_validations)
+    monkeypatch.setattr(vpc, "all_passed", lambda _r: True)
+    monkeypatch.setattr(vpc, "results_to_json", lambda _r: [])
+    monkeypatch.setattr(vpc, "apply_document_type_approval_gate", _fake_approval)
+    monkeypatch.setattr(vpc, "send_notification", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        "app.services.approval.approval_pipeline_service.human_approved_payable_bypass",
+        _noop_false,
+    )
+
+    await vpc.continue_vision_understood_posting(
+        _Session(),  # type: ignore[arg-type]
+        inv,
+        config=config,
+        org=OrgContext(legal_name="Tenant"),
+        definition=defn,
+    )
+    assert order == ["prepare", "approval"]
+    assert inv.sales_document_type == "invoice"
+    assert inv.evaluation_status == "pending_approval"
+
+
+def test_vision_should_sync_register_for_bundle_roles() -> None:
+    from app.services.invoice.vision_posting_continue import vision_should_sync_register
+
+    grn = DocumentTypeDefinition(
+        code="DT-GRN",
+        title="Goods Receipt Note",
+        shortTitle="GRN",
+        klass="Non-transactional",
+        posting="No",
+        recognitionMode="signals",
+        recognitionSignals=["heading_grn"],
+        llmPrompt="",
+        routeTarget="Purchase Management",
+        playbookProfile="supporting",
+        purchaseBundleRole="grn",
+        enabled=True,
+    )
+    assert vision_should_sync_register(grn) is True
+
+    vault = DocumentTypeDefinition(
+        code="DT-AWB",
+        title="Air Waybill",
+        shortTitle="AWB",
+        klass="Non-transactional",
+        posting="No",
+        recognitionMode="signals",
+        recognitionSignals=["heading_transport"],
+        llmPrompt="",
+        routeTarget="Vault",
+        playbookProfile="supporting",
+        enabled=True,
+    )
+    assert vision_should_sync_register(vault) is False

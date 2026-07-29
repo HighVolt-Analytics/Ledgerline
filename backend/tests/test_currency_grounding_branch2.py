@@ -15,8 +15,8 @@ from app.services.shared.currency import UNKNOWN_CURRENCY, convert_to_base, sum_
 _ABN = "51824753556"
 
 
-def test_ground_clears_aud_when_only_bare_dollar_even_with_abn() -> None:
-    """ABN must not invent AUD — bare $ stays empty for human confirm."""
+def test_ground_sets_usd_when_only_bare_dollar_even_with_abn() -> None:
+    """ABN must not invent AUD — bare $ defaults to USD."""
     ocr = (
         f"TAX INVOICE\nABN {_ABN}\nVendor: Acme Pty Ltd\n"
         "Subtotal: $100.00\nGST 10%: $10.00\nTotal: $110.00\n"
@@ -30,7 +30,7 @@ def test_ground_clears_aud_when_only_bare_dollar_even_with_abn() -> None:
         document_text=ocr,
     )
     grounded = ground_invoice_scalars(parsed, ocr)
-    assert (grounded.currency or "") == ""
+    assert grounded.currency == "USD"
 
 
 def test_ground_keeps_aud_when_iso_literally_on_document() -> None:
@@ -68,11 +68,11 @@ def test_ground_keeps_eur_from_glyph() -> None:
     assert grounded.currency == "EUR"
 
 
-def test_ground_clears_currency_without_tax_id_or_iso() -> None:
+def test_ground_sets_usd_without_tax_id_or_iso() -> None:
     ocr = "Vendor: Acme Pty Ltd\nTotal: $100.00\n"
     parsed = InvoiceData(currency="AUD", total=Decimal("100.00"), document_text=ocr)
     grounded = ground_invoice_scalars(parsed, ocr)
-    assert (grounded.currency or "") == ""
+    assert grounded.currency == "USD"
 
 
 def test_ground_clears_amd_invented_from_processor_brand() -> None:
@@ -90,11 +90,11 @@ def test_ground_clears_amd_invented_from_processor_brand() -> None:
     assert (grounded.currency or "") == ""
 
 
-def test_ground_rejects_usd_when_not_on_document() -> None:
+def test_ground_keeps_usd_when_bare_dollar_on_document() -> None:
     ocr = f"TAX INVOICE\nABN {_ABN}\nTotal: $100.00\n"
     parsed = InvoiceData(abn=_ABN, currency="USD", total=Decimal("100.00"), document_text=ocr)
     grounded = ground_invoice_scalars(parsed, ocr)
-    assert (grounded.currency or "") == ""
+    assert grounded.currency == "USD"
 
 
 def test_merge_prefer_complete_does_not_invent_sgd() -> None:

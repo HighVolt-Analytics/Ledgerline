@@ -93,6 +93,13 @@ describe("salesRegisterQueue", () => {
     expect(salesActionIssue(inv, coverage)).toContain("SO-100");
   });
 
+  it("flags awaiting SO invoices for action", () => {
+    const coverage = buildSalesRegisterCoverage([]);
+    const inv = baseInvoice({ id: 7, evaluation_status: "awaiting_so", so_reference: "SO-200" });
+    expect(salesInvoiceNeedsAction(inv, coverage)).toBe(true);
+    expect(salesActionIssue(inv, coverage)).toContain("SO-200");
+  });
+
   it("returns action required routed invoices", () => {
     const routed = [
       baseInvoice({ id: 1, so_reference: "SO-100" }),

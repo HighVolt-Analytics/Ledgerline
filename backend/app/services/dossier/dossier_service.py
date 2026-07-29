@@ -61,6 +61,7 @@ from app.services.invoice.pipeline_stages import (
     _latest_log,
     _source_label,
     resolve_pipeline_active_path,
+    vision_posting_continues,
 )
 from app.services.integration.publish_service import is_published_from_audit_logs
 from app.tenant_settings import tenant_today
@@ -138,10 +139,16 @@ def _sla(
     today: date,
     logs: list[AuditLog] | None = None,
 ) -> tuple[str, bool]:
+    from app.services.invoice.pipeline_stages import vision_posting_continues
+
     if invoice.status == InvoiceStatus.PROCESSED:
         return "Posted", False
     if invoice.status == InvoiceStatus.EXCEPTION:
-        if logs and _resolve_dossier_pipeline_path(invoice, logs) == "understood":
+        if (
+            logs
+            and _resolve_dossier_pipeline_path(invoice, logs) == "understood"
+            and not vision_posting_continues(logs)
+        ):
             return "Vaulted", False
         return "Blocked", True
     if invoice.status == InvoiceStatus.DUPLICATE_SKIPPED:
@@ -184,15 +191,18 @@ def _derive_outcome(
     payment: Payment | None,
     fail_detail: str | None,
 ) -> tuple[str, str]:
+    from app.services.invoice.pipeline_stages import vision_posting_continues
+
     if invoice.status == InvoiceStatus.DUPLICATE_SKIPPED:
         return "blocked", fail_detail or "Duplicate file skipped"
     if invoice.status == InvoiceStatus.REJECTED:
         return "blocked", "Invoice rejected"
-    # Understood path intentionally holds as EXCEPTION after bundle + vault — not a failure.
+    # Vault-only Understood path intentionally holds as EXCEPTION after bundle + vault — not a failure.
     if (
         invoice.status == InvoiceStatus.EXCEPTION
         and not pipeline_fail
         and _resolve_dossier_pipeline_path(invoice, logs) == "understood"
+        and not vision_posting_continues(logs)
     ):
         return "vaulted", "Understood path — bundled and stored in vault"
     if pipeline_fail or invoice.status == InvoiceStatus.EXCEPTION:
@@ -895,8 +905,13 @@ async def build_dossier_summary(
         payment=payment,
         fail_detail=blocker_detail,
     )
-    # Understood path ends at vault — pending Archive must not surface as a blocker.
-    if outcome != "blocked" and fail is None and pipeline_path == "understood":
+    # Vault-only Understood path ends at vault — pending Archive must not surface as a blocker.
+    if (
+        outcome != "blocked"
+        and fail is None
+        and pipeline_path == "understood"
+        and not vision_posting_continues(logs)
+    ):
         bottleneck = None
         blocker_detail = None
     if invoice.status == InvoiceStatus.PROCESSED and published and approved_human:

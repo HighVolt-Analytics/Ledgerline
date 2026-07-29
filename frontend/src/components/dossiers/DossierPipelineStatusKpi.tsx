@@ -5,21 +5,14 @@ import { Button } from "@/components/ui/button";
 import type { DossierSummary } from "@/lib/dossiers";
 
 import {
-
   DOSSIER_PIPELINE_STAGES,
-
   dossierBlockerFromSummary,
-
   dossierOutcomeLabel,
-
   dossierStageLabel,
-
   firstPipelineBottleneck,
-
+  isUnderstoodVaultOnlyPipeline,
   pipelineActiveStage,
-
   pipelineProgressSummary,
-
 } from "@/lib/dossiers";
 
 import { cn } from "@/lib/cn";
@@ -255,8 +248,7 @@ export function DossierPipelineStatusKpi({
     !firstPipelineBottleneck(dossier.pipeline) &&
     Boolean(active) &&
     (active?.step.state === "pass" || active?.step.state === "waived") &&
-    (dossier.pipelinePath === "understood" ||
-      (dossier.outcomeBanner || "").toLowerCase().includes("understood path"));
+    isUnderstoodVaultOnlyPipeline(dossier.pipeline, dossier.pipelinePath);
 
 
 

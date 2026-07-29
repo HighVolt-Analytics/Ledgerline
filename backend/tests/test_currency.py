@@ -49,8 +49,8 @@ def test_sum_amounts_blank_currency_unknown_bucket() -> None:
     assert total == Decimal("100")
 
 
-def test_normalize_currency_rejects_ambiguous_dollar() -> None:
-    assert normalize_currency("$") is None
+def test_normalize_currency_maps_bare_dollar_to_usd() -> None:
+    assert normalize_currency("$") == "USD"
     assert normalize_currency("¥") is None
     assert normalize_currency("€") == "EUR"
     assert normalize_currency("£") == "GBP"
@@ -79,8 +79,8 @@ def test_detect_currency_symbol_launchdarkly_style() -> None:
     assert detect_currency_code_in_text(text) is None
     assert detect_currency_symbol_in_text(text) == "$"
     iso, symbol = resolve_currency_from_ocr(text)
-    assert iso == ""
-    assert symbol == "$"
+    assert iso == "USD"
+    assert symbol is None
 
 
 def test_rm_inside_terms_is_not_myr() -> None:
@@ -143,14 +143,14 @@ def test_unambiguous_euro_symbol_maps_to_iso() -> None:
     assert symbol is None
 
 
-def test_apply_currency_ocr_fallback_sets_symbol() -> None:
+def test_apply_currency_ocr_fallback_sets_usd_for_bare_dollar() -> None:
     parsed = InvoiceData(total=Decimal("156"), currency="")
     updated = apply_currency_ocr_fallback(
         parsed,
         "Service Connections\n1 $156.00 $156.00\nSubtotal $156.00",
     )
-    assert updated.currency == ""
-    assert (updated.extracted_fields or {}).get("currency_symbol") == "$"
+    assert updated.currency == "USD"
+    assert "currency_symbol" not in (updated.extracted_fields or {})
 
 
 def test_apply_currency_ocr_fallback_keeps_existing_iso() -> None:
@@ -167,6 +167,7 @@ def test_currency_evidence_accepts_prefix_and_glyph() -> None:
     assert currency_evidence_in_text("USD", "Total US$37.08")
     assert currency_evidence_in_text("EUR", "Total €45.00")
     assert not currency_evidence_in_text("AUD", "Total $100.00 ABN 51824753556")
+    assert currency_evidence_in_text("USD", "Total $100.00")
     assert currency_evidence_in_text("AUD", "Total AUD 100.00")
 
 

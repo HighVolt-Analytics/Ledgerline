@@ -103,16 +103,26 @@ def test_understood_path_vaulted_goes_to_approved() -> None:
     from app.services.approval.approval_board_service import (
         is_understood_path_complete,
         is_understood_path_not_approvable,
+        is_understood_path_vault_terminal,
     )
 
     vaulted = _inv(status=InvoiceStatus.EXCEPTION, evaluation_status="vision_vaulted")
     assert approval_board_column(vaulted) == "approved"
     assert is_understood_path_complete(vaulted)
     assert is_understood_path_not_approvable(vaulted)
+    assert is_understood_path_vault_terminal(vaulted)
 
     header = _inv(status=InvoiceStatus.EXCEPTION, evaluation_status="vision_header_review")
     assert approval_board_column(header) == "review"
-    assert is_understood_path_not_approvable(header)
+    assert not is_understood_path_not_approvable(header)
+    assert not is_understood_path_vault_terminal(header)
+
+    header_with_dt = _inv(
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="vision_header_review",
+        document_type_code="DT-07",
+    )
+    assert approval_board_column(header_with_dt) == "processing"
 
     # Legacy understood rows still tagged awaiting_classification but soft-bundled.
     legacy = Invoice(

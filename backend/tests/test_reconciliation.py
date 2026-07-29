@@ -447,3 +447,76 @@ async def test_rc1_sales_route_matches_receivable_debits(db_session: AsyncSessio
     assert result.rc1_passed
     assert result.is_balanced
     assert not result.halted
+
+
+@pytest.mark.asyncio
+async def test_rc1_ignores_processed_supporting_po_totals(
+    db_session: AsyncSession,
+) -> None:
+    """Processed PO totals must not poison purchase RC1 for a sales invoice same day."""
+    d = date(2026, 6, 15)
+    config = RuleBookConfigPayload(
+        chart_of_accounts=[
+            ChartOfAccountEntry(code="1200", name="Accounts Receivable", type="Asset"),
+            ChartOfAccountEntry(code="4100", name="Sales Revenue", type="Revenue"),
+            ChartOfAccountEntry(code="2000", name="Accounts Payable", type="Liability"),
+        ],
+    )
+    po = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        invoice_no=None,
+        invoice_date=d,
+        total=Decimal("5500"),
+        status=InvoiceStatus.PROCESSED,
+        currency="AUD",
+        file_hash="rc1-po-support",
+        route_target="Purchase Management",
+        purchase_document_type="po",
+        document_type_code="DT-02",
+        document_heading="PURCHASE ORDER",
+        evaluation_status="auto_coded",
+    )
+    sales = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        invoice_no="INV-SAL-001",
+        invoice_date=d,
+        subtotal=Decimal("900"),
+        gst=Decimal("90"),
+        total=Decimal("990"),
+        status=InvoiceStatus.RECONCILING,
+        currency="AUD",
+        file_hash="rc1-sales-vs-po",
+        route_target=ROUTE_SALES,
+        sales_document_type="invoice",
+        document_type_code="DT-07",
+    )
+    db_session.add_all([po, sales])
+    await db_session.flush()
+    for code, name, dr, cr, et in [
+        ("1200", "Accounts Receivable", Decimal("990"), Decimal("0"), EntryType.DEBIT),
+        ("4100", "Sales Revenue", Decimal("0"), Decimal("990"), EntryType.CREDIT),
+    ]:
+        db_session.add(
+            JournalEntry(
+                invoice_id=sales.id,
+                date=d,
+                account_code=code,
+                account_name=name,
+                debit=dr,
+                credit=cr,
+                entry_type=et,
+            )
+        )
+    await db_session.flush()
+
+    result = await reconcile_daily(
+        db_session,
+        d,
+        tenant_id=TESTING_TENANT_UUID,
+        current_invoice=sales,
+        config=config,
+    )
+    assert result.purchase_invoice_total == Decimal("0")
+    assert result.sales_invoice_total == Decimal("990")
+    assert result.rc1_passed
+    assert not result.halted

@@ -43,10 +43,15 @@ VARIANCE_BLOCKING_STATUSES = frozenset(
     }
 )
 
-MATCH_FAIL_STATUSES = VARIANCE_BLOCKING_STATUSES | frozenset(
+POSTING_BLOCKING_STATUSES = VARIANCE_BLOCKING_STATUSES | frozenset(
     {
         "No GRN",
         "No DN",
+    }
+)
+
+MATCH_FAIL_STATUSES = POSTING_BLOCKING_STATUSES | frozenset(
+    {
         "Routed for Approval",
     }
 )
@@ -63,8 +68,19 @@ class MatchVarianceGateResult:
     match_mode: str | None = None
 
 
-def _outcome_blocks_variance(outcome: DocumentMatchOutcome) -> bool:
-    return not outcome.passed and outcome.status in VARIANCE_BLOCKING_STATUSES
+def _outcome_blocks_variance(
+    outcome: DocumentMatchOutcome,
+    *,
+    variance_approved: bool,
+) -> bool:
+    if outcome.passed:
+        return False
+    # Missing receipt is not cleared by PO/SO variance approval.
+    if outcome.status in {"No GRN", "No DN"}:
+        return True
+    if outcome.status in VARIANCE_BLOCKING_STATUSES:
+        return not variance_approved
+    return False
 
 
 def build_variance_gate_audit_detail(
@@ -175,10 +191,9 @@ async def evaluate_match_variance_gate(
         )
 
     outcome = outcome_raw if isinstance(outcome_raw, DocumentMatchOutcome) else None
-    blocked = (
-        not variance_approved
-        and outcome is not None
-        and _outcome_blocks_variance(outcome)
+    blocked = outcome is not None and _outcome_blocks_variance(
+        outcome,
+        variance_approved=variance_approved,
     )
     return MatchVarianceGateResult(
         blocked=blocked,

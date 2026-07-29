@@ -83,7 +83,7 @@ function isPaidThisMonth(paidDate: string | null | undefined): boolean {
 }
 
 function stageBlocked(flag: MatrixFlagType, cellState: MatrixCellState | undefined): boolean {
-  return flag !== "Clean" && cellState === "pending";
+  return matrixFlagNeedsReview(flag) && cellState === "pending";
 }
 
 function rowHasPendingStage(row: MatrixTableRow): boolean {
@@ -105,7 +105,13 @@ function toFlagType(value: string): MatrixFlagType {
   if (value === "Anomaly Detected") return "Anomaly Detected";
   if (value === "Duplicate Suspected") return "Duplicate Suspected";
   if (value === "Quarantined") return "Quarantined";
+  if (value === "Awaiting approval") return "Awaiting approval";
+  if (value === "Awaiting linkage") return "Awaiting linkage";
   return "Clean";
+}
+
+function matrixFlagNeedsReview(flag: MatrixFlagType): boolean {
+  return flag !== "Clean";
 }
 
 function toPaymentStatus(value: string): MatrixPaymentStatus {
@@ -311,11 +317,7 @@ export function DocumentMatrixPanel({
       matrixRows.filter((row) => {
         if (!invoiceMatchesListSearch(row.inv, searchQuery)) return false;
         if (filter === "anomalies") {
-          return (
-            row.flag === "Anomaly Detected" ||
-            row.flag === "Duplicate Suspected" ||
-            row.flag === "Quarantined"
-          );
+          return matrixFlagNeedsReview(row.flag);
         }
         if (filter === "awaiting") {
           return row.payment === "Awaiting Payment" || row.payment === "Payment Approved";
@@ -351,7 +353,7 @@ export function DocumentMatrixPanel({
 
   const kpis = useMemo(
     () => ({
-      flagged: matrixRows.filter((r) => r.flag !== "Clean").length,
+      flagged: matrixRows.filter((r) => matrixFlagNeedsReview(r.flag)).length,
       duplicates: matrixRows.filter((r) => r.flag === "Duplicate Suspected").length,
       awaiting: matrixRows.filter(
         (r) => r.payment === "Awaiting Payment" || r.payment === "Payment Approved"

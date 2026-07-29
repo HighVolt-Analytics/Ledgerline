@@ -386,6 +386,8 @@ export interface Invoice {
   published_to_ledger?: boolean;
   current_stage?: string;
   current_stage_state?: "done" | "pending" | "fail" | "skipped";
+  /** Actionable next step when the document is blocked (Upload / inbox). */
+  resolution_hint?: string | null;
   approval_board_column?: "review" | "processing" | "approved" | "rejected";
   processing_overrides?: ProcessingOverrides | null;
   gl_posting_applicable?: boolean;
@@ -451,6 +453,7 @@ export interface InvoiceUpdatePayload {
   total?: string | null;
   account_code?: string | null;
   account_name?: string | null;
+  email_sender?: string | null;
   line_items?: LineItemUpdatePayload[];
   processing_overrides?: ProcessingOverrides | null;
   extracted_fields?: Record<string, string> | null;

@@ -35,7 +35,11 @@ from app.services.invoice.invoice_evaluation_service import (
     parse_matched_rule_ids,
 )
 from app.services.invoice.processing_override_catalog import normalise_processing_overrides
-from app.services.invoice.pipeline_stages import derive_current_stage, derive_list_stage
+from app.services.invoice.pipeline_stages import (
+    derive_current_stage,
+    derive_list_stage,
+    derive_resolution_hint,
+)
 from app.services.classification.document_type_validation_service import (
     display_validation_pass_percent,
     validation_pass_applicable,
@@ -184,6 +188,13 @@ def _inbox_display_fields(
         and evaluation_status == EvaluationStatus.NEEDS_REVIEW
     ):
         evaluation_status = EvaluationStatus.AUTO_CODED
+    # Coding finished but pipeline halted later — do not show a green Auto coded
+    # badge on Upload; surface as actionable Needs review.
+    if (
+        inv.status == InvoiceStatus.EXCEPTION
+        and evaluation_status == EvaluationStatus.AUTO_CODED
+    ):
+        evaluation_status = EvaluationStatus.NEEDS_REVIEW
     # Legacy understood-path rows still stored as awaiting_classification.
     if evaluation_status == EvaluationStatus.AWAITING_CLASSIFICATION:
         if _legacy_awaiting_maps_to_vision_vaulted(inv):
@@ -209,11 +220,16 @@ def invoice_to_response(
         if has_stored_file is not None
         else has_stored_path(inv.raw_file_path)
     )
+    logs = list(audit_logs or [])
     if current_stage is None or current_stage_state is None:
-        if for_list:
+        # Prefer audit-backed stage whenever logs are available (Upload list
+        # now hydrates audits so Stage matches the document drawer).
+        if logs:
+            stage_label, stage_state = derive_current_stage(inv, logs)
+        elif for_list:
             stage_label, stage_state = derive_list_stage(inv)
         else:
-            stage_label, stage_state = derive_current_stage(inv, audit_logs or [])
+            stage_label, stage_state = derive_current_stage(inv, [])
         current_stage = current_stage or stage_label
         current_stage_state = current_stage_state or stage_state
     validation_items = parse_validation_results(inv.validation_results)
@@ -222,6 +238,13 @@ def invoice_to_response(
         document_types=document_types,
         validation_items=validation_items,
     )
+    resolution_hint = derive_resolution_hint(inv, logs)
+    if (
+        inv.status == InvoiceStatus.EXCEPTION
+        and evaluation_status == EvaluationStatus.NEEDS_REVIEW
+        and not resolution_hint
+    ):
+        resolution_hint = "Open document drawer — check Fields, Audit, or Lines tabs"
     from app.services.classification.document_type_playbook_profile_service import (
         gl_posting_applicable_for_invoice,
     )
@@ -289,6 +312,7 @@ def invoice_to_response(
         gl_posting_applicable=gl_posting_applicable,
         current_stage=current_stage,
         current_stage_state=current_stage_state,
+        resolution_hint=resolution_hint,
         processing_overrides=(
             normalise_processing_overrides(getattr(inv, "processing_overrides", None))
             if not for_list
@@ -343,11 +367,15 @@ async def _responses_for_invoices_once(
 
         config = await load_posting_config_for_tenant(db, tenant_id)
         document_types = list(config.document_types)
+        # Hydrate audits so Upload Stage/Evaluation match the document drawer.
+        audit_by_id = await audit_logs_for_invoices(
+            db, invoice_ids, tenant_id=tenant_id
+        )
         return [
             invoice_to_response(
                 row,
                 published_to_ledger=False,
-                audit_logs=[],
+                audit_logs=audit_by_id.get(row.id, []),
                 document_types=document_types,
                 for_list=True,
             )
@@ -424,11 +452,14 @@ async def responses_for_approval_board(
         published = await published_invoice_ids(db, invoice_ids, tenant_id=tenant_id)
         config = await load_posting_config_for_tenant(db, tenant_id)
         document_types = list(config.document_types)
+        audit_by_id = await audit_logs_for_invoices(
+            db, invoice_ids, tenant_id=tenant_id
+        )
         return [
             invoice_to_response(
                 row,
                 published_to_ledger=row.id in published,
-                audit_logs=[],
+                audit_logs=audit_by_id.get(row.id, []),
                 document_types=document_types,
                 for_list=True,
             )

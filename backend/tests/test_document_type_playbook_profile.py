@@ -358,6 +358,38 @@ def test_matrix_template_linked_edits_survive_save() -> None:
     assert row.extraction_fields == ["vendor", "po_reference"]
 
 
+def test_matrix_template_match_override_survives_save() -> None:
+    """Template-linked types must keep deliberate match/approval overrides on save/load."""
+    from app.schemas.rule_book_config import validate_rule_book_config_for_save
+
+    payload = validate_rule_book_config_for_save(
+        {
+            "document_types": [
+                {
+                    "code": "DT-05",
+                    "matrixTemplateCode": "DT-01",
+                    "title": "PO-based goods invoice",
+                    "shortTitle": "PO goods invoice",
+                    "klass": "Transactional",
+                    "posting": "Yes",
+                    "recognition_mode": "prompt",
+                    "llm_prompt": "Custom PO invoice prompt for our vendors.",
+                    "playbookProfile": "po_goods",
+                    "matchPolicy": {"mode": "two_way_po_ses"},
+                    "approvalPolicy": {"mode": "full_doa"},
+                    "routeTarget": "Purchase Management",
+                    "enabled": False,
+                }
+            ]
+        }
+    )
+    row = payload.document_types[0]
+    assert row.match_policy is not None
+    assert row.match_policy.mode == "two_way_po_ses"
+    assert row.approval_policy is not None
+    assert row.approval_policy.mode == "full_doa"
+
+
 def test_matrix_template_prompt_survives_when_classifier_stale() -> None:
     from app.schemas.rule_book_config import validate_rule_book_config_payload
 
@@ -457,9 +489,38 @@ def test_playbook_preset_catalog_parity() -> None:
 
 
 def test_sync_stale_match_policy_on_save() -> None:
+    """Cross-route mismatch syncs; same-route deliberate overrides are preserved."""
     from app.schemas.rule_book_config import validate_rule_book_config_payload
 
-    payload = validate_rule_book_config_payload(
+    # Purchase match mode on a sales playbook → force sales preset.
+    cross = validate_rule_book_config_payload(
+        {
+            "document_types": [
+                {
+                    "code": "DT-26",
+                    "title": "AR goods invoice",
+                    "shortTitle": "AR goods",
+                    "klass": "Transactional",
+                    "posting": "Yes",
+                    "recognition_mode": "signals",
+                    "recognition_signals": ["heading_invoice"],
+                    "llm_prompt": "",
+                    "routeTarget": "Sales Management",
+                    "playbookProfile": "ar_goods_2way",
+                    "matchPolicy": {"mode": "three_way_po_grn"},
+                    "approvalPolicy": {"mode": "touchless_on_clean_match"},
+                }
+            ]
+        }
+    )
+    assert cross.document_types[0].playbook_profile == "ar_goods_2way"
+    assert cross.document_types[0].match_policy is not None
+    assert cross.document_types[0].match_policy.mode == "two_way_dn_invoice"
+    assert cross.document_types[0].approval_policy is not None
+    assert cross.document_types[0].approval_policy.mode == "supervisor_on_exception"
+
+    # Same-route override (3-way on 2-way profile) is kept — finance may opt in deliberately.
+    kept = validate_rule_book_config_payload(
         {
             "document_types": [
                 {
@@ -479,12 +540,8 @@ def test_sync_stale_match_policy_on_save() -> None:
             ]
         }
     )
-    assert payload.document_types[0].playbook_profile == "ar_goods_2way"
-    assert payload.document_types[0].match_policy is not None
-    assert payload.document_types[0].match_policy.mode == "two_way_dn_invoice"
-    assert payload.document_types[0].approval_policy is not None
-    assert payload.document_types[0].approval_policy.mode == "supervisor_on_exception"
-
+    assert kept.document_types[0].match_policy is not None
+    assert kept.document_types[0].match_policy.mode == "three_way_so_dn"
 
 def test_infer_ar_goods_routes_to_sales() -> None:
     from app.services.classification.document_type_recognition_signals import infer_document_metadata

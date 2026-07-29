@@ -104,13 +104,21 @@ describe("columnForInvoice", () => {
     ).toBe("awaiting");
   });
 
-  it("puts vision_vaulted in Approved and vision_header_review in To review", () => {
+  it("puts vision_vaulted in Approved and vision_header_review by DT", () => {
     expect(
       columnForInvoice(inv(1, "exception", { evaluation_status: "vision_vaulted" }))
     ).toBe("approved");
     expect(
       columnForInvoice(inv(2, "exception", { evaluation_status: "vision_header_review" }))
     ).toBe("pending");
+    expect(
+      columnForInvoice(
+        inv(4, "exception", {
+          evaluation_status: "vision_header_review",
+          document_type_code: "DT-07",
+        })
+      )
+    ).toBe("awaiting");
     expect(
       columnForInvoice(
         inv(3, "exception", {
@@ -151,6 +159,18 @@ describe("isPreClassificationReview and approve visibility", () => {
     expect(canShowApproveOnBoard(reviewInv, "pending")).toBe(false);
     expect(canShowApproveOnBoard(procInv, "awaiting")).toBe(true);
     expect(canShowApproveOnBoard(rejectedInv, "rejected")).toBe(false);
+  });
+
+  it("shows approve for vision_header_review in Processing, not for vault-terminal", () => {
+    const headerReview = inv(10, "exception", {
+      evaluation_status: "vision_header_review",
+      document_type_code: "DT-07",
+    });
+    const vaulted = inv(11, "exception", { evaluation_status: "vision_vaulted" });
+    expect(canShowApproveOnBoard(headerReview, "awaiting")).toBe(true);
+    expect(canShowApproveOnBoard(headerReview, "pending")).toBe(false);
+    expect(canShowApproveOnBoard(vaulted, "awaiting")).toBe(false);
+    expect(canShowApproveOnBoard(vaulted, "approved")).toBe(false);
   });
 
   it("shows reprocess only for rejected status with stored file on Rejected column", () => {

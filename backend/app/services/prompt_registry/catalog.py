@@ -1203,17 +1203,38 @@ HARD RULES (non-negotiable)
    must be <= 0.40.
 5. Prefer "" over a weak guess. An empty string is always safer than a wrong DT.
 6. Do not extract amounts, line items, parties, dates, or tax IDs — type mapping only.
-7. Do not use memory of typical ERP codes. Use ONLY the provided catalogue + labels.
+7. Do not use memory of typical ERP codes. Use ONLY the provided catalogue + labels
+   + few_shot_examples + tenant block in the user payload.
 
 ═══════════════════════════════════════════════
 HOW TO CHOOSE
 ═══════════════════════════════════════════════
 - Primary signals: document_heading and canonical_document_type (printed title / vault label).
-- Secondary: heading_kind and rule_fail_reason (why deterministic matching failed).
+- Secondary: heading_kind, rule_fail_reason, and perspective (sales vs purchase).
+- If few_shot_examples is non-empty and a row's document_heading closely matches the
+  current title, strongly prefer that row's human_confirmed_dt over catalogue defaults.
+  When llm_suggested_dt was wrong but human_confirmed_dt was chosen, learn from the note.
+- Honor tenant.classification_hints and tenant.default_perspective when present.
+- When perspective is "sales", prefer customer / AR / outbound catalogue rows; when
+  "purchase", prefer supplier / AP / inbound rows.
 - Match by meaning, not exact string equality:
-  e.g. "COMMERCIAL INVOICE" / "TAX INVOICE" / "Tax Inv" → invoice-like catalogue rows;
+  e.g. "COMMERCIAL INVOICE" / "TAX INVOICE" / "Tax Inv" → invoice-like catalogue rows
+  with Purchase Management or Expenses Management routes;
+  "EXPENSE CLAIM" / "REIMBURSEMENT" / claim-form titles → catalogue rows whose
+  route_target is Team Expenses or playbook is employee_claim (any tenant DT code —
+  not a fixed DT-12) when the capture channel allows Team Expenses;
   "PACKING LIST" / "Weight List" → packing/supporting rows;
+  "DESPATCH ADVICE" / "DISPATCH NOTE" / "DELIVERY NOTE" → delivery-note rows when present
+  (not goods-receipt / GRN unless the title clearly says receipt/POD/GRN);
   transport titles (AWB, HAWB, B/L) → transport rows when present.
+- Team Expenses routing is decided by capture channel + employee registry (email /
+  WhatsApp / Viber), not by this map alone. Manual upload must not map to Team
+  Expenses catalogue rows. On email/WhatsApp/Viber, a known employee sender forces
+  Team Expenses after mapping; do not refuse a claim-like row solely because the
+  sender is an employee.
+- A printed TAX INVOICE or COMMERCIAL INVOICE must NOT be mapped to a Team Expenses
+  catalogue row unless the title/body clearly indicates employee expense claim or
+  reimbursement (employee identity is applied later by route policy).
 - Use each catalogue row's title, recognition_signals / recognition_rules / llm_prompt /
   classification_hints / negative_hints when present.
 - Honor negative_hints: if the title matches a negative hint for a row, do not pick that row.
@@ -1226,7 +1247,8 @@ HOW TO CHOOSE
 SELF-CHECK BEFORE RETURNING
 ═══════════════════════════════════════════════
 - If suggested_dt is non-empty, it appears verbatim in catalogue[].code.
-- reasoning is one short sentence naming which label matched which catalogue title/hint.
+- reasoning is one short sentence naming which label matched which catalogue title/hint
+  (or which few-shot correction applied).
 - If rule_fail_reason is "ambiguous", only return a code when one row is clearly better;
   otherwise "".
 """
@@ -1347,7 +1369,7 @@ PROMPT_CATALOG: tuple[PromptDefinition, ...] = (
         group="Vision",
         description=(
             "When deterministic heading→DT scoring fails, map vision labels to one "
-            "catalogue DT-xx code (or empty) using a text LLM."
+            "catalogue DT-xx code (or empty) using a text LLM with tenant few-shots."
         ),
         default_body=_VISION_DT_MAP_FALLBACK_DEFAULT,
     ),

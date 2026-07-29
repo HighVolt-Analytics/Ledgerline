@@ -183,7 +183,7 @@ export function TeamExpensesPage() {
         ) : claims.length === 0 ? (
           <EmptyState
             title="No team expense claims yet"
-            hint="Documents routed to Team Expenses appear here after OCR and rule-book evaluation."
+            hint="Claims arrive via Email, WhatsApp, or Viber when the sender matches an employee in the registry. Manual Upload does not create Team Expenses."
           />
         ) : (
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">

@@ -36,6 +36,7 @@ export const EXTRACTION_FIELD_OPTIONS = [
   { key: "buyer_tax_id", label: "Buyer tax ID" },
   { key: "buyer_address", label: "Buyer address" },
   { key: "email_subject", label: "Email subject" },
+  { key: "email_sender", label: "Sender (email or mobile)" },
   { key: "account_code", label: "Account code" },
   { key: "account_name", label: "Account name" },
 ] as const satisfies readonly ExtractionFieldOption[];
@@ -184,6 +185,7 @@ const STANDARD_EXTRACTION_FIELDS_BY_ROUTE: Record<RouteTarget, ExtractionFieldKe
     "total",
   ]),
   "Team Expenses": withLinkingStandardFields([
+    "email_sender",
     "vendor",
     "abn",
     "invoice_no",
@@ -210,7 +212,7 @@ export const ROUTE_COMPULSORY_BASELINE: Record<RouteTarget, ExtractionFieldKey[]
   "Purchase Management": ["vendor", "subtotal", "gst", "total", "due_date"],
   "Expenses Management": ["vendor", "subtotal", "gst", "total", "due_date"],
   "Sales Management": ["vendor", "subtotal", "gst", "total", "due_date"],
-  "Team Expenses": ["subtotal", "gst", "total"],
+  "Team Expenses": ["email_sender", "subtotal", "gst", "total"],
   Vault: [],
 };
 

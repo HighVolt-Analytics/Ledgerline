@@ -1,5 +1,9 @@
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
 import { isTransPosting } from "@/lib/documentTypeKlass";
+import {
+  dtCodeForRegisterRole,
+  purchaseRegisterRoleForDefinition,
+} from "@/lib/documentTypeRegisterRoles";
 
 type PurchaseKind = "po" | "grn" | "invoice";
 
@@ -65,15 +69,22 @@ export function resolveDocumentTypeForPurchaseKind(
   const normalized = normalizePurchaseKind(kind);
   if (!normalized) return null;
 
-  const bundleRole = normalized === "po" ? "po" : normalized === "grn" ? "grn" : null;
-  if (bundleRole) {
-    const match = documentTypes.find(
-      (dt) => dt.enabled && (dt.purchaseBundleRole ?? "").toLowerCase() === bundleRole
-    );
-    if (match) return match;
-  }
+  const { code } = dtCodeForRegisterRole({
+    side: "purchase",
+    role: normalized,
+    documentTypes,
+  });
+  const match = documentTypes.find(
+    (dt) => dt.enabled && dt.code.toUpperCase() === code.toUpperCase()
+  );
+  if (match) return match;
 
+  // Legacy invent: first transactional purchase card when org has no po_goods / role match.
   if (normalized === "invoice") {
+    const byRole = documentTypes.find(
+      (dt) => dt.enabled && purchaseRegisterRoleForDefinition(dt) === "invoice"
+    );
+    if (byRole) return byRole;
     const transactional = documentTypes.filter(
       (dt) =>
         dt.enabled &&

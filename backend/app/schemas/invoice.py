@@ -114,6 +114,7 @@ class InvoiceResponse(BaseModel):
     gl_posting_applicable: bool = True
     current_stage: str = "Received"
     current_stage_state: PipelineStageState = "pending"
+    resolution_hint: str | None = None
     approval_board_column: ApprovalBoardColumn | None = None
     processing_overrides: ProcessingOverridesPayload | None = None
 
@@ -152,6 +153,7 @@ class InvoiceUpdateRequest(BaseModel):
     total: Decimal | None = None
     account_code: str | None = None
     account_name: str | None = None
+    email_sender: str | None = None
     line_items: list[LineItemUpdateRequest] | None = None
     processing_overrides: ProcessingOverridesPayload | None = None
     extracted_fields: dict[str, str] | None = None

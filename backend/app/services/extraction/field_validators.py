@@ -59,8 +59,8 @@ def normalize_currency(value: Any) -> str | None:
     raw = str(value).strip()
     if not raw:
         return None
-    # Ambiguous symbols must not invent an ISO code (USD vs AUD, JPY vs CNY).
-    if raw in {"$", "¥"}:
+    # Ambiguous symbols must not invent an ISO code (JPY vs CNY for ¥).
+    if raw == "¥":
         return None
     import re
 
@@ -75,7 +75,7 @@ def normalize_currency(value: Any) -> str | None:
         return is_iso4217_currency(code) and code not in _ENGLISH_FALSE_POSITIVE_ISO
 
     # Unambiguous symbols → ISO
-    symbol_map = {"£": "GBP", "€": "EUR", "₹": "INR"}
+    symbol_map = {"$": "USD", "£": "GBP", "€": "EUR", "₹": "INR"}
     if raw in symbol_map:
         return symbol_map[raw]
 

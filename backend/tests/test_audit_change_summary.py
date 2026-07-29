@@ -167,3 +167,15 @@ def test_journal_unbalanced_remap_skip_label() -> None:
         {"subtotal": 1000.0, "gst": 100.0, "total": 900.0, "context": "remap_skip"},
     )
     assert summary.startswith("Rule book remap — Journal unbalanced —")
+
+
+def test_three_way_match_prefers_price_variance_over_register_mismatch() -> None:
+    summary = summarize_audit_change(
+        "three_way_match_evaluated",
+        {
+            "status": "mismatch",
+            "match_status": "Price Variance",
+            "so_number": "SO-TEST-003",
+        },
+    )
+    assert summary == "SO-TEST-003: Price Variance"

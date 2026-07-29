@@ -28,6 +28,7 @@ export function salesInvoiceNeedsAction(
   inv: Invoice,
   coverage: SalesRegisterCoverage
 ): boolean {
+  if (inv.evaluation_status === "awaiting_so") return true;
   const docType = (inv.sales_document_type ?? "").trim().toLowerCase();
   if (docType === "so") {
     return !coverage.soDocumentIds.has(inv.id);
@@ -39,6 +40,10 @@ export function salesInvoiceNeedsAction(
 }
 
 export function salesActionIssue(inv: Invoice, coverage: SalesRegisterCoverage): string {
+  if (inv.evaluation_status === "awaiting_so") {
+    const soRef = inv.so_reference?.trim();
+    return soRef ? `Awaiting SO ${soRef}` : "Awaiting sales order document";
+  }
   const docType = (inv.sales_document_type ?? "").trim().toLowerCase();
   if (docType === "so") return "SO document not linked to register";
   if (docType === "dn") return "DN document not linked to register";

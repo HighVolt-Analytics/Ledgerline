@@ -47,7 +47,25 @@ export function isPreClassificationReview(inv: Invoice): boolean {
   return col === "pending";
 }
 
+function hasVisionBundleSnapshot(inv: Invoice): boolean {
+  const fields = inv.extracted_fields;
+  return (
+    fields != null &&
+    typeof fields === "object" &&
+    ("vision_bundle_kind" in fields || "vision_bundle_key" in fields)
+  );
+}
+
+/** Understood-path docs finished at vault — no posting from Approvals. */
+export function isVisionVaultTerminal(inv: Invoice): boolean {
+  const evalStatus = (inv.evaluation_status ?? "").trim();
+  if (evalStatus === "vision_vaulted") return true;
+  if (evalStatus === "awaiting_classification" && hasVisionBundleSnapshot(inv)) return true;
+  return false;
+}
+
 export function canShowApproveOnBoard(inv: Invoice, column: ApprovalBoardColumnKey): boolean {
+  if (isVisionVaultTerminal(inv)) return false;
   if (column === "approved" || column === "pending" || column === "rejected") return false;
   return APPROVABLE_STATUSES.has(inv.status);
 }
@@ -126,16 +144,13 @@ function localApprovalBoardColumn(inv: Invoice): ApprovalBoardColumnApi {
   if (inv.status === "processed") return "approved";
 
   const evalStatus = inv.evaluation_status ?? "";
-  // Vision understood path: finished at vault → Approved; header gaps → To review.
+  // Vision understood path: finished at vault → Approved; header gaps → review/processing.
   if (evalStatus === "vision_vaulted") return "approved";
-  if (evalStatus === "vision_header_review") return "review";
+  if (evalStatus === "vision_header_review") {
+    return isClassificationConfirmed(inv) ? "processing" : "review";
+  }
   // Legacy tag before vision_* evals: soft-bundled docs are vaulted.
-  const fields = inv.extracted_fields;
-  const hasVisionBundle =
-    fields != null &&
-    typeof fields === "object" &&
-    ("vision_bundle_kind" in fields || "vision_bundle_key" in fields);
-  if (evalStatus === "awaiting_classification" && hasVisionBundle) return "approved";
+  if (evalStatus === "awaiting_classification" && hasVisionBundleSnapshot(inv)) return "approved";
 
   if (PRE_CLASSIFICATION_EVAL.has(evalStatus)) return "review";
 

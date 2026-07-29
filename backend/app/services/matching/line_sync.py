@@ -5,6 +5,9 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.orm import attributes
+
 from app.models.delivery_note import DeliveryNote
 from app.models.delivery_note_line import DeliveryNoteLine
 from app.models.goods_receipt import GoodsReceipt
@@ -25,14 +28,37 @@ from app.services.matching.line_match_engine import (
 )
 
 
+def _collection_loaded(obj: Any, attr: str) -> bool:
+    """True when relationship is already in memory (safe to iterate/clear)."""
+    try:
+        return attr not in sa_inspect(obj).unloaded
+    except Exception:
+        return True
+
+
+def _safe_clear_collection(obj: Any, attr: str) -> None:
+    """Clear a one-to-many without lazy IO (MissingGreenlet after flush on new rows)."""
+    if not _collection_loaded(obj, attr):
+        attributes.set_committed_value(obj, attr, [])
+        return
+    getattr(obj, attr).clear()
+
+
+def _safe_collection_rows(obj: Any, attr: str) -> list[Any]:
+    if not _collection_loaded(obj, attr):
+        return []
+    return list(getattr(obj, attr) or [])
+
+
 def _invoice_lines_sorted(invoice: Invoice) -> list[Any]:
-    rows = list(invoice.line_items or [])
+    # Async-safe: never trigger lazy IO on unloaded line_items.
+    rows = _safe_collection_rows(invoice, "line_items")
     return sorted(rows, key=lambda r: getattr(r, "id", 0) or 0)
 
 
 def replace_po_lines_from_invoice(po: PurchaseOrder, invoice: Invoice) -> None:
     """Replace PO lines from invoice line_items and roll up header fields."""
-    po.lines.clear()
+    _safe_clear_collection(po, "lines")
     for idx, item in enumerate(_invoice_lines_sorted(invoice), start=1):
         qty = item.qty
         unit = resolve_unit_price(unit_price=item.unit_price, amount=item.amount, qty=qty)
@@ -54,8 +80,11 @@ def replace_po_lines_from_invoice(po: PurchaseOrder, invoice: Invoice) -> None:
 
 def ensure_po_lines(po: PurchaseOrder) -> None:
     """If PO has no lines, synthesize one from header (legacy rows)."""
-    if po.lines:
+    rows = _safe_collection_rows(po, "lines")
+    if rows:
         return
+    if not _collection_loaded(po, "lines"):
+        attributes.set_committed_value(po, "lines", [])
     po.lines.append(
         PurchaseOrderLine(
             tenant_id=po.tenant_id,
@@ -70,7 +99,7 @@ def ensure_po_lines(po: PurchaseOrder) -> None:
 
 
 def apply_po_header_rollup(po: PurchaseOrder) -> None:
-    qty, unit, desc, uom = header_rollup_from_order_lines(list(po.lines or []))
+    qty, unit, desc, uom = header_rollup_from_order_lines(_safe_collection_rows(po, "lines"))
     po.po_qty = qty if qty > 0 else Decimal("0")
     po.po_unit_price = unit
     if desc:
@@ -80,7 +109,7 @@ def apply_po_header_rollup(po: PurchaseOrder) -> None:
 
 
 def replace_so_lines_from_invoice(so: SalesOrder, invoice: Invoice) -> None:
-    so.lines.clear()
+    _safe_clear_collection(so, "lines")
     for idx, item in enumerate(_invoice_lines_sorted(invoice), start=1):
         qty = item.qty
         unit = resolve_unit_price(unit_price=item.unit_price, amount=item.amount, qty=qty)
@@ -101,8 +130,11 @@ def replace_so_lines_from_invoice(so: SalesOrder, invoice: Invoice) -> None:
 
 
 def ensure_so_lines(so: SalesOrder) -> None:
-    if so.lines:
+    rows = _safe_collection_rows(so, "lines")
+    if rows:
         return
+    if not _collection_loaded(so, "lines"):
+        attributes.set_committed_value(so, "lines", [])
     so.lines.append(
         SalesOrderLine(
             tenant_id=so.tenant_id,
@@ -117,7 +149,7 @@ def ensure_so_lines(so: SalesOrder) -> None:
 
 
 def apply_so_header_rollup(so: SalesOrder) -> None:
-    qty, unit, desc, uom = header_rollup_from_order_lines(list(so.lines or []))
+    qty, unit, desc, uom = header_rollup_from_order_lines(_safe_collection_rows(so, "lines"))
     so.so_qty = qty if qty > 0 else Decimal("0")
     so.so_unit_price = unit
     if desc:
@@ -135,10 +167,12 @@ def populate_grn_lines_from_invoice(
 ) -> None:
     """Create GRN lines from invoice lines (or a single fallback qty) and link to PO lines."""
     ensure_po_lines(po)
-    grn.lines.clear()
-    order_inputs = [line_input_from_order_line(ln) for ln in (po.lines or [])]
+    _safe_clear_collection(grn, "lines")
+    po_lines = _safe_collection_rows(po, "lines")
+    order_inputs = [line_input_from_order_line(ln) for ln in po_lines]
 
-    if invoice is not None and invoice.line_items:
+    inv_rows = _safe_collection_rows(invoice, "line_items") if invoice is not None else []
+    if inv_rows:
         inv_inputs = [
             line_input_from_invoice_item(item, key=i)
             for i, item in enumerate(_invoice_lines_sorted(invoice))
@@ -146,7 +180,7 @@ def populate_grn_lines_from_invoice(
         paired, _leftover_orders, leftover_inv = pair_order_to_invoice(order_inputs, inv_inputs)
         for order, inv in paired:
             pol = None
-            for candidate in po.lines:
+            for candidate in po_lines:
                 cin = line_input_from_order_line(candidate)
                 if cin.key == order.key or (
                     cin.sku and order.sku and str(cin.sku).upper() == str(order.sku).upper()
@@ -176,7 +210,7 @@ def populate_grn_lines_from_invoice(
             )
     else:
         qty = fallback_qty if fallback_qty is not None else grn.grn_qty
-        first = po.lines[0] if po.lines else None
+        first = po_lines[0] if po_lines else None
         grn.lines.append(
             GoodsReceiptLine(
                 tenant_id=grn.tenant_id,
@@ -190,7 +224,7 @@ def populate_grn_lines_from_invoice(
 
     # Rollup GRN header qty from lines
     total = Decimal("0")
-    for gl in grn.lines:
+    for gl in _safe_collection_rows(grn, "lines"):
         if gl.qty is not None:
             total += gl.qty
     if total > 0:
@@ -205,10 +239,12 @@ def populate_dn_lines_from_invoice(
     fallback_qty: Decimal | None = None,
 ) -> None:
     ensure_so_lines(so)
-    dn.lines.clear()
+    _safe_clear_collection(dn, "lines")
+    so_lines = _safe_collection_rows(so, "lines")
 
-    if invoice is not None and invoice.line_items:
-        order_inputs = [line_input_from_order_line(ln) for ln in (so.lines or [])]
+    inv_rows = _safe_collection_rows(invoice, "line_items") if invoice is not None else []
+    if inv_rows:
+        order_inputs = [line_input_from_order_line(ln) for ln in so_lines]
         inv_inputs = [
             line_input_from_invoice_item(item, key=i)
             for i, item in enumerate(_invoice_lines_sorted(invoice))
@@ -216,7 +252,7 @@ def populate_dn_lines_from_invoice(
         paired, _lo, leftover_inv = pair_order_to_invoice(order_inputs, inv_inputs)
         for order, inv in paired:
             sol = None
-            for candidate in so.lines:
+            for candidate in so_lines:
                 cin = line_input_from_order_line(candidate)
                 if cin.key == order.key or (
                     cin.sku and order.sku and str(cin.sku).upper() == str(order.sku).upper()
@@ -246,7 +282,7 @@ def populate_dn_lines_from_invoice(
             )
     else:
         qty = fallback_qty if fallback_qty is not None else dn.dn_qty
-        first = so.lines[0] if so.lines else None
+        first = so_lines[0] if so_lines else None
         dn.lines.append(
             DeliveryNoteLine(
                 tenant_id=dn.tenant_id,
@@ -259,7 +295,7 @@ def populate_dn_lines_from_invoice(
         )
 
     total = Decimal("0")
-    for dl in dn.lines:
+    for dl in _safe_collection_rows(dn, "lines"):
         if dl.qty is not None:
             total += dl.qty
     if total > 0:
@@ -268,12 +304,12 @@ def populate_dn_lines_from_invoice(
 
 def order_match_inputs_from_po(po: PurchaseOrder) -> list[MatchLineInput]:
     ensure_po_lines(po)
-    return [line_input_from_order_line(ln) for ln in po.lines]
+    return [line_input_from_order_line(ln) for ln in _safe_collection_rows(po, "lines")]
 
 
 def order_match_inputs_from_so(so: SalesOrder) -> list[MatchLineInput]:
     ensure_so_lines(so)
-    return [line_input_from_order_line(ln) for ln in so.lines]
+    return [line_input_from_order_line(ln) for ln in _safe_collection_rows(so, "lines")]
 
 
 def invoice_match_inputs(invoice: Invoice | None) -> list[MatchLineInput]:

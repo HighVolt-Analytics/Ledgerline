@@ -85,7 +85,7 @@ async def test_current_stage_exception_needs_review_maps_to_blocked_step(
         _log("mapping_applied", invoice_id=inv.id),
     ]
     label, state = derive_current_stage(inv, logs)
-    assert label == "Mapped"
+    assert label == "Approved"
     assert state == "pending"
 
 
@@ -223,3 +223,117 @@ def test_list_stage_understood_path_vaulted() -> None:
     label, state = derive_list_stage(inv)
     assert label == "Vaulted"
     assert state == "done"
+
+
+@pytest.mark.asyncio
+async def test_current_stage_match_fail_before_mapped_on_understood_path(
+    db_session: AsyncSession,
+) -> None:
+    """Match holds must not surface as Mapped (MATRIX order puts Mapped first)."""
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Harbour View",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="pending_approval",
+        route_target="Sales Management",
+        currency="AUD",
+        file_hash="match-fail-stage",
+        account_name="Suspense Account",
+        sales_document_type="invoice",
+        extracted_fields={"vision_bundle_kind": "soft"},
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    # Vision path — vault_stored is not terminal when Match still blocks posting.
+    logs = [
+        AuditLog(
+            event="vision_understand_passed",
+            invoice_id=inv.id,
+            created_at=datetime(2026, 6, 1, 12, 0, 0, tzinfo=timezone.utc),
+            detail={},
+        ),
+        AuditLog(
+            event="vault_stored",
+            invoice_id=inv.id,
+            created_at=datetime(2026, 6, 1, 12, 1, 0, tzinfo=timezone.utc),
+            detail={},
+        ),
+        AuditLog(
+            event="validation_passed",
+            invoice_id=inv.id,
+            created_at=datetime(2026, 6, 1, 12, 2, 0, tzinfo=timezone.utc),
+            detail={},
+        ),
+        AuditLog(
+            event="match_phase_evaluated",
+            invoice_id=inv.id,
+            created_at=datetime(2026, 6, 1, 12, 3, 0, tzinfo=timezone.utc),
+            detail={"match_status": "Price Variance", "status": "mismatch"},
+        ),
+        AuditLog(
+            event="approval_requested",
+            invoice_id=inv.id,
+            created_at=datetime(2026, 6, 1, 12, 4, 0, tzinfo=timezone.utc),
+            detail={"reason": "match_not_clean"},
+        ),
+    ]
+    label, state = derive_current_stage(inv, logs)
+    assert label == "Match"
+    assert state == "fail"
+
+    from app.services.invoice.pipeline_stages import build_matrix_cells
+
+    cells = {c["stage"]: c for c in build_matrix_cells(inv, logs)}
+    assert cells["Approved"]["state"] == "fail"
+    assert "Price Variance" in cells["Approved"]["detail"]
+
+
+@pytest.mark.asyncio
+async def test_current_stage_processed_supporting_ignores_commercial_match_audit(
+    db_session: AsyncSession,
+) -> None:
+    """SO/DN sync audits commercial variance onto the supporting doc id — not a Match hold."""
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Harbour View",
+        status=InvoiceStatus.PROCESSED,
+        evaluation_status="auto_coded",
+        route_target="Sales Management",
+        sales_document_type="so",
+        currency="AUD",
+        file_hash="so-supporting-match-audit",
+        extracted_fields={"vision_bundle_kind": "soft"},
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    logs = [
+        AuditLog(
+            event="vision_understand_passed",
+            invoice_id=inv.id,
+            created_at=datetime(2026, 6, 1, 12, 0, 0, tzinfo=timezone.utc),
+            detail={},
+        ),
+        AuditLog(
+            event="sales_document_processed",
+            invoice_id=inv.id,
+            created_at=datetime(2026, 6, 1, 12, 1, 0, tzinfo=timezone.utc),
+            detail={},
+        ),
+        AuditLog(
+            event="three_way_match_evaluated",
+            invoice_id=inv.id,
+            created_at=datetime(2026, 6, 1, 12, 2, 0, tzinfo=timezone.utc),
+            detail={"match_status": "Qty Variance", "status": "partial"},
+        ),
+    ]
+    label, state = derive_current_stage(inv, logs)
+    assert label == "Processed"
+    assert state == "done"
+
+    from app.services.invoice.pipeline_stages import build_matrix_cells
+
+    cells = {c["stage"]: c for c in build_matrix_cells(inv, logs)}
+    assert cells["Approved"]["state"] == "done"
+    assert cells["Approved"]["state"] != "fail"

@@ -30,6 +30,7 @@ export function purchaseInvoiceNeedsAction(
   inv: Invoice,
   coverage: PurchaseRegisterCoverage
 ): boolean {
+  if (inv.evaluation_status === "awaiting_po") return true;
   const docType = (inv.purchase_document_type ?? "").trim().toLowerCase();
   if (docType === "po") {
     return !coverage.poDocumentIds.has(inv.id);
@@ -44,6 +45,10 @@ export function purchaseActionIssue(
   inv: Invoice,
   coverage: PurchaseRegisterCoverage
 ): string {
+  if (inv.evaluation_status === "awaiting_po") {
+    const poRef = inv.po_reference?.trim();
+    return poRef ? `Awaiting PO ${poRef}` : "Awaiting purchase order document";
+  }
   const docType = (inv.purchase_document_type ?? "").trim().toLowerCase();
   if (docType === "po") return "PO document not linked to register";
   if (docType === "grn") return "GRN document not linked to register";

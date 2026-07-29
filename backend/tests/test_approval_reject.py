@@ -281,6 +281,7 @@ async def test_approvals_board_understood_path_columns(
         vendor="Vision Header Co",
         status=InvoiceStatus.EXCEPTION,
         evaluation_status="vision_header_review",
+        document_type_code="DT-07",
         currency="AUD",
         file_hash="board-vision-header",
     )
@@ -299,8 +300,95 @@ async def test_approvals_board_understood_path_columns(
     assert res.status_code == 200
     rows = {row["id"]: row for row in res.json()["data"]}
     assert rows[vaulted.id]["approval_board_column"] == "approved"
-    assert rows[header_review.id]["approval_board_column"] == "review"
+    assert rows[header_review.id]["approval_board_column"] == "processing"
     assert rows[ocr_hold.id]["approval_board_column"] == "review"
+
+
+@pytest.mark.asyncio
+async def test_approve_vision_vaulted_returns_400(
+    client: AsyncClient, db_session: AsyncSession, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    patch_approval_file_checks(monkeypatch)
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+    monkeypatch.setenv("UPLOAD_DIR", str(upload_dir))
+    monkeypatch.setenv("AZURE_STORAGE_CONNECTION_STRING", "")
+    get_settings.cache_clear()
+
+    pdf = upload_dir / "vaulted.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Vault Only Co",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="vision_vaulted",
+        currency="AUD",
+        file_hash="vault-approve-block",
+        raw_file_path=str(pdf),
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    res = await client.post(f"/api/approvals/{inv.id}/approve")
+    assert res.status_code == 400
+    assert "vault only" in res.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_approve_vision_header_review_resumes_without_enqueue(
+    client: AsyncClient, db_session: AsyncSession, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import date
+
+    patch_approval_file_checks(monkeypatch)
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+    monkeypatch.setenv("UPLOAD_DIR", str(upload_dir))
+    monkeypatch.setenv("AZURE_STORAGE_CONNECTION_STRING", "")
+    get_settings.cache_clear()
+
+    pdf = upload_dir / "header-review.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Posting Co",
+        invoice_no="INV-HR-1",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="vision_header_review",
+        document_type_code="DT-07",
+        currency="AUD",
+        file_hash="header-review-approve",
+        raw_file_path=str(pdf),
+        total=Decimal("120"),
+        due_date=date(2026, 6, 15),
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    enqueue_calls: list[list[int]] = []
+
+    def _track_enqueue(ids, **kwargs):
+        enqueue_calls.append(list(ids))
+
+    async def _fake_continue(session, invoice, *, config, org, definition):
+        invoice.status = InvoiceStatus.PROCESSED
+        invoice.evaluation_status = None
+
+    monkeypatch.setattr(
+        "app.api.approvals.enqueue_invoice_pipelines",
+        _track_enqueue,
+    )
+    monkeypatch.setattr(
+        "app.services.approval.approval_api_service.continue_vision_understood_posting",
+        _fake_continue,
+    )
+
+    res = await client.post(f"/api/approvals/{inv.id}/approve")
+    assert res.status_code == 200
+    assert res.json()["data"]["status"] == "processed"
+    assert enqueue_calls == []
 
 
 @pytest.mark.asyncio

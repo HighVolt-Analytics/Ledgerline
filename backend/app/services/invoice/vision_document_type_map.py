@@ -1,17 +1,20 @@
 """Map vision header labels to a tenant Rule Book DT-xx.
 
-1) Deterministic heading-kind scoring (same scorer as PDF segment classify).
-2) When an invoice row is available: tenant configured classifiers
-   (recognition signals, or playbook-recommended identity signals).
-3) Optional text-LLM catalogue fallback — may pick ONLY a catalogue DT-xx
-   code, or leave empty.
+Hybrid resolve order:
+1) Human lock (reviewer confirmed DT on this invoice)
+2) Deterministic heading-kind scoring (same scorer as PDF segment classify)
+3) Tenant heading learning (exact normalized title → prior human_confirmed_dt)
+4) Configured classifiers (recognition / playbook identity signals)
+5) Text-LLM catalogue fallback — may pick ONLY a catalogue DT-xx, or leave empty
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import Any
+from uuid import UUID
 
 from app.schemas.document_type import DocumentTypeDefinition
 from app.services.classification.segment_heading_classification import (
@@ -27,6 +30,7 @@ logger = get_logger(__name__)
 _MATCH_THRESHOLD = 0.82
 _AMBIGUITY_MARGIN = 0.05
 _METHOD_RULES = "heading_kind_score"
+_METHOD_LEARNING = "tenant_heading_learning"
 _METHOD_CLASSIFIER = "config_classifier"
 _METHOD_LLM = "llm_catalogue_fallback"
 _LLM_FALLBACK_REASONS = frozenset({"no_kind", "below_threshold", "ambiguous"})
@@ -41,7 +45,7 @@ class VisionDocumentTypeMapResult:
     heading_kind: str | None
     reason: str
     # matched | below_threshold | ambiguous | no_kind | human_locked | empty_catalogue
-    # | classifier_matched | classifier_no_match
+    # | learning_matched | classifier_matched | classifier_no_match
     # | llm_matched | llm_empty | llm_rejected | llm_error | llm_unavailable
     method: str = _METHOD_RULES
     runner_up_code: str | None = None
@@ -56,8 +60,17 @@ def map_vision_label_to_document_type(
     canonical_document_type: str,
     document_types: Sequence[DocumentTypeDefinition],
     human_locked_dt: str = "",
+    filename: str | None = None,
+    invoice: Any | None = None,
 ) -> VisionDocumentTypeMapResult:
     """Deterministic resolve vision heading/canonical label → Rule Book DT code."""
+    from app.services.classification.document_role_resolve_service import (
+        filter_document_types_for_perspective,
+        filter_document_types_for_role,
+        perspective_from_invoice,
+        resolve_document_role,
+    )
+
     locked = (human_locked_dt or "").strip().upper()
     if locked:
         return VisionDocumentTypeMapResult(
@@ -107,8 +120,34 @@ def map_vision_label_to_document_type(
             method=_METHOD_RULES,
         )
 
+    attach = (filename or "").strip()
+    if not attach and invoice is not None:
+        attach = (
+            getattr(invoice, "email_attachment_name", None)
+            or getattr(invoice, "original_filename", None)
+            or ""
+        )
+    doc_role = resolve_document_role(
+        heading_kind=str(heading_kind),
+        filename=attach or None,
+        invoice=invoice,
+        document_text=blob,
+    )
+    candidates = filter_document_types_for_role(enabled, doc_role)
+    candidates = filter_document_types_for_perspective(
+        candidates, perspective_from_invoice(invoice)
+    )
+    if doc_role and not candidates:
+        return VisionDocumentTypeMapResult(
+            code=None,
+            confidence=0.0,
+            heading_kind=str(heading_kind),
+            reason=f"no_dt_for_role_{doc_role}",
+            method=_METHOD_RULES,
+        )
+
     scored: list[tuple[DocumentTypeDefinition, float]] = []
-    for definition in enabled:
+    for definition in candidates:
         if heading_conflicts_with_definition(heading_kind, definition):
             continue
         score = score_document_type_for_heading(definition, heading_kind)
@@ -116,13 +155,22 @@ def map_vision_label_to_document_type(
             scored.append((definition, score))
 
     if not scored:
-        return VisionDocumentTypeMapResult(
-            code=None,
-            confidence=0.0,
-            heading_kind=str(heading_kind),
-            reason="below_threshold",
-            method=_METHOD_RULES,
-        )
+        # Role filter may have left only low-scoring supporting cards; still prefer
+        # any non-conflicting role match over falling back to the full catalogue.
+        if doc_role and candidates:
+            for definition in candidates:
+                if heading_conflicts_with_definition(heading_kind, definition):
+                    continue
+                score = score_document_type_for_heading(definition, heading_kind)
+                scored.append((definition, max(score, 0.82)))
+        if not scored:
+            return VisionDocumentTypeMapResult(
+                code=None,
+                confidence=0.0,
+                heading_kind=str(heading_kind),
+                reason="below_threshold",
+                method=_METHOD_RULES,
+            )
 
     scored.sort(
         key=lambda item: (item[1], -int(getattr(item[0].classifier, "priority", 100) or 100)),
@@ -169,6 +217,72 @@ def map_vision_label_to_document_type(
 _INVOICE_LIKE_HEADING_KINDS = frozenset(
     {"invoice", "tax_invoice", "commercial_invoice"}
 )
+
+# Explicit claim / reimbursement cues — weak tokens like bare "meal" or "claim"
+# must not flip a tax invoice onto a Team Expenses catalogue DT.
+_STRONG_TEAM_CLAIM_RE = re.compile(
+    r"(?i)(expense[\s_-]?claim|reimburse(?:ment)?|claim[\s_-]?form|"
+    r"claim[\s_-]?receipt|team[\s_-]?expense)"
+)
+
+
+def has_strong_team_expense_claim_evidence(
+    *,
+    document_heading: str = "",
+    canonical_document_type: str = "",
+    invoice: Any | None = None,
+) -> bool:
+    """True when text/filename clearly indicates an employee claim (not a tax invoice)."""
+    parts: list[str] = [
+        (document_heading or "").strip(),
+        (canonical_document_type or "").strip(),
+    ]
+    if invoice is not None:
+        parts.append(str(getattr(invoice, "email_attachment_name", None) or "").strip())
+        fields = getattr(invoice, "extracted_fields", None)
+        if isinstance(fields, dict):
+            for key in (
+                "document_heading",
+                "canonical_document_type",
+                "document_type",
+                "ocr_text",
+                "full_text",
+            ):
+                val = fields.get(key)
+                if val is not None and str(val).strip():
+                    parts.append(str(val).strip())
+    blob = "\n".join(p for p in parts if p)
+    return bool(blob and _STRONG_TEAM_CLAIM_RE.search(blob))
+
+
+def _pool_excluding_team_expenses_without_claim(
+    pool: Sequence[DocumentTypeDefinition],
+    *,
+    heading_kind: str | None,
+    document_heading: str,
+    canonical_document_type: str,
+    invoice: Any | None,
+) -> list[DocumentTypeDefinition]:
+    """Drop Team Expenses DTs for upload, or on invoice-like headings without claim cues."""
+    from app.services.classification.document_type_catalog import (
+        is_team_expenses_document_type,
+    )
+    from app.services.purchase.team_expense_route_policy import (
+        team_expenses_blocked_for_upload,
+    )
+
+    rows = list(pool)
+    if invoice is not None and team_expenses_blocked_for_upload(invoice):
+        return [dt for dt in rows if not is_team_expenses_document_type(dt)]
+    if (heading_kind or "") not in _INVOICE_LIKE_HEADING_KINDS:
+        return rows
+    if has_strong_team_expense_claim_evidence(
+        document_heading=document_heading,
+        canonical_document_type=canonical_document_type,
+        invoice=invoice,
+    ):
+        return rows
+    return [dt for dt in rows if not is_team_expenses_document_type(dt)]
 
 
 def map_vision_via_configured_classifiers(
@@ -256,6 +370,119 @@ def _parse_llm_confidence(raw: Any) -> float:
     return max(0.0, min(1.0, value))
 
 
+def _role_perspective_pool(
+    document_types: Sequence[DocumentTypeDefinition],
+    *,
+    heading_kind: str | None,
+    invoice: Any | None,
+) -> list[DocumentTypeDefinition]:
+    from app.services.classification.document_role_resolve_service import (
+        filter_document_types_for_perspective,
+        filter_document_types_for_role,
+        perspective_from_invoice,
+        resolve_document_role,
+    )
+
+    doc_role = resolve_document_role(
+        heading_kind=heading_kind,
+        filename=(getattr(invoice, "email_attachment_name", None) if invoice else None),
+        invoice=invoice,
+    )
+    pool = filter_document_types_for_role(document_types, doc_role)
+    pool = filter_document_types_for_perspective(
+        pool, perspective_from_invoice(invoice)
+    )
+    return pool
+
+
+def _org_tenant_block(org: Any | None) -> dict[str, Any]:
+    if org is None:
+        return {}
+    return {
+        "legal_name": getattr(org, "legal_name", "") or "",
+        "abn": getattr(org, "abn", "") or "",
+        "aliases": list(getattr(org, "aliases", None) or []),
+        "default_perspective": getattr(org, "default_perspective", "") or "",
+        "intake_summary": getattr(org, "intake_summary", "") or "",
+        "classification_hints": getattr(org, "classification_hints", "") or "",
+    }
+
+
+def _few_shot_rows(few_shots: Sequence[dict[str, str]] | None) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for raw in list(few_shots or [])[:5]:
+        if not isinstance(raw, dict):
+            continue
+        human = str(raw.get("human_confirmed_dt") or "").strip().upper()
+        if not human:
+            continue
+        rows.append(
+            {
+                "document_heading": str(raw.get("document_heading") or "").strip()[:120],
+                "human_confirmed_dt": human,
+                "llm_suggested_dt": str(raw.get("llm_suggested_dt") or "").strip().upper(),
+                "note": str(raw.get("note") or "").strip()[:240],
+            }
+        )
+    return rows
+
+
+async def _try_tenant_heading_learning(
+    *,
+    session: Any,
+    tenant_id: UUID,
+    document_heading: str,
+    document_types: Sequence[DocumentTypeDefinition],
+    heading_kind: str | None,
+    invoice: Any | None,
+    vendor_key: str | None,
+    rule_reason: str,
+) -> VisionDocumentTypeMapResult | None:
+    """Exact normalized heading → prior reviewer DT (tenant synonym memory)."""
+    from app.services.classification.classification_learning_service import (
+        learned_document_type_for_heading,
+    )
+    from app.services.classification.document_role_resolve_service import (
+        filter_document_types_for_perspective,
+        perspective_from_invoice,
+    )
+
+    enabled = [dt for dt in document_types if getattr(dt, "enabled", True)]
+    # Prefer role+perspective pool when kind known; else perspective-only; else all.
+    pool = _role_perspective_pool(
+        enabled, heading_kind=heading_kind, invoice=invoice
+    )
+    if heading_kind and not pool:
+        # Role says no card — do not learn around that structural guard.
+        return None
+    if not pool:
+        pool = filter_document_types_for_perspective(
+            enabled, perspective_from_invoice(invoice)
+        ) or enabled
+    allowed = _allowed_catalogue_codes(pool)
+    if not allowed:
+        return None
+
+    hit = await learned_document_type_for_heading(
+        session,
+        tenant_id=tenant_id,
+        document_heading=document_heading,
+        valid_dt_codes=allowed,
+        vendor_key=vendor_key,
+    )
+    if hit is None:
+        return None
+    code, confidence = hit
+    return VisionDocumentTypeMapResult(
+        code=code,
+        confidence=round(float(confidence), 4),
+        heading_kind=heading_kind,
+        reason="learning_matched",
+        method=_METHOD_LEARNING,
+        rule_reason=rule_reason,
+    )
+
+
 async def _llm_pick_catalogue_dt(
     *,
     document_heading: str,
@@ -263,6 +490,9 @@ async def _llm_pick_catalogue_dt(
     heading_kind: str | None,
     rule_fail_reason: str,
     document_types: Sequence[DocumentTypeDefinition],
+    org: Any | None = None,
+    few_shots: Sequence[dict[str, str]] | None = None,
+    perspective: str | None = None,
 ) -> VisionDocumentTypeMapResult:
     from app.config import get_settings
     from app.services.extraction.azure_openai_client import chat_json_async
@@ -288,6 +518,9 @@ async def _llm_pick_catalogue_dt(
         "canonical_document_type": (canonical_document_type or "").strip(),
         "heading_kind": heading_kind or "",
         "rule_fail_reason": rule_fail_reason,
+        "perspective": (perspective or "").strip().lower(),
+        "tenant": _org_tenant_block(org),
+        "few_shot_examples": _few_shot_rows(few_shots),
         "catalogue": build_llm_catalogue_rows(enabled),
         "output_keys": ["suggested_dt", "confidence", "reasoning"],
     }
@@ -377,39 +610,114 @@ async def map_vision_label_to_document_type_with_llm_fallback(
     document_types: Sequence[DocumentTypeDefinition],
     human_locked_dt: str = "",
     invoice: Any | None = None,
+    session: Any | None = None,
+    tenant_id: UUID | None = None,
+    org: Any | None = None,
+    few_shots: Sequence[dict[str, str]] | None = None,
+    vendor_key: str | None = None,
 ) -> VisionDocumentTypeMapResult:
-    """Rules first; tenant classifiers next; text LLM catalogue pick last.
+    """Hybrid: rules → tenant heading learning → classifiers → LLM catalogue pick.
 
-    For invoice-like headings, configured classifiers (recognition signals /
-    playbook-recommended identity) refine the pick whenever an invoice row is
-    available — so ``has_po_reference`` can beat a generic heading match.
+    Learning uses exact normalized title matches from prior reviewer confirmations
+    (synonyms / org-specific naming). LLM receives the same few-shots + org block
+    when deterministic scoring fails. Structural ``no_dt_for_role_*`` and human
+    locks are never bypassed.
     """
+    from app.services.classification.document_role_resolve_service import (
+        perspective_from_invoice,
+    )
+
     rule = map_vision_label_to_document_type(
         document_heading=document_heading,
         canonical_document_type=canonical_document_type,
         document_types=document_types,
         human_locked_dt=human_locked_dt,
+        invoice=invoice,
     )
     if rule.reason == "human_locked":
         return rule
 
+    # Never learn/LLM into a commercial DT when role resolution already said
+    # there is no supporting PO/GRN/SO/DN card in the catalogue.
+    if (rule.reason or "").startswith("no_dt_for_role_"):
+        return rule
+
+    if session is not None and tenant_id is not None:
+        learned = await _try_tenant_heading_learning(
+            session=session,
+            tenant_id=tenant_id,
+            document_heading=document_heading or "",
+            document_types=document_types,
+            heading_kind=rule.heading_kind,
+            invoice=invoice,
+            vendor_key=vendor_key,
+            rule_reason=rule.reason,
+        )
+        if learned is not None and learned.code:
+            return replace(
+                learned,
+                runner_up_code=rule.code or rule.runner_up_code,
+                runner_up_score=rule.confidence if rule.code else rule.runner_up_score,
+            )
+
     invoice_like = (rule.heading_kind or "") in _INVOICE_LIKE_HEADING_KINDS
     if invoice is not None and (rule.reason in _LLM_FALLBACK_REASONS or invoice_like):
+        classifier_pool = _role_perspective_pool(
+            document_types, heading_kind=rule.heading_kind, invoice=invoice
+        )
+        classifier_pool = _pool_excluding_team_expenses_without_claim(
+            classifier_pool or document_types,
+            heading_kind=rule.heading_kind,
+            document_heading=document_heading or "",
+            canonical_document_type=canonical_document_type or "",
+            invoice=invoice,
+        )
         classifier = map_vision_via_configured_classifiers(
             invoice=invoice,
-            document_types=document_types,
+            document_types=classifier_pool or document_types,
             heading_kind=rule.heading_kind,
             rule_fail_reason=rule.reason
             if rule.reason in _LLM_FALLBACK_REASONS
             else "field_refine",
         )
         if classifier.reason == "classifier_matched" and classifier.code:
-            return replace(
-                classifier,
-                runner_up_score=classifier.runner_up_score or rule.runner_up_score,
+            from app.services.classification.document_type_catalog import (
+                get_document_type_definition,
+                is_team_expenses_document_type,
             )
 
+            matched_defn = get_document_type_definition(
+                classifier.code, document_types=document_types
+            )
+            allow_team = (
+                not invoice_like
+                or not is_team_expenses_document_type(matched_defn)
+                or has_strong_team_expense_claim_evidence(
+                    document_heading=document_heading or "",
+                    canonical_document_type=canonical_document_type or "",
+                    invoice=invoice,
+                )
+            )
+            if allow_team:
+                return replace(
+                    classifier,
+                    runner_up_score=classifier.runner_up_score or rule.runner_up_score,
+                )
+
     if rule.reason not in _LLM_FALLBACK_REASONS:
+        return rule
+
+    llm_pool = _role_perspective_pool(
+        document_types, heading_kind=rule.heading_kind, invoice=invoice
+    )
+    llm_pool = _pool_excluding_team_expenses_without_claim(
+        llm_pool or document_types,
+        heading_kind=rule.heading_kind,
+        document_heading=document_heading or "",
+        canonical_document_type=canonical_document_type or "",
+        invoice=invoice,
+    )
+    if rule.heading_kind and not llm_pool:
         return rule
 
     canonical = derive_canonical_document_type(
@@ -421,7 +729,10 @@ async def map_vision_label_to_document_type_with_llm_fallback(
         canonical_document_type=canonical,
         heading_kind=rule.heading_kind,
         rule_fail_reason=rule.reason,
-        document_types=document_types,
+        document_types=llm_pool or document_types,
+        org=org,
+        few_shots=few_shots,
+        perspective=perspective_from_invoice(invoice),
     )
     if llm.reason == "llm_matched" and llm.code:
         return replace(

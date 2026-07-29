@@ -178,7 +178,12 @@ export function poGoodsLinkedDocuments(opts: {
   match?: Partial<DossierMatchSummary> &
     Pick<DossierMatchSummary, "status" | "poValue" | "invoiceTotal" | "currency">;
   purchaseOrderId?: number | null;
+  /** Org catalogue codes when available; shipped DT-02/03/01 are last-resort defaults. */
+  documentTypeCodes?: { po?: string; grn?: string; invoice?: string };
 }): DossierLinkedDocuments {
+  const poCode = opts.documentTypeCodes?.po ?? "DT-02";
+  const grnCode = opts.documentTypeCodes?.grn ?? "DT-03";
+  const invoiceCode = opts.documentTypeCodes?.invoice ?? "DT-01";
   return {
     linkageKind: "po_reference",
     linkageKey: opts.poReference,
@@ -189,7 +194,7 @@ export function poGoodsLinkedDocuments(opts: {
     matchSummary: opts.match ? dossierMatchSummary(opts.match) : undefined,
     documents: [
       doc({
-        documentTypeCode: "DT-14",
+        documentTypeCode: poCode,
         label: "Purchase order",
         documentRef: opts.po.present ? (opts.po.ref ?? opts.poReference) : null,
         present: opts.po.present,
@@ -200,7 +205,7 @@ export function poGoodsLinkedDocuments(opts: {
         linkageDetail: opts.po.present ? `PO register · ${opts.poReference}` : "VR-PB02 required",
       }),
       doc({
-        documentTypeCode: "DT-15",
+        documentTypeCode: grnCode,
         label: "Goods receipt",
         documentRef: opts.grn.present ? (opts.grn.ref ?? null) : null,
         present: opts.grn.present,
@@ -212,7 +217,7 @@ export function poGoodsLinkedDocuments(opts: {
       }),
       doc({
         id: "anchor-invoice",
-        documentTypeCode: "DT-01",
+        documentTypeCode: invoiceCode,
         label: "Commercial invoice",
         documentRef: opts.anchorRef,
         present: true,
@@ -337,7 +342,7 @@ export function haltedLinkedDocuments(opts: {
       conditionalAdvisories: [],
       documents: [
         doc({
-          documentTypeCode: "DT-14",
+          documentTypeCode: "DT-02",
           label: "Purchase order",
           documentRef: null,
           present: false,
@@ -346,7 +351,7 @@ export function haltedLinkedDocuments(opts: {
           linkageDetail: opts.reason,
         }),
         doc({
-          documentTypeCode: "DT-15",
+          documentTypeCode: "DT-03",
           label: "Goods receipt",
           documentRef: null,
           present: false,

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.invoice import Invoice, InvoiceStatus, PurchaseDocumentType
+from app.models.goods_receipt import GoodsReceipt
 from app.models.purchase_order import PurchaseOrder
 from app.services.audit.audit_service import log_event
 from app.services.master_data.bundle_vendor_service import reconcile_dossier_vendor
@@ -140,6 +141,7 @@ def resolve_purchase_document_type(
     invoice: Invoice,
     *,
     explicit: str | None = None,
+    document_types: list | None = None,
 ) -> str | None:
     normalized = normalize_purchase_document_type(explicit)
     if normalized:
@@ -147,6 +149,27 @@ def resolve_purchase_document_type(
     stored = normalize_purchase_document_type(invoice.purchase_document_type)
     if stored:
         return stored
+
+    code = (invoice.document_type_code or "").strip()
+    if code:
+        from app.services.classification.document_type_catalog import get_document_type_definition
+        from app.services.classification.document_type_register_roles import (
+            purchase_register_role_for_definition,
+        )
+
+        definition = get_document_type_definition(
+            code,
+            document_types=document_types,
+            tenant_id=invoice.tenant_id,
+        )
+        register_role = purchase_register_role_for_definition(definition)
+        if register_role in {
+            PurchaseDocumentType.PO.value,
+            PurchaseDocumentType.GRN.value,
+            PurchaseDocumentType.INVOICE.value,
+        }:
+            return register_role
+
     if invoice.route_target != ROUTE_PURCHASE:
         return None
     return infer_purchase_document_type(invoice)
@@ -187,7 +210,7 @@ async def _get_or_load_po(
                 PurchaseOrder.po_number == po_number,
             )
             .options(
-                selectinload(PurchaseOrder.goods_receipts),
+                selectinload(PurchaseOrder.goods_receipts).selectinload(GoodsReceipt.lines),
                 selectinload(PurchaseOrder.lines),
             )
         )
@@ -221,7 +244,10 @@ async def _sync_po_document(db: AsyncSession, invoice: Invoice, po_number: str) 
             await db.execute(
                 select(PurchaseOrder)
                 .where(PurchaseOrder.id == po.id)
-                .options(selectinload(PurchaseOrder.goods_receipts), selectinload(PurchaseOrder.lines))
+                .options(
+                    selectinload(PurchaseOrder.goods_receipts).selectinload(GoodsReceipt.lines),
+                    selectinload(PurchaseOrder.lines),
+                )
             )
         ).scalar_one()
         replace_po_lines_from_invoice(po, invoice)
@@ -452,11 +478,37 @@ async def sync_purchase_document(
 ) -> PurchaseOrder | None:
     """PO-first sync: PO doc creates PO; GRN/invoice require existing PO."""
     if invoice.route_target != ROUTE_PURCHASE:
-        return None
+        # Org PO commercial DTs may still need Purchase route — set from DT when missing.
+        code = (invoice.document_type_code or "").strip()
+        if code:
+            from app.services.classification.document_type_catalog import get_document_type_definition
+            from app.services.classification.document_type_register_roles import (
+                purchase_register_role_for_definition,
+            )
 
-    doc_type = resolve_purchase_document_type(invoice, explicit=explicit_document_type)
+            config = await load_classification_config(db, invoice.tenant_id)
+            definition = get_document_type_definition(
+                code,
+                document_types=list(config.document_types),
+                tenant_id=invoice.tenant_id,
+            )
+            if purchase_register_role_for_definition(definition) == PurchaseDocumentType.INVOICE.value:
+                invoice.route_target = ROUTE_PURCHASE
+                await db.flush()
+            else:
+                return None
+        else:
+            return None
+
+    config = await load_classification_config(db, invoice.tenant_id)
+    doc_type = resolve_purchase_document_type(
+        invoice,
+        explicit=explicit_document_type,
+        document_types=list(config.document_types),
+    )
     if doc_type:
         invoice.purchase_document_type = doc_type
+        invoice.sales_document_type = None
         await db.flush()
 
     po_number = po_ref_for_invoice(invoice)
@@ -488,8 +540,17 @@ async def apply_purchase_document_type_after_eval(
     db: AsyncSession,
     invoice: Invoice,
 ) -> None:
-    """Set purchase_document_type from attachment/heading/parsed signals when not already set."""
+    """Set purchase_document_type from DT register role or attachment/heading signals."""
     if normalize_purchase_document_type(invoice.purchase_document_type):
+        return
+    config = await load_classification_config(db, invoice.tenant_id)
+    resolved = resolve_purchase_document_type(
+        invoice,
+        document_types=list(config.document_types),
+    )
+    if resolved:
+        invoice.purchase_document_type = resolved
+        await db.flush()
         return
     inferred = infer_purchase_document_type(invoice)
     if inferred:

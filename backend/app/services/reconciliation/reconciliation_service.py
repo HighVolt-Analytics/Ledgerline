@@ -27,15 +27,19 @@ _TOLERANCE = Decimal("0.01")
 # Invoice side and journal side MUST use the same set.
 #
 # INCLUDE
-#   - InvoiceStatus.PROCESSED on the recon_date
+#   - InvoiceStatus.PROCESSED on the recon_date that are GL-posting documents
+#     (commercial invoices — not PO/GRN/SO/DN / posting=No vault cards)
 #   - Plus the ``current_invoice`` being reconciled right now (typically
 #     RECONCILING), so its own totals/journals count before status flips to
-#     PROCESSED
+#     PROCESSED — when that invoice itself is GL-posting
 #
 # EXCLUDE (never count totals or journals toward RC1/RC2)
 #   - PENDING, PARSING, VALIDATING, MAPPING, JOURNALING
 #   - RECONCILING when it is NOT the current_invoice (crash/orphan mid-flight)
 #   - EXCEPTION, REJECTED, DUPLICATE_SKIPPED
+#   - Supporting / non-posting docs (PO, GRN, SO, DN, posting=No) even when
+#     PROCESSED — they have totals but no accrual journals and must not poison
+#     day-level AP/AR RC1 for commercial invoices on the same date
 #
 # "Not completed" for RC1 = any status other than PROCESSED, except the single
 # current_invoice argument passed into reconcile_daily.
@@ -78,12 +82,30 @@ def _is_sales_route(invoice: Invoice) -> bool:
     return (invoice.route_target or "").strip() == ROUTE_SALES
 
 
+def _invoice_counts_for_rc1(
+    invoice: Invoice,
+    *,
+    config: RuleBookConfigPayload | None,
+) -> bool:
+    """True when this PROCESSED/current invoice belongs in AP/AR day totals."""
+    from app.services.classification.document_type_playbook_profile_service import (
+        gl_posting_applicable_for_invoice,
+    )
+
+    document_types = config.document_types if config is not None else None
+    return gl_posting_applicable_for_invoice(
+        invoice,
+        document_types=document_types,
+    )
+
+
 async def _sum_processed_invoice_totals(
     session: AsyncSession,
     recon_date: date,
     *,
     tenant_id: uuid.UUID | int,
     sales: bool,
+    config: RuleBookConfigPayload | None = None,
     exclude_invoice_id: int | None = None,
 ) -> tuple[int, Decimal]:
     filters = [
@@ -100,15 +122,21 @@ async def _sum_processed_invoice_totals(
     if exclude_invoice_id is not None:
         filters.append(Invoice.id != exclude_invoice_id)
 
-    count, inv_sum = (
-        await session.execute(
-            select(
-                func.count(Invoice.id),
-                func.coalesce(func.sum(Invoice.total), 0),
-            ).where(*filters)
-        )
-    ).one()
-    return int(count or 0), Decimal(str(inv_sum or 0))
+    rows = list((await session.execute(select(Invoice).where(*filters))).scalars().all())
+    count = 0
+    inv_sum = Decimal("0")
+    for inv in rows:
+        if not _invoice_counts_for_rc1(inv, config=config):
+            continue
+        count += 1
+        if sales:
+            if inv.total is not None:
+                inv_sum += Decimal(str(inv.total))
+        else:
+            payable = invoice_payable_total(inv)
+            if payable is not None:
+                inv_sum += payable
+    return count, inv_sum
 
 
 def _countable_journal_filter(
@@ -137,8 +165,11 @@ def _include_current_invoice(
     recon_date: date,
     *,
     sales: bool,
+    config: RuleBookConfigPayload | None = None,
 ) -> Decimal:
     if current_invoice is None:
+        return Decimal("0")
+    if not _invoice_counts_for_rc1(current_invoice, config=config):
         return Decimal("0")
     accrual_date = effective_invoice_recon_date(current_invoice)
     if accrual_date is None or accrual_date != recon_date:
@@ -175,6 +206,7 @@ async def reconcile_daily(
         recon_date,
         tenant_id=tenant_id,
         sales=False,
+        config=config,
         exclude_invoice_id=exclude_id,
     )
     sales_count, sales_sum = await _sum_processed_invoice_totals(
@@ -182,16 +214,26 @@ async def reconcile_daily(
         recon_date,
         tenant_id=tenant_id,
         sales=True,
+        config=config,
         exclude_invoice_id=exclude_id,
     )
 
-    purchase_sum += _include_current_invoice(current_invoice, recon_date, sales=False)
-    sales_sum += _include_current_invoice(current_invoice, recon_date, sales=True)
+    purchase_sum += _include_current_invoice(
+        current_invoice, recon_date, sales=False, config=config
+    )
+    sales_sum += _include_current_invoice(
+        current_invoice, recon_date, sales=True, config=config
+    )
 
     total_invoices = purchase_count + sales_count
     if current_invoice is not None:
         accrual_date = effective_invoice_recon_date(current_invoice)
-        if accrual_date is not None and accrual_date == recon_date and exclude_id is not None:
+        if (
+            accrual_date is not None
+            and accrual_date == recon_date
+            and exclude_id is not None
+            and _invoice_counts_for_rc1(current_invoice, config=config)
+        ):
             total_invoices += 1
 
     countable_journal = _countable_journal_filter(

@@ -69,6 +69,7 @@ export function RulesPage() {
   const pendingSaveRef = useRef<RuleBookConfigState | null>(null);
   const executeSaveRef = useRef<() => void>(() => {});
   const saveGenerationRef = useRef(0);
+  const saveInFlightRef = useRef(false);
 
   const tenantId = user?.tenant_id ?? null;
   const {
@@ -124,9 +125,9 @@ export function RulesPage() {
 
   const runSave = () => {
     const payload = pendingSaveRef.current;
-    if (!payload) return;
-    saveGenerationRef.current += 1;
+    if (!payload || saveInFlightRef.current) return;
     const generation = saveGenerationRef.current;
+    saveInFlightRef.current = true;
     saveMutation.mutate(payload, {
       onSuccess: ({ config }) => {
         if (!shouldApplyRuleBookSaveResponse(generation, saveGenerationRef.current)) {
@@ -143,6 +144,12 @@ export function RulesPage() {
           variant: "destructive",
         });
       },
+      onSettled: () => {
+        saveInFlightRef.current = false;
+        if (saveGenerationRef.current > generation) {
+          runSave();
+        }
+      },
     });
   };
 
@@ -152,6 +159,7 @@ export function RulesPage() {
     pendingSaveRef.current = next;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     setSaveState("pending");
+    saveGenerationRef.current += 1;
     if (options?.immediate) {
       runSave();
       return;

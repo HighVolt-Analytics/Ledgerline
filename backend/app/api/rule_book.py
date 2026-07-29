@@ -17,6 +17,7 @@ from app.schemas.common import ApiEnvelope
 from app.schemas.rule_book_changelog import RuleBookChangelogEntry
 from app.schemas.rule_book_config import (
     RuleBookConfigPayload,
+    RuleBookDocumentTypeInvariantError,
     RuleBookPostToValidationError,
     RuleBookRulesPayload,
     validate_rule_book_config_for_save,
@@ -143,7 +144,7 @@ async def put_rule_book_config(
         from app.services.classification.document_type_lifecycle import scrub_document_type_references
 
         payload = scrub_document_type_references(validate_rule_book_config_for_save(raw))
-    except RuleBookPostToValidationError as exc:
+    except (RuleBookPostToValidationError, RuleBookDocumentTypeInvariantError) as exc:
         raise HTTPException(422, str(exc)) from exc
     except (ValidationError, ValueError) as exc:
         raise _validation_http_error(exc) from exc
@@ -197,7 +198,7 @@ async def delete_document_type(
     before_raw = await load_rule_book_config_dict(db, ctx.tenant_id)
     try:
         before_payload = validate_rule_book_config_payload(before_raw)
-    except RuleBookPostToValidationError as exc:
+    except (RuleBookPostToValidationError, RuleBookDocumentTypeInvariantError) as exc:
         raise HTTPException(422, str(exc)) from exc
     except (ValidationError, ValueError) as exc:
         raise _validation_http_error(exc) from exc
@@ -513,7 +514,7 @@ async def evaluate_rule_book_config(
             limit=body.limit,
         )
         return ApiEnvelope(data=RuleBookEvaluateResponse.model_validate(result))
-    except RuleBookPostToValidationError as exc:
+    except (RuleBookPostToValidationError, RuleBookDocumentTypeInvariantError) as exc:
         raise HTTPException(422, str(exc)) from exc
     except (ValidationError, ValueError) as exc:
         raise _validation_http_error(exc) from exc

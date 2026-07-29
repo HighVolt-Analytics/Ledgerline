@@ -1,4 +1,4 @@
-import { AlertTriangle, Ban, Check } from "lucide-react";
+import { AlertTriangle, Ban, Check, Clock, Link2 } from "lucide-react";
 import { StatusPill, pillTones } from "@/components/StatusPill";
 import type { MatrixFlagType } from "@/lib/v4MatrixMockData";
 
@@ -24,6 +24,22 @@ export function MatrixFlagBadge({ flag }: { flag: MatrixFlagType }) {
       <StatusPill className={pillTones.bad}>
         <Ban className="h-3 w-3" />
         Quarantined
+      </StatusPill>
+    );
+  }
+  if (flag === "Awaiting approval") {
+    return (
+      <StatusPill className={pillTones.amber}>
+        <Clock className="h-3 w-3 shrink-0" />
+        Awaiting approval
+      </StatusPill>
+    );
+  }
+  if (flag === "Awaiting linkage") {
+    return (
+      <StatusPill className={pillTones.amber}>
+        <Link2 className="h-3 w-3 shrink-0" />
+        Awaiting linkage
       </StatusPill>
     );
   }

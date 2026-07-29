@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 
 from app.models.invoice import Invoice
 from app.schemas.document_type import DocumentTypeDefinition, DocumentTypePostTo
-from app.schemas.rule_book_config import ChartOfAccountEntry, RuleBookConfigPayload
+from app.schemas.rule_book_config import ChartOfAccountEntry, PostingDefaults, RuleBookConfigPayload
 from app.services.classification.document_type_catalog import get_document_type_definition
 from app.services.classification.document_type_gl_defaults import resolve_coa_account_name
 from app.services.master_data.chart_of_accounts_service import (
@@ -20,6 +21,16 @@ class DocumentTypePostToMissingError(ValueError):
     """Transactional document type has no valid Post to ledger configured."""
 
 
+class DocumentTypePostToControlAccountError(ValueError):
+    """Transactional Post to must not target AP/AR/bank/control accounts."""
+
+
+_CONTROL_LEDGER_NAME = re.compile(
+    r"\b(payable|receivable|creditor|debtor|suspense|bank|cash)\b",
+    re.IGNORECASE,
+)
+
+
 def document_type_requires_post_to(definition: DocumentTypeDefinition | None) -> bool:
     if definition is None or not definition.enabled:
         return False
@@ -31,6 +42,33 @@ def ledger_exists_in_coa(ledger: str, accounts: Sequence[ChartOfAccountEntry]) -
     if not cleaned:
         return False
     return bool(resolve_coa_account_name(cleaned, list(accounts)))
+
+
+def control_account_names(defaults: PostingDefaults | None) -> set[str]:
+    if defaults is None:
+        defaults = PostingDefaults()
+    names = {
+        (defaults.payable_account or "").strip().lower(),
+        (defaults.receivable_account or "").strip().lower(),
+        (defaults.bank_account or "").strip().lower(),
+        (defaults.fallback_account or "").strip().lower(),
+    }
+    return {name for name in names if name}
+
+
+def is_control_post_to_ledger(
+    ledger: str,
+    *,
+    posting_defaults: PostingDefaults | None = None,
+) -> bool:
+    """True when ledger is a control/counterparty account unsuitable as transactional Post To."""
+    cleaned = (ledger or "").strip()
+    if not cleaned:
+        return False
+    lowered = cleaned.lower()
+    if lowered in control_account_names(posting_defaults):
+        return True
+    return bool(_CONTROL_LEDGER_NAME.search(cleaned))
 
 
 def sub_ledger_valid_for_post_to(
@@ -51,6 +89,8 @@ def sub_ledger_valid_for_post_to(
 def has_valid_document_type_post_to(
     definition: DocumentTypeDefinition | None,
     accounts: Sequence[ChartOfAccountEntry],
+    *,
+    posting_defaults: PostingDefaults | None = None,
 ) -> bool:
     if definition is None:
         return False
@@ -58,6 +98,8 @@ def has_valid_document_type_post_to(
         return True
     ledger = (definition.post_to.ledger or "").strip()
     if not ledger:
+        return False
+    if is_control_post_to_ledger(ledger, posting_defaults=posting_defaults):
         return False
     return ledger_exists_in_coa(ledger, accounts)
 
@@ -112,6 +154,11 @@ def ensure_transactional_post_to_or_raise(
     if not ledger:
         raise DocumentTypePostToMissingError(
             f"Document type {code} has no Post to ledger — configure it in Rule Book → Document types."
+        )
+    if is_control_post_to_ledger(ledger, posting_defaults=config.posting_defaults):
+        raise DocumentTypePostToControlAccountError(
+            f"Document type {code} Post to ledger {ledger!r} is a control account "
+            "(AP/AR/bank/cash/suspense) — pick an expense or revenue ledger instead."
         )
     if not ledger_exists_in_coa(ledger, config.chart_of_accounts):
         raise DocumentTypePostToMissingError(

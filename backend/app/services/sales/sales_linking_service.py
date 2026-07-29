@@ -49,7 +49,10 @@ def invoice_no_link_token_set(invoice: Invoice) -> set[str]:
 async def dn_linked_to_so(session: AsyncSession, dn_invoice_id: int) -> DeliveryNote | None:
     return (
         await session.execute(
-            select(DeliveryNote).where(DeliveryNote.dn_invoice_id == dn_invoice_id).limit(1)
+            select(DeliveryNote)
+            .where(DeliveryNote.dn_invoice_id == dn_invoice_id)
+            .options(selectinload(DeliveryNote.lines))
+            .limit(1)
         )
     ).scalar_one_or_none()
 
@@ -137,7 +140,15 @@ async def attach_dn_invoice_to_so(
             existing.sales_order_id = so.id
         if qty > 0 and qty != existing.dn_qty:
             existing.dn_qty = qty
-        if not existing.lines:
+        from sqlalchemy import inspect as sa_inspect
+
+        try:
+            lines_empty = (
+                "lines" in sa_inspect(existing).unloaded or not list(existing.lines or [])
+            )
+        except Exception:
+            lines_empty = not list(existing.lines or [])
+        if lines_empty:
             populate_dn_lines_from_invoice(
                 existing, so=so, invoice=dn_invoice, fallback_qty=qty if qty > 0 else None
             )

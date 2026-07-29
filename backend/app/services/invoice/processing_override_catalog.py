@@ -129,6 +129,11 @@ def override_bypasses_purchase_hold(invoice: Invoice) -> bool:
     return should_skip(invoice, "playbook")
 
 
+def override_bypasses_sales_hold(invoice: Invoice) -> bool:
+    """Skipping playbook also bypasses missing-SO / awaiting_so sales holds."""
+    return should_skip(invoice, "playbook")
+
+
 def clear_processing_overrides(invoice: Invoice) -> None:
     invoice.processing_overrides = None
 

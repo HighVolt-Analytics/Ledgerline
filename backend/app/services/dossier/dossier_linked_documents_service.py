@@ -21,12 +21,6 @@ from app.services.purchase.purchase_dossier_service import build_purchase_dossie
 from app.services.sales.sales_dossier_service import build_sales_dossier
 from app.services.sales.so_reference import is_plausible_so_reference, resolve_so_reference_from_invoice
 
-_ROLE_TO_DT = {
-    PurchaseDocumentType.PO.value: ("DT-14", "Purchase order"),
-    PurchaseDocumentType.GRN.value: ("DT-15", "Goods receipt"),
-    PurchaseDocumentType.INVOICE.value: ("DT-01", "Commercial invoice"),
-}
-
 _PURCHASE_BUNDLE_ROLE = {
     PurchaseDocumentType.PO.value: "po",
     PurchaseDocumentType.GRN.value: "grn",
@@ -37,12 +31,6 @@ _SALES_BUNDLE_ROLE = {
     SalesDocumentType.SO.value: "so",
     SalesDocumentType.DN.value: "dn",
     SalesDocumentType.INVOICE.value: "invoice",
-}
-
-_SALES_ROLE_FALLBACK_DT = {
-    SalesDocumentType.SO.value: ("DT-27", "Sales order"),
-    SalesDocumentType.DN.value: ("DT-28", "Delivery note"),
-    SalesDocumentType.INVOICE.value: ("DT-26", "Customer invoice"),
 }
 
 
@@ -177,20 +165,38 @@ def _is_sales_dossier_invoice(
     if route == ROUTE_SALES:
         return True
     profile = ((definition.playbook_profile if definition else None) or "").strip().lower()
-    return profile == "ar_goods"
+    return profile in {"ar_goods", "ar_goods_2way"}
 
 
 def _dt_for_sales_role(
     role: str,
     document_types: list[DocumentTypeDefinition],
 ) -> tuple[str, str]:
-    token = (role or "").strip().lower()
-    for row in document_types:
-        if (row.sales_bundle_role or "").strip().lower() == token:
-            label = (row.title or row.short_title or row.code).strip() or row.code
-            return row.code.upper(), label
-    return _SALES_ROLE_FALLBACK_DT.get(token, (token.upper(), token))
+    from app.services.classification.document_type_register_roles import (
+        dt_code_for_register_role,
+    )
 
+    return dt_code_for_register_role(
+        side="sales",
+        role=role,
+        document_types=document_types,
+    )
+
+
+def _dt_for_purchase_role(
+    role: str,
+    document_types: list[DocumentTypeDefinition],
+) -> tuple[str, str]:
+    """Resolve purchase register slot DT from org catalogue (not template codes alone)."""
+    from app.services.classification.document_type_register_roles import (
+        dt_code_for_register_role,
+    )
+
+    return dt_code_for_register_role(
+        side="purchase",
+        role=role,
+        document_types=document_types,
+    )
 
 def _linked_dossier_id(
     *,
@@ -362,6 +368,12 @@ async def build_dossier_linked_documents(
         for member in sales.members:
             if member.is_current:
                 dt_code, default_label = _anchor_document_type(invoice, document_types)
+            elif member.present and member.invoice_id is not None:
+                member_inv = await session.get(Invoice, member.invoice_id)
+                if member_inv is not None:
+                    dt_code, default_label = _anchor_document_type(member_inv, document_types)
+                else:
+                    dt_code, default_label = _dt_for_sales_role(member.role, document_types)
             else:
                 dt_code, default_label = _dt_for_sales_role(member.role, document_types)
             linked_id = _linked_dossier_id(
@@ -375,7 +387,7 @@ async def build_dossier_linked_documents(
                 DossierLinkedDocumentResponse(
                     id=f"{dt_code or member.role}-bundle-{member.role}",
                     document_type_code=dt_code,
-                    label=default_label if member.is_current else (member.label or default_label),
+                    label=default_label if (member.is_current or member.present) else (member.label or default_label),
                     document_ref=member.document_ref,
                     present=member.present,
                     requirement="mandatory",
@@ -386,6 +398,7 @@ async def build_dossier_linked_documents(
                     is_anchor=member.is_current,
                     has_file=member.has_stored_file,
                     linkage_detail=f"Linked on SO {so_ref}" if member.present else "VR-PB02 required",
+                    counterparty=_counterparty_name(invoice) if member.is_current else None,
                 )
             )
 
@@ -416,10 +429,14 @@ async def build_dossier_linked_documents(
         for member in purchase.members:
             if member.is_current:
                 dt_code, default_label = _anchor_document_type(invoice, document_types)
+            elif member.present and member.invoice_id is not None:
+                member_inv = await session.get(Invoice, member.invoice_id)
+                if member_inv is not None:
+                    dt_code, default_label = _anchor_document_type(member_inv, document_types)
+                else:
+                    dt_code, default_label = _dt_for_purchase_role(member.role, document_types)
             else:
-                dt_code, default_label = _ROLE_TO_DT.get(
-                    member.role, (member.role.upper(), member.label)
-                )
+                dt_code, default_label = _dt_for_purchase_role(member.role, document_types)
             linked_id = _linked_dossier_id(
                 anchor_id=anchor_id,
                 member_invoice_id=member.invoice_id,

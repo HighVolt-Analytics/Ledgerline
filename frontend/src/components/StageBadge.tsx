@@ -10,6 +10,7 @@ const stageToneByName: Record<string, KpiModuleColor> = {
   Received: "blue",
   Parsed: "teal",
   Validated: "violet",
+  Match: "rust",
   Mapped: "green",
   Approved: "sage",
   Processed: "green",
@@ -59,13 +60,18 @@ export function StageBadge({
   stage,
   state,
   processing = false,
+  title,
 }: {
   stage: string;
   state?: PipelineStageState;
   processing?: boolean;
+  title?: string;
 }) {
   return (
-    <span className={cn(stageChipClass(stage, state), "inline-flex items-center gap-1")}>
+    <span
+      className={cn(stageChipClass(stage, state), "inline-flex items-center gap-1")}
+      title={title}
+    >
       {processing ? (
         <Loader2 className="h-3 w-3 shrink-0 animate-spin" aria-hidden />
       ) : null}

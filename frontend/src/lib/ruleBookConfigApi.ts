@@ -411,8 +411,13 @@ function mapSalesBundleRole(raw: Record<string, unknown>): SalesBundleRole {
 function inferPlaybookProfileFromRaw(raw: Record<string, unknown>): PlaybookProfile {
   const explicit = String(raw.playbook_profile ?? raw.playbookProfile ?? "").trim().toLowerCase();
   if (explicit) return explicit as PlaybookProfile;
+  const matrixCode = String(raw.matrix_template_code ?? raw.matrixTemplateCode ?? "")
+    .trim()
+    .toUpperCase();
+  const catalogueCode = matrixCode || String(raw.code ?? raw.dt_code ?? "");
   return inferPlaybookProfileFromDefinition({
-    code: String(raw.code ?? raw.dt_code ?? ""),
+    code: catalogueCode,
+    matrixTemplateCode: matrixCode,
     klass: raw.klass as DocumentTypeDefinition["klass"],
     posting: String(raw.posting ?? "No"),
     purchaseBundleRole: mapPurchaseBundleRole(raw),

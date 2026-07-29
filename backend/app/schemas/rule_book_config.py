@@ -748,15 +748,6 @@ def _sync_match_policy_with_playbook(data: dict[str, Any]) -> dict[str, Any]:
             should_sync = True
         if not should_sync and profile in purchase_profiles and current_mode in sales_match_modes:
             should_sync = True
-        if not should_sync:
-            stale_pairs = {
-                ("ar_goods_2way", "three_way_so_dn"),
-                ("ar_goods", "two_way_dn_invoice"),
-                ("po_services", "three_way_po_grn"),
-                ("po_goods", "two_way_po_ses"),
-            }
-            if (profile, current_mode) in stale_pairs:
-                should_sync = True
 
         if should_sync:
             existing_approval = row.get("approval_policy") or row.get("approvalPolicy")
@@ -1059,9 +1050,6 @@ def _backfill_extraction_fields_from_shipped_defaults(data: dict[str, Any]) -> d
 
         current = list(row.get("extraction_fields") or row.get("extractionFields") or [])
         normalized = [str(key).strip() for key in current if str(key or "").strip()]
-        if normalized:
-            merged.append(row)
-            continue
         seen = {key.lower() for key in normalized}
 
         def _append(key: str) -> None:
@@ -1074,12 +1062,16 @@ def _backfill_extraction_fields_from_shipped_defaults(data: dict[str, Any]) -> d
             normalized.append(token)
             seen.add(lowered)
 
+        # Only seed the full shipped catalogue when the tenant left extraction empty.
+        # Always union playbook-recommended keys so gaps (e.g. employee_claim + invoice_no)
+        # are filled without wiping intentional field lists.
+        seed_shipped = not normalized
         try:
             definition_for_slot = DocumentTypeDefinition.model_validate(row)
             matrix_code = shipped_matrix_slot_for_org_row(definition_for_slot)
         except Exception:
             matrix_code = None
-        if matrix_code:
+        if seed_shipped and matrix_code:
             for key in default_extraction_fields(matrix_code):
                 _append(key)
 
@@ -1220,6 +1212,10 @@ def _backfill_document_type_post_to(data: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(row, dict):
             merged.append(row)
             continue
+        posting = str(row.get("posting") or "").strip().lower()
+        if posting in {"", "no"}:
+            merged.append(row)
+            continue
         post = row.get("post_to") if isinstance(row.get("post_to"), dict) else None
         if post is None and isinstance(row.get("postTo"), dict):
             post = row.get("postTo")
@@ -1244,6 +1240,46 @@ def _backfill_document_type_post_to(data: dict[str, Any]) -> dict[str, Any]:
                     "postTo": post_payload,
                 }
         merged.append(row)
+    data["document_types"] = merged
+    return data
+
+
+def _scrub_non_posting_document_type_post_to(data: dict[str, Any]) -> dict[str, Any]:
+    """Clear invoice Post to on non-posting types (supporting roles keep hard posting=No checks)."""
+    types = data.get("document_types")
+    if not isinstance(types, list):
+        return data
+
+    merged: list[Any] = []
+    for row in types:
+        if not isinstance(row, dict):
+            merged.append(row)
+            continue
+        posting = str(row.get("posting") or "").strip().lower()
+        if posting not in {"", "no"}:
+            merged.append(row)
+            continue
+        post = row.get("post_to") if isinstance(row.get("post_to"), dict) else None
+        if post is None and isinstance(row.get("postTo"), dict):
+            post = row.get("postTo")
+        ledger = str((post or {}).get("ledger") or "").strip()
+        sub = str((post or {}).get("sub_ledger") or (post or {}).get("subLedger") or "").strip()
+        if not ledger and not sub:
+            merged.append(row)
+            continue
+        post_payload = {
+            **(post or {}),
+            "ledger": "",
+            "sub_ledger": "",
+            "subLedger": "",
+        }
+        merged.append(
+            {
+                **row,
+                "post_to": post_payload,
+                "postTo": post_payload,
+            }
+        )
     data["document_types"] = merged
     return data
 
@@ -1279,26 +1315,36 @@ def validate_rule_book_config_payload(data: dict[str, Any]) -> RuleBookConfigPay
         data = _backfill_shipped_document_type_identity(data)
         data = _backfill_extraction_fields_from_shipped_defaults(data)
         data = _backfill_document_type_post_to(data)
+        data = _scrub_non_posting_document_type_post_to(data)
         data = _backfill_validation_rules(data)
         data = _migrate_ai_classification(data)
         data = _normalize_ai_classification_provider(data)
     payload = RuleBookConfigPayload.model_validate(data)
-    from app.services.rule_book.extraction_field_config_audit import log_extraction_field_config_warnings
-
-    log_extraction_field_config_warnings(payload)
     return payload
 
 
 def validate_rule_book_config_for_save(data: dict[str, Any]) -> RuleBookConfigPayload:
     """Validate and normalize config before persisting (includes Post to checks)."""
     payload = validate_rule_book_config_payload(data)
+    from app.services.rule_book.extraction_field_config_audit import (
+        log_extraction_field_config_warnings,
+    )
+
+    # Audit once on save — never on every request-time validate/load.
+    log_extraction_field_config_warnings(payload)
     from app.services.classification.document_type_recognition_migration import (
         sync_classifier_from_recognition,
     )
+    from app.services.classification.route_compulsory_fields import (
+        merge_route_compulsory_into_config,
+    )
 
     synced_types = [sync_classifier_from_recognition(defn) for defn in payload.document_types]
+    synced_types = merge_route_compulsory_into_config(synced_types)
+    synced_types = [_ensure_commercial_due_date_required(defn) for defn in synced_types]
     payload = payload.model_copy(update={"document_types": synced_types})
     _validate_transactional_document_type_post_to(payload)
+    _validate_document_type_bundle_invariants(payload)
     return payload
 
 
@@ -1306,10 +1352,40 @@ class RuleBookPostToValidationError(ValueError):
     """Enabled transactional document types must have a valid Post to ledger."""
 
 
+class RuleBookDocumentTypeInvariantError(ValueError):
+    """Document type catalogue violates hard identity / bundle invariants."""
+
+
+_COMMERCIAL_PLAYBOOKS = frozenset({"po_goods", "ar_goods", "ar_goods_2way", "direct_expense"})
+_SUPPORTING_BUNDLE_PURCHASE = frozenset({"po", "grn"})
+_SUPPORTING_BUNDLE_SALES = frozenset({"so", "dn"})
+
+
+def _ensure_commercial_due_date_required(definition: DocumentTypeDefinition) -> DocumentTypeDefinition:
+    from app.services.classification.document_type_playbook_profile_service import (
+        effective_playbook_profile,
+    )
+    from app.services.classification.document_type_field_keys import normalize_extraction_field_keys
+
+    profile = effective_playbook_profile(definition)
+    if profile not in {"po_goods", "ar_goods", "ar_goods_2way"}:
+        return definition
+    required = normalize_extraction_field_keys(list(definition.required_fields or []))
+    extraction = normalize_extraction_field_keys(list(definition.extraction_fields or []))
+    if "due_date" not in required:
+        required.append("due_date")
+    if "due_date" not in extraction:
+        extraction.append("due_date")
+    return definition.model_copy(
+        update={"required_fields": required, "extraction_fields": extraction}
+    )
+
+
 def _validate_transactional_document_type_post_to(payload: RuleBookConfigPayload) -> None:
     from app.services.classification.document_type_post_to_service import (
         document_type_requires_post_to,
         has_valid_document_type_post_to,
+        is_control_post_to_ledger,
     )
 
     messages: list[str] = []
@@ -1318,7 +1394,11 @@ def _validate_transactional_document_type_post_to(payload: RuleBookConfigPayload
             continue
         if not document_type_requires_post_to(definition):
             continue
-        if has_valid_document_type_post_to(definition, payload.chart_of_accounts):
+        if has_valid_document_type_post_to(
+            definition,
+            payload.chart_of_accounts,
+            posting_defaults=payload.posting_defaults,
+        ):
             continue
         code = definition.code.strip().upper()
         ledger = (definition.post_to.ledger or "").strip()
@@ -1326,9 +1406,54 @@ def _validate_transactional_document_type_post_to(payload: RuleBookConfigPayload
             messages.append(
                 f"{code}: Post to ledger is required for transactional document types."
             )
+        elif is_control_post_to_ledger(ledger, posting_defaults=payload.posting_defaults):
+            messages.append(
+                f"{code}: Post to ledger {ledger!r} cannot be a control account "
+                "(AP/AR/bank/cash/suspense) — use an expense or revenue ledger."
+            )
         else:
             messages.append(
                 f"{code}: Post to ledger {ledger!r} is not in your chart of accounts."
             )
     if messages:
         raise RuleBookPostToValidationError(" ".join(messages))
+
+
+def _validate_document_type_bundle_invariants(payload: RuleBookConfigPayload) -> None:
+    """Hard-fail only structural conflicts; duplicate roles / matrix drift are UI warnings."""
+    from app.services.classification.document_type_playbook_profile_service import (
+        effective_playbook_profile,
+    )
+
+    messages: list[str] = []
+
+    for definition in payload.document_types:
+        if not definition.enabled:
+            continue
+        code = definition.code.strip().upper()
+        purchase_role = (definition.purchase_bundle_role or "").strip().lower()
+        sales_role = (definition.sales_bundle_role or "").strip().lower()
+        profile = effective_playbook_profile(definition)
+        posting = (definition.posting or "").strip()
+        supporting_role = (
+            purchase_role in _SUPPORTING_BUNDLE_PURCHASE
+            or sales_role in _SUPPORTING_BUNDLE_SALES
+        )
+
+        if supporting_role:
+            if profile != "supporting":
+                messages.append(
+                    f"{code}: bundle role {purchase_role or sales_role} requires playbookProfile=supporting."
+                )
+            if posting.lower() != "no":
+                messages.append(
+                    f"{code}: bundle role {purchase_role or sales_role} requires posting=No."
+                )
+
+        if profile in _COMMERCIAL_PLAYBOOKS and supporting_role:
+            messages.append(
+                f"{code}: commercial playbook {profile} cannot also set a PO/GRN/SO/DN bundle role."
+            )
+
+    if messages:
+        raise RuleBookDocumentTypeInvariantError(" ".join(messages))

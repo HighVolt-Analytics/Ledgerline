@@ -110,6 +110,8 @@ def field_is_present(
         return bool((invoice.billing_address or "").strip())
     if key == "email_subject":
         return bool((invoice.email_subject or "").strip())
+    if key == "email_sender":
+        return bool((invoice.email_sender or "").strip())
     if key == "account_code":
         return bool((invoice.account_code or "").strip())
     if key == "account_name":

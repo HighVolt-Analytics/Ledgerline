@@ -499,10 +499,12 @@ def compute_line_match(
     # When invoice has lines but order has none (legacy), treat all invoice as unmatched already done.
     # When both empty: fall back to empty match / no receipt handled below.
 
-    if variance_approved:
-        status = "3-Way Match" if require_receipt else "2-Way Match"
-    elif require_receipt and not receipt_present:
+    # Missing receipt is never cleared by PO/SO variance approval — that only
+    # clears qty/price/amount variance once a receipt exists.
+    if require_receipt and not receipt_present:
         status = missing_receipt_status
+    elif variance_approved:
+        status = "3-Way Match" if require_receipt else "2-Way Match"
     elif any_price:
         status = "Price Variance"
     elif any_qty or any_missing_qty or any_uom or any_unmatched_inv:

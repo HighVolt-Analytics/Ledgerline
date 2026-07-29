@@ -22,7 +22,7 @@ RECOMMENDED_FIELDS_BY_PLAYBOOK: dict[str, tuple[str, ...]] = {
     "debit_note": ("invoice_no", "invoice_date", "vendor"),
     "freight_logistics": ("invoice_no", "invoice_date", "vendor", "total"),
     "import_dossier": ("invoice_no", "invoice_date"),
-    "employee_claim": ("invoice_no", "invoice_date", "total"),
+    "employee_claim": ("email_sender", "invoice_date", "total", "vendor", "invoice_no"),
     "intercompany": ("invoice_no", "invoice_date", "vendor", "total"),
     "pre_transactional": ("invoice_no",),
 }
@@ -92,14 +92,25 @@ def audit_rule_book_extraction_config(payload: RuleBookConfigPayload) -> list[st
     return warnings
 
 
+_LOGGED_WARNING_FINGERPRINTS: set[tuple[str, ...]] = set()
+
+
 def log_extraction_field_config_warnings(payload: RuleBookConfigPayload) -> int:
-    """Log warnings; return count."""
+    """Log warnings once per unique message set (startup/save); return count.
+
+    Request-path config validation must not call this — it floods logs.
+    """
     warnings = audit_rule_book_extraction_config(payload)
+    if not warnings:
+        return 0
+    fingerprint = tuple(warnings)
+    if fingerprint in _LOGGED_WARNING_FINGERPRINTS:
+        return len(warnings)
+    _LOGGED_WARNING_FINGERPRINTS.add(fingerprint)
     for message in warnings:
         logger.warning("extraction_field_config_gap", message=message)
-    if warnings:
-        logger.warning(
-            "extraction_field_config_audit_summary",
-            warning_count=len(warnings),
-        )
+    logger.warning(
+        "extraction_field_config_audit_summary",
+        warning_count=len(warnings),
+    )
     return len(warnings)

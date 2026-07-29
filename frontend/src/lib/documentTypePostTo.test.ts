@@ -4,9 +4,11 @@ import type { ChartOfAccountRow } from "@/api/types";
 import {
   coaAccountsToSelectOptions,
   defaultExpensePostingLedger,
+  filterCoaAccountsForDocumentTypePostTo,
   filterCoaAccountsForExpenseDefaultLedger,
   filterCoaAccountsForLedgerPurpose,
   filterCoaAccountsForPostingRole,
+  isControlLedgerAccountName,
   mergeCoaOptionsWithSavedValue,
   resolveCoaAccountName,
 } from "@/lib/coaAccountOptions";
@@ -80,6 +82,15 @@ describe("coaAccountOptions", () => {
   it("filters expense default ledgers for vendor and purchase rules", () => {
     const names = filterCoaAccountsForExpenseDefaultLedger(starterCoa).map((row) => row.name);
     expect(names).toEqual(["Operating Expenses"]);
+  });
+
+  it("excludes control accounts from document-type Post To picker", () => {
+    expect(isControlLedgerAccountName("Accounts Payable")).toBe(true);
+    const names = filterCoaAccountsForDocumentTypePostTo(starterCoa, "po_goods").map(
+      (row) => row.name
+    );
+    expect(names).toEqual(["Operating Expenses"]);
+    expect(names).not.toContain("Accounts Payable");
   });
 
   it("resolves default expense posting ledger from starter COA", () => {

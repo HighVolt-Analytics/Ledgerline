@@ -5,6 +5,8 @@ import {
   normalizeDtCodeList,
   playbookEnforcesBundle,
 } from "@/lib/documentBundleConfig";
+import { DOCUMENT_TYPE_TEMPLATES } from "@/lib/documentTypeTemplates";
+import { defaultPlaybookProfileForCode } from "@/lib/documentTypePlaybookDefaults";
 
 export type BundleConfigWarning = {
   id: string;
@@ -24,6 +26,62 @@ function bundleRoleForMember(member: DocumentTypeDefinition): string {
     (member.salesBundleRole || "").trim() ||
     (member.purchaseBundleRole || "").trim()
   );
+}
+
+/** Catalogue-level health warnings (drift / duplicate roles) — report only. */
+export function catalogueHealthWarnings(
+  documentTypes: DocumentTypeDefinition[]
+): BundleConfigWarning[] {
+  const warnings: BundleConfigWarning[] = [];
+  const roleOwners = new Map<string, string>();
+
+  for (const dt of documentTypes) {
+    if (!dt.enabled) continue;
+    const code = dt.code.trim().toUpperCase();
+    const purchaseRole = (dt.purchaseBundleRole || "").trim().toLowerCase();
+    const salesRole = (dt.salesBundleRole || "").trim().toLowerCase();
+    for (const [kind, role] of [
+      ["purchase", purchaseRole],
+      ["sales", salesRole],
+    ] as const) {
+      if (!role) continue;
+      if (kind === "purchase" && role !== "po" && role !== "grn") continue;
+      if (kind === "sales" && role !== "so" && role !== "dn") continue;
+      const key = `${kind}:${role}`;
+      const prior = roleOwners.get(key);
+      if (prior) {
+        warnings.push({
+          id: `duplicate-role-${key}-${code}`,
+          message: `${code} and ${prior} both claim the ${role.toUpperCase()} bundle role — keep only one enabled.`,
+        });
+      } else {
+        roleOwners.set(key, code);
+      }
+    }
+
+    const matrix = (dt.matrixTemplateCode || "").trim().toUpperCase();
+    if (!matrix) continue;
+    const template = DOCUMENT_TYPE_TEMPLATES.find((row) => row.id === matrix);
+    if (!template || template.id === "custom") continue;
+    const shippedProfile = defaultPlaybookProfileForCode(matrix);
+    const profile = (dt.playbookProfile || "").trim().toLowerCase();
+    const shippedPurchase = (template.purchaseBundleRole || "").trim().toLowerCase();
+    const shippedSales = (template.salesBundleRole || "").trim().toLowerCase();
+    if (shippedProfile && profile && profile !== shippedProfile) {
+      warnings.push({
+        id: `matrix-drift-playbook-${code}`,
+        message: `${code} is linked to matrix ${matrix} but playbook is ${profile} (shipped ${shippedProfile}) — detach or restore.`,
+      });
+    }
+    if (purchaseRole !== shippedPurchase || salesRole !== shippedSales) {
+      warnings.push({
+        id: `matrix-drift-role-${code}`,
+        message: `${code} is linked to matrix ${matrix} but bundle role drifted from the shipped template.`,
+      });
+    }
+  }
+
+  return warnings;
 }
 
 /** Rule Book warnings for finance-standard bundle configuration. */
@@ -60,7 +118,7 @@ export function bundleConfigWarnings(
   if (playbookEnforcesBundle(draft) && mandatory.length === 0) {
     warnings.push({
       id: "enforce-bundle-empty",
-        message: isSales
+      message: isSales
         ? "This playbook enforces supporting document completeness — add required SO/DN members or use “Use SO + DN from catalogue”."
         : "This playbook enforces supporting document completeness — add required PO/GRN members or use “Use PO + GRN from catalogue”.",
     });

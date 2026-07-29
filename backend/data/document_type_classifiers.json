@@ -340,9 +340,21 @@
         },
         {
           "type": "condition",
+          "field": "document_text",
+          "operator": "contains",
+          "value": "reimbursement"
+        },
+        {
+          "type": "condition",
           "field": "attachment_name",
           "operator": "contains",
-          "value": "claim"
+          "value": "expense-claim"
+        },
+        {
+          "type": "condition",
+          "field": "attachment_name",
+          "operator": "contains",
+          "value": "claim-receipt"
         }
       ]
     }

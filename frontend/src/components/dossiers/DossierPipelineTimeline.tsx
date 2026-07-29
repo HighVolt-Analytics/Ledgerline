@@ -12,6 +12,7 @@ import { formatApprovalTimestamp } from "@/lib/dossierApproval";
 import {
   DOSSIER_PIPELINE_PHASES,
   DOSSIER_PIPELINE_STAGES,
+  UNDERSTOOD_DOSSIER_STAGE_IDS,
   dossierPipelineCounts,
   dossierPipelinePhases,
   dossierStageDescription,
@@ -558,21 +559,26 @@ export function DossierPipelineTimeline({
     const ordered = catalog.filter((stage) => byStage.has(stage.id));
     return new Map(ordered.map((stage, index) => [stage.id, index + 1]));
   }, [byStage, catalog]);
+  const understoodCompact =
+    pipelinePath === "understood" ||
+    (pipeline.length > 0 &&
+      pipeline.length <= UNDERSTOOD_DOSSIER_STAGE_IDS.size &&
+      pipeline.every((step) => UNDERSTOOD_DOSSIER_STAGE_IDS.has(step.stageId)));
 
   const [openPhases, setOpenPhases] = useState(() => {
-    if (pipelinePath === "understood" || pipeline.length <= 8) {
+    if (understoodCompact) {
       return new Set(DOSSIER_PIPELINE_PHASES.map((phase) => phase.id));
     }
     return defaultOpenPhases(byStage);
   });
   const [openStages, setOpenStages] = useState(() => {
-    if (pipelinePath === "understood" || pipeline.length <= 8) {
+    if (understoodCompact) {
       return new Set(pipeline.map((step) => step.stageId));
     }
     return defaultOpenStages(byStage);
   });
   const [openCompletedGroups, setOpenCompletedGroups] = useState<Set<DossierPipelinePhaseId>>(
-    () => new Set(pipelinePath === "understood" ? DOSSIER_PIPELINE_PHASES.map((p) => p.id) : [])
+    () => new Set(understoodCompact ? DOSSIER_PIPELINE_PHASES.map((p) => p.id) : [])
   );
   const stageRefs = useRef<Partial<Record<DossierPipelineStageId, HTMLElement | null>>>({});
 
@@ -580,7 +586,12 @@ export function DossierPipelineTimeline({
 
   useEffect(() => {
     const map = new Map(pipeline.map((step) => [step.stageId, step]));
-    if (pipelinePath === "understood" || pipeline.length <= 8) {
+    const compact =
+      pipelinePath === "understood" ||
+      (pipeline.length > 0 &&
+        pipeline.length <= UNDERSTOOD_DOSSIER_STAGE_IDS.size &&
+        pipeline.every((step) => UNDERSTOOD_DOSSIER_STAGE_IDS.has(step.stageId)));
+    if (compact) {
       setOpenPhases(new Set(DOSSIER_PIPELINE_PHASES.map((phase) => phase.id)));
       setOpenStages(new Set(pipeline.map((step) => step.stageId)));
       setOpenCompletedGroups(new Set(DOSSIER_PIPELINE_PHASES.map((p) => p.id)));
@@ -705,7 +716,7 @@ export function DossierPipelineTimeline({
           const open = openPhases.has(phase.id);
           // Understood path: show every stage card — do not collapse into "N completed".
           const { completedBeforeFail, failed, rest } =
-            pipelinePath === "understood"
+            pipelinePath === "understood" || understoodCompact
               ? { completedBeforeFail: [], failed: [], rest: phaseStages }
               : splitPhaseStages(phaseStages, byStage);
 
@@ -726,7 +737,7 @@ export function DossierPipelineTimeline({
                 open={openStages.has(stage.id)}
                 onToggle={() => toggleStage(stage.id)}
                 routeTarget={routeTarget}
-                compact={compact && pipelinePath !== "understood"}
+                compact={compact && pipelinePath !== "understood" && !understoodCompact}
                 cardRef={(el) => {
                   stageRefs.current[stage.id] = el;
                 }}

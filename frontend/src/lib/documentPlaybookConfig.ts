@@ -116,7 +116,13 @@ export const APPROVAL_MODE_OPTIONS: Array<{ value: ApprovalMode; label: string }
 export function inferPlaybookProfileFromDefinition(
   docType: Pick<
     DocumentTypeDefinition,
-    "code" | "klass" | "posting" | "purchaseBundleRole" | "salesBundleRole" | "playbookProfile"
+    | "code"
+    | "klass"
+    | "posting"
+    | "purchaseBundleRole"
+    | "salesBundleRole"
+    | "playbookProfile"
+    | "matrixTemplateCode"
   >
 ): PlaybookProfile {
   const purchaseRole = (docType.purchaseBundleRole || "").trim().toLowerCase();
@@ -125,9 +131,9 @@ export function inferPlaybookProfileFromDefinition(
   if (salesRole === "so" || salesRole === "dn") return "supporting";
   const explicit = (docType.playbookProfile || "").trim().toLowerCase() as PlaybookProfile;
   if (explicit) return explicit;
-  const code = (docType.code || "").trim().toUpperCase();
-  if (code) {
-    const defaultProfile = shippedDefaultPlaybookProfileForCode(code);
+  const catalogueCode = (docType.matrixTemplateCode || docType.code || "").trim().toUpperCase();
+  if (catalogueCode) {
+    const defaultProfile = shippedDefaultPlaybookProfileForCode(catalogueCode);
     if (defaultProfile !== "standard_transactional") return defaultProfile;
   }
   const posting = derivePostingFromKlassAndProfile(

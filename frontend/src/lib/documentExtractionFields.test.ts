@@ -198,7 +198,12 @@ describe("reconcileExtractionFieldsForRoute", () => {
 
 describe("routeCompulsoryBaseline", () => {
   it("returns team money fields", () => {
-    expect(routeCompulsoryBaseline("Team Expenses")).toEqual(["subtotal", "gst", "total"]);
+    expect(routeCompulsoryBaseline("Team Expenses")).toEqual([
+      "email_sender",
+      "subtotal",
+      "gst",
+      "total",
+    ]);
   });
 
   it("returns purchase baseline with subtotal and gst", () => {

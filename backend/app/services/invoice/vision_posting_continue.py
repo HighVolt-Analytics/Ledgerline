@@ -36,6 +36,20 @@ from app.services.tenant.tenant_org_context import OrgContext
 _VISION_EVAL_HOLD = frozenset({EVAL_VISION_VAULTED, EVAL_VISION_HEADER_REVIEW})
 
 
+def vision_should_sync_register(definition: DocumentTypeDefinition | None) -> bool:
+    """True when posting=No DT is a PO/GRN/SO/DN register document (not vault-only)."""
+    if definition is None:
+        return False
+    from app.services.classification.document_type_playbook_service import (
+        _infer_purchase_bundle_role,
+        _infer_sales_bundle_role,
+    )
+
+    purchase_role = _infer_purchase_bundle_role(definition)
+    sales_role = _infer_sales_bundle_role(definition)
+    return purchase_role in {"po", "grn"} or sales_role in {"so", "dn"}
+
+
 def vision_should_continue_posting(
     invoice: Invoice,
     definition: DocumentTypeDefinition | None,
@@ -102,6 +116,63 @@ def vision_hold_evaluation_status(
     return EVAL_VISION_VAULTED if header_ok else EVAL_VISION_HEADER_REVIEW
 
 
+def _extracted_needs_review(invoice: Invoice) -> bool:
+    fields = invoice.extracted_fields if isinstance(invoice.extracted_fields, dict) else {}
+    token = fields.get("needs_review")
+    if token is True:
+        return True
+    if isinstance(token, str) and token.strip().lower() in {"1", "true", "yes"}:
+        return True
+    return False
+
+
+def vision_header_ok_from_invoice(
+    invoice: Invoice,
+    definition: DocumentTypeDefinition | None,
+) -> bool:
+    """Derive header_ok from persisted invoice state (for Approvals resume)."""
+    from app.services.approval.approval_pipeline_service import payable_fields_complete
+    from app.services.approval.approval_service import _assert_invoice_ready_for_approval
+
+    if _extracted_needs_review(invoice):
+        return False
+    if definition is not None and allows_posting_pipeline(definition):
+        if not payable_fields_complete(invoice):
+            return False
+    try:
+        _assert_invoice_ready_for_approval(invoice, definition=definition)
+    except ValueError:
+        return False
+    return True
+
+
+_VISION_POSTING_SKIP_MESSAGES: dict[str, str] = {
+    "dt_not_posting": (
+        "Supporting document — stored in vault only; posting is not applicable "
+        "for this document type."
+    ),
+    "header_not_ok": (
+        "Complete header fields in the Fields tab (vendor, amounts, dates), save, "
+        "then confirm again."
+    ),
+    "no_document_type": "Confirm document type in the Fields tab before approving.",
+    "definition_missing": "Document type is not in your Rule Book — fix DT before approving.",
+}
+
+
+def vision_posting_skip_user_message(
+    invoice: Invoice,
+    definition: DocumentTypeDefinition | None,
+    *,
+    header_ok: bool,
+) -> str:
+    reason = vision_posting_skip_reason(invoice, definition, header_ok=header_ok)
+    return _VISION_POSTING_SKIP_MESSAGES.get(
+        reason,
+        "Cannot confirm this document into the posting pipeline yet.",
+    )
+
+
 def resolve_vision_posting_definition(
     invoice: Invoice,
     config: RuleBookConfigPayload,
@@ -113,7 +184,15 @@ def resolve_vision_posting_definition(
 
 
 def _apply_dt_route_target(invoice: Invoice, definition: DocumentTypeDefinition) -> None:
-    route = (definition.route_target or "").strip()
+    from app.services.classification.document_type_catalog import (
+        ROUTE_TEAM,
+        is_team_expenses_document_type,
+        resolved_route_for_definition,
+    )
+
+    route = resolved_route_for_definition(definition)
+    if not route and is_team_expenses_document_type(definition):
+        route = ROUTE_TEAM
     if route:
         invoice.route_target = route
 
@@ -137,13 +216,26 @@ async def continue_vision_understood_posting(
         human_approval_may_bypass_validation,
         human_approved_payable_bypass,
     )
+    from app.services.classification.document_type_catalog import (
+        ROUTE_EXPENSES,
+        ROUTE_TEAM,
+        is_team_expenses_document_type,
+        resolved_route_for_definition,
+    )
     from app.services.invoice.pipeline import (
         _log_processing_override_skip,
         _sync_counterparty_and_evaluate,
         _vendor_hold_unless_skipped,
+        prepare_route_register_before_posting,
         resume_invoice_posting_pipeline,
     )
     from app.services.invoice.processing_override_catalog import should_skip
+    from app.services.purchase.team_expense_route_policy import (
+        ensure_team_expenses_document_type,
+        normalize_capture_source,
+        should_force_team_expenses,
+        team_expenses_allowed_capture,
+    )
     from app.services.vault.vault_blob_sync import sync_invoice_blob_path
 
     loaded = (
@@ -180,8 +272,35 @@ async def continue_vision_understood_posting(
         parsed=parsed,
         config=config,
         org=org,
+        force_dt_route=True,
     )
+    # Team Expenses: employee-channel policy wins; upload never stays on TE.
+    employees = list(config.employee_masters or [])
+    capture_ok = team_expenses_allowed_capture(normalize_capture_source(loaded))
+    if should_force_team_expenses(loaded, employees):
+        ensure_team_expenses_document_type(loaded, config.document_types)
+        loaded.route_target = ROUTE_TEAM
+    elif not capture_ok and (
+        (loaded.route_target or "").strip() == ROUTE_TEAM
+        or is_team_expenses_document_type(definition)
+    ):
+        catalogue_route = resolved_route_for_definition(definition)
+        if catalogue_route and catalogue_route != ROUTE_TEAM:
+            loaded.route_target = catalogue_route
+        else:
+            loaded.route_target = ROUTE_EXPENSES
+    elif is_team_expenses_document_type(definition) and capture_ok:
+        team_route = resolved_route_for_definition(definition) or ROUTE_TEAM
+        loaded.route_target = team_route
+    else:
+        catalogue_route = resolved_route_for_definition(definition)
+        if catalogue_route and catalogue_route != ROUTE_TEAM:
+            loaded.route_target = catalogue_route
+        elif catalogue_route == ROUTE_TEAM and capture_ok:
+            loaded.route_target = ROUTE_TEAM
     invoice.route_target = loaded.route_target
+    invoice.document_type_code = loaded.document_type_code
+    invoice.document_type_confidence = loaded.document_type_confidence
     invoice.evaluation_status = loaded.evaluation_status
     invoice.vendor = loaded.vendor
 
@@ -282,6 +401,35 @@ async def continue_vision_understood_posting(
         ),
     )
 
+    # Register sync must run before the approval gate. Otherwise commercial
+    # invoices held for match_not_clean never get sales/purchase_document_type
+    # or SO/PO.invoice_id (classic OCR path syncs before validation/approval).
+    invoice.status = loaded.status
+    invoice.evaluation_status = loaded.evaluation_status
+    invoice.route_target = loaded.route_target
+    invoice.vendor = loaded.vendor
+    invoice.raw_file_path = loaded.raw_file_path
+    invoice.validation_results = loaded.validation_results
+    invoice.document_type_code = loaded.document_type_code
+    invoice.so_reference = loaded.so_reference
+    invoice.po_reference = loaded.po_reference
+    invoice.sales_document_type = loaded.sales_document_type
+    invoice.purchase_document_type = loaded.purchase_document_type
+
+    if await prepare_route_register_before_posting(
+        session,
+        invoice,
+        bypass_review_gates=bypass_review_gates,
+    ):
+        return
+
+    loaded.sales_document_type = invoice.sales_document_type
+    loaded.purchase_document_type = invoice.purchase_document_type
+    loaded.so_reference = invoice.so_reference
+    loaded.po_reference = invoice.po_reference
+    loaded.evaluation_status = invoice.evaluation_status
+    loaded.status = invoice.status
+
     if await apply_document_type_approval_gate(
         session,
         loaded,
@@ -291,10 +439,13 @@ async def continue_vision_understood_posting(
     ):
         invoice.status = loaded.status
         invoice.evaluation_status = loaded.evaluation_status
+        invoice.sales_document_type = loaded.sales_document_type
+        invoice.purchase_document_type = loaded.purchase_document_type
+        invoice.so_reference = loaded.so_reference
+        invoice.po_reference = loaded.po_reference
         send_notification(invoice, InvoiceStatus.EXCEPTION)
         return
 
-    # Copy identity fields back onto the caller's invoice before resume.
     invoice.status = loaded.status
     invoice.evaluation_status = loaded.evaluation_status
     invoice.route_target = loaded.route_target
@@ -302,5 +453,9 @@ async def continue_vision_understood_posting(
     invoice.raw_file_path = loaded.raw_file_path
     invoice.validation_results = loaded.validation_results
     invoice.document_type_code = loaded.document_type_code
+    invoice.sales_document_type = loaded.sales_document_type
+    invoice.purchase_document_type = loaded.purchase_document_type
+    invoice.so_reference = loaded.so_reference
+    invoice.po_reference = loaded.po_reference
 
     await resume_invoice_posting_pipeline(session, invoice, config=config)

@@ -4,8 +4,8 @@ export const MATRIX_STAGES = [
   "Received",
   "Parsed",
   "Validated",
-  "Mapped",
   "Approved",
+  "Mapped",
   "Posted",
 ] as const;
 
@@ -26,8 +26,8 @@ const STAGE_ACTORS: Record<MatrixStage, string> = {
   Received: "Email capture",
   Parsed: "OCR engine",
   Validated: "Validator",
-  Mapped: "Rule engine",
   Approved: "Approver",
+  Mapped: "Rule engine",
   Posted: "Ledger",
 };
 
@@ -42,7 +42,9 @@ export function validationHasFailure(inv: Invoice): boolean {
   return rules.some((r) => !r.skipped && !r.passed);
 }
 
-/** Completed stage count before the current in-progress pipeline step. */
+/** Completed stage count before the current in-progress pipeline step.
+ * Order: Received → Parsed → Validated → Approved → Mapped → Posted
+ */
 export function completedStageCount(status: InvoiceStatus): number {
   switch (status) {
     case "pending":
@@ -52,10 +54,11 @@ export function completedStageCount(status: InvoiceStatus): number {
     case "validating":
       return 2;
     case "mapping":
-      return 3;
-    case "journaling":
+      // Approve/Match already cleared — currently on Map GL.
       return 4;
+    case "journaling":
     case "reconciling":
+      // Map complete — waiting on Post / ledger continuum.
       return 5;
     case "processed":
       return 6;

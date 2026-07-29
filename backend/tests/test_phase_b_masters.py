@@ -32,7 +32,7 @@ from app.services.purchase.team_expense_approval import (
     requires_manual_approval,
 )
 from app.services.purchase.team_expense_validator import (
-    _find_employee_by_sender,
+    find_employee_by_sender,
     run_team_expense_validations,
     vr_te04_bank,
     vr_te05_status,
@@ -62,7 +62,7 @@ def test_find_employee_by_whatsapp() -> None:
         status="Active",
         db_id=1,
     )
-    match = _find_employee_by_sender([employee], "+61 412 345 678")
+    match = find_employee_by_sender([employee], "+61 412 345 678")
     assert match is not None
     assert match.name == "Marcus Webb"
 

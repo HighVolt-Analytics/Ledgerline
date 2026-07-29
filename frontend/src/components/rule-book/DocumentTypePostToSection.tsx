@@ -36,6 +36,9 @@ export function DocumentTypePostToEditor({
     emptyLabel: documentTypeRequiresPostTo(draft)
       ? "— Select account —"
       : "— Optional —",
+    ledgerPurpose: documentTypeRequiresPostTo(draft) ? "document_type_post_to" : undefined,
+    playbookProfile: draft.playbookProfile,
+    routeTarget: draft.routeTarget,
   });
 
   const ledgerExclude = draft.postTo.ledger.trim() ? [draft.postTo.ledger] : [];

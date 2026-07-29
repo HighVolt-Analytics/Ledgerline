@@ -814,12 +814,12 @@ export function UploadPage() {
 
   const emptyHint =
     channelTab === "upload"
-      ? "Drop files above to upload, or capture documents from the Email, WhatsApp, or Viber tabs."
+      ? "Drop files above to upload, or capture documents from the Email, WhatsApp, or Viber tabs. Team expense claims use Email / WhatsApp / Viber when the sender is in Employees."
       : channelTab === "email"
-        ? "Connect a mailbox and fetch mail to capture documents here."
+        ? "Connect a mailbox and fetch mail. Messages from employees in the registry route to Team Expenses."
         : channelTab === "whatsapp"
-          ? "Connect WhatsApp to capture documents here."
-          : "Connect Viber to capture documents here.";
+          ? "Connect WhatsApp to capture employee claims (sender must match Employees)."
+          : "Connect Viber to capture employee claims (sender must match Employees).";
 
   const emptyTitle =
     channelTab === "upload"

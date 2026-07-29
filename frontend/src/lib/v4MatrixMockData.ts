@@ -2,7 +2,9 @@ export type MatrixFlagType =
   | "Clean"
   | "Anomaly Detected"
   | "Duplicate Suspected"
-  | "Quarantined";
+  | "Quarantined"
+  | "Awaiting approval"
+  | "Awaiting linkage";
 
 export type MatrixPaymentStatus =
   | "Paid"

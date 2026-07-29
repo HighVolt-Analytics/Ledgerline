@@ -58,7 +58,7 @@ import {
 import {
   documentTypeFromTemplate,
 } from "@/lib/documentTypeTemplates";
-import { bundleConfigWarnings } from "@/lib/documentTypeBundleValidation";
+import { bundleConfigWarnings, catalogueHealthWarnings } from "@/lib/documentTypeBundleValidation";
 import { normalizeBundleConditional } from "@/lib/documentBundleConfig";
 import { DocumentRecognitionEditor } from "@/components/rule-book/DocumentRecognitionEditor";
 import { DocumentTypeChip } from "@/components/inbox/DocumentTypeChip";
@@ -1218,7 +1218,7 @@ export function DocumentTypesTab({
       clearTimeout(fieldSaveTimerRef.current);
       fieldSaveTimerRef.current = null;
     }
-    pendingFieldPatchRef.current = null;
+    flushPendingFieldPatch();
     if (!editing) return;
     const normalized = editing.code.trim().toUpperCase();
     const validationRules = mergeConfigurableRules(
@@ -1263,6 +1263,11 @@ export function DocumentTypesTab({
     return codes;
   }, [documentTypes, isNew, selectedCode]);
 
+  const healthWarnings = useMemo(
+    () => catalogueHealthWarnings(documentTypes),
+    [documentTypes]
+  );
+
   return (
     <div className="document-types-tab space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -1281,6 +1286,20 @@ export function DocumentTypesTab({
           </Button>
         ) : null}
       </div>
+
+      {healthWarnings.length > 0 ? (
+        <ul
+          className="space-y-1 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-100"
+          data-testid="document-types-health-warnings"
+        >
+          {healthWarnings.slice(0, 8).map((warning) => (
+            <li key={warning.id}>{warning.message}</li>
+          ))}
+          {healthWarnings.length > 8 ? (
+            <li>+{healthWarnings.length - 8} more catalogue warnings</li>
+          ) : null}
+        </ul>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-2">
         <ListSearchInput

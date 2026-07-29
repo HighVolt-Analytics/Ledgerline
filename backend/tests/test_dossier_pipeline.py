@@ -293,7 +293,7 @@ def test_pipeline_understood_hold_skips_validate_not_routing_fail() -> None:
     pipeline = build_dossier_pipeline(inv, logs)
     validate = next(s for s in pipeline if s.stage_id == "validate")
     assert validate.state == "skipped"
-    assert "understood path" in (validate.detail or "").lower()
+    assert "vault-only" in (validate.detail or "").lower()
     assert validate.exception_code is None
     fail = first_pipeline_failure(pipeline)
     assert fail is None or fail.stage_id != "validate"
@@ -346,10 +346,33 @@ def test_understood_path_skips_llm_classify_not_blocked() -> None:
         "file_validity",
         "vision_understand",
         "extract",
+        "document_type",
         "bundle",
         "archive",
+        "validate",
+        "match",
+        "approve",
+        "map_gl",
+        "journal",
+        "reconcile",
+        "post",
     ]
-    assert all(s.state == "pass" for s in pipeline)
+    by_id = {s.stage_id: s for s in pipeline}
+    for sid in (
+        "ingest",
+        "duplicate",
+        "storage",
+        "file_validity",
+        "vision_understand",
+        "extract",
+        "document_type",
+        "bundle",
+        "archive",
+    ):
+        assert by_id[sid].state == "pass"
+    for sid in ("validate", "match", "approve", "map_gl", "journal", "reconcile", "post"):
+        assert by_id[sid].state == "skipped"
+        assert "vault-only" in (by_id[sid].detail or "").lower()
     assert first_pipeline_failure(pipeline) is None
     assert first_pipeline_bottleneck(pipeline) is None
 
@@ -386,8 +409,71 @@ def test_understood_pipeline_passes_from_invoice_snapshot_without_vision_logs() 
     by_id = {s.stage_id: s for s in pipeline}
     assert by_id["vision_understand"].state == "pass"
     assert by_id["extract"].state == "pass"
+    assert by_id["document_type"].state == "pass"
     assert by_id["bundle"].state == "pass"
     assert by_id["archive"].state == "pass"
+    assert by_id["validate"].state == "skipped"
+
+
+def test_understood_pipeline_continue_shows_post_vault_live() -> None:
+    from app.services.dossier.dossier_pipeline_service import build_understood_dossier_pipeline
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.PROCESSED,
+        evaluation_status="auto_coded",
+        currency="AUD",
+        document_type_code="TAX_INV",
+        account_name="Cost of Goods",
+        document_heading="TAX INVOICE",
+        extracted_fields={
+            "canonical_document_type": "Tax Invoice",
+            "vision_bundle_kind": "invoice_no",
+            "vision_bundle_key": "INV-9",
+        },
+        raw_file_path="/tmp/inv.pdf",
+    )
+    logs = [
+        _log_id("invoice_uploaded", 1, 1),
+        _log_id("storage_verified", 1, 2),
+        _log_id("file_validity_passed", 1, 3),
+        _log_id("vision_understand_passed", 1, 4, confidence=0.9),
+        _log_id("vision_header_extracted", 1, 5, document_heading="TAX INVOICE"),
+        _log_id("vision_document_type_mapped", 1, 6, code="TAX_INV", reason="heading_rules"),
+        _log_id(
+            "vision_bundle_linked",
+            1,
+            7,
+            vision_bundle_kind="invoice_no",
+            vision_bundle_key="INV-9",
+        ),
+        _log_id("blob_relocated", 1, 8, book="Tax Invoice"),
+        _log_id("vision_posting_continued", 1, 9, document_type_code="TAX_INV", posting=True),
+        _log_id("validation_passed", 1, 10),
+        _log_id("mapping_applied", 1, 11, account_name="Cost of Goods"),
+        _log_id("invoice_approved", 1, 12),
+        _log_id(
+            "three_way_match_evaluated",
+            1,
+            13,
+            match_status="2-Way Match",
+            status="match",
+        ),
+        _log_id("invoice_processed", 1, 14),
+        _log_id("invoice_published_to_ledger", 1, 15),
+    ]
+    pipeline = build_understood_dossier_pipeline(inv, logs)
+    by_id = {s.stage_id: s for s in pipeline}
+    assert by_id["document_type"].state == "pass"
+    assert by_id["validate"].state == "pass"
+    assert by_id["approve"].state == "pass"
+    assert by_id["map_gl"].state == "pass"
+    assert by_id["match"].state == "pass"
+    assert by_id["journal"].state == "pass"
+    assert by_id["reconcile"].state == "pass"
+    assert by_id["post"].state == "pass"
+    assert first_pipeline_failure(pipeline) is None
 
 def test_understood_path_outcome_not_blocked() -> None:
     from app.services.dossier.dossier_service import _derive_outcome
@@ -1204,6 +1290,7 @@ def test_resolve_match_fails_on_mismatch_register_status() -> None:
         invoice_no="INV-2026-0703",
         status=InvoiceStatus.EXCEPTION,
         currency="INR",
+        purchase_document_type="invoice",
     )
     logs = [
         _log(
@@ -1222,6 +1309,103 @@ def test_resolve_match_fails_on_mismatch_register_status() -> None:
     assert step.state == "fail"
     assert step.exception_code == "MATCH_FAILED"
     assert any(check.state == "fail" and check.rule_ref == "MATCH" for check in (step.checks or []))
+    assert step.remediation and "variance" in step.remediation.lower()
+    assert "Link PO/GRN" not in (step.remediation or "")
+
+
+def test_resolve_match_waives_supporting_so_despite_commercial_variance_audit() -> None:
+    """Register sync writes Qty Variance onto the SO upload — Processing must not fail Match."""
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Harbour View Hotel Pty Ltd",
+        so_reference="SO-TEST-003",
+        status=InvoiceStatus.PROCESSED,
+        evaluation_status="auto_coded",
+        sales_document_type="so",
+        currency="AUD",
+    )
+    logs = [
+        _log(
+            "three_way_match_evaluated",
+            1,
+            **_match_eval_detail(
+                status="partial",
+                match_status="Qty Variance",
+                total_deviation=150.0,
+            ),
+        ),
+        _log("sales_document_processed", 1),
+    ]
+    step = _resolve_match(inv, logs, wm=15)
+    assert step.state == "waived"
+    assert step.exception_code is None
+    assert "supporting" in (step.detail or "").lower()
+
+
+def test_non_posting_supporting_waives_gl_journal_reconcile_post() -> None:
+    """Finance: SO/DN/PO/GRN never wait on Map GL → Journal → Reconcile → Post."""
+    from app.services.dossier.dossier_pipeline_service import (
+        _resolve_journal,
+        _resolve_map_gl,
+        _resolve_post,
+        _resolve_reconcile,
+    )
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Harbour View Hotel Pty Ltd",
+        so_reference="SO-TEST-003",
+        status=InvoiceStatus.PROCESSED,
+        evaluation_status="auto_coded",
+        sales_document_type="dn",
+        currency="AUD",
+    )
+    logs = [_log("sales_document_processed", 1)]
+    for resolver, stage in (
+        (_resolve_map_gl, "map_gl"),
+        (_resolve_journal, "journal"),
+        (_resolve_reconcile, "reconcile"),
+        (_resolve_post, "post"),
+    ):
+        step = resolver(inv, logs, wm=20)
+        assert step.stage_id == stage
+        assert step.state == "waived", f"{stage} should be waived, got {step.state}"
+        assert "non-posting" in (step.detail or "").lower()
+
+
+def test_resolve_sales_match_price_variance_remediation() -> None:
+    from app.services.classification.document_type_catalog import ROUTE_SALES
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Harbour View Hotel Pty Ltd",
+        so_reference="SO-TEST-003",
+        invoice_no="INV-SAL-003",
+        status=InvoiceStatus.EXCEPTION,
+        route_target=ROUTE_SALES,
+        currency="AUD",
+    )
+    logs = [
+        _log(
+            "three_way_match_evaluated",
+            1,
+            status="mismatch",
+            match_status="Price Variance",
+            so_number="SO-TEST-003",
+            so_present=True,
+            dn_present=True,
+            invoice_present=True,
+            so_unit_price=45.0,
+            invoice_unit_price=60.0,
+            total_deviation=150.0,
+            currency="AUD",
+        ),
+    ]
+    step = _resolve_match(inv, logs, wm=15)
+    assert step.state == "fail"
+    assert "Price Variance" in (step.detail or "")
+    assert step.remediation and "sales price/qty variance" in step.remediation.lower()
+    assert "Link the commercial invoice" not in (step.remediation or "")
 
 
 def test_resolve_match_passes_on_clean_three_way_match() -> None:

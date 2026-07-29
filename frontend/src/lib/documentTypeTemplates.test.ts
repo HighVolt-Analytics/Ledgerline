@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import shippedCatalog from "@/lib/v5DocumentTypes.json";
+import { documentTypeDefinitionToApi, ruleBookConfigFromApi } from "@/lib/ruleBookConfigApi";
 import {
   DOCUMENT_TYPE_TEMPLATES,
   documentTypeFromTemplate,
@@ -94,5 +95,73 @@ describe("documentTypeFromTemplate format", () => {
     expect(hydrated.recognitionMode).toBe("prompt");
     expect(hydrated.llmPrompt).toContain("Custom vendor invoice rules");
     expect(hydrated.classifier.enabled).toBe(false);
+  });
+
+  it("preserves user edits after API roundtrip when org code differs from matrix template", () => {
+    const existing: DocumentTypeDefinition[] = [
+      { code: "DT-01" } as DocumentTypeDefinition,
+      { code: "DT-02" } as DocumentTypeDefinition,
+      { code: "DT-03" } as DocumentTypeDefinition,
+      { code: "DT-04" } as DocumentTypeDefinition,
+    ];
+    const created = documentTypeFromTemplate("DT-01", existing);
+    expect(created.code).toBe("DT-05");
+    expect(created.matrixTemplateCode).toBe("DT-01");
+
+    const customPrompt =
+      "Custom PO invoice recognition for our warehouse vendors — handwritten totals allowed.";
+    const edited: DocumentTypeDefinition = {
+      ...created,
+      title: "Our PO goods invoice",
+      shortTitle: "Our PO invoice",
+      llmPrompt: customPrompt,
+      playbookProfile: "standard_transactional",
+      matchPolicy: { mode: "none" },
+      approvalPolicy: { mode: "full_doa" },
+      extractionFields: ["vendor", "invoice_no", "po_reference"],
+      requiredFields: ["vendor"],
+      postTo: { ledger: "Operating Expenses", subLedger: "" },
+    };
+
+    const apiRow = documentTypeDefinitionToApi(edited);
+    const reloaded = ruleBookConfigFromApi({
+      schema_version: 1,
+      document_classification: {
+        unclassified_document_type_code: "",
+        unclassified_min_confidence: 0.45,
+      },
+      ai_classification: {
+        document_ai_provider: "azure_di",
+        auto_route_min_confidence: 0.85,
+      },
+      org_context: { company_name: "", industry: "", fiscal_year_end: "" },
+      document_types: [apiRow],
+      email_capture_rules: [],
+      purchase_rules: [],
+      sales_rules: [],
+      expense_rules: [],
+      team_expense_rules: [],
+      vendor_detection_config: { weights: {}, threshold: 70 },
+      posting_defaults: {
+        tax_account: "GST Paid",
+        payable_account: "Accounts Payable",
+        receivable_account: "Accounts Receivable",
+        fallback_account: "Suspense Account",
+      },
+      document_sets: [],
+      vendor_masters: [],
+      employee_masters: [],
+      chart_of_accounts: [],
+    }).documentTypes[0]!;
+
+    expect(reloaded.title).toBe("Our PO goods invoice");
+    expect(reloaded.shortTitle).toBe("Our PO invoice");
+    expect(reloaded.llmPrompt).toBe(customPrompt);
+    expect(reloaded.playbookProfile).toBe("standard_transactional");
+    expect(reloaded.matchPolicy.mode).toBe("none");
+    expect(reloaded.matrixTemplateCode).toBe("DT-01");
+    expect(reloaded.extractionFields).toEqual(
+      expect.arrayContaining(["vendor", "invoice_no", "po_reference"])
+    );
   });
 });

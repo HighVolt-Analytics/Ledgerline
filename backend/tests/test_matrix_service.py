@@ -22,6 +22,31 @@ def test_derive_matrix_flag_exception() -> None:
     assert reason == "Total mismatch"
 
 
+def test_derive_matrix_flag_pending_approval() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Harbour View",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="pending_approval",
+    )
+    flag, reason = derive_matrix_flag(inv)
+    assert flag == "Awaiting approval"
+    assert reason is not None
+    assert "approver" in reason.lower()
+
+
+def test_derive_matrix_flag_awaiting_po_linkage() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Everest",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="awaiting_po",
+    )
+    flag, reason = derive_matrix_flag(inv)
+    assert flag == "Awaiting linkage"
+    assert reason == "Awaiting PO linkage"
+
+
 def test_derive_matrix_payment_status_paid() -> None:
     inv = Invoice(tenant_id=TESTING_TENANT_UUID, vendor="Acme", status=InvoiceStatus.PROCESSED, total=Decimal("100"))
     payment = Payment(

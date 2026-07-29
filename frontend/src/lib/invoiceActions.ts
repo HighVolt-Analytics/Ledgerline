@@ -29,15 +29,31 @@ const PROCESSING_TIMEOUT_MS = 90_000;
 
 const PIPELINE_ACTIVE = new Set<string>(PIPELINE_STATUSES);
 
+function isVisionVaultTerminalInvoice(inv: Invoice): boolean {
+  const evalStatus = (inv.evaluation_status ?? "").trim();
+  if (evalStatus === "vision_vaulted") return true;
+  const fields = inv.extracted_fields;
+  const hasVisionBundle =
+    fields != null &&
+    typeof fields === "object" &&
+    ("vision_bundle_kind" in fields || "vision_bundle_key" in fields);
+  return evalStatus === "awaiting_classification" && hasVisionBundle;
+}
+
 export function canApproveClaim(status: string): boolean {
   return (APPROVAL_QUEUE_STATUSES as readonly string[]).includes(status);
 }
 
 /** Approve from drawer — rejected/duplicate rows use Reprocess only. */
-export function canApproveFromDrawer(status: string): boolean {
-  return (
-    canApproveClaim(status) && status !== "rejected" && status !== "duplicate_skipped"
-  );
+export function canApproveFromDrawer(invOrStatus: Invoice | string): boolean {
+  const status = typeof invOrStatus === "string" ? invOrStatus : invOrStatus.status;
+  if (!canApproveClaim(status) || status === "rejected" || status === "duplicate_skipped") {
+    return false;
+  }
+  if (typeof invOrStatus !== "string" && isVisionVaultTerminalInvoice(invOrStatus)) {
+    return false;
+  }
+  return true;
 }
 
 export function canRejectClaim(status: string): boolean {

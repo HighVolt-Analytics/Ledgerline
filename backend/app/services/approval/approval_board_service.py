@@ -57,6 +57,11 @@ def _has_vision_bundle_snapshot(inv: Invoice) -> bool:
 
 def is_understood_path_complete(inv: Invoice) -> bool:
     """True when vision understood path finished (vaulted) — show under Approved."""
+    return is_understood_path_vault_terminal(inv)
+
+
+def is_understood_path_vault_terminal(inv: Invoice) -> bool:
+    """True when understood path ended at vault — no posting from Approvals."""
     token = (inv.evaluation_status or "").strip().lower()
     if token in UNDERSTOOD_PATH_COMPLETE_EVAL:
         return True
@@ -67,13 +72,8 @@ def is_understood_path_complete(inv: Invoice) -> bool:
 
 
 def is_understood_path_not_approvable(inv: Invoice) -> bool:
-    """True when Confirm must not re-queue into the OCR/posting pipeline."""
-    token = (inv.evaluation_status or "").strip().lower()
-    if token in UNDERSTOOD_PATH_COMPLETE_EVAL | UNDERSTOOD_PATH_REVIEW_EVAL:
-        return True
-    if token == _LEGACY_UNDERSTOOD_EVAL and _has_vision_bundle_snapshot(inv):
-        return True
-    return False
+    """True when Confirm must not resume posting (vault-terminal holds only)."""
+    return is_understood_path_vault_terminal(inv)
 
 
 # Back-compat alias used by approve gate.
@@ -109,6 +109,8 @@ def approval_board_column(inv: Invoice) -> ApprovalBoardColumn:
     if is_understood_path_complete(inv):
         return "approved"
     if eval_token in UNDERSTOOD_PATH_REVIEW_EVAL:
+        if is_classification_confirmed(inv):
+            return "processing"
         return "review"
 
     eval_status = _parse_eval(inv.evaluation_status)

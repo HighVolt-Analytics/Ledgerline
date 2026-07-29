@@ -491,12 +491,18 @@ export function isNeedsReviewEvaluation(status: string | null | undefined): bool
  * New pipeline runs persist auto_coded after deterministic GL mapping. This
  * fallback keeps legacy processed rows from presenting a contradictory
  * "Needs review" badge while their database records are repaired.
+ *
+ * Exception + auto_coded means coding finished but the pipeline halted later
+ * (recon, control account, etc.) — surface as Needs review so Upload is actionable.
  */
 export function effectiveEvaluationStatus(
   inv: Pick<Invoice, "status" | "evaluation_status">,
 ): Invoice["evaluation_status"] {
   if (inv.status === "processed" && inv.evaluation_status === "needs_review") {
     return "auto_coded";
+  }
+  if (inv.status === "exception" && inv.evaluation_status === "auto_coded") {
+    return "needs_review";
   }
   return inv.evaluation_status;
 }
@@ -547,7 +553,7 @@ export function evaluationStatusDescription(
     return "Vision understood this document — soft-bundled and stored in the vault (no OCR classification).";
   }
   if (status === "vision_header_review") {
-    return "Vision understood the file but header extraction was incomplete — review Fields, then reprocess if needed.";
+    return "Vision understood the file but header extraction was incomplete — complete Fields, then Confirm & process.";
   }
   if (status === "needs_rescan") {
     return "Image or OCR quality was too poor — ask the sender for a flat, well-lit scan or PDF.";
@@ -616,9 +622,13 @@ export function evaluationReviewTooltip(
     | "route_target"
     | "llm_suggested_dt"
     | "status"
+    | "resolution_hint"
   >,
   reviewReasons?: string[]
 ): string {
+  const apiHint = (inv.resolution_hint ?? "").trim();
+  if (apiHint) return apiHint;
+
   const status = inv.evaluation_status;
   if (reviewReasons?.length) {
     return reviewReasons.map((code) => reviewReasonLabel(code)).join("; ");
@@ -639,7 +649,7 @@ export function evaluationReviewTooltip(
   }
 
   if (status === "vision_header_review") {
-    return "Fields tab — complete or correct vision header fields, then reprocess if needed";
+    return "Fields tab — complete header fields, save, then Confirm & process";
   }
 
   if (status === "needs_review") {
@@ -701,16 +711,18 @@ export type InvoiceSource = "email" | "upload" | "onedrive" | "whatsapp" | "vibe
 
 export function invoiceSourceKind(inv: Invoice): InvoiceSource {
   const capture = (inv.capture_source ?? "").trim().toLowerCase();
+  // Explicit ingest channel always wins. Claimant/sender (email_sender) is identity,
+  // not channel — e.g. Team Expenses uploads still capture_source=upload.
   if (capture === "whatsapp") return "whatsapp";
   if (capture === "viber") return "viber";
   if (capture === "email") return "email";
+  if (capture === "upload") return "upload";
 
+  // Legacy rows without capture_source: use connection markers, not sender alone.
+  if (inv.connected_mailbox_id) return "email";
   const sender = (inv.email_sender ?? "").toLowerCase();
   if (sender.includes("onedrive") || sender.includes("sharepoint")) {
     return "onedrive";
-  }
-  if (inv.email_sender || inv.connected_mailbox_id) {
-    return "email";
   }
   return "upload";
 }

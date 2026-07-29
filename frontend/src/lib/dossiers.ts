@@ -46,7 +46,7 @@ export const DOSSIER_PIPELINE_STAGES = [
   { id: "archive", order: 20, label: "Archive", phase: "finish" as const },
 ] as const;
 
-/** Vision understood path — same points as the Audit Processing tab. */
+/** Vision understood path — capture → vault, then posting continuum when continue. */
 export const UNDERSTOOD_PIPELINE_STAGES = [
   { id: "ingest", order: 1, label: "Received", phase: "capture" as const },
   { id: "duplicate", order: 2, label: "Duplicate check", phase: "capture" as const },
@@ -54,18 +54,39 @@ export const UNDERSTOOD_PIPELINE_STAGES = [
   { id: "file_validity", order: 4, label: "File validity", phase: "capture" as const },
   { id: "vision_understand", order: 5, label: "Vision understand", phase: "capture" as const },
   { id: "extract", order: 6, label: "Vision header", phase: "capture" as const },
-  { id: "bundle", order: 7, label: "Bundle", phase: "process" as const },
-  { id: "archive", order: 8, label: "Vault", phase: "finish" as const },
+  { id: "document_type", order: 7, label: "DT mapped", phase: "capture" as const },
+  { id: "bundle", order: 8, label: "Bundle", phase: "process" as const },
+  // Vault sits mid-continuum before validate/post — keep in process so the phase strip order matches runtime.
+  { id: "archive", order: 9, label: "Vault", phase: "process" as const },
+  { id: "validate", order: 10, label: "Validate", phase: "process" as const },
+  // Finance continuum: Match amounts → Approve variance/policy → Map GL → Journal.
+  { id: "match", order: 11, label: "Match", phase: "process" as const },
+  { id: "approve", order: 12, label: "Approve", phase: "process" as const },
+  { id: "map_gl", order: 13, label: "Map GL", phase: "process" as const },
+  { id: "journal", order: 14, label: "Journal", phase: "process" as const },
+  { id: "reconcile", order: 15, label: "Reconcile", phase: "process" as const },
+  { id: "post", order: 16, label: "Post", phase: "finish" as const },
 ] as const;
+
 
 export type DossierPipelineStageId =
   | (typeof DOSSIER_PIPELINE_STAGES)[number]["id"]
   | (typeof UNDERSTOOD_PIPELINE_STAGES)[number]["id"];
 
-/** Vision understood path — capture header, soft-bundle, vault only. */
+/** Vision understood path — capture → vault, then posting continuum when continue. */
 export const UNDERSTOOD_DOSSIER_STAGE_IDS: ReadonlySet<string> = new Set(
   UNDERSTOOD_PIPELINE_STAGES.map((stage) => stage.id)
 );
+
+const UNDERSTOOD_POST_VAULT_STAGE_IDS = [
+  "validate",
+  "match",
+  "approve",
+  "map_gl",
+  "journal",
+  "reconcile",
+  "post",
+] as const;
 
 export type DossierPipelinePath = "understood" | "not_understood" | "unknown";
 
@@ -135,7 +156,11 @@ export const DOSSIER_PIPELINE_BACKEND_MAP: Record<
     invoiceStatus: "parsing",
   },
   document_type: {
-    auditEvents: ["document_classified", "classification_resolved"],
+    auditEvents: [
+      "document_classified",
+      "classification_resolved",
+      "vision_document_type_mapped",
+    ],
   },
   bundle: {
     auditEvents: [
@@ -243,6 +268,26 @@ export type DossierPipelineStep = {
   evidence?: DossierPipelineEvidence[];
 };
 
+/** True when Understood path stopped at vault (post-vault stages skipped/absent). */
+export function isUnderstoodVaultOnlyPipeline(
+  pipeline: DossierPipelineStep[],
+  path?: DossierPipelinePath | null
+): boolean {
+  if (path === "not_understood") return false;
+  if (path !== "understood") {
+    const onlyUnderstood =
+      pipeline.length > 0 &&
+      pipeline.every((step) => UNDERSTOOD_DOSSIER_STAGE_IDS.has(step.stageId));
+    if (!onlyUnderstood) return false;
+  }
+  const byStage = new Map(pipeline.map((step) => [step.stageId, step]));
+  const hasLivePostVault = UNDERSTOOD_POST_VAULT_STAGE_IDS.some((id) => {
+    const step = byStage.get(id);
+    return step != null && step.state !== "skipped" && step.state !== "waived";
+  });
+  return !hasLivePostVault;
+}
+
 /** Show only stages for the path this document actually ran. */
 export function filterDossierPipelineForPath(
   pipeline: DossierPipelineStep[],
@@ -262,7 +307,10 @@ export function resolveDossierPipelinePath(
   const understoodSkip = pipeline.some(
     (step) =>
       (step.state === "skipped" || step.state === "waived") &&
-      (step.detail || "").toLowerCase().includes("understood path")
+      (() => {
+        const detail = (step.detail || "").toLowerCase();
+        return detail.includes("understood path") || detail.includes("vault-only");
+      })()
   );
   if (understoodSkip) return "understood";
   const onlyUnderstoodStages =
@@ -363,6 +411,20 @@ function stagesForPipeline(pipeline: DossierPipelineStep[]) {
   return catalog.filter((stage) => byStage.has(stage.id));
 }
 
+function stageOrderInPipeline(
+  pipeline: DossierPipelineStep[],
+  stageId: DossierPipelineStageId
+): number {
+  const ordered = stagesForPipeline(pipeline);
+  const idx = ordered.findIndex((stage) => stage.id === stageId);
+  if (idx >= 0) return idx;
+  return (
+    UNDERSTOOD_PIPELINE_STAGES.find((stage) => stage.id === stageId)?.order ??
+    DOSSIER_PIPELINE_STAGES.find((stage) => stage.id === stageId)?.order ??
+    0
+  );
+}
+
 export function pipelineActiveStage(
   pipeline: DossierPipelineStep[]
 ): { stageId: DossierPipelineStageId; step: DossierPipelineStep } | undefined {
@@ -370,7 +432,7 @@ export function pipelineActiveStage(
   if (bottleneck) return bottleneck;
 
   const byStage = new Map(pipeline.map((step) => [step.stageId, step]));
-  const ordered = DOSSIER_PIPELINE_STAGES.filter((stage) => byStage.has(stage.id));
+  const ordered = stagesForPipeline(pipeline);
   let last: { stageId: DossierPipelineStageId; step: DossierPipelineStep } | undefined;
   for (const stage of ordered) {
     const step = byStage.get(stage.id);
@@ -623,20 +685,14 @@ export function pipelineBlockedFromStageId(
 
   const fail = firstPipelineFailure(pipeline);
   if (fail) {
-    const failOrder =
-      DOSSIER_PIPELINE_STAGES.find((stage) => stage.id === fail.stageId)?.order ?? 0;
-    const stageOrder =
-      DOSSIER_PIPELINE_STAGES.find((stage) => stage.id === stageId)?.order ?? 0;
-    return stageOrder > failOrder;
+    return stageOrderInPipeline(pipeline, stageId) > stageOrderInPipeline(pipeline, fail.stageId);
   }
 
   const bottleneck = firstPipelineBottleneck(pipeline);
   if (!bottleneck) return false;
-  const bottleneckOrder =
-    DOSSIER_PIPELINE_STAGES.find((stage) => stage.id === bottleneck.stageId)?.order ?? 0;
-  const stageOrder =
-    DOSSIER_PIPELINE_STAGES.find((stage) => stage.id === stageId)?.order ?? 0;
-  return stageOrder > bottleneckOrder;
+  return (
+    stageOrderInPipeline(pipeline, stageId) > stageOrderInPipeline(pipeline, bottleneck.stageId)
+  );
 }
 
 export function dossierStageDescription(stageId: DossierPipelineStageId): string {
@@ -651,7 +707,7 @@ export function dossierStageDescription(stageId: DossierPipelineStageId): string
     llm_classify: "LLM suggests document type from OCR.",
     confidence_gate: "Auto-route confidence and catalogue gate.",
     extract: "Header fields captured from vision understanding.",
-    document_type: "Confirmed document type applied to the invoice.",
+    document_type: "Document type mapped for the understood path (or catalogue confirm).",
     bundle: "Soft-bundled with linked supporting documents.",
     vendor_hold: "Vendor registration status verified.",
     validate: "Business rules and validation checks run.",

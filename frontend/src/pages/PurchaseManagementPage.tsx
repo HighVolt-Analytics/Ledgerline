@@ -119,11 +119,22 @@ export function PurchaseManagementPage() {
 
       <PurchaseCaptureStrip activeRuleCount={activeRuleCount} />
 
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 mb-5">
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 mb-5">
         <KpiCard
           label="Open POs"
           value={purchasesLoading ? "…" : kpis.openPos}
           testid="kpi-po-open"
+        />
+        <KpiCard
+          label="Awaiting PO"
+          value={purchasesLoading ? "…" : kpis.awaitingPo}
+          testid="kpi-po-awaiting"
+          onClick={kpis.awaitingPo > 0 ? () => setRegisterTab("action") : undefined}
+          delta={
+            !purchasesLoading && kpis.awaitingPo > 0
+              ? { dir: "down", text: "invoice before PO", good: false }
+              : undefined
+          }
         />
         <KpiCard
           label="Pending GRN"
@@ -136,23 +147,22 @@ export function PurchaseManagementPage() {
           }
         />
         <KpiCard
+          label="Variances awaiting"
+          value={purchasesLoading ? "…" : kpis.variancesAwaiting}
+          testid="kpi-po-variances"
+          delta={
+            !purchasesLoading && kpis.variancesAwaiting > 0
+              ? { dir: "down", text: "needs approval", good: false }
+              : undefined
+          }
+        />
+        <KpiCard
           label="3-Way match pass"
           value={purchasesLoading ? "…" : `${kpis.matchPct}%`}
           testid="kpi-po-matchpct"
           delta={
             !purchasesLoading && threeWayRows.length > 0
               ? { dir: "up", text: "of 3-way POs clean", good: true }
-              : undefined
-          }
-        />
-        <KpiCard
-          label="2-Way match pass"
-          value={purchasesLoading ? "…" : `${kpis.twoWayMatchPct}%`}
-          testid="kpi-po-two-way-matchpct"
-          onClick={kpis.twoWayCount > 0 ? () => setRegisterTab("two_way") : undefined}
-          delta={
-            !purchasesLoading && kpis.twoWayCount > 0
-              ? { dir: "up", text: `${kpis.twoWayCount} PO↔Invoice`, good: true }
               : undefined
           }
         />

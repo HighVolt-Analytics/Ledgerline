@@ -4,16 +4,27 @@ export type PipelineActivePath = "understood" | "not_understood" | "unknown";
 
 export const UNDERSTOOD_AUDIT_STAGES = new Set([
   "Received",
+  "Duplicate",
   "Storage",
   "File validity",
   "Vision understand",
   "Vision header",
+  "DT mapped",
   "Bundle",
   "Vault",
+  "Parsed",
+  "Validated",
+  "Approved",
+  "Mapped",
+  "Match",
+  "Journal",
+  "Reconcile",
+  "Posted",
 ]);
 
 export const NOT_UNDERSTOOD_AUDIT_STAGES = new Set([
   "Received",
+  "Duplicate",
   "Storage",
   "File validity",
   "Vision understand",

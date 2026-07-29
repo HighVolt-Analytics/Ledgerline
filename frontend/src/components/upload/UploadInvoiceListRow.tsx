@@ -108,6 +108,7 @@ export function UploadInvoiceMobileRow({
   const matchLabel = counterpartyMatchLabel(inv, documentTypes);
   const showMatch =
     matchLabel != null || vendorMatchApplicable(inv, documentTypes);
+  const stageTitle = (inv.resolution_hint ?? "").trim() || undefined;
 
   return (
     <button
@@ -148,7 +149,7 @@ export function UploadInvoiceMobileRow({
             glPostingApplicable={inv.gl_posting_applicable ?? true}
           />
         </UploadColumnCell>
-        <StageBadge {...stageProps} processing={stageProcessing} />
+        <StageBadge {...stageProps} processing={stageProcessing} title={stageTitle} />
         <UploadColumnCell mode={modes.evaluation}>
           <div className="flex flex-col items-start gap-1">
             <EvaluationStatusBadge status={inv.evaluation_status} invoice={inv} />
@@ -191,6 +192,7 @@ export function UploadInvoiceTableRow({
   const stageProps = invoiceStageBadgeProps(inv);
   const stageProcessing = isStageColumnProcessing(inv, processingIds);
   const vaultFolder = invoiceVaultFolderLabel(inv);
+  const stageTitle = (inv.resolution_hint ?? "").trim() || undefined;
 
   return (
     <tr
@@ -222,7 +224,7 @@ export function UploadInvoiceTableRow({
         </UploadColumnCell>
       </td>
       <td className="px-3 py-2.5">
-        <StageBadge {...stageProps} processing={stageProcessing} />
+        <StageBadge {...stageProps} processing={stageProcessing} title={stageTitle} />
       </td>
       <td className="px-3 py-2.5">
         <UploadColumnCell mode={modes.evaluation}>

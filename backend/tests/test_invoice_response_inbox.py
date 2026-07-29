@@ -88,6 +88,40 @@ def test_inbox_response_exposes_payable_metrics() -> None:
     response = invoice_to_response(inv, document_types=[payable_type])
     assert response.vendor_confidence == 88.0
     assert response.validation_pass_rate == 50
+    # Exception + auto_coded must not look "done" on Upload.
+    assert response.evaluation_status == EvaluationStatus.NEEDS_REVIEW
+    assert response.resolution_hint
+
+
+def test_exception_auto_coded_with_recon_halt_hint() -> None:
+    from app.models.audit import AuditLog
+    from app.services.invoice.pipeline_stages import derive_resolution_hint
+
+    inv = Invoice(
+        id=910,
+        tenant_id=TESTING_TENANT_UUID,
+        created_at=datetime.now(timezone.utc),
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status=EVAL_AUTO_CODED,
+        account_code="4100",
+        currency="AUD",
+    )
+    logs = [
+        AuditLog(
+            tenant_id=TESTING_TENANT_UUID,
+            invoice_id=910,
+            event="reconciliation_halted",
+            detail={"reason": "RC1: purchase invoice totals 5500 != payable credits 0"},
+            created_at=datetime.now(timezone.utc),
+        )
+    ]
+    hint = derive_resolution_hint(inv, logs)
+    assert hint is not None
+    assert "reconciliation" in hint.lower()
+    response = invoice_to_response(inv, audit_logs=logs, for_list=True)
+    assert response.evaluation_status == EvaluationStatus.NEEDS_REVIEW
+    assert response.resolution_hint
+    assert "reconciliation" in (response.resolution_hint or "").lower()
 
 
 def test_legacy_awaiting_with_vision_markers_maps_to_vaulted() -> None:
@@ -227,3 +261,67 @@ async def test_list_invoices_deferred_document_text_no_missing_greenlet(
     data = res.json()["data"]
     match = next(item for item in data if item["file_hash"] == "inbox-vision-deferred-text")
     assert match["evaluation_status"] == "vision_vaulted"
+
+
+@pytest.mark.asyncio
+async def test_list_invoices_capture_source_channel_parity(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Upload summary/detailed must agree: email_sender is identity, not channel."""
+    from app.models.connected_mailbox import ConnectedMailbox
+
+    mb = ConnectedMailbox(
+        tenant_id=TESTING_TENANT_UUID,
+        email="inbox-channel@example.com",
+        display_name="Channel parity",
+        is_active=True,
+    )
+    db_session.add(mb)
+    await db_session.flush()
+
+    upload_with_claimant = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Uber",
+        status=InvoiceStatus.EXCEPTION,
+        currency="AUD",
+        file_hash="capture-upload-with-claimant",
+        capture_source="upload",
+        email_sender="priya@acme-hospitality.com.au",
+    )
+    email_explicit = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Vendor Co",
+        status=InvoiceStatus.PROCESSED,
+        currency="AUD",
+        file_hash="capture-email-explicit",
+        capture_source="email",
+        email_sender="vendor@example.com",
+        connected_mailbox_id=mb.id,
+    )
+    email_legacy = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Legacy Mail Vendor",
+        status=InvoiceStatus.PROCESSED,
+        currency="AUD",
+        file_hash="capture-email-legacy-mailbox",
+        capture_source=None,
+        email_sender="legacy@example.com",
+        connected_mailbox_id=mb.id,
+    )
+    db_session.add_all([upload_with_claimant, email_explicit, email_legacy])
+    await db_session.flush()
+
+    upload_res = await client.get("/api/invoices?page=1&page_size=100&capture_source=upload")
+    assert upload_res.status_code == 200
+    upload_hashes = {row["file_hash"] for row in upload_res.json()["data"]}
+    assert "capture-upload-with-claimant" in upload_hashes
+    assert "capture-email-explicit" not in upload_hashes
+    assert "capture-email-legacy-mailbox" not in upload_hashes
+
+    email_res = await client.get("/api/invoices?page=1&page_size=100&capture_source=email")
+    assert email_res.status_code == 200
+    email_hashes = {row["file_hash"] for row in email_res.json()["data"]}
+    assert "capture-email-explicit" in email_hashes
+    assert "capture-email-legacy-mailbox" in email_hashes
+    assert "capture-upload-with-claimant" not in email_hashes

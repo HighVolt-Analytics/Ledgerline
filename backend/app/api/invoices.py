@@ -205,24 +205,54 @@ async def list_invoices(
         if capture_source and capture_source.strip():
             src = capture_source.strip().lower()
             if src in {"upload", "email", "whatsapp", "viber"}:
+                unset_capture = or_(
+                    Invoice.capture_source.is_(None),
+                    Invoice.capture_source == "",
+                )
                 if src == "upload":
                     # Explicit uploads plus legacy rows with no channel markers.
+                    # Claimant/sender (email_sender) is identity, not channel.
                     query = query.where(
                         or_(
                             func.lower(Invoice.capture_source) == "upload",
                             and_(
-                                or_(
-                                    Invoice.capture_source.is_(None),
-                                    Invoice.capture_source == "",
-                                ),
+                                unset_capture,
                                 Invoice.connected_mailbox_id.is_(None),
                                 Invoice.whatsapp_connection_id.is_(None),
                                 Invoice.viber_connection_id.is_(None),
                             ),
                         )
                     )
-                else:
-                    query = query.where(func.lower(Invoice.capture_source) == src)
+                elif src == "email":
+                    query = query.where(
+                        or_(
+                            func.lower(Invoice.capture_source) == "email",
+                            and_(
+                                unset_capture,
+                                Invoice.connected_mailbox_id.isnot(None),
+                            ),
+                        )
+                    )
+                elif src == "whatsapp":
+                    query = query.where(
+                        or_(
+                            func.lower(Invoice.capture_source) == "whatsapp",
+                            and_(
+                                unset_capture,
+                                Invoice.whatsapp_connection_id.isnot(None),
+                            ),
+                        )
+                    )
+                else:  # viber
+                    query = query.where(
+                        or_(
+                            func.lower(Invoice.capture_source) == "viber",
+                            and_(
+                                unset_capture,
+                                Invoice.viber_connection_id.isnot(None),
+                            ),
+                        )
+                    )
         if route_target and route_target.strip():
             query = query.where(Invoice.route_target == route_target.strip())
             # Rejected / duplicate docs belong on Approvals, not management pages.
@@ -909,6 +939,7 @@ async def resolve_classification(
             "confirmed_dt": confirmed,
             "llm_suggested_dt": detail.get("llm_suggested_dt"),
             "policy_winner_dt": detail.get("policy_winner_dt"),
+            "document_heading": inv.document_heading,
         },
     )
 

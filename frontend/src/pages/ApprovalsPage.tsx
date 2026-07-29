@@ -31,6 +31,7 @@ import {
   APPROVABLE_STATUSES,
   APPROVAL_QUEUE_STATUSES,
   type ApprovalBoardColumnKey,
+  canShowApproveOnBoard,
   canShowRejectOnApprovedBoard,
   canShowReprocessOnBoard,
   columnForInvoice,
@@ -648,7 +649,7 @@ export function ApprovalsPage() {
                           testId={`edit-${inv.id}`}
                         />
                       )}
-                      {col.key !== "approved" && APPROVABLE_STATUSES.has(inv.status) && (
+                      {canShowApproveOnBoard(inv, col.key) && (
                         <ActionChip
                           tone="approve"
                           icon={Check}

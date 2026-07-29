@@ -159,6 +159,7 @@ async def _build_purchase_variance_triplet(
         subtotal=inv_qty * unit_price,
         gst=Decimal("74880"),
         total=inv_qty * unit_price + Decimal("74880"),
+        invoice_date=date(2026, 6, 15),
         due_date=date(2026, 7, 1),
         status=InvoiceStatus.PENDING,
         currency="INR",
@@ -427,7 +428,10 @@ async def test_pipeline_blocks_variance_before_journal(
                 await db.execute(
                     select(PurchaseOrder)
                     .where(PurchaseOrder.id == po.id)
-                    .options(selectinload(PurchaseOrder.goods_receipts))
+                    .options(
+                        selectinload(PurchaseOrder.goods_receipts).selectinload(GoodsReceipt.lines),
+                        selectinload(PurchaseOrder.lines),
+                    )
                 )
             ).scalar_one()
         return None
@@ -568,9 +572,19 @@ async def test_sales_gate_blocks_qty_variance(db_session: AsyncSession) -> None:
     assert so.so_number == gate.anchor_number
 
 
+def _purchase_two_way_config() -> RuleBookConfigPayload:
+    return _doc_type_config(
+        code="DT-09",
+        ledger="Marketing Expense",
+        title="PO-based goods invoice",
+        route_target=ROUTE_PURCHASE,
+        match_mode="two_way_po_ses",
+    )
+
+
 @pytest.mark.asyncio
 async def test_two_way_po_price_variance_blocks(db_session: AsyncSession) -> None:
-    config = _purchase_config()
+    config = _purchase_two_way_config()
     po_number = "PO-2WAY-PRICE"
     po = PurchaseOrder(
         tenant_id=TESTING_TENANT_UUID,
@@ -686,6 +700,197 @@ async def test_clean_invoice_without_po_not_blocked(db_session: AsyncSession) ->
     await db_session.flush()
     gate = await evaluate_match_variance_gate(db_session, inv, config=config)
     assert gate.blocked is False
+
+
+@pytest.mark.asyncio
+async def test_three_way_missing_grn_blocks_posting(db_session: AsyncSession) -> None:
+    """Configured 3-way must not silently downgrade to 2-way when GRN is missing."""
+    config = _purchase_config()
+    po_number = "PO-NO-GRN-1"
+    po_doc = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="No GRN Vendor",
+        po_reference=po_number,
+        invoice_no=po_number,
+        route_target=ROUTE_PURCHASE,
+        purchase_document_type=PurchaseDocumentType.PO.value,
+        subtotal=Decimal("100"),
+        status=InvoiceStatus.PROCESSED,
+        document_type_code="DT-02",
+    )
+    db_session.add(po_doc)
+    await db_session.flush()
+    po = PurchaseOrder(
+        tenant_id=TESTING_TENANT_UUID,
+        po_number=po_number,
+        vendor="No GRN Vendor",
+        po_qty=Decimal("10"),
+        po_unit_price=Decimal("10"),
+        po_document_id=po_doc.id,
+    )
+    db_session.add(po)
+    await db_session.flush()
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="No GRN Vendor",
+        po_reference=po_number,
+        invoice_no="INV-NO-GRN-1",
+        route_target=ROUTE_PURCHASE,
+        purchase_document_type=PurchaseDocumentType.INVOICE.value,
+        document_type_code="DT-09",
+        subtotal=Decimal("100"),
+        total=Decimal("100"),
+        due_date=date(2026, 7, 1),
+    )
+    db_session.add(inv)
+    await db_session.flush()
+    db_session.add(
+        LineItem(
+            tenant_id=TESTING_TENANT_UUID,
+            invoice_id=inv.id,
+            qty=Decimal("10"),
+            unit_price=Decimal("10"),
+            amount=Decimal("100"),
+        )
+    )
+    po.invoice_id = inv.id
+    await db_session.flush()
+
+    inv = await _reload_invoice(db_session, inv.id)
+    gate = await evaluate_match_variance_gate(db_session, inv, config=config)
+    assert gate.blocked is True
+    assert gate.outcome is not None
+    assert gate.outcome.status == "No GRN"
+    assert gate.match_mode == "three_way_po_grn"
+
+
+@pytest.mark.asyncio
+async def test_three_way_missing_dn_blocks_posting(db_session: AsyncSession) -> None:
+    """Configured 3-way sales must not silently downgrade when DN is missing."""
+    from app.models.invoice import SalesDocumentType
+
+    config = _sales_config()
+    so_number = "SO-NO-DN-1"
+    so_doc = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="No DN Customer",
+        so_reference=so_number,
+        invoice_no=so_number,
+        route_target=ROUTE_SALES,
+        sales_document_type=SalesDocumentType.SO.value,
+        subtotal=Decimal("100"),
+        status=InvoiceStatus.PROCESSED,
+        document_type_code="DT-SO",
+    )
+    db_session.add(so_doc)
+    await db_session.flush()
+    so = SalesOrder(
+        tenant_id=TESTING_TENANT_UUID,
+        so_number=so_number,
+        customer="No DN Customer",
+        so_qty=Decimal("10"),
+        so_unit_price=Decimal("10"),
+        so_document_id=so_doc.id,
+    )
+    db_session.add(so)
+    await db_session.flush()
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="No DN Customer",
+        so_reference=so_number,
+        invoice_no="INV-NO-DN-1",
+        route_target=ROUTE_SALES,
+        sales_document_type=SalesDocumentType.INVOICE.value,
+        document_type_code="DT-07",
+        subtotal=Decimal("100"),
+        total=Decimal("100"),
+        due_date=date(2026, 7, 1),
+    )
+    db_session.add(inv)
+    await db_session.flush()
+    db_session.add(
+        LineItem(
+            tenant_id=TESTING_TENANT_UUID,
+            invoice_id=inv.id,
+            qty=Decimal("10"),
+            unit_price=Decimal("10"),
+            amount=Decimal("100"),
+        )
+    )
+    so.invoice_id = inv.id
+    await db_session.flush()
+
+    inv = await _reload_invoice(db_session, inv.id)
+    gate = await evaluate_match_variance_gate(db_session, inv, config=config)
+    assert gate.blocked is True
+    assert gate.outcome is not None
+    assert gate.outcome.status == "No DN"
+    assert gate.match_mode == "three_way_so_dn"
+
+
+@pytest.mark.asyncio
+async def test_no_grn_not_cleared_by_variance_approval(db_session: AsyncSession) -> None:
+    config = _purchase_config()
+    po_number = "PO-NO-GRN-APPR-1"
+    po_doc = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Still No GRN",
+        po_reference=po_number,
+        invoice_no=po_number,
+        route_target=ROUTE_PURCHASE,
+        purchase_document_type=PurchaseDocumentType.PO.value,
+        subtotal=Decimal("50"),
+        status=InvoiceStatus.PROCESSED,
+        document_type_code="DT-02",
+    )
+    db_session.add(po_doc)
+    await db_session.flush()
+    po = PurchaseOrder(
+        tenant_id=TESTING_TENANT_UUID,
+        po_number=po_number,
+        vendor="Still No GRN",
+        po_qty=Decimal("5"),
+        po_unit_price=Decimal("10"),
+        po_document_id=po_doc.id,
+        variance_approved=True,
+    )
+    db_session.add(po)
+    await db_session.flush()
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Still No GRN",
+        po_reference=po_number,
+        invoice_no="INV-STILL-NO-GRN",
+        route_target=ROUTE_PURCHASE,
+        purchase_document_type=PurchaseDocumentType.INVOICE.value,
+        document_type_code="DT-09",
+        subtotal=Decimal("50"),
+        total=Decimal("50"),
+        due_date=date(2026, 7, 1),
+    )
+    db_session.add(inv)
+    await db_session.flush()
+    db_session.add(
+        LineItem(
+            tenant_id=TESTING_TENANT_UUID,
+            invoice_id=inv.id,
+            qty=Decimal("5"),
+            unit_price=Decimal("10"),
+            amount=Decimal("50"),
+        )
+    )
+    po.invoice_id = inv.id
+    await db_session.flush()
+
+    inv = await _reload_invoice(db_session, inv.id)
+    gate = await evaluate_match_variance_gate(db_session, inv, config=config)
+    assert gate.outcome is not None
+    assert gate.outcome.status == "No GRN"
+    # Variance approval must not clear a missing-receipt hold.
+    assert gate.blocked is True
 
 
 @pytest.mark.asyncio
