@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
 import { PageHeader } from "@/components/PageHeader";
 import { PageTabPanel, PageTabs } from "@/components/PageTabs";
 import { JournalExportTab } from "@/components/ledger-link/JournalExportTab";
@@ -21,6 +22,7 @@ const LL_TABS = [
 
 export function LedgerLinkPage() {
   const [tab, setTab] = useState("overview");
+  const [drawerInvoiceId, setDrawerInvoiceId] = useState<number | null>(null);
   const { user } = useAuth();
   const { data, isLoading, error } = useLedgerLink(Boolean(user));
 
@@ -79,7 +81,12 @@ export function LedgerLinkPage() {
       </PageHeader>
 
       <PageTabPanel value="overview" active={tab} className="mt-4">
-        <LedgerOverview recon={recon} loading={isLoading} currency={currency} />
+        <LedgerOverview
+          recon={recon}
+          loading={isLoading}
+          currency={currency}
+          onViewInvoice={setDrawerInvoiceId}
+        />
       </PageTabPanel>
       <PageTabPanel value="invoices" active={tab} className="mt-4">
         <LedgerExportTable title="Invoices" rows={exports?.invoices ?? []} currency={currency} />
@@ -99,6 +106,12 @@ export function LedgerLinkPage() {
       <PageTabPanel value="export" active={tab} className="mt-4">
         <JournalExportTab exports={exports} currency={currency} />
       </PageTabPanel>
+
+      <InvoiceDetailDrawer
+        invoiceId={drawerInvoiceId}
+        open={drawerInvoiceId != null}
+        onClose={() => setDrawerInvoiceId(null)}
+      />
     </div>
   );
 }

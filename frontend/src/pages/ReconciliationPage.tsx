@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
-import { CheckCircle2, ChevronDown, ChevronRight, Scale } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronRight, Eye, Scale } from "lucide-react";
 import { api } from "@/api/client";
 import { EmptyState } from "@/components/EmptyState";
+import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
 import { PageHeader } from "@/components/PageHeader";
 import { PageLoader } from "@/components/PageLoader";
 import { ReconciliationDetailDrawer } from "@/components/ReconciliationDetailDrawer";
@@ -51,6 +52,7 @@ export function ReconciliationPage() {
   const [period, setPeriod] = useState("");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [detailDate, setDetailDate] = useState<string | null>(null);
+  const [drawerInvoiceId, setDrawerInvoiceId] = useState<number | null>(null);
   const { data: dayDetail } = useReconciliationDayDetail(detailDate, Boolean(user));
   const tenantScope = user?.tenant_id ?? null;
 
@@ -378,7 +380,7 @@ export function ReconciliationPage() {
                 {open && (
                   <div className="border-t border-border px-4 py-3 space-y-4">
                     {day.invoices.map((inv) => (
-                      <div key={inv.id}>
+                      <div key={inv.invoiceId ?? inv.id}>
                         <div className="flex items-center gap-2 mb-1.5 text-sm">
                           <span className="font-medium">{inv.id}</span>
                           <span className="text-muted-foreground">{inv.vendor}</span>
@@ -394,6 +396,20 @@ export function ReconciliationPage() {
                               Currency unknown
                             </Badge>
                           )}
+                          {inv.invoiceId != null ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-7 gap-1.5 px-2 text-xs"
+                              onClick={() => setDrawerInvoiceId(inv.invoiceId!)}
+                              data-testid={`recon-view-invoice-${inv.invoiceId}`}
+                              aria-label={`View document ${inv.id}`}
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                              View
+                            </Button>
+                          ) : null}
                           <span className="tnum text-muted-foreground ml-auto">
                             {fmtRow(inv.total, inv.currency)}
                           </span>
@@ -444,6 +460,12 @@ export function ReconciliationPage() {
         open={detailDate != null}
         onClose={() => setDetailDate(null)}
         currency={baseCurrency}
+      />
+
+      <InvoiceDetailDrawer
+        invoiceId={drawerInvoiceId}
+        open={drawerInvoiceId != null}
+        onClose={() => setDrawerInvoiceId(null)}
       />
     </div>
   );

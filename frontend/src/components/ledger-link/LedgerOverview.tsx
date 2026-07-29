@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { CheckCircle2, ChevronDown, ChevronRight, Scale } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronRight, Eye, Scale } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { LedgerOverviewSkeleton } from "@/components/skeleton/PageSkeletons";
 import { cn } from "@/lib/cn";
@@ -11,9 +12,15 @@ type LedgerOverviewProps = {
   recon: ReconSummary | null;
   loading?: boolean;
   currency?: string;
+  onViewInvoice?: (invoiceId: number) => void;
 };
 
-export function LedgerOverview({ recon, loading = false, currency = "SGD" }: LedgerOverviewProps) {
+export function LedgerOverview({
+  recon,
+  loading = false,
+  currency = "SGD",
+  onViewInvoice,
+}: LedgerOverviewProps) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const fmtBase = (v: number) => money(v, currency);
   const fmtRow = (v: number, rowCurrency?: string | null) =>
@@ -142,7 +149,7 @@ export function LedgerOverview({ recon, loading = false, currency = "SGD" }: Led
               {open && (
                 <div className="border-t border-border px-4 py-3 space-y-4">
                   {day.invoices.map((inv) => (
-                    <div key={inv.id}>
+                    <div key={inv.invoiceId ?? inv.id}>
                       <div className="flex items-center gap-2 mb-1.5 text-sm">
                         <span className="font-medium">{inv.id}</span>
                         <span className="text-muted-foreground">{inv.vendor}</span>
@@ -150,6 +157,20 @@ export function LedgerOverview({ recon, loading = false, currency = "SGD" }: Led
                           <Badge variant="outline" className="tnum text-[10px]">
                             {inv.currency}
                           </Badge>
+                        ) : null}
+                        {onViewInvoice && inv.invoiceId != null ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 gap-1.5 px-2 text-xs"
+                            onClick={() => onViewInvoice(inv.invoiceId!)}
+                            data-testid={`ledger-view-invoice-${inv.invoiceId}`}
+                            aria-label={`View document ${inv.id}`}
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                            View
+                          </Button>
                         ) : null}
                         <span className="tnum text-muted-foreground ml-auto">
                           {fmtRow(inv.total, inv.currency)}

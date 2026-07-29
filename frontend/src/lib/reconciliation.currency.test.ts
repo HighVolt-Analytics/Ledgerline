@@ -54,5 +54,7 @@ describe("mapReconciliationOverview currency", () => {
     expect(recon.totalsByCurrency.AUD).toBe(299);
     expect(recon.totalsByCurrency.INR).toBe(9800.53);
     expect(recon.byDate[0].invoices[1].currency).toBe("INR");
+    expect(recon.byDate[0].invoices[0].invoiceId).toBe(7);
+    expect(recon.byDate[0].invoices[1].invoiceId).toBe(85);
   });
 });

@@ -14,6 +14,8 @@ export type ReconPosting = {
 
 export type ReconInvoiceRow = {
   id: string;
+  /** Numeric invoice PK for opening InvoiceDetailDrawer. */
+  invoiceId?: number;
   vendor: string;
   total: number;
   currency: string;
@@ -264,6 +266,7 @@ export function buildReconciliationFromApiInvoices(
     .filter((inv) => inv.journal_entries.length > 0 && inv.invoice_date)
     .map((inv) => ({
       id: documentDisplayRef(inv),
+      invoiceId: inv.id,
       vendor: inv.vendor ?? "—",
       invoice_date: inv.invoice_date!,
       total: toNum(inv.total),
@@ -287,6 +290,7 @@ export function mapReconciliationOverview(data: ReconciliationOverview): ReconSu
     crByCurrency: mapCurrencyTotals(day.cr_by_currency),
     invoices: day.invoices.map((inv) => ({
       id: inv.id,
+      invoiceId: inv.invoice_id,
       vendor: inv.vendor,
       total: toNum(inv.total),
       currency: (inv.currency || "").trim().toUpperCase(),
@@ -314,6 +318,7 @@ export function mapReconciliationOverview(data: ReconciliationOverview): ReconSu
 
 type ReconSourceRow = {
   id: string;
+  invoiceId?: number;
   vendor: string;
   invoice_date: string;
   total: number;
@@ -370,6 +375,7 @@ export function buildReconciliation(rows: ReconSourceRow[]): ReconSummary {
     day.crByCurrency[currency] = roundMoney((day.crByCurrency[currency] ?? 0) + rowCr);
     day.invoices.push({
       id: row.id,
+      invoiceId: row.invoiceId,
       vendor: row.vendor,
       total: row.total,
       currency: currency === "UNKNOWN" ? "" : currency,
