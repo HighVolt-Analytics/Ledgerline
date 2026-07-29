@@ -85,7 +85,8 @@ def employee_bypass_capture_rule(mailbox_email: str) -> EmailCaptureRule:
         id=EMPLOYEE_BYPASS_CAPTURE_RULE_ID,
         name="Employee registry bypass",
         enabled=True,
-        priority=0,
+        # EmailCaptureRule.priority is ge=1; 0 crashes employee bypass at ingest.
+        priority=1,
         mailbox=mailbox,
         root=RuleConditionGroup(
             type="group",

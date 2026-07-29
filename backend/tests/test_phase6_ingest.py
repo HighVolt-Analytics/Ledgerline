@@ -73,6 +73,15 @@ def _aws_billing_email() -> RawEmail:
     )
 
 
+def test_employee_bypass_capture_rule_is_valid() -> None:
+    from app.services.ingest.ingest_capture_service import employee_bypass_capture_rule
+
+    rule = employee_bypass_capture_rule("vishnu@highvolt.tech")
+    assert rule.id == "ec-employee-bypass"
+    assert rule.priority >= 1
+    assert rule.action.route_to == "Team Expenses"
+
+
 def test_raw_email_to_sample_email_maps_fields() -> None:
     email = _aws_billing_email()
     email.body = "Please find your invoice attached."

@@ -37,6 +37,10 @@ _SKIPPED_PRESKIP_REASONS = frozenset(
 _RETRYABLE_SKIP_REASONS = frozenset(
     {
         "no_capture_rule_match",
+        # Transient ingest crashes (e.g. synthetic employee-bypass rule validation)
+        # should be retried once the underlying bug is fixed.
+        "ingest_message_failed",
+        "ingest_error",
     }
 )
 
@@ -64,11 +68,11 @@ async def upsert_pending_mailbox_message(
     if row is not None:
         if provider_message_id and row.provider_message_id != provider_message_id:
             row.provider_message_id = provider_message_id
-        retryable_skip = (
-            row.outcome == OUTCOME_SKIPPED
-            and (row.skip_reason or "") in _RETRYABLE_SKIP_REASONS
+        retryable = (row.skip_reason or "") in _RETRYABLE_SKIP_REASONS and row.outcome in (
+            OUTCOME_SKIPPED,
+            OUTCOME_EXCEPTION,
         )
-        if row.outcome not in TERMINAL_OUTCOMES or retryable_skip:
+        if row.outcome not in TERMINAL_OUTCOMES or retryable:
             row.outcome = OUTCOME_PENDING
             row.skip_reason = None
         return row
@@ -131,7 +135,7 @@ async def known_terminal_mailbox_message_ids(
                 MailboxMessage.outcome.in_(tuple(TERMINAL_OUTCOMES)),
                 not_(
                     and_(
-                        MailboxMessage.outcome == OUTCOME_SKIPPED,
+                        MailboxMessage.outcome.in_((OUTCOME_SKIPPED, OUTCOME_EXCEPTION)),
                         MailboxMessage.skip_reason.in_(tuple(_RETRYABLE_SKIP_REASONS)),
                     )
                 ),
