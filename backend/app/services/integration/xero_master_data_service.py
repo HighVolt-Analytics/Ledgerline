@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.accounting_integration import AccountingProvider
+from app.models.accounting_integration import AccountingIntegration, AccountingProvider
 from app.models.accounting_sync_job import AccountingSyncJob
 from app.models.external_accounting_ref import ExternalAccountingRef
 from app.models.xero_account import XeroAccount
@@ -23,21 +23,48 @@ def _page_meta(*, total: int, limit: int, offset: int) -> dict[str, int]:
     return {"total": total, "limit": limit, "offset": offset}
 
 
+async def resolve_selected_xero_tenant_id(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> str | None:
+    row = (
+        await db.execute(
+            select(AccountingIntegration.provider_tenant_id).where(
+                AccountingIntegration.tenant_id == tenant_id,
+                AccountingIntegration.provider == AccountingProvider.XERO.value,
+            )
+        )
+    ).scalar_one_or_none()
+    value = (row or "").strip() if row else ""
+    return value or None
+
+
 async def list_xero_accounts(
     db: AsyncSession,
     *,
     tenant_id: uuid.UUID,
     search: str | None = None,
     status: str | None = None,
+    xero_tenant_id: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> dict[str, Any]:
     limit = min(max(limit, 1), 200)
     offset = max(offset, 0)
+    org_id = xero_tenant_id
+    if org_id is None:
+        org_id = await resolve_selected_xero_tenant_id(db, tenant_id)
     stmt = select(XeroAccount).where(XeroAccount.tenant_id == tenant_id)
     count_stmt = select(func.count()).select_from(XeroAccount).where(
         XeroAccount.tenant_id == tenant_id
     )
+    if org_id:
+        stmt = stmt.where(XeroAccount.xero_tenant_id == org_id)
+        count_stmt = count_stmt.where(XeroAccount.xero_tenant_id == org_id)
+    else:
+        # No selected organisation: never mix orgs in UI counts/lists.
+        stmt = stmt.where(XeroAccount.xero_tenant_id == "")
+        count_stmt = count_stmt.where(XeroAccount.xero_tenant_id == "")
     if status:
         stmt = stmt.where(XeroAccount.sync_status == status)
         count_stmt = count_stmt.where(XeroAccount.sync_status == status)
@@ -70,15 +97,25 @@ async def list_xero_tax_rates(
     tenant_id: uuid.UUID,
     search: str | None = None,
     status: str | None = None,
+    xero_tenant_id: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> dict[str, Any]:
     limit = min(max(limit, 1), 200)
     offset = max(offset, 0)
+    org_id = xero_tenant_id
+    if org_id is None:
+        org_id = await resolve_selected_xero_tenant_id(db, tenant_id)
     stmt = select(XeroTaxRate).where(XeroTaxRate.tenant_id == tenant_id)
     count_stmt = select(func.count()).select_from(XeroTaxRate).where(
         XeroTaxRate.tenant_id == tenant_id
     )
+    if org_id:
+        stmt = stmt.where(XeroTaxRate.xero_tenant_id == org_id)
+        count_stmt = count_stmt.where(XeroTaxRate.xero_tenant_id == org_id)
+    else:
+        stmt = stmt.where(XeroTaxRate.xero_tenant_id == "")
+        count_stmt = count_stmt.where(XeroTaxRate.xero_tenant_id == "")
     if status:
         stmt = stmt.where(XeroTaxRate.sync_status == status)
         count_stmt = count_stmt.where(XeroTaxRate.sync_status == status)
@@ -110,15 +147,25 @@ async def list_xero_contacts(
     search: str | None = None,
     status: str | None = None,
     mapping_status: str | None = None,
+    xero_tenant_id: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> dict[str, Any]:
     limit = min(max(limit, 1), 200)
     offset = max(offset, 0)
+    org_id = xero_tenant_id
+    if org_id is None:
+        org_id = await resolve_selected_xero_tenant_id(db, tenant_id)
     stmt = select(XeroContact).where(XeroContact.tenant_id == tenant_id)
     count_stmt = select(func.count()).select_from(XeroContact).where(
         XeroContact.tenant_id == tenant_id
     )
+    if org_id:
+        stmt = stmt.where(XeroContact.xero_tenant_id == org_id)
+        count_stmt = count_stmt.where(XeroContact.xero_tenant_id == org_id)
+    else:
+        stmt = stmt.where(XeroContact.xero_tenant_id == "")
+        count_stmt = count_stmt.where(XeroContact.xero_tenant_id == "")
     if status:
         stmt = stmt.where(XeroContact.sync_status == status)
         count_stmt = count_stmt.where(XeroContact.sync_status == status)
@@ -149,12 +196,29 @@ async def list_xero_contacts(
     }
 
 
-async def get_master_data_totals(db: AsyncSession, tenant_id: uuid.UUID) -> dict[str, int]:
+async def get_master_data_totals(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    *,
+    xero_tenant_id: str | None = None,
+) -> dict[str, int]:
+    org_id = xero_tenant_id
+    if org_id is None:
+        org_id = await resolve_selected_xero_tenant_id(db, tenant_id)
+    if not org_id:
+        return {
+            "accounts": 0,
+            "tax_rates": 0,
+            "contacts": 0,
+            "currencies": 0,
+        }
+
     accounts = int(
         (
             await db.execute(
                 select(func.count()).select_from(XeroAccount).where(
                     XeroAccount.tenant_id == tenant_id,
+                    XeroAccount.xero_tenant_id == org_id,
                     XeroAccount.sync_status == "active",
                 )
             )
@@ -166,6 +230,7 @@ async def get_master_data_totals(db: AsyncSession, tenant_id: uuid.UUID) -> dict
             await db.execute(
                 select(func.count()).select_from(XeroTaxRate).where(
                     XeroTaxRate.tenant_id == tenant_id,
+                    XeroTaxRate.xero_tenant_id == org_id,
                     XeroTaxRate.sync_status == "active",
                 )
             )
@@ -177,6 +242,7 @@ async def get_master_data_totals(db: AsyncSession, tenant_id: uuid.UUID) -> dict
             await db.execute(
                 select(func.count()).select_from(XeroContact).where(
                     XeroContact.tenant_id == tenant_id,
+                    XeroContact.xero_tenant_id == org_id,
                     XeroContact.sync_status == "active",
                 )
             )
@@ -188,6 +254,7 @@ async def get_master_data_totals(db: AsyncSession, tenant_id: uuid.UUID) -> dict
             await db.execute(
                 select(func.count()).select_from(XeroCurrency).where(
                     XeroCurrency.tenant_id == tenant_id,
+                    XeroCurrency.xero_tenant_id == org_id,
                     XeroCurrency.sync_status == "active",
                 )
             )
@@ -200,6 +267,7 @@ async def get_master_data_totals(db: AsyncSession, tenant_id: uuid.UUID) -> dict
         "contacts": contacts,
         "currencies": currencies,
     }
+
 
 
 async def list_sync_history(
@@ -238,6 +306,7 @@ async def list_sync_history(
         "items": [_serialize_sync_job(row) for row in rows],
         **_page_meta(total=total, limit=limit, offset=offset),
     }
+
 
 
 async def list_export_history(
@@ -388,6 +457,7 @@ def _serialize_sync_job(row: AccountingSyncJob) -> dict[str, Any]:
         "initiated_by": row.initiated_by,
         "created_at": row.created_at,
     }
+
 
 
 def _serialize_export_ref(row: ExternalAccountingRef) -> dict[str, Any]:

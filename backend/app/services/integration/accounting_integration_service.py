@@ -331,6 +331,9 @@ async def select_xero_connection(
     if (row.xero_tenant_type or "").upper() != XERO_ORGANISATION_TYPE:
         raise ValueError("Only organisation connections can be selected")
 
+    previous_org = (integration.provider_tenant_id or "").strip()
+    new_org = (row.xero_tenant_id or "").strip()
+
     await db.execute(
         update(XeroConnection)
         .where(
@@ -347,6 +350,26 @@ async def select_xero_connection(
     integration.status = AccountingIntegrationStatus.CONNECTED.value
     integration.last_error = None
     integration.last_error_code = None
+
+    # Organisation switch: deactivate prior org master data + mappings.
+    # Same-org reconnect leaves rows active so sync can update in place.
+    if previous_org and new_org and previous_org != new_org:
+        from app.services.integration.xero_organisation_isolation import (
+            deactivate_xero_organisation_scope,
+        )
+
+        await deactivate_xero_organisation_scope(
+            db,
+            tenant_id=tenant_id,
+            xero_tenant_id=previous_org,
+        )
+        logger.info(
+            "xero_organisation_switched",
+            tenant_id=str(tenant_id),
+            previous_xero_tenant_id=previous_org,
+            xero_tenant_id=new_org,
+        )
+
     await db.flush()
     return integration
 
@@ -492,6 +515,7 @@ async def _apply_xero_org_selection(
         for c in connections
         if c.active and (c.xero_tenant_type or "").upper() == XERO_ORGANISATION_TYPE
     ]
+    previous_org = (integration.provider_tenant_id or "").strip()
     await db.execute(
         update(XeroConnection)
         .where(XeroConnection.accounting_integration_id == integration.id)
@@ -500,12 +524,34 @@ async def _apply_xero_org_selection(
     if len(organisations) == 1:
         org = organisations[0]
         org.selected = True
+        new_org = (org.xero_tenant_id or "").strip()
         integration.provider_tenant_id = org.xero_tenant_id
         integration.xero_connection_id = org.xero_connection_id
         integration.provider_tenant_type = org.xero_tenant_type
         integration.display_name = org.xero_tenant_name
         integration.status = AccountingIntegrationStatus.CONNECTED.value
+        if previous_org and new_org and previous_org != new_org:
+            from app.services.integration.xero_organisation_isolation import (
+                deactivate_xero_organisation_scope,
+            )
+
+            await deactivate_xero_organisation_scope(
+                db,
+                tenant_id=integration.tenant_id,
+                xero_tenant_id=previous_org,
+            )
     elif len(organisations) > 1:
+        if previous_org:
+            from app.services.integration.xero_organisation_isolation import (
+                deactivate_xero_organisation_scope,
+            )
+
+            # Selection cleared pending user choice — do not leave prior org active.
+            await deactivate_xero_organisation_scope(
+                db,
+                tenant_id=integration.tenant_id,
+                xero_tenant_id=previous_org,
+            )
         integration.provider_tenant_id = None
         integration.xero_connection_id = None
         integration.provider_tenant_type = None

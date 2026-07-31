@@ -239,7 +239,11 @@ async def validate_invoice_for_xero_export(
     gl_key = (invoice.account_code or "").strip()
     gl_map = (
         await get_mapping(
-            db, tenant_id=tenant_id, mapping_type=MAPPING_GL_ACCOUNT, source_key=gl_key
+            db,
+            tenant_id=tenant_id,
+            mapping_type=MAPPING_GL_ACCOUNT,
+            source_key=gl_key,
+            xero_tenant_id=xero_tenant_id,
         )
         if gl_key
         else None
@@ -251,7 +255,11 @@ async def validate_invoice_for_xero_export(
         tax_key = f"GST:{invoice.gst_rate}" if invoice.gst_rate is not None else "GST"
     tax_map = (
         await get_mapping(
-            db, tenant_id=tenant_id, mapping_type=MAPPING_TAX, source_key=tax_key
+            db,
+            tenant_id=tenant_id,
+            mapping_type=MAPPING_TAX,
+            source_key=tax_key,
+            xero_tenant_id=xero_tenant_id,
         )
         if tax_key
         else None
@@ -266,6 +274,7 @@ async def validate_invoice_for_xero_export(
             tenant_id=tenant_id,
             mapping_type=MAPPING_TRACKING,
             source_key=cost_centre,
+            xero_tenant_id=xero_tenant_id,
         )
         if track_map is None:
             blocking.append(
@@ -299,17 +308,19 @@ async def validate_invoice_for_xero_export(
             {
                 "field": "supplier",
                 "code": "ambiguous_supplier_match",
-                "message": "ambiguous supplier match — human review required",
+                "message": "ambiguous supplier match ΓÇö human review required",
             }
         )
     elif contact_match.outcome == "none" or not contact_match.contact_id:
-        blocking.append(
-            {
-                "field": "supplier",
-                "code": "contact_not_mapped",
-                "message": "supplier has no Xero contact",
-            }
-        )
+        # Exact match missing: export will auto-create when legal name is present.
+        if not (invoice.vendor or "").strip():
+            blocking.append(
+                {
+                    "field": "supplier",
+                    "code": "contact_not_mapped",
+                    "message": "supplier has no Xero contact and no legal name to create one",
+                }
+            )
 
     if not mapped_account:
         blocking.append(
@@ -339,7 +350,7 @@ async def validate_invoice_for_xero_export(
             {
                 "field": "currency",
                 "code": "currency_missing",
-                "message": "Organisation currency is not configured",
+                "message": "Document currency is missing",
             }
         )
     else:
@@ -358,7 +369,7 @@ async def validate_invoice_for_xero_export(
                 {
                     "field": "currency",
                     "code": "currency_not_supported",
-                    "message": "currency not supported",
+                    "message": f"Document currency '{currency}' is not supported by the selected Xero organisation",
                 }
             )
 
@@ -409,7 +420,7 @@ async def export_supplier_invoice_to_xero(
         db, tenant_id=tenant_id, invoice_id=invoice_id
     )
     if not validation["valid"]:
-        # Ambiguous supplier → human review ledger row
+        # Ambiguous supplier ΓåÆ human review ledger row
         codes = {e.get("code") for e in validation["blocking_errors"]}
         if "ambiguous_supplier_match" in codes:
             ledger = await _ensure_review_ledger(
@@ -440,18 +451,73 @@ async def export_supplier_invoice_to_xero(
     integration, xero_tenant_id = await require_xero_ready(db, tenant_id)
     del integration
 
-    canonical_data = validation["canonical"]
     from app.schemas.canonical_accounting_transaction import (
         CanonicalAccountingTransaction,
     )
+    from app.services.integration.xero_contact_resolution_service import (
+        create_xero_supplier_contact,
+    )
 
+    canonical_data = validation["canonical"]
     txn = CanonicalAccountingTransaction.model_validate(canonical_data)
     contact_id = validation["contact_resolution"]["contact_id"]
+    outcome = validation["contact_resolution"]["outcome"]
+
+    if not contact_id and outcome == "none":
+        try:
+            created = await create_xero_supplier_contact(
+                db,
+                tenant_id=tenant_id,
+                supplier_key=str(
+                    invoice.storage_vendor_slug or invoice.vendor or invoice.id
+                ),
+                legal_name=invoice.vendor or "",
+                tax_id=invoice.abn,
+                email=invoice.email_sender,
+                user_id=user_id,
+            )
+        except ValueError as exc:
+            if str(exc) == "ambiguous_supplier_match":
+                ledger = await _ensure_review_ledger(
+                    db,
+                    tenant_id=tenant_id,
+                    invoice_id=invoice_id,
+                    validation=validation,
+                    user_id=user_id,
+                    correlation_id=correlation_id,
+                )
+                raise XeroExportError(
+                    "ambiguous supplier match",
+                    code="ambiguous_supplier_match",
+                    bucket=STATUS_HUMAN_REVIEW,
+                    blocking_errors=[
+                        {
+                            "field": "supplier",
+                            "code": "ambiguous_supplier_match",
+                            "message": "ambiguous supplier match ΓÇö human review required",
+                        }
+                    ],
+                    ledger=ledger,
+                ) from exc
+            raise XeroExportError(
+                str(exc) or "supplier create failed",
+                code="supplier_create_failed",
+                bucket=ERROR_TERMINAL,
+            ) from exc
+        except XeroApiError as exc:
+            raise XeroExportError(
+                exc.message or "supplier create failed",
+                code=exc.error_code or "supplier_create_failed",
+                bucket=ERROR_TRANSIENT if (exc.status_code or 500) >= 500 else ERROR_TERMINAL,
+            ) from exc
+        contact_id = created["contact_id"]
+        outcome = "created" if created.get("created") else "matched"
+        txn.supplier.external_xero_contact_id = contact_id
+
     assert contact_id
 
-    # Persist auto-match mapping evidence when exact match succeeded.
-    outcome = validation["contact_resolution"]["outcome"]
-    if outcome == "matched":
+    # Persist mapping evidence for exact match or newly created supplier.
+    if outcome in {"matched", "created"}:
         await save_supplier_contact_mapping(
             db,
             tenant_id=tenant_id,
@@ -472,7 +538,7 @@ async def export_supplier_invoice_to_xero(
     )
 
     if ledger and ledger.status == STATUS_SUCCESS and ledger.payload_hash == txn.payload_hash:
-        # Same payload — return evidence; retry attachment only if needed.
+        # Same payload ╬ô├ç├╢ return evidence; retry attachment only if needed.
         if ledger.attachment_status != ATTACHMENT_SUCCESS and txn.attachment:
             await _attach_pdf(db, ledger=ledger, txn=txn, xero_tenant_id=xero_tenant_id)
             await db.refresh(ledger)

@@ -120,7 +120,7 @@ def validate_accpay_payload(payload: dict[str, Any]) -> list[dict[str, str]]:
             {
                 "field": "CurrencyCode",
                 "code": "currency_missing",
-                "message": "Organisation currency is not configured",
+                "message": "Document currency is missing",
             }
         )
     return errors

@@ -43,7 +43,7 @@ from app.schemas.canonical_accounting_transaction import (
     compute_payload_hash,
     validate_canonical_totals,
 )
-from app.services.integration.accounting_mapping_service import upsert_mapping
+from app.services.integration.accounting_mapping_service import get_mapping, upsert_mapping
 from app.services.integration.canonical_transaction_builder import (
     build_canonical_supplier_invoice,
 )
@@ -240,7 +240,7 @@ async def test_tenant_isolation_mappings(db_session):
 async def test_mapping_completeness_and_inactive(db_session):
     await _seed_xero_ready(db_session)
     inv = await _seed_invoice(db_session)
-    # Without mappings / tax mapping — validation fails for tax
+    # Without mappings / tax mapping ΓÇö validation fails for tax
     with patch(
         "app.services.integration.xero_export_service.require_xero_ready",
         AsyncMock(return_value=(MagicMock(provider_tenant_id="xero-org-1"), "xero-org-1")),
@@ -310,6 +310,152 @@ async def test_contact_exact_match_and_ambiguous(db_session):
     assert amb.outcome == "ambiguous"
 
 
+@pytest.mark.asyncio
+async def test_validation_allows_auto_create_when_no_supplier_match(db_session):
+    await _seed_xero_ready(db_session)
+    inv = await _seed_invoice(
+        db_session,
+        vendor="Brand New Supplier Pty Ltd",
+        abn="11111111111",
+    )
+    inv.storage_vendor_slug = "brand-new-supplier"
+    inv.email_sender = "ap@brandnew.test"
+    await upsert_mapping(
+        db_session,
+        tenant_id=TESTING_TENANT_UUID,
+        mapping_type=MAPPING_TAX,
+        source_key="GST:10",
+        external_code="INPUT",
+        user_id=1,
+        xero_tenant_id="xero-org-1",
+    )
+    await db_session.flush()
+    with patch(
+        "app.services.integration.xero_export_service.require_xero_ready",
+        AsyncMock(return_value=(MagicMock(provider_tenant_id="xero-org-1"), "xero-org-1")),
+    ):
+        result = await validate_invoice_for_xero_export(
+            db_session, tenant_id=TESTING_TENANT_UUID, invoice_id=inv.id
+        )
+    codes = {e["code"] for e in result["blocking_errors"]}
+    assert "contact_not_mapped" not in codes
+    assert "ambiguous_supplier_match" not in codes
+    assert result["contact_resolution"]["outcome"] == "none"
+    assert result["contact_resolution"]["contact_id"] is None
+    assert result["valid"] is True
+
+
+@pytest.mark.asyncio
+async def test_export_auto_creates_supplier_when_no_match(db_session, tmp_path):
+    integration = await _seed_xero_ready(db_session)
+    inv = await _seed_invoice(
+        db_session,
+        vendor="Brand New Supplier Pty Ltd",
+        abn="11111111111",
+    )
+    inv.storage_vendor_slug = "brand-new-supplier"
+    inv.email_sender = "ap@brandnew.test"
+    await upsert_mapping(
+        db_session,
+        tenant_id=TESTING_TENANT_UUID,
+        mapping_type=MAPPING_TAX,
+        source_key="GST:10",
+        external_code="INPUT",
+        user_id=1,
+        xero_tenant_id="xero-org-1",
+    )
+    pdf = tmp_path / "invoice.pdf"
+    pdf.write_bytes(b"%PDF-1.4 test")
+    inv.raw_file_path = str(pdf)
+    await db_session.flush()
+
+    mock_client = MagicMock()
+
+    async def _post_json(path, json_body=None, **kwargs):
+        if path == "Contacts":
+            return {
+                "Contacts": [
+                    {
+                        "ContactID": "contact-new-1",
+                        "Name": "Brand New Supplier Pty Ltd",
+                        "EmailAddress": "ap@brandnew.test",
+                        "TaxNumber": "11111111111",
+                        "ContactStatus": "ACTIVE",
+                    }
+                ]
+            }
+        return {
+            "Invoices": [
+                {
+                    "InvoiceID": "xero-inv-new",
+                    "InvoiceNumber": "INV-100",
+                    "Status": "DRAFT",
+                    "CurrencyCode": "AUD",
+                    "Total": "110.00",
+                }
+            ]
+        }
+
+    mock_client.post_json = AsyncMock(side_effect=_post_json)
+    mock_client.put_bytes = AsyncMock(
+        return_value=MagicMock(
+            content=b'{"Attachments":[{"AttachmentID":"att-1"}]}',
+            json=lambda: {"Attachments": [{"AttachmentID": "att-1"}]},
+        )
+    )
+
+    with (
+        patch(
+            "app.services.integration.xero_export_service.require_xero_ready",
+            AsyncMock(return_value=(integration, "xero-org-1")),
+        ),
+        patch(
+            "app.services.integration.xero_contact_resolution_service.require_xero_ready",
+            AsyncMock(return_value=(integration, "xero-org-1")),
+        ),
+        patch(
+            "app.services.integration.xero_export_service.XeroClient",
+            return_value=mock_client,
+        ),
+        patch(
+            "app.services.integration.xero_contact_resolution_service.XeroClient",
+            return_value=mock_client,
+        ),
+        patch(
+            "app.services.integration.xero_attachment_service.XeroClient",
+            return_value=mock_client,
+        ),
+        patch(
+            "app.services.integration.xero_attachment_service.open_pdf_for_reading",
+        ) as open_pdf,
+    ):
+        open_pdf.return_value.__enter__ = lambda s: MagicMock(
+            read=lambda: b"%PDF-1.4 test"
+        )
+        open_pdf.return_value.__exit__ = lambda *a: None
+        result = await export_supplier_invoice_to_xero(
+            db_session,
+            tenant_id=TESTING_TENANT_UUID,
+            invoice_id=inv.id,
+            user_id=1,
+        )
+
+    assert result["evidence"]["external_id"] == "xero-inv-new"
+    mapping = await get_mapping(
+        db_session,
+        tenant_id=TESTING_TENANT_UUID,
+        mapping_type=MAPPING_SUPPLIER,
+        source_key="brand-new-supplier",
+        xero_tenant_id="xero-org-1",
+    )
+    assert mapping is not None
+    assert mapping.external_id == "contact-new-1"
+    contact_calls = [
+        c for c in mock_client.post_json.await_args_list if c.args and c.args[0] == "Contacts"
+    ]
+    assert len(contact_calls) == 1
+
+
 def test_accpay_draft_enforced():
     txn = CanonicalAccountingTransaction(
         qll_transaction_id="qll-1",
@@ -358,8 +504,8 @@ def test_error_classification_transient_and_terminal():
 
 
 @pytest.mark.asyncio
-async def test_export_currency_blank_source_uses_organisation_aud(db_session):
-    """Blank invoice.currency + organisation AUD => canonical/export AUD."""
+async def test_export_currency_blank_source_is_currency_missing(db_session):
+    """Blank invoice.currency must not fall back to organisation AUD."""
     await _seed_xero_ready(db_session)
     inv = await _seed_invoice(db_session, currency="")
     assert inv.currency == ""
@@ -371,16 +517,14 @@ async def test_export_currency_blank_source_uses_organisation_aud(db_session):
             db_session, tenant_id=TESTING_TENANT_UUID, invoice_id=inv.id
         )
     codes = {e["code"] for e in result["blocking_errors"]}
-    assert "currency_missing" not in codes
-    assert "currency_not_supported" not in codes
-    assert "unsupported_currency" not in codes
-    assert result["canonical"] is not None
-    assert result["canonical"]["currency"] == "AUD"
+    assert "currency_missing" in codes
+    assert result["valid"] is False
+    assert result["canonical"]["currency"] == ""
 
 
 @pytest.mark.asyncio
-async def test_export_currency_foreign_source_uses_organisation_aud(db_session):
-    """Foreign source currency + organisation AUD => posted/export AUD."""
+async def test_export_currency_foreign_not_supported_when_not_synced(db_session):
+    """Foreign document currency must not be silently replaced with AUD."""
     await _seed_xero_ready(db_session)
     inv = await _seed_invoice(db_session, currency="USD")
     with patch(
@@ -391,27 +535,119 @@ async def test_export_currency_foreign_source_uses_organisation_aud(db_session):
             db_session, tenant_id=TESTING_TENANT_UUID, invoice_id=inv.id
         )
     codes = {e["code"] for e in result["blocking_errors"]}
+    assert "currency_not_supported" in codes
     assert "currency_missing" not in codes
-    assert "currency_not_supported" not in codes
-    assert result["canonical"] is not None
-    assert result["canonical"]["currency"] == "AUD"
+    assert result["canonical"]["currency"] == "USD"
     assert inv.currency == "USD"
 
 
 @pytest.mark.asyncio
-async def test_export_currency_missing_org_currency_blocks_without_500(db_session):
-    """Tenant without organisation currency => controlled blocking error, not HTTP 500."""
+async def test_export_currency_document_usd_when_synced(db_session):
+    """Normalised document currency is used when active for the selected org."""
+    await _seed_xero_ready(db_session)
+    # Seed only has AUD; add USD for selected org.
+    integration = (
+        await db_session.execute(
+            select(AccountingIntegration).where(
+                AccountingIntegration.tenant_id == TESTING_TENANT_UUID
+            )
+        )
+    ).scalar_one()
+    db_session.add(
+        XeroCurrency(
+            tenant_id=TESTING_TENANT_UUID,
+            accounting_integration_id=integration.id,
+            xero_tenant_id="xero-org-1",
+            code="USD",
+            sync_status="active",
+        )
+    )
+    await db_session.flush()
+    inv = await _seed_invoice(db_session, currency=" usd ")
+    with patch(
+        "app.services.integration.xero_export_service.require_xero_ready",
+        AsyncMock(return_value=(MagicMock(provider_tenant_id="xero-org-1"), "xero-org-1")),
+    ):
+        result = await validate_invoice_for_xero_export(
+            db_session, tenant_id=TESTING_TENANT_UUID, invoice_id=inv.id
+        )
+    codes = {e["code"] for e in result["blocking_errors"]}
+    assert "currency_missing" not in codes
+    assert "currency_not_supported" not in codes
+    assert result["canonical"]["currency"] == "USD"
+
+
+@pytest.mark.asyncio
+async def test_export_currency_success_ledger_immutable_on_retry(db_session):
+    """Existing SUCCESS export currency stays fixed even if document currency changes."""
+    await _seed_xero_ready(db_session)
+    inv = await _seed_invoice(db_session, currency="AUD")
+    db_session.add(
+        AccountingExportLedger(
+            tenant_id=TESTING_TENANT_UUID,
+            provider="xero",
+            qll_transaction_id=str(uuid.uuid4()),
+            source_invoice_id=inv.id,
+            source_document_id=f"DOC-{inv.id}",
+            transaction_type="SUPPLIER_INVOICE",
+            direction="OUTBOUND",
+            status=STATUS_SUCCESS,
+            payload_version=1,
+            payload_hash="hash-ccy",
+            idempotency_key="idem-ccy",
+            external_id="xero-inv-ccy",
+            external_currency="AUD",
+            external_status="DRAFT",
+        )
+    )
+    inv.currency = "USD"
+    await db_session.flush()
+    with patch(
+        "app.services.integration.xero_export_service.require_xero_ready",
+        AsyncMock(return_value=(MagicMock(provider_tenant_id="xero-org-1"), "xero-org-1")),
+    ):
+        result = await validate_invoice_for_xero_export(
+            db_session, tenant_id=TESTING_TENANT_UUID, invoice_id=inv.id
+        )
+    assert result["canonical"]["currency"] == "AUD"
+    codes = {e["code"] for e in result["blocking_errors"]}
+    assert "currency_not_supported" not in codes
+
+
+@pytest.mark.asyncio
+async def test_accpay_due_date_mapped_when_present(db_session):
+    await _seed_xero_ready(db_session)
+    inv = await _seed_invoice(db_session)
+    inv.due_date = date(2026, 2, 28)
+    await db_session.flush()
+    txn = build_canonical_supplier_invoice(
+        inv, tenant_id=TESTING_TENANT_UUID, posting_currency="AUD"
+    )
+    payload = build_accpay_draft_payload(txn, contact_id="contact-1")
+    assert payload["DueDate"] == "2026-02-28"
+
+
+@pytest.mark.asyncio
+async def test_accpay_due_date_absent_when_missing(db_session):
+    await _seed_xero_ready(db_session)
+    inv = await _seed_invoice(db_session)
+    inv.due_date = None
+    await db_session.flush()
+    txn = build_canonical_supplier_invoice(
+        inv, tenant_id=TESTING_TENANT_UUID, posting_currency="AUD"
+    )
+    payload = build_accpay_draft_payload(txn, contact_id="contact-1")
+    assert "DueDate" not in payload
+
+
+@pytest.mark.asyncio
+async def test_export_currency_missing_document_blocks_without_500(db_session):
+    """Missing document currency => controlled blocking error, not HTTP 500."""
     await _seed_xero_ready(db_session)
     inv = await _seed_invoice(db_session, currency="")
-    with (
-        patch(
-            "app.services.integration.xero_export_service.require_xero_ready",
-            AsyncMock(return_value=(MagicMock(provider_tenant_id="xero-org-1"), "xero-org-1")),
-        ),
-        patch(
-            "app.services.integration.canonical_transaction_builder.tenant_currency",
-            return_value="",
-        ),
+    with patch(
+        "app.services.integration.xero_export_service.require_xero_ready",
+        AsyncMock(return_value=(MagicMock(provider_tenant_id="xero-org-1"), "xero-org-1")),
     ):
         result = await validate_invoice_for_xero_export(
             db_session, tenant_id=TESTING_TENANT_UUID, invoice_id=inv.id

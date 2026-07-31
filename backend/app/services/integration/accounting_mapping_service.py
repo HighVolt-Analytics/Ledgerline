@@ -33,13 +33,19 @@ async def list_mappings(
     *,
     tenant_id: uuid.UUID,
     mapping_type: str | None = None,
+    xero_tenant_id: str | None = None,
+    active_only: bool = False,
 ) -> list[AccountingEntityMapping]:
     stmt = select(AccountingEntityMapping).where(
         AccountingEntityMapping.tenant_id == tenant_id,
         AccountingEntityMapping.provider == PROVIDER_XERO,
     )
+    if xero_tenant_id is not None:
+        stmt = stmt.where(AccountingEntityMapping.xero_tenant_id == xero_tenant_id)
     if mapping_type:
         stmt = stmt.where(AccountingEntityMapping.mapping_type == mapping_type)
+    if active_only:
+        stmt = stmt.where(AccountingEntityMapping.is_active.is_(True))
     stmt = stmt.order_by(
         AccountingEntityMapping.mapping_type,
         AccountingEntityMapping.source_key,
@@ -51,6 +57,7 @@ def mapping_to_dict(row: AccountingEntityMapping) -> dict[str, Any]:
     return {
         "id": row.id,
         "provider": row.provider,
+        "xero_tenant_id": row.xero_tenant_id,
         "mapping_type": row.mapping_type,
         "source_key": row.source_key,
         "source_label": row.source_label,
@@ -83,6 +90,7 @@ async def upsert_mapping(
 ) -> AccountingEntityMapping:
     mapping_type = mapping_type.strip()
     source_key = source_key.strip()
+    org_id = (xero_tenant_id or "").strip()
     if mapping_type not in {
         MAPPING_GL_ACCOUNT,
         MAPPING_TAX,
@@ -92,6 +100,11 @@ async def upsert_mapping(
         raise MappingServiceError(f"Unsupported mapping type '{mapping_type}'")
     if not source_key:
         raise MappingServiceError("source_key is required")
+    if not org_id:
+        raise MappingServiceError(
+            "xero_tenant_id is required for organisation-scoped mappings",
+            code="xero_tenant_required",
+        )
 
     await _validate_against_reference(
         db,
@@ -100,7 +113,7 @@ async def upsert_mapping(
         external_id=external_id,
         external_code=external_code,
         external_option_id=external_option_id,
-        xero_tenant_id=xero_tenant_id,
+        xero_tenant_id=org_id,
     )
 
     row = (
@@ -108,6 +121,7 @@ async def upsert_mapping(
             select(AccountingEntityMapping).where(
                 AccountingEntityMapping.tenant_id == tenant_id,
                 AccountingEntityMapping.provider == PROVIDER_XERO,
+                AccountingEntityMapping.xero_tenant_id == org_id,
                 AccountingEntityMapping.mapping_type == mapping_type,
                 AccountingEntityMapping.source_key == source_key,
             )
@@ -117,12 +131,14 @@ async def upsert_mapping(
         row = AccountingEntityMapping(
             tenant_id=tenant_id,
             provider=PROVIDER_XERO,
+            xero_tenant_id=org_id,
             mapping_type=mapping_type,
             source_key=source_key,
             created_by=user_id,
         )
         db.add(row)
 
+    row.xero_tenant_id = org_id
     row.source_label = source_label
     row.external_id = (external_id or "").strip() or None
     row.external_code = (external_code or "").strip() or None
@@ -140,12 +156,17 @@ async def get_mapping(
     tenant_id: uuid.UUID,
     mapping_type: str,
     source_key: str,
+    xero_tenant_id: str,
 ) -> AccountingEntityMapping | None:
+    org_id = (xero_tenant_id or "").strip()
+    if not org_id:
+        return None
     return (
         await db.execute(
             select(AccountingEntityMapping).where(
                 AccountingEntityMapping.tenant_id == tenant_id,
                 AccountingEntityMapping.provider == PROVIDER_XERO,
+                AccountingEntityMapping.xero_tenant_id == org_id,
                 AccountingEntityMapping.mapping_type == mapping_type,
                 AccountingEntityMapping.source_key == source_key,
                 AccountingEntityMapping.is_active.is_(True),

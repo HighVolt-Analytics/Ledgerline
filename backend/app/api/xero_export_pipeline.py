@@ -167,9 +167,10 @@ async def reference_tracking_categories(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_admin),
 ) -> ApiEnvelope[dict]:
-    await require_xero_ready(db, ctx.tenant_id)
+    _, xero_tenant_id = await require_xero_ready(db, ctx.tenant_id)
     stmt = select(XeroTrackingCategory).where(
         XeroTrackingCategory.tenant_id == ctx.tenant_id,
+        XeroTrackingCategory.xero_tenant_id == xero_tenant_id,
         XeroTrackingCategory.sync_status == "active",
     )
     if search:
@@ -210,8 +211,12 @@ async def get_mappings(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_admin),
 ) -> ApiEnvelope[dict]:
+    _, xero_tenant_id = await require_xero_ready(db, ctx.tenant_id)
     rows = await list_mappings(
-        db, tenant_id=ctx.tenant_id, mapping_type=mapping_type
+        db,
+        tenant_id=ctx.tenant_id,
+        mapping_type=mapping_type,
+        xero_tenant_id=xero_tenant_id,
     )
     return ApiEnvelope(data={"items": [mapping_to_dict(r) for r in rows]})
 
