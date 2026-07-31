@@ -585,7 +585,7 @@ async def test_export_validation_accepts_aud_after_currency_sync(db_session, mon
         vendor="Acme Supplies",
         invoice_no="INV-SYNC-1",
         invoice_date=date(2026, 1, 15),
-        currency="",
+        currency="AUD",
         subtotal=Decimal("100.00"),
         gst=Decimal("10.00"),
         gst_rate=Decimal("10"),

@@ -34,9 +34,10 @@ class AccountingEntityMapping(Base):
         UniqueConstraint(
             "tenant_id",
             "provider",
+            "xero_tenant_id",
             "mapping_type",
             "source_key",
-            name="uq_accounting_entity_mappings_source",
+            name="uq_accounting_entity_mappings_org_source",
         ),
     )
 
@@ -47,6 +48,7 @@ class AccountingEntityMapping(Base):
         index=True,
     )
     provider: Mapped[str] = mapped_column(String(32), index=True, default=PROVIDER_XERO)
+    xero_tenant_id: Mapped[str] = mapped_column(String(128), index=True, default="")
     mapping_type: Mapped[str] = mapped_column(String(32), index=True)
     source_key: Mapped[str] = mapped_column(String(255))
     source_label: Mapped[str | None] = mapped_column(String(255))

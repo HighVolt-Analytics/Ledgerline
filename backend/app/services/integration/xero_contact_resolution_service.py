@@ -63,14 +63,14 @@ async def resolve_supplier_contact(
     email: str | None = None,
     existing_contact_id: str | None = None,
 ) -> ContactMatch:
-    """Resolve ContactID without fuzzy auto-create.
+    """Resolve ContactID without fuzzy matching.
 
     Order:
-    1. Stored mapping / explicit ContactID
+    1. Stored organisation-scoped mapping / explicit ContactID
     2. Tax ID exact
     3. Exact normalised legal name
     4. Email exact
-    Ambiguous (>1) → HUMAN_REVIEW; none → none.
+    Ambiguous (>1) → HUMAN_REVIEW; none → caller may auto-create on export.
     """
     if existing_contact_id and existing_contact_id.strip():
         row = (
@@ -96,6 +96,7 @@ async def resolve_supplier_contact(
         tenant_id=tenant_id,
         mapping_type=MAPPING_SUPPLIER,
         source_key=supplier_key,
+        xero_tenant_id=xero_tenant_id,
     )
     if mapped and mapped.external_id:
         row = (
@@ -198,7 +199,7 @@ async def save_supplier_contact_mapping(
     legal_name: str,
     contact_id: str,
     user_id: int | None,
-    xero_tenant_id: str | None = None,
+    xero_tenant_id: str,
 ) -> None:
     await upsert_mapping(
         db,
@@ -215,6 +216,7 @@ async def save_supplier_contact_mapping(
         await db.execute(
             select(XeroContact).where(
                 XeroContact.tenant_id == tenant_id,
+                XeroContact.xero_tenant_id == xero_tenant_id,
                 XeroContact.xero_contact_id == contact_id,
             )
         )
@@ -233,7 +235,11 @@ async def create_xero_supplier_contact(
     email: str | None = None,
     user_id: int | None = None,
 ) -> dict[str, Any]:
-    """Explicit authorised create — never called automatically on ambiguous match."""
+    """Create a Xero supplier contact when exact resolution finds no match.
+
+    Idempotent within tenant + Xero organisation: re-resolves first and reuses a
+    single exact match. Never called for ambiguous matches.
+    """
     integration, xero_tenant_id = await require_xero_ready(db, tenant_id)
 
     existing = await resolve_supplier_contact(

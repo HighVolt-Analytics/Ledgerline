@@ -18,8 +18,6 @@ from app.models.accounting_export_ledger import (
     AccountingExportLedger,
 )
 from app.models.invoice import Invoice, InvoiceStatus
-from app.models.tenant import Tenant
-from app.models.xero_organisation_profile import XeroOrganisationProfile
 from app.schemas.canonical_accounting_transaction import (
     CanonicalAccountingTransaction,
     CanonicalAttachment,
@@ -32,7 +30,6 @@ from app.schemas.canonical_accounting_transaction import (
     new_qll_transaction_id,
     validate_canonical_totals,
 )
-from app.tenant_settings import tenant_currency
 
 
 class CanonicalTransactionError(ValueError):
@@ -73,18 +70,20 @@ async def resolve_organisation_posting_currency(
     tenant_id: uuid.UUID,
     xero_tenant_id: str | None = None,
     invoice_id: int | None = None,
+    document_currency: str | None = None,
 ) -> str | None:
-    """Resolve currency for accounting posting / Xero export (tenant-scoped).
-
-    Posting rule: use the tenant organisation currency, not the source document
-    currency (which may be blank or foreign).
+    """Resolve currency for Xero ACCPAY export (tenant + organisation scoped).
 
     Preference order:
-    1. Persisted SUCCESS export ledger currency for this invoice (canonical /
-       external), when present — keeps re-exports stable.
-    2. Synced Xero organisation profile ``base_currency``.
-    3. Tenant institution currency from settings (``tenant_currency``).
+    1. Persisted SUCCESS export ledger currency for this invoice — immutable for
+       idempotent retries (do not re-derive from document or organisation).
+    2. Document currency from the invoice (normalised case/whitespace).
+
+    Organisation / tenant base currency is never used as a silent substitute.
+    Missing document currency returns ``None`` (caller emits ``currency_missing``).
     """
+    del xero_tenant_id  # reserved for call-site clarity; validation is org-scoped elsewhere
+
     if invoice_id is not None:
         ledger = (
             await db.execute(
@@ -100,7 +99,7 @@ async def resolve_organisation_posting_currency(
             )
         ).scalar_one_or_none()
         if ledger is not None:
-            external = (ledger.external_currency or "").strip().upper()
+            external = _normalize_currency_code(ledger.external_currency)
             if external:
                 return external
             if ledger.canonical_json:
@@ -109,27 +108,27 @@ async def resolve_organisation_posting_currency(
                 except (TypeError, ValueError, json.JSONDecodeError):
                     payload = None
                 if isinstance(payload, dict):
-                    canonical_ccy = (payload.get("currency") or "").strip().upper()
+                    canonical_ccy = _normalize_currency_code(payload.get("currency"))
                     if canonical_ccy:
                         return canonical_ccy
 
-    if xero_tenant_id:
-        profile = (
+        invoice = (
             await db.execute(
-                select(XeroOrganisationProfile).where(
-                    XeroOrganisationProfile.tenant_id == tenant_id,
-                    XeroOrganisationProfile.xero_tenant_id == xero_tenant_id,
+                select(Invoice).where(
+                    Invoice.id == invoice_id,
+                    Invoice.tenant_id == tenant_id,
                 )
             )
         ).scalar_one_or_none()
-        if profile is not None:
-            base = (profile.base_currency or "").strip().upper()
-            if base:
-                return base
+        if invoice is not None:
+            return _normalize_currency_code(invoice.currency)
 
-    tenant = await db.get(Tenant, tenant_id)
-    org = (tenant_currency(tenant) or "").strip().upper()
-    return org or None
+    return _normalize_currency_code(document_currency)
+
+
+def _normalize_currency_code(value: str | None) -> str | None:
+    code = (value or "").strip().upper()
+    return code or None
 
 
 def build_canonical_supplier_invoice(
@@ -145,8 +144,8 @@ def build_canonical_supplier_invoice(
 ) -> CanonicalAccountingTransaction:
     """Create a serialisable canonical supplier invoice before any Xero adapter runs.
 
-    ``posting_currency`` must be the organisation posting currency (resolved by
-    the caller). Source ``invoice.currency`` is intentionally ignored.
+    ``posting_currency`` must be the resolved export currency (document currency,
+    or immutable SUCCESS ledger currency). Source currency is not re-read here.
     """
     if invoice.tenant_id != tenant_id:
         raise CanonicalTransactionError(
@@ -276,7 +275,7 @@ def assert_canonical_valid(txn: CanonicalAccountingTransaction) -> list[dict[str
             {
                 "field": "currency",
                 "code": "currency_missing",
-                "message": "Organisation currency is not configured",
+                "message": "Document currency is missing",
             }
         )
     if not txn.lines:
