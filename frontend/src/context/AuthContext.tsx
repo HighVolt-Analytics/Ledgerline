@@ -47,6 +47,7 @@ import {
 import { postLoginPathForRole, readReturnToFromLocation } from "@/lib/authReturnTo";
 import { withRouterBasename } from "@/lib/routerBasename";
 import { queryClient } from "@/lib/queryClient";
+import { identifyOpenReplayUser } from "@/third-party/sessionRecorder/OpenReplay/OpenReplay";
 
 type SessionCachePolicy = "full" | "soft" | "none";
 
@@ -95,6 +96,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       mountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (user?.email) {
+      identifyOpenReplayUser(user.email, {
+        user_id: String(user.id),
+        tenant_id: user.tenant_id,
+        role: user.role,
+      });
+    }
+  }, [user?.id, user?.email, user?.tenant_id, user?.role]);
 
   const applySession = useCallback(
     (

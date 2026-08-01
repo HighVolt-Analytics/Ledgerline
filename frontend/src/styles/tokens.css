@@ -98,12 +98,12 @@
   --cyan-900: 194 61% 24%;
 
   /* Shell layout */
-  --primary-sidebar-width: 10rem;
-  --primary-sidebar-width-basic: 11.75rem;
-  --primary-sidebar-width-collapsed: 3.5rem;
+  --primary-sidebar-width: 11.5rem;
+  --primary-sidebar-width-basic: 14rem;
+  --primary-sidebar-width-collapsed: 3.75rem;
   --profile-menu-width: 280px;
-  --primary-sidebar-flyout-width: 12.5rem;
-  --secondary-sidebar-width: 13.75rem;
+  --primary-sidebar-flyout-width: 14rem;
+  --secondary-sidebar-width: 14.5rem;
   --shell-card-gap: 8px;
   --shell-nav-offset: calc(
     var(--primary-sidebar-width) + var(--shell-card-gap) +

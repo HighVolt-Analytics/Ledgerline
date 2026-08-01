@@ -43,11 +43,14 @@ type ProfileSidebarMenuProps = {
   collapsed?: boolean;
   /** Compact trigger for mobile header */
   variant?: "sidebar" | "header";
+  /** Tenant settings links — hide on platform console */
+  showSettings?: boolean;
 };
 
 export function ProfileSidebarMenu({
   collapsed = false,
   variant = "sidebar",
+  showSettings = true,
 }: ProfileSidebarMenuProps) {
   const navigate = useNavigate();
   const { user, logout, switchTenant } = useAuth();
@@ -354,27 +357,31 @@ export function ProfileSidebarMenu({
                 </div>
               </div>
 
-              <div className="profile-menu__divider" />
+              {showSettings && (
+                <>
+                  <div className="profile-menu__divider" />
 
-              <div className="profile-menu__section">
-                <p className="profile-menu__section-title">Settings</p>
-                {SETTINGS_TABS.map((tab) => (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    role="menuitem"
-                    className="profile-menu__link"
-                    data-testid={`profile-menu-${tab.id}`}
-                    onClick={() => {
-                      closeMenu();
-                      navigate(`/settings?tab=${tab.id}`);
-                    }}
-                  >
-                    <span>{tab.label}</span>
-                    <ChevronRight className="profile-menu__row-chevron" />
-                  </button>
-                ))}
-              </div>
+                  <div className="profile-menu__section">
+                    <p className="profile-menu__section-title">Settings</p>
+                    {SETTINGS_TABS.map((tab) => (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        role="menuitem"
+                        className="profile-menu__link"
+                        data-testid={`profile-menu-${tab.id}`}
+                        onClick={() => {
+                          closeMenu();
+                          navigate(`/settings?tab=${tab.id}`);
+                        }}
+                      >
+                        <span>{tab.label}</span>
+                        <ChevronRight className="profile-menu__row-chevron" />
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
 
               <div className="profile-menu__divider" />
 

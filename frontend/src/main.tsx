@@ -7,9 +7,11 @@ import { ThemeProvider } from "@/context/ThemeContext";
 import { ToastProvider } from "@/context/ToastContext";
 import { queryClient } from "@/lib/queryClient";
 import { normalizeBareBasenameUrl } from "@/lib/routerBasename";
+import { startOpenReplay } from "@/third-party/sessionRecorder/OpenReplay/OpenReplay";
 import "./index.css";
 
 normalizeBareBasenameUrl();
+void startOpenReplay();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
