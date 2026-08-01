@@ -11,6 +11,7 @@ import type {
   DocumentRuleCondition,
   DocumentRuleConditionGroup,
   DocumentTypePostTo,
+  DocumentTypeTeamExpenseKind,
   RecognitionMode,
 } from "@/lib/v5DocumentTypes";
 import { extractionFieldLabel, normalizeExtractionFieldKeys } from "@/lib/documentExtractionFields";
@@ -572,6 +573,7 @@ export function documentTypeReadiness(
     code: string;
     posting: string;
     postTo?: DocumentTypePostTo;
+    teamExpenseKind?: DocumentTypeTeamExpenseKind;
     classifier: { root: DocumentRuleConditionGroup };
     playbookProfile?: string;
     bundleMandatory?: string[];
@@ -588,7 +590,11 @@ export function documentTypeReadiness(
   const hasCode = Boolean(draft.code.trim());
   const accounts = options?.coaAccounts ?? [];
   const hasPostTo = hasValidPostTo(
-    { posting: draft.posting, postTo: draft.postTo ?? emptyDocumentTypePostTo() },
+    {
+      posting: draft.posting,
+      postTo: draft.postTo ?? emptyDocumentTypePostTo(),
+      teamExpenseKind: draft.teamExpenseKind ?? "",
+    },
     accounts
   );
   const enforceBundle = playbookEnforcesBundle({
