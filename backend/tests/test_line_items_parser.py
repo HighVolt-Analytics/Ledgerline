@@ -277,6 +277,31 @@ Widget A 2 10.00 20.00
     assert not document_has_qty_only_table(text, {})
 
 
+def test_build_line_items_presentation_prompt_vision_mode() -> None:
+    from app.services.extraction.line_items_parser import build_line_items_presentation_prompt
+
+    lines = build_line_items_presentation_prompt(
+        di_rows_present=False,
+        ocr_table_present=False,
+        vision_images_present=True,
+    )
+    blob = "\n".join(lines)
+    assert "PAGE IMAGES" in blob
+    assert "NOT APPLICABLE" not in blob
+
+
+def test_build_line_items_presentation_prompt_not_applicable_without_vision() -> None:
+    from app.services.extraction.line_items_parser import build_line_items_presentation_prompt
+
+    lines = build_line_items_presentation_prompt(
+        di_rows_present=False,
+        ocr_table_present=False,
+        vision_images_present=False,
+    )
+    blob = "\n".join(lines)
+    assert "NOT APPLICABLE" in blob
+
+
 def test_build_line_items_presentation_prompt_qty_only_mode() -> None:
     from app.services.extraction.line_items_parser import build_line_items_presentation_prompt
 

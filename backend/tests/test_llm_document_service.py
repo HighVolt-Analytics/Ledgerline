@@ -234,6 +234,42 @@ def test_build_structure_extract_prompts_omits_unconfigured_line_items() -> None
     assert "line_items" not in json_keys
 
 
+def test_build_structure_extract_prompts_sparse_uses_vision_line_items() -> None:
+    from app.schemas.document_type import DocumentTypeClassifier, DocumentTypeDefinition
+    from app.services.extraction.llm_document_service import build_structure_extract_prompts
+    from app.services.tenant.tenant_org_context import OrgContext
+
+    dt = DocumentTypeDefinition(
+        code="DT-03",
+        title="PO goods",
+        shortTitle="PO",
+        klass="Transactional",
+        posting="Yes",
+        recognition_mode="signals",
+        recognition_signals=["heading_invoice"],
+        llm_prompt="",
+        routeTarget="Purchase Management",
+        classifier=DocumentTypeClassifier(),
+        extraction_fields=["vendor", "total", "line_items"],
+    )
+    system, _user = build_structure_extract_prompts(
+        ocr=OcrArtifact(
+            success=True,
+            sparse=True,
+            text="",
+            text_length=0,
+            payload_json={"provider": "vision_dt_scoped"},
+        ),
+        org=OrgContext(),
+        document_types=[dt],
+        confirmed_dt="DT-03",
+        sparse=True,
+    )
+    assert "PAGE IMAGES" in system
+    assert "NOT APPLICABLE" not in system
+    assert "line_items" in _extract_json_keys_line(system)
+
+
 def test_build_extract_system_prompt_qty_only_table_does_not_break_format() -> None:
     from pathlib import Path
 

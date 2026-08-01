@@ -18,6 +18,10 @@ function evaluationChipClass(status: NonNullable<Invoice["evaluation_status"]>):
       return needsReviewStatusChipClass();
     case "vision_header_review":
       return needsReviewStatusChipClass();
+    case "line_gl_review":
+      return needsReviewStatusChipClass();
+    case "line_items_review":
+      return needsReviewStatusChipClass();
     case "pending_approval":
       return kpiStatusChipClass("rust");
     case "awaiting_po":

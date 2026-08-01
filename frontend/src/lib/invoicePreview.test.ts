@@ -12,6 +12,7 @@ import {
   formatPreviewMoney,
   invoiceTaxMeta,
   isCompactReceiptStyle,
+  isNoiseLineItemRow,
   isSummaryLineDescription,
   isVisionHeaderPipelineSummary,
   lineItemColumnsForPreview,
@@ -630,6 +631,35 @@ describe("sanitizeLineItemValues", () => {
     );
     expect(items[0]?.amount).toBeNull();
   });
+
+  it("keeps amount for single product line equal to invoice total", () => {
+    const items = sanitizeLineItemValues(
+      [
+        {
+          id: 1,
+          invoice_id: 712,
+          description: "Sale of VER's",
+          qty: "100000",
+          unit_price: "0.70",
+          amount: "70000.00",
+          tax_amount: null,
+        },
+      ],
+      "70000.00"
+    );
+    expect(items[0]?.amount).toBe("70000");
+  });
+});
+
+describe("isNoiseLineItemRow", () => {
+  it("keeps short high-qty product lines like Sale of VERs", () => {
+    expect(isNoiseLineItemRow("Sale of VER's", "100000")).toBe(false);
+  });
+
+  it("still drops address bleed with high qty", () => {
+    expect(isNoiseLineItemRow("Site Office Plot No.4", "51810")).toBe(true);
+    expect(isNoiseLineItemRow("PH: 0432 423", "431")).toBe(true);
+  });
 });
 
 describe("isSummaryLineDescription", () => {
@@ -969,6 +999,23 @@ describe("additionalExtractedFieldKeys", () => {
     expect(additionalExtractedFieldKeys(inv, ["vendor", "invoice_no", "total"])).toEqual([
       "gst_rate",
       "seller_abn",
+    ]);
+  });
+
+  it("hides type-suggest summary/hints from additional fields", () => {
+    const inv = {
+      ...baseInvoice,
+      extracted_fields: {
+        vendor: "Everest",
+        document_summary: "Supplier tax invoice against PO-TEST-001.",
+        document_role_hints: '{"has_po_reference":"true"}',
+        vision_type_suggest_confidence: "0.99",
+        seller_name: "Everest Furnishings Pty Ltd",
+      },
+    } as InvoiceDetails;
+
+    expect(additionalExtractedFieldKeys(inv, ["vendor", "invoice_no", "total"])).toEqual([
+      "seller_name",
     ]);
   });
 

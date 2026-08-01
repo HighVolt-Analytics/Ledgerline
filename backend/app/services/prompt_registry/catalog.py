@@ -723,6 +723,36 @@ Return JSON only with keys: document_heading, text_excerpt.
 - document_heading is the primary visible document title or heading.
 - text_excerpt is the full visible document text including tables, amounts, and labels (max 12000 chars)."""
 
+_VISION_TYPE_SUGGEST_DEFAULT = """\
+TYPE SUGGEST — understand the document from page images (kind + short summary).
+Return JSON only with keys:
+document_heading, canonical_document_type, perspective, document_summary,
+document_role_hints, confidence, reason.
+Never omit keys — use empty string / empty object when absent.
+Do not extract amounts, dates, line-item tables, tax IDs, bank details, or full addresses.
+Do not map to a catalogue DT-xx code.
+
+Rules:
+- document_heading is the primary printed title on the page (as printed).
+- canonical_document_type is a short plain-language type name
+  (e.g. "Tax Invoice", "Packing List", "Expense claim", "Purchase Order",
+  "Credit Note", "Goods Receipt Note", "Air Waybill").
+- perspective is one of: purchase, sales, internal, unknown.
+- document_summary is 2–4 sentences describing what the document IS for later
+  catalogue mapping: transactional vs supporting; supplier vs customer vs employee
+  roles (names/roles only, not full addresses); and visible linking cues such as
+  PO/SO/invoice/credit-note references or claim/reimbursement cues. Mention
+  reference tokens when clearly printed (e.g. PO-TEST-001). Do not invent refs.
+- document_role_hints is an object with keys (use "true", "false", or ""):
+  has_po_reference, has_so_reference, has_invoice_number, is_credit_note,
+  is_supporting_only.
+- confidence is 0.0-1.0 for the type understanding.
+- reason is one short sentence.
+- Do not invent amounts or catalogue codes.
+SELF-CHECK BEFORE RETURNING: heading/type/perspective/summary/role_hints/confidence/reason
+are set; summary is non-empty when the page is readable; no money totals."""
+
+
 _VISION_UNDERSTAND_DEFAULT = """\
 You assess whether a vision model can clearly read AP/trade document page images
 well enough for later header extraction (Foundry-style readability gate).
@@ -1187,7 +1217,7 @@ _VISION_HEADER_EXTRACT_DEFAULT = _vision_header_extract_default()
 
 def _vision_dt_map_fallback_default() -> str:
     return """\
-You map a vision-extracted document title to ONE Rule Book catalogue code (DT-xx).
+You map a vision document understanding (title + summary) to ONE Rule Book catalogue code (DT-xx).
 
 Return JSON only with keys:
 suggested_dt, confidence, reasoning.
@@ -1204,12 +1234,27 @@ HARD RULES (non-negotiable)
 5. Prefer "" over a weak guess. An empty string is always safer than a wrong DT.
 6. Do not extract amounts, line items, parties, dates, or tax IDs — type mapping only.
 7. Do not use memory of typical ERP codes. Use ONLY the provided catalogue + labels
-   + few_shot_examples + tenant block in the user payload.
+   + document_summary + document_role_hints + few_shot_examples + tenant block.
 
 ═══════════════════════════════════════════════
 HOW TO CHOOSE
 ═══════════════════════════════════════════════
-- Primary signals: document_heading and canonical_document_type (printed title / vault label).
+- Primary signals: document_summary and document_role_hints (what the document IS),
+  then document_heading and canonical_document_type (printed title / vault label).
+- Use the summary to break ties across finance families:
+  Non-PO vs PO-based invoice; purchase (AP) vs sales (AR); invoice vs credit note;
+  invoice vs purchase-order copy; claim/reimbursement vs vendor invoice;
+  GRN/delivery/packing vs transactional invoice.
+- When document_role_hints.has_po_reference is "true", or the summary clearly states
+  a supplier/tax invoice against a PO, prefer catalogue rows for PO-based goods/services
+  (playbook po_goods / po_services or titles containing PO-based) over Non-PO /
+  direct-expense / bare standard transactional invoice rows.
+- When has_po_reference is "false" / absent and the summary has no PO cue, prefer
+  Non-PO / direct expense invoice rows over PO-based ones.
+- When is_credit_note is "true" or the summary describes a credit/adjustment note,
+  prefer credit-note catalogue rows over invoice rows.
+- When is_supporting_only is "true", prefer supporting/non-posting rows (PO copy,
+  GRN, packing list, delivery note) over transactional invoice DTs.
 - Secondary: heading_kind, rule_fail_reason, and perspective (sales vs purchase).
 - If few_shot_examples is non-empty and a row's document_heading closely matches the
   current title, strongly prefer that row's human_confirmed_dt over catalogue defaults.
@@ -1233,24 +1278,26 @@ HOW TO CHOOSE
   Team Expenses after mapping; do not refuse a claim-like row solely because the
   sender is an employee.
 - A printed TAX INVOICE or COMMERCIAL INVOICE must NOT be mapped to a Team Expenses
-  catalogue row unless the title/body clearly indicates employee expense claim or
+  catalogue row unless the title/summary clearly indicates employee expense claim or
   reimbursement (employee identity is applied later by route policy).
 - Use each catalogue row's title, recognition_signals / recognition_rules / llm_prompt /
   classification_hints / negative_hints when present.
-- Honor negative_hints: if the title matches a negative hint for a row, do not pick that row.
+- Honor negative_hints: if the title/summary matches a negative hint for a row, do not
+  pick that row.
 - Supporting / ops titles (packing list, handover, LOA, certificate of origin, clearance
   permit) must NOT be mapped to a transactional invoice/PO DT when a better supporting
   row exists — if none fits, return "".
-- When two catalogue rows fit equally well, return "" (do not break ties by guessing).
+- When two catalogue rows fit equally well even after reading the summary, return ""
+  (do not break ties by guessing).
 
 ═══════════════════════════════════════════════
 SELF-CHECK BEFORE RETURNING
 ═══════════════════════════════════════════════
 - If suggested_dt is non-empty, it appears verbatim in catalogue[].code.
-- reasoning is one short sentence naming which label matched which catalogue title/hint
-  (or which few-shot correction applied).
-- If rule_fail_reason is "ambiguous", only return a code when one row is clearly better;
-  otherwise "".
+- reasoning is one short sentence naming which summary/hint matched which catalogue
+  title/hint (or which few-shot correction applied).
+- If rule_fail_reason is "ambiguous", only return a code when the summary/role hints
+  make one row clearly better; otherwise "".
 """
 
 
@@ -1364,12 +1411,23 @@ PROMPT_CATALOG: tuple[PromptDefinition, ...] = (
         default_body=_VISION_HEADER_EXTRACT_DEFAULT,
     ),
     PromptDefinition(
+        key="vision.type_suggest.system",
+        label="Vision type suggest",
+        group="Vision",
+        description=(
+            "Document kind understanding (heading + canonical type + perspective + "
+            "short summary/role hints) before mapping to an org Document Type."
+        ),
+        default_body=_VISION_TYPE_SUGGEST_DEFAULT,
+    ),
+    PromptDefinition(
         key="vision.dt_map_fallback.system",
         label="Vision DT map LLM fallback",
         group="Vision",
         description=(
-            "When deterministic heading→DT scoring fails, map vision labels to one "
-            "catalogue DT-xx code (or empty) using a text LLM with tenant few-shots."
+            "When deterministic heading→DT scoring fails, map vision labels + document "
+            "summary to one catalogue DT-xx code (or empty) using a text LLM with "
+            "tenant few-shots."
         ),
         default_body=_VISION_DT_MAP_FALLBACK_DEFAULT,
     ),

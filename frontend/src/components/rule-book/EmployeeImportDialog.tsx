@@ -135,7 +135,7 @@ export function EmployeeImportDialog({
               </span>
               <span className="text-[11px] opacity-80">
                 {value === "register"
-                  ? "Name, email, WhatsApp, role, status"
+                  ? "Name, email, organisation, status"
                   : "Bank, budget, status by email"}
               </span>
             </button>

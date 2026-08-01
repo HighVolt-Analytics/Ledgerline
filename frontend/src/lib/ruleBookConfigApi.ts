@@ -15,8 +15,9 @@ import {
   emptyOrgContextConfig,
   INGEST_ACTION_ROUTE_PLACEHOLDER,
   ROUTE_TARGETS,
+  TEAM_EXPENSE_KINDS,
 } from "@/lib/v4RuleBookTypes";
-import { emptyDocumentClassifier, emptyDocumentTypePostTo, type DocumentTypeDefinition, type DocumentTypePostTo, type DocumentTypeSampleAnalysis } from "@/lib/v5DocumentTypes";
+import { emptyDocumentClassifier, emptyDocumentTypePostTo, type DocumentTypeDefinition, type DocumentTypePostTo, type DocumentTypeSampleAnalysis, type DocumentTypeTeamExpenseKind } from "@/lib/v5DocumentTypes";
 import {
   derivePostingFromKlassAndProfile,
   normalizeDocumentTypeIdentity,
@@ -334,7 +335,14 @@ export function mapEmployee(raw: Record<string, unknown>): EmployeeMaster {
     role: String(raw.role ?? ""),
     email: String(raw.email ?? ""),
     whatsappNumber: String(raw.whatsapp_number ?? ""),
+    whatsappNumber2: String(raw.whatsapp_number_2 ?? ""),
     viberNumber: raw.viber_number as string | undefined,
+    dateOfJoining: String(raw.date_of_joining ?? ""),
+    department: String(raw.department ?? ""),
+    location: String(raw.location ?? ""),
+    division: String(raw.division ?? ""),
+    supervisor1: String(raw.supervisor_1 ?? ""),
+    supervisor2: String(raw.supervisor_2 ?? ""),
     bank: {
       bsb: bank.bsb,
       accountNumber: bank.account_number ?? "",
@@ -349,6 +357,9 @@ export function mapEmployee(raw: Record<string, unknown>): EmployeeMaster {
       annual: Number(budget.annual ?? 0),
       categories: budget.categories ?? [],
     },
+    advanceParentLedger: String(raw.advance_parent_ledger ?? ""),
+    advanceSubLedger: String(raw.advance_sub_ledger ?? ""),
+    advanceBalance: Number(raw.advance_balance ?? 0),
     ytdSpent: Number(raw.ytd_spent ?? 0),
     mtdSpent: Number(raw.mtd_spent ?? 0),
     qtdSpent: Number(raw.qtd_spent ?? 0),
@@ -365,7 +376,14 @@ export function employeeToApi(employee: EmployeeMaster): Record<string, unknown>
     role: employee.role,
     email: employee.email,
     whatsapp_number: employee.whatsappNumber,
+    whatsapp_number_2: employee.whatsappNumber2 ?? "",
     ...(employee.viberNumber != null ? { viber_number: employee.viberNumber } : {}),
+    date_of_joining: employee.dateOfJoining ?? "",
+    department: employee.department ?? "",
+    location: employee.location ?? "",
+    division: employee.division ?? "",
+    supervisor_1: employee.supervisor1 ?? "",
+    supervisor_2: employee.supervisor2 ?? "",
     bank: {
       ...(employee.bank.bsb != null ? { bsb: employee.bank.bsb } : {}),
       account_number: employee.bank.accountNumber,
@@ -375,6 +393,7 @@ export function employeeToApi(employee: EmployeeMaster): Record<string, unknown>
       ...(employee.bank.iban != null ? { iban: employee.bank.iban } : {}),
     },
     budget: employee.budget,
+    advance_parent_ledger: employee.advanceParentLedger ?? "",
     ytd_spent: employee.ytdSpent,
     mtd_spent: employee.mtdSpent,
     qtd_spent: employee.qtdSpent,
@@ -406,6 +425,15 @@ function mapSalesBundleRole(raw: Record<string, unknown>): SalesBundleRole {
     .trim()
     .toLowerCase();
   return (token === "so" || token === "dn" ? token : "") as SalesBundleRole;
+}
+
+function mapTeamExpenseKind(raw: Record<string, unknown>): DocumentTypeTeamExpenseKind {
+  const token = String(raw.team_expense_kind ?? raw.teamExpenseKind ?? "")
+    .trim()
+    .toLowerCase();
+  return (TEAM_EXPENSE_KINDS as readonly string[]).includes(token)
+    ? (token as DocumentTypeTeamExpenseKind)
+    : "";
 }
 
 function inferPlaybookProfileFromRaw(raw: Record<string, unknown>): PlaybookProfile {
@@ -583,6 +611,7 @@ function mapDocumentType(raw: Record<string, unknown>): DocumentTypeDefinition {
       salesBundleRole: mapSalesBundleRole(raw),
       sampleAnalysis: mapSampleAnalysis(raw),
       matrixTemplateCode: String(raw.matrix_template_code ?? raw.matrixTemplateCode ?? ""),
+      teamExpenseKind: mapTeamExpenseKind(raw),
       postTo: mapDocumentTypePostTo(
         (raw.post_to ?? raw.postTo) as Record<string, unknown> | undefined
       ),
@@ -655,6 +684,7 @@ function documentTypeToApi(
       ? { purchase_bundle_role: reconciled.purchaseBundleRole }
       : {}),
     ...(reconciled.salesBundleRole ? { sales_bundle_role: reconciled.salesBundleRole } : {}),
+    ...(reconciled.teamExpenseKind ? { team_expense_kind: reconciled.teamExpenseKind } : {}),
     ...(reconciled.matrixTemplateCode
       ? { matrix_template_code: reconciled.matrixTemplateCode }
       : {}),
@@ -811,6 +841,11 @@ export function ruleBookConfigFromApi(api: RuleBookConfig): RuleBookConfigState 
       receivableAccount: api.posting_defaults?.receivable_account ?? "Accounts Receivable",
       fallbackAccount: api.posting_defaults?.fallback_account ?? "Suspense Account",
     },
+    teamExpensePosting: {
+      defaultAdvanceParentLedger:
+        api.team_expense_posting?.default_advance_parent_ledger ?? "Staff Advance",
+      settlementAccount: api.team_expense_posting?.settlement_account ?? "Bank Account",
+    },
     documentSets: (api.document_sets ?? []).map((set) => ({
       id: set.id,
       pattern: set.pattern,
@@ -904,6 +939,11 @@ export function ruleBookConfigToApi(state: RuleBookConfigState): RuleBookRulesPa
       payable_account: state.postingDefaults.payableAccount,
       receivable_account: state.postingDefaults.receivableAccount,
       fallback_account: state.postingDefaults.fallbackAccount,
+    },
+    team_expense_posting: {
+      default_advance_parent_ledger:
+        state.teamExpensePosting?.defaultAdvanceParentLedger ?? "Staff Advance",
+      settlement_account: state.teamExpensePosting?.settlementAccount ?? "Bank Account",
     },
     document_sets: state.documentSets.map((set) => ({
       id: set.id,

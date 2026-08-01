@@ -257,6 +257,41 @@ def test_ground_recovers_invoice_date_from_labeled_text() -> None:
     assert "invoice_date" in detail["recovered"]
 
 
+def test_ground_keeps_unpadded_claim_form_date() -> None:
+    """TE forms print '3 June 2026'; vision ISO must not be cleared as ungrounded."""
+    from decimal import Decimal
+
+    from app.services.invoice.vision_header_extract import VisionHeaderExtractResult
+    from app.services.invoice.vision_header_reconcile import ground_vision_header_result
+
+    text = (
+        "EMPLOYEE EXPENSE CLAIM FORM\n"
+        "CLAIM NO. DATE\n"
+        "EXP-2026-091 3 June 2026\n"
+        "EMPLOYEE NAME Vishnu\n"
+        "Subtotal AUD 2,000.00\n"
+        "GST 10% AUD 200.00\n"
+        "Total Claimed AUD 2,200.00\n"
+        "This document is not a tax invoice.\n"
+    )
+    result = VisionHeaderExtractResult(
+        success=True,
+        document_heading="EMPLOYEE EXPENSE CLAIM FORM",
+        invoice_date=date(2026, 6, 3),
+        invoice_date_raw="2026-06-03",
+        total=Decimal("2200.00"),
+        subtotal=Decimal("2000.00"),
+        gst=Decimal("200.00"),
+        currency="AUD",
+        confidence=0.9,
+        provider="test",
+    )
+    grounded, detail = ground_vision_header_result(result, text)
+    assert grounded.invoice_date == date(2026, 6, 3)
+    assert "invoice_date" in detail["kept"]
+    assert "invoice_date" not in detail["cleared"]
+
+
 def test_enrich_fills_missing_invoice_date_from_text() -> None:
     from app.services.invoice.vision_header_extract import VisionHeaderExtractResult
     from app.services.invoice.vision_header_reconcile import enrich_vision_header_refs_from_text

@@ -68,6 +68,40 @@ def effective_line_ledger(*, sub_ledger: str | None, parent_ledger: str) -> str:
     return parent_ledger.strip()
 
 
+def resolve_effective_ledger_mapping(
+    *,
+    parent_ledger: str,
+    effective_ledger: str,
+    config: RuleBookConfigPayload,
+) -> "AccountMapping":
+    """Map parent or nested sub-ledger name to a journal AccountMapping."""
+    from app.services.master_data.chart_of_accounts_service import sub_ledgers_for_ledger
+    from app.services.rule_book.account_mapper import AccountMapping, resolve_category_for_config
+
+    parent = resolve_category_for_config(parent_ledger, config)
+    eff = (effective_ledger or "").strip()
+    parent_name = (parent.account_name or "").strip()
+    if not eff or eff.lower() == parent_name.lower():
+        return parent
+
+    for sub in sub_ledgers_for_ledger(parent_ledger, list(config.chart_of_accounts or [])):
+        if sub.name.strip().lower() == eff.lower():
+            sub_code = (sub.code or "").strip()
+            account_code = (
+                f"{parent.account_code}-{sub_code}" if sub_code else parent.account_code
+            )
+            return AccountMapping(
+                account_code,
+                sub.name.strip(),
+                expense_category=sub.name.strip(),
+            )
+
+    flat = resolve_category_for_config(eff, config)
+    if (flat.account_code or "").strip() not in {"", "9999"}:
+        return flat
+    return parent
+
+
 def build_line_item_response(
     line: LineItem,
     *,
@@ -106,6 +140,26 @@ def build_line_item_responses(
     return [build_line_item_response(line, parent_ledger=parent) for line in invoice.line_items]
 
 
+def _is_team_expense_invoice(
+    invoice: Invoice,
+    config: RuleBookConfigPayload,
+) -> bool:
+    """True for Team Expenses route / employee_claim DTs (skip line sub-ledger LLM)."""
+    from app.services.classification.document_type_catalog import (
+        ROUTE_TEAM,
+        get_document_type_definition,
+        is_team_expenses_document_type,
+    )
+
+    if (getattr(invoice, "route_target", None) or "").strip() == ROUTE_TEAM:
+        return True
+    defn = get_document_type_definition(
+        getattr(invoice, "document_type_code", None) or "",
+        document_types=list(config.document_types),
+    )
+    return is_team_expenses_document_type(defn)
+
+
 def line_gl_mapping_applicable(
     invoice: Invoice,
     config: RuleBookConfigPayload,
@@ -115,7 +169,45 @@ def line_gl_mapping_applicable(
         document_types=list(config.document_types),
     ):
         return False
+    if _is_team_expense_invoice(invoice, config):
+        return False
     return bool(resolve_parent_ledger(invoice, config))
+
+
+def line_sub_ledger_gate_applies(
+    invoice: Invoice,
+    config: RuleBookConfigPayload,
+) -> bool:
+    """True when blank line sub-ledgers must block posting (parent has catalogue)."""
+    if not line_gl_mapping_applicable(invoice, config):
+        return False
+    if not getattr(invoice, "line_items", None):
+        return False
+    parent = resolve_parent_ledger(invoice, config)
+    if not parent:
+        return False
+    from app.services.extraction.llm_coa_catalogue import (
+        parent_ledger_has_sub_ledger_catalogue,
+    )
+
+    return parent_ledger_has_sub_ledger_catalogue(parent, config.chart_of_accounts)
+
+
+def missing_line_sub_ledger_indexes(invoice: Invoice) -> list[int]:
+    return [
+        index
+        for index, line in enumerate(getattr(invoice, "line_items", None) or [])
+        if not (getattr(line, "sub_ledger", None) or "").strip()
+    ]
+
+
+def line_sub_ledger_review_required(
+    invoice: Invoice,
+    config: RuleBookConfigPayload,
+) -> bool:
+    if not line_sub_ledger_gate_applies(invoice, config):
+        return False
+    return bool(missing_line_sub_ledger_indexes(invoice))
 
 
 def validate_sub_ledger_for_parent(

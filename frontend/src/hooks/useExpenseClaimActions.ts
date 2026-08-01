@@ -100,10 +100,29 @@ export function useExpenseClaimActions(routeTarget: string) {
     [refresh]
   );
 
+  const setKind = useCallback(
+    async (inv: Invoice, kind: string) => {
+      setBusyId(inv.id);
+      try {
+        await api.setTeamExpenseKind(inv.id, kind);
+        await refresh();
+        setToast("Claim kind updated");
+        return true;
+      } catch (e) {
+        setToast(e instanceof Error ? e.message : "Could not change claim kind");
+        return false;
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [refresh]
+  );
+
   return {
     approve,
     reject,
     requestInfo,
+    setKind,
     busyId,
     toast,
     setToast,

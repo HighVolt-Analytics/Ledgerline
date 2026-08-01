@@ -352,6 +352,37 @@ async def extract_header_claude(
     )
 
 
+def _vision_type_suggest_user_payload(org: OrgContext) -> dict[str, Any]:
+    from app.services.invoice.vision_type_suggest import VISION_TYPE_SUGGEST_JSON_KEYS
+
+    return {
+        "task": "vision_type_suggest",
+        "required_keys": list(VISION_TYPE_SUGGEST_JSON_KEYS),
+        "tenant": _org_tenant_block(org),
+    }
+
+
+async def extract_type_suggest_claude(
+    images: list[bytes],
+    *,
+    org: OrgContext,
+) -> dict[str, Any] | None:
+    """Lean type suggest: heading + canonical type + perspective only."""
+    settings = get_settings()
+    if not images:
+        return None
+    user_text = json.dumps(
+        _vision_type_suggest_user_payload(org),
+        default=str,
+    )
+    return await _vision_json(
+        system=resolve_system_prompt_text("vision.type_suggest.system"),
+        user_text=user_text,
+        images=images,
+        timeout_seconds=settings.runtime_llm_timeout_seconds,
+    )
+
+
 async def read_for_classification_claude(
     file_path: str | Path,
     *,
@@ -466,6 +497,7 @@ async def extract_fields_claude(
     confirmed_dt: str,
     few_shots: Sequence[dict[str, str]] | None = None,
     vision_page_images: list[bytes] | None = None,
+    prefer_vision_images: bool = False,
 ) -> LlmDocumentResult | None:
     settings = get_settings()
     dt_token = confirmed_dt.strip().upper()
@@ -478,11 +510,11 @@ async def extract_fields_claude(
         confirmed_dt=dt_token,
         few_shots=few_shots,
         selected_keys=selected_keys,
-        sparse=ocr.sparse,
+        sparse=ocr.sparse or prefer_vision_images,
     )
 
     images: list[bytes] = []
-    if ocr.sparse and file_path is not None:
+    if (prefer_vision_images or ocr.sparse) and file_path is not None:
         path = Path(file_path)
         images = resolve_pdf_page_images(path, vision_page_images)
 

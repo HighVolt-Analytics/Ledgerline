@@ -330,6 +330,103 @@ async def phase_vision_header_extract(
     return result
 
 
+async def phase_vision_type_suggest(
+    session: AsyncSession,
+    invoice: Invoice,
+    *,
+    org: OrgContext,
+    doc_provider: DocumentAiProvider,
+    document_ai_provider: str,
+    vision_page_images: list[bytes] | None = None,
+):
+    """Lean type suggest for can-understand path — never raises."""
+    from app.services.invoice.vision_type_suggest import (
+        evaluate_vision_type_suggest,
+        persist_vision_type_suggest_to_invoice,
+        vision_type_suggest_audit_detail,
+    )
+
+    with open_pdf_for_reading(invoice.raw_file_path, tenant_id=invoice.tenant_id) as path:
+        result = await evaluate_vision_type_suggest(
+            path,
+            provider=doc_provider,
+            org=org,
+            vision_page_images=vision_page_images,
+        )
+    if result.success:
+        persist_vision_type_suggest_to_invoice(invoice, result)
+        await log_event(
+            session,
+            "vision_type_suggested",
+            invoice_id=invoice.id,
+            detail={
+                **vision_type_suggest_audit_detail(result),
+                "document_ai_provider": document_ai_provider,
+                "persisted_document_heading": invoice.document_heading,
+            },
+        )
+    else:
+        await log_event(
+            session,
+            "vision_type_suggest_failed",
+            invoice_id=invoice.id,
+            detail={
+                **vision_type_suggest_audit_detail(result),
+                "document_ai_provider": document_ai_provider,
+            },
+        )
+    return result
+
+
+async def phase_vision_dt_extract(
+    session: AsyncSession,
+    invoice: Invoice,
+    *,
+    org: OrgContext,
+    document_types: Sequence[DocumentTypeDefinition],
+    confirmed_dt: str,
+    doc_provider: DocumentAiProvider,
+    document_ai_provider: str,
+    vision_page_images: list[bytes] | None = None,
+    few_shots: Sequence | None = None,
+    definition: DocumentTypeDefinition | None = None,
+):
+    """DT-scoped field extract after org DT map — never raises."""
+    from app.services.invoice.vision_dt_extract import (
+        evaluate_vision_dt_extract,
+        vision_dt_extract_audit_detail,
+    )
+
+    result = await evaluate_vision_dt_extract(
+        session,
+        invoice,
+        org=org,
+        document_types=list(document_types),
+        confirmed_dt=confirmed_dt,
+        doc_provider=doc_provider,
+        vision_page_images=vision_page_images,
+        few_shots=list(few_shots or []),
+        definition=definition,
+    )
+    event = (
+        "vision_dt_fields_extracted" if result.success else "vision_dt_fields_extract_failed"
+    )
+    await log_event(
+        session,
+        event,
+        invoice_id=invoice.id,
+        detail={
+            **vision_dt_extract_audit_detail(result),
+            "document_ai_provider": document_ai_provider,
+            "document_type_code": (confirmed_dt or "").strip().upper(),
+            "persisted_vendor": invoice.vendor,
+            "persisted_total": str(invoice.total) if invoice.total is not None else None,
+            "persisted_invoice_no": invoice.invoice_no,
+        },
+    )
+    return result
+
+
 async def phase_image_quality(
     session: AsyncSession,
     invoice: Invoice,
@@ -1182,16 +1279,46 @@ def evaluate_line_item_review_gate(
     dt_definition: DocumentTypeDefinition | None = None,
     threshold: float | None = None,
 ) -> tuple[bool, float | None, list[str]]:
-    """Return whether line-item confidence meets review threshold."""
+    """Return whether line items meet review threshold (present + confidence)."""
     from app.services.classification.document_type_playbook_service import confidence_gate_fields
     from app.services.extraction.extraction_orchestrator import _doc_line_items_confidence
     from app.services.extraction.field_extraction_confidence import _score_line_items
+    from app.services.extraction.line_item_extraction_policy import (
+        classify_line_document_shape,
+        document_requires_line_items,
+        line_items_extraction_incomplete,
+    )
     from app.services.extraction.line_item_parsing_config import DEFAULT_THRESHOLDS
 
-    if parsed is None or not parsed.line_items:
+    wants_lines = document_requires_line_items(dt_definition) or (
+        "line_items" in confidence_gate_fields(dt_definition)
+    )
+    if parsed is None:
+        if wants_lines:
+            return False, None, ["line_items_missing"]
         return True, None, []
+
+    shape = classify_line_document_shape(
+        parsed.document_text or "",
+        None,
+        dt_definition=dt_definition,
+        parsed=parsed,
+    )
+    if line_items_extraction_incomplete(
+        wants_line_items=wants_lines,
+        rows=list(parsed.line_items or []),
+        shape=shape if wants_lines else None,
+    ):
+        return False, None, ["line_items_missing"]
+
+    if not parsed.line_items:
+        return True, None, []
+
     gate_fields = confidence_gate_fields(dt_definition)
+    if "line_items" not in gate_fields and not wants_lines:
+        return True, None, []
     if "line_items" not in gate_fields:
+        # Required via extraction fields but not confidence-gated — presence only.
         return True, None, []
 
     confidence = _doc_line_items_confidence(parsed)

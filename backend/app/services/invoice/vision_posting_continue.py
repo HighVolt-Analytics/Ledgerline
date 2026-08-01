@@ -1,8 +1,8 @@
 """Continue understood-path posting when Rule Book DT allows it.
 
-Vision extract + DT map already ran. This module decides whether to keep the
-vault-only early return or continue validate → Approvals → resume posting
-without re-running OCR/full extract.
+Vision type-suggest + DT map + DT-scoped extract (or legacy header extract) already
+ran. This module decides whether to keep the vault-only early return or continue
+validate → Approvals → resume posting without re-running OCR/full extract.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from app.services.classification.document_type_playbook_profile_service import (
 )
 from app.services.invoice.invoice_data import invoice_data_from_invoice
 from app.services.invoice.invoice_evaluation_service import (
+    EVAL_LINE_ITEMS_REVIEW,
     EVAL_VISION_HEADER_REVIEW,
     EVAL_VISION_VAULTED,
 )
@@ -59,6 +60,9 @@ def vision_should_continue_posting(
     """True when understood path should enter validate→Approvals→journal."""
     if not header_ok:
         return False
+    # Extract already set line_items_review when required lines were empty.
+    if (invoice.evaluation_status or "").strip() == EVAL_LINE_ITEMS_REVIEW:
+        return False
     code = (invoice.document_type_code or "").strip().upper()
     if not code:
         return False
@@ -89,6 +93,8 @@ def vision_posting_skip_reason(
     # with a perfect header, so header_not_ok is not the governing reason.
     if vision_dt_never_posts(invoice, definition):
         return "dt_not_posting"
+    if (invoice.evaluation_status or "").strip() == EVAL_LINE_ITEMS_REVIEW:
+        return "line_items_missing"
     if not header_ok:
         return "header_not_ok"
     if not (invoice.document_type_code or "").strip():
@@ -113,6 +119,8 @@ def vision_hold_evaluation_status(
     """
     if vision_dt_never_posts(invoice, definition):
         return EVAL_VISION_VAULTED
+    if (invoice.evaluation_status or "").strip() == EVAL_LINE_ITEMS_REVIEW:
+        return EVAL_LINE_ITEMS_REVIEW
     return EVAL_VISION_VAULTED if header_ok else EVAL_VISION_HEADER_REVIEW
 
 
@@ -133,9 +141,12 @@ def vision_header_ok_from_invoice(
     """Derive header_ok from persisted invoice state (for Approvals resume)."""
     from app.services.approval.approval_pipeline_service import payable_fields_complete
     from app.services.approval.approval_service import _assert_invoice_ready_for_approval
+    from app.services.invoice.due_date_defaults import apply_due_on_receipt_to_invoice
 
     if _extracted_needs_review(invoice):
         return False
+    # Only when DT playbook marks due_date compulsory and the print omitted it.
+    apply_due_on_receipt_to_invoice(invoice, definition)
     if definition is not None and allows_posting_pipeline(definition):
         if not payable_fields_complete(invoice):
             return False
@@ -303,11 +314,15 @@ async def continue_vision_understood_posting(
     invoice.document_type_confidence = loaded.document_type_confidence
     invoice.evaluation_status = loaded.evaluation_status
     if (loaded.route_target or "").strip() == ROUTE_TEAM:
+        from app.services.purchase.team_expense_kind_service import stamp_team_expense_kind
         from app.services.purchase.team_expense_service import (
             stamp_team_expense_employee_identity,
         )
 
         await stamp_team_expense_employee_identity(session, loaded)
+        # No definition passed: ensure_team_expenses_document_type may have reassigned the DT.
+        await stamp_team_expense_kind(session, loaded, config)
+        invoice.team_expense_kind = loaded.team_expense_kind
     invoice.vendor = loaded.vendor
 
     if await _vendor_hold_unless_skipped(session, loaded):

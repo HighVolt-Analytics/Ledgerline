@@ -109,13 +109,26 @@ def sanitize_parsed_line_item(
     # When qty × unit_price disagrees with printed amount, drop unit_price and
     # keep qty+amount (unit is the field most often hit by missing decimals,
     # e.g. 864 vs 0.864). Never rewrite unit from amount/qty.
+    # If tax is printed separately, compare against the ex-tax net amount.
+    compare_amount = amount
     if (
         qty is not None
         and unit_price is not None
         and amount is not None
-        and (qty * unit_price - amount).copy_abs() > Decimal("0.05")
+        and tax_amount is not None
+    ):
+        net = amount - tax_amount
+        if (qty * unit_price - net).copy_abs() <= Decimal("0.05"):
+            compare_amount = net
+    if (
+        qty is not None
+        and unit_price is not None
+        and compare_amount is not None
+        and (qty * unit_price - compare_amount).copy_abs() > Decimal("0.05")
     ):
         unit_price = None
+        if trace is not None and row_key:
+            trace.record(row_key, "amount_sanity", "adjusted", "cleared_mismatched_unit_price")
     return ParsedLineItem(
         description=item.description,
         qty=qty,

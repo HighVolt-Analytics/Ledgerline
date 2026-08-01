@@ -27,13 +27,22 @@ async def test_payable_fields_complete() -> None:
         tenant_id=TESTING_TENANT_UUID,
         vendor="ram",
         total=Decimal("110"),
-        due_date=date(2026, 6, 30),
         currency="AUD",
         file_hash="x",
     )
     incomplete = Invoice(tenant_id=TESTING_TENANT_UUID, vendor="ram", currency="AUD", file_hash="y")
     assert payable_fields_complete(complete) is True
     assert payable_fields_complete(incomplete) is False
+    # Due date is optional for the payable identity gate.
+    with_due = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="ram",
+        total=Decimal("110"),
+        due_date=date(2026, 6, 30),
+        currency="AUD",
+        file_hash="z",
+    )
+    assert payable_fields_complete(with_due) is True
 
 
 @pytest.mark.asyncio
@@ -290,3 +299,26 @@ async def test_currency_fill_allowed_when_unset_on_processed(
             InvoiceUpdateRequest(currency="EUR"),
             actor_name="tester",
         )
+
+
+@pytest.mark.asyncio
+async def test_reset_invoice_for_approval_clears_sticky_pending_approval(
+    db_session: AsyncSession,
+) -> None:
+    from app.services.invoice.invoice_evaluation_service import EVAL_PENDING_APPROVAL
+    from app.services.invoice.invoice_reset import reset_invoice_for_approval
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status=EVAL_PENDING_APPROVAL,
+        currency="AUD",
+        file_hash="reset-approval-sticky-1",
+        route_target="Team Expenses",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    await reset_invoice_for_approval(db_session, inv)
+    assert inv.status == InvoiceStatus.PENDING
+    assert inv.evaluation_status is None

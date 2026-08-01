@@ -122,6 +122,10 @@ const INTERNAL_EXTRACTED_KEYS = new Set([
   "vision_bundle_kind",
   "vision_bundle_key",
   "vision_bundle_custom_field",
+  // Type-suggest understanding — not DT extraction_fields.
+  "document_summary",
+  "document_role_hints",
+  "vision_type_suggest_confidence",
   // Shown explicitly via pushReference above the generic extracted loop.
   "proforma_invoice_no",
   "other_reference",
@@ -591,15 +595,18 @@ export function isNoiseLineItemRow(
     return true;
   }
   if (
-    /^(?:abn|gstin|acn|tfn)\s*:?\s*[\d\s]{8,}|\b(?:bank\s*(?:details|name|account)|account\s*name|bsb|swift|iban|remittance|please\s*(?:pay|remit)|payment\s*instructions|tel(?:ephone)?|phone|mobile|fax|email|www\.|http)\b/i.test(
+    /^(?:abn|gstin|acn|tfn)\s*:?\s*[\d\s]{8,}|\b(?:bank\s*(?:details|name|account)|account\s*name|bsb|swift|iban|remittance|please\s*(?:pay|remit)|payment\s*instructions|tel(?:ephone)?|phone|ph:?|mobile|fax|email|www\.|http)\b/i.test(
       desc
     ) &&
     desc.split(/\s+/).length <= 14
   ) {
     return true;
   }
+  if (/^(?:tel(?:ephone)?|phone|ph|mobile|fax)\s*(?:no\.?|number|#)?\s*:?\s*\+?[\d\s\-()]{6,}$/i.test(desc)) {
+    return true;
+  }
   if (
-    /\b(?:street|st\.?|road|rd\.?|avenue|ave\.?|drive|dr\.?|lane|ln\.?|boulevard|blvd\.?|straat|gracht|weg|laan|plein|allee|suite|floor|building|unit\s+\d+|henderson|singapore|postal|zip\s*code|australia|nsw|vic|qld|sa|wa|act|tas|nz|new\s+zealand)\b/i.test(
+    /\b(?:street|st\.?|road|rd\.?|avenue|ave\.?|drive|dr\.?|lane|ln\.?|boulevard|blvd\.?|straat|gracht|weg|laan|plein|allee|suite|floor|building|unit\s+\d+|henderson|singapore|postal|zip\s*code|australia|nsw|vic|qld|sa|wa|act|tas|nz|new\s+zealand|plot|site\s*office|mandal|village)\b/i.test(
       desc
     ) &&
     (/\b\d{4,6}\b/.test(desc) || desc.split(/\s+/).length <= 8)
@@ -615,7 +622,23 @@ export function isNoiseLineItemRow(
   }
   const qtyNum = qty == null || qty === "" ? null : Number(String(qty).replace(/,/g, ""));
   if (qtyNum != null && Number.isFinite(qtyNum) && qtyNum > 1000 && desc.split(/\s+/).length <= 3) {
-    if (!/\b(?:cpu|chip|part|widget|item|unit|kg|pcs)\b/i.test(desc)) return true;
+    // Keep short product descriptions (e.g. "Sale of VERs"); only drop address/phone bleed.
+    if (
+      /\b(?:cpu|chip|part|widget|item|unit|kg|pcs|sale|ver|service|goods|product|software|license|hosting|cloud|subscription)\b/i.test(
+        desc
+      )
+    ) {
+      return false;
+    }
+    if (
+      /\b(?:street|st\.?|road|rd\.?|avenue|ave\.?|drive|dr\.?|lane|ln\.?|boulevard|blvd\.?|straat|gracht|weg|laan|plein|allee|suite|floor|building|unit\s+\d+|henderson|singapore|postal|zip\s*code|australia|nsw|vic|qld|sa|wa|act|tas|nz|new\s+zealand|plot|office|ph:?|phone|mandal|village)\b/i.test(
+        desc
+      ) ||
+      /\b\d{4,6}\b/.test(desc)
+    ) {
+      return true;
+    }
+    return false;
   }
   return false;
 }
@@ -728,7 +751,11 @@ function amountsRoughlyEqual(a: number, b: number): boolean {
   return Math.abs(a - b) / scale < 0.02;
 }
 
-/** Drop invoice-level totals and inconsistent qty/unit/amount combinations. */
+/** Drop inconsistent qty/unit/amount combinations.
+
+  Do *not* clear amount merely because it equals the invoice total — single-line
+  invoices (qty × unit = header total) are valid and must stay visible.
+*/
 export function sanitizeLineItemValues(
   items: LineItem[],
   invoiceTotal: string | null | undefined
@@ -740,11 +767,14 @@ export function sanitizeLineItemValues(
     const unitPrice = parseNumeric(line.unit_price);
     let amount = parseNumeric(line.amount);
 
+    // Legacy bleed: a "line" that is only a duplicate of the invoice total with
+    // no usable unit price (qty missing or 1) is not a product row amount.
     if (
       amount != null &&
       headerTotal != null &&
       amountsRoughlyEqual(amount, headerTotal) &&
-      (qty == null || qty > 1)
+      unitPrice == null &&
+      (qty == null || qty === 1)
     ) {
       amount = null;
     }

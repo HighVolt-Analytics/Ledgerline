@@ -1300,6 +1300,14 @@ export const api = {
     bustGetCacheByPrefix("/api/approvals");
     return request<Invoice>(`/api/invoices/${id}/reprocess`, { method: "POST" });
   },
+  setTeamExpenseKind: (id: number, teamExpenseKind: string) => {
+    bustGetCacheByPrefix("/api/invoices");
+    return request<Invoice>(`/api/invoices/${id}/team-expense-kind`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ team_expense_kind: teamExpenseKind }),
+    });
+  },
   attachInvoiceFile: (id: number, file: File) => {
     const fd = new FormData();
     fd.append("file", file);

@@ -83,6 +83,11 @@ _PAGE_KIND_KEYWORDS: list[tuple[re.Pattern[str], HeadingKind]] = [
     (re.compile(r"\bDEBIT\s+NOTE\b", re.I), "credit_note"),
 ]
 
+# Footer disclaimers: "This document … is not a tax invoice." must not become a kind.
+_NEGATED_INVOICE_PHRASE = re.compile(
+    r"(?i)\b(?:is\s+)?not\s+(?:a\s+|an\s+)?(?:tax\s+|commercial\s+|pro[\s-]?forma\s+)?invoice\b"
+)
+
 # Title/body kinds that beat logistics field labels when both appear on one page.
 _STRONG_PAGE_KINDS: frozenset[HeadingKind] = frozenset(
     {
@@ -384,7 +389,8 @@ def is_continuation_page(text: str) -> bool:
 
 
 def _body_keyword_kinds(text: str) -> list[HeadingKind]:
-    blob = "\n".join((text or "").splitlines()[:50])
+    # Mask "is not a tax invoice" so footer disclaimers do not invent a kind.
+    blob = "\n".join(_NEGATED_INVOICE_PHRASE.sub(" ", text or "").splitlines()[:50])
     found: list[HeadingKind] = []
     seen: set[HeadingKind] = set()
     for pattern, kind in _PAGE_KIND_KEYWORDS:

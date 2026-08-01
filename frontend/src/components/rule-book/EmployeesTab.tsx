@@ -231,6 +231,7 @@ export function EmployeesTab() {
                 <th className="px-3 py-2 font-medium">Email</th>
                 <th className="px-3 py-2 font-medium">Status</th>
                 <th className="px-3 py-2 font-medium w-44">MTD / Monthly</th>
+                <th className="px-3 py-2 font-medium w-28">Net advance</th>
                 <th className="px-3 py-2 font-medium">Last claim</th>
               </tr>
             </thead>
@@ -267,7 +268,13 @@ export function EmployeesTab() {
                           </span>
                         </div>
                         <span className="text-[11px] text-muted-foreground ml-9">
-                          {dirty ? draft.role : emp.role}
+                          {(() => {
+                            const row = dirty ? draft : emp;
+                            const designation = row.role || "";
+                            const dept = row.department || "";
+                            if (dept && designation) return `${dept} · ${designation}`;
+                            return designation || dept || "—";
+                          })()}
                         </span>
                       </td>
                       <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">
@@ -293,13 +300,16 @@ export function EmployeesTab() {
                           />
                         </div>
                       </td>
+                      <td className="px-3 py-2 text-xs tnum whitespace-nowrap">
+                        {fmtAud(emp.advanceBalance ?? 0)}
+                      </td>
                       <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
                         {emp.lastClaim}
                       </td>
                     </tr>
                     {open && (
                       <tr>
-                        <td colSpan={6} className="p-0 border-b border-border">
+                        <td colSpan={7} className="p-0 border-b border-border">
                           <EmployeeDetailPanel
                             emp={draft}
                             onChange={(patch) => patchDraft(emp.id, patch)}

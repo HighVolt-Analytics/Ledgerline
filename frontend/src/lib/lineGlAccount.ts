@@ -92,3 +92,13 @@ export function parentLedgerForLineItems(
 ): string {
   return (docTypeLedger ?? inv.account_name ?? "").trim();
 }
+
+/** True when parent has a COA catalogue and the line still needs a sub-ledger pick. */
+export function lineSubLedgerRequired(
+  line: Pick<LineItem, "sub_ledger">,
+  parentLedger: string,
+  accounts: ChartOfAccountRow[]
+): boolean {
+  if (!ledgerHasSubLedgerCatalog(parentLedger, accounts)) return false;
+  return !(line.sub_ledger ?? "").trim();
+}

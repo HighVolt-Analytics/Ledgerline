@@ -383,6 +383,7 @@ _PRESET_EXTRACTION_LABELS: dict[str, str] = {
     "po_reference": "PO reference",
     "so_reference": "SO reference",
     "cost_centre": "Cost centre",
+    "currency": "Currency",
     "subtotal": "Subtotal",
     "gst": "Tax (GST/VAT)",
     "gst_rate": "Tax rate (%)",

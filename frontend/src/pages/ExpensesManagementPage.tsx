@@ -218,6 +218,7 @@ export function ExpensesManagementPage() {
               {selected && selectedInvoice ? (
                 <Card className="p-4">
                   <ClaimDetailPanel
+                    key={selected.id}
                     claim={selected}
                     invoiceId={selectedInvoice.id}
                     invoiceStatus={selectedInvoice.status}
@@ -226,6 +227,10 @@ export function ExpensesManagementPage() {
                     canApprove={actions.canApproveClaim(selectedInvoice.status)}
                     canReject={actions.canRejectClaim(selectedInvoice.status)}
                     canRequestInfo={actions.canRequestInfo(selectedInvoice.status)}
+                    currency={
+                      (selectedInvoice.currency || institutionCurrency).trim().toUpperCase() ||
+                      institutionCurrency
+                    }
                     onApprove={async () => {
                       await actions.approve(selectedInvoice);
                     }}

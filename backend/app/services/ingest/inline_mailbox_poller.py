@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import time
+import uuid
 
 from app.config import get_settings
 from app.services.ingest.gmail_oauth_service import gmail_oauth_configured
@@ -18,6 +20,33 @@ _shutting_down = False
 _STOP_TIMEOUT_SECONDS = 10.0
 
 
+async def _poll_tenant(
+    tid: uuid.UUID,
+    *,
+    sem: asyncio.Semaphore,
+) -> None:
+    """Poll one tenant's mailbox without the pre-poll pending sweep."""
+    async with sem:
+        if _shutting_down:
+            return
+        try:
+            result = await run_pipeline(
+                tenant_id=tid,
+                poll_inbox=True,
+                skip_pending_check=True,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error(
+                "inline_mailbox_poll_tenant_failed",
+                tenant_id=tid,
+                error=str(exc),
+            )
+            return
+        logger.info("inline_mailbox_poll_done", tenant_id=tid, **result)
+
+
 async def _poll_once() -> None:
     if _shutting_down:
         return
@@ -25,21 +54,17 @@ async def _poll_once() -> None:
         logger.info("inline_mailbox_poll_skipped", reason="already_running")
         return
 
-    from app.workers.tasks import is_inline_pipeline_active
-
-    if is_inline_pipeline_active():
-        logger.info("inline_mailbox_poll_skipped", reason="invoice_pipeline_active")
-        return
-
     async with _poll_lock:
         if _shutting_down:
             return
         from app.database import async_session_factory
-        from app.services.tenant.tenant_context_service import list_active_tenant_ids
+        from app.services.tenant.tenant_context_service import (
+            list_active_tenant_ids_with_mailboxes,
+        )
 
         async with async_session_factory() as session:
             try:
-                tenant_ids = await list_active_tenant_ids(session)
+                tenant_ids = await list_active_tenant_ids_with_mailboxes(session)
             except asyncio.CancelledError:
                 await session.rollback()
                 raise
@@ -47,23 +72,18 @@ async def _poll_once() -> None:
                 await session.rollback()
                 raise
 
-        logger.info("inline_mailbox_poll_cycle_started", tenant_count=len(tenant_ids))
+        settings = get_settings()
+        concurrency = max(1, int(settings.mailbox_poll_concurrency))
+        logger.info(
+            "inline_mailbox_poll_cycle_started",
+            tenant_count=len(tenant_ids),
+            concurrency=concurrency,
+        )
+        if not tenant_ids:
+            return
 
-        for tid in tenant_ids:
-            if _shutting_down:
-                return
-            try:
-                result = await run_pipeline(tenant_id=tid, poll_inbox=True)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                logger.error(
-                    "inline_mailbox_poll_tenant_failed",
-                    tenant_id=tid,
-                    error=str(exc),
-                )
-                continue
-            logger.info("inline_mailbox_poll_done", tenant_id=tid, **result)
+        sem = asyncio.Semaphore(concurrency)
+        await asyncio.gather(*(_poll_tenant(tid, sem=sem) for tid in tenant_ids))
 
 
 async def _poll_loop() -> None:
@@ -77,6 +97,7 @@ async def _poll_loop() -> None:
         raise
 
     while not _shutting_down:
+        started = time.monotonic()
         try:
             await _poll_once()
         except asyncio.CancelledError:
@@ -85,8 +106,17 @@ async def _poll_loop() -> None:
             logger.error("inline_mailbox_poll_failed", error=str(exc))
         if _shutting_down:
             break
+        # Keep wall-clock cadence: sleep only the remainder of the interval.
+        elapsed = time.monotonic() - started
+        sleep_for = max(0.0, interval_seconds - elapsed)
+        logger.info(
+            "inline_mailbox_poll_cycle_finished",
+            elapsed_seconds=round(elapsed, 1),
+            sleep_seconds=round(sleep_for, 1),
+            interval_seconds=interval_seconds,
+        )
         try:
-            await asyncio.sleep(interval_seconds)
+            await asyncio.sleep(sleep_for)
         except asyncio.CancelledError:
             raise
 
@@ -119,6 +149,7 @@ def start_inline_mailbox_poller() -> asyncio.Task[None] | None:
     logger.info(
         "inline_mailbox_poller_started",
         interval_minutes=settings.graph_poll_interval_minutes,
+        concurrency=settings.mailbox_poll_concurrency,
         graph_enabled=is_graph_enabled(),
         gmail_configured=gmail_oauth_configured(),
     )

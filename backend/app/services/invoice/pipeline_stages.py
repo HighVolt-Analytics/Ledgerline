@@ -39,7 +39,9 @@ UNDERSTOOD_AUDIT_STAGES: frozenset[str] = frozenset(
         "File validity",
         "Vision understand",
         "Vision header",
+        "Type suggest",
         "DT mapped",
+        "DT fields",
         "Bundle",
         "Vault",
         "Parsed",
@@ -281,6 +283,21 @@ def _early_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineS
         vh_log = vh_pass if _is_after(vh_pass, vh_fail) else vh_fail
     else:
         vh_log = vh_pass or vh_fail
+
+    ts_pass = _latest_log(logs, "vision_type_suggested")
+    ts_fail = _latest_log(logs, "vision_type_suggest_failed")
+    if ts_pass and ts_fail:
+        ts_log = ts_pass if _is_after(ts_pass, ts_fail) else ts_fail
+    else:
+        ts_log = ts_pass or ts_fail
+
+    dtf_pass = _latest_log(logs, "vision_dt_fields_extracted")
+    dtf_fail = _latest_log(logs, "vision_dt_fields_extract_failed")
+    if dtf_pass and dtf_fail:
+        dtf_log = dtf_pass if _is_after(dtf_pass, dtf_fail) else dtf_fail
+    else:
+        dtf_log = dtf_pass or dtf_fail
+
     vision_pending = _latest_log(logs, "vision_path_pending")
 
     iq_pass = _latest_log(logs, "image_quality_passed")
@@ -353,8 +370,23 @@ def _early_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineS
             )
         )
 
-    # --- Understood branch: header → DT map → bundle → vault (no legacy IQ/OCR/classify) ---
+    # --- Understood branch: type-suggest/header → DT map → DT fields → bundle → vault ---
     if vision_can:
+        if ts_log and _on_current_branch(ts_log):
+            passed = ts_log.event == "vision_type_suggested"
+            heading = (ts_log.detail or {}).get("document_heading") or "—"
+            stages.append(
+                PipelineStage(
+                    stage="Type suggest",
+                    at=ts_log.created_at,
+                    detail=(
+                        f"{heading} · suggested"
+                        if passed
+                        else f"Type suggest failed · {(ts_log.detail or {}).get('fail_reason') or 'error'}"
+                    ),
+                    state="done" if passed else "fail",
+                )
+            )
         if vh_log and _on_current_branch(vh_log):
             passed = vh_log.event == "vision_header_extracted"
             heading = (vh_log.detail or {}).get("document_heading") or "—"
@@ -370,12 +402,17 @@ def _early_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineS
                     state="done" if passed else "fail",
                 )
             )
-        elif vision_pending and _on_current_branch(vision_pending):
+        elif (
+            vision_pending
+            and _on_current_branch(vision_pending)
+            and not ts_log
+            and not vh_log
+        ):
             stages.append(
                 PipelineStage(
-                    stage="Vision header",
+                    stage="Type suggest",
                     at=vision_pending.created_at,
-                    detail="Header extract pending",
+                    detail="Type suggest pending",
                     state="pending",
                 )
             )
@@ -394,13 +431,33 @@ def _early_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineS
                     state="done" if code and code != "—" else "pending",
                 )
             )
-        elif vh_log and _on_current_branch(vh_log) and vh_log.event == "vision_header_extracted":
+        elif (ts_log or vh_log) and (
+            (ts_log and _on_current_branch(ts_log) and ts_log.event == "vision_type_suggested")
+            or (vh_log and _on_current_branch(vh_log) and vh_log.event == "vision_header_extracted")
+        ):
             stages.append(
                 PipelineStage(
                     stage="DT mapped",
                     at=None,
                     detail="Document type pending",
                     state="pending",
+                )
+            )
+
+        if dtf_log and _on_current_branch(dtf_log):
+            passed = dtf_log.event == "vision_dt_fields_extracted"
+            keys = (dtf_log.detail or {}).get("selected_keys") or []
+            key_n = len(keys) if isinstance(keys, list) else 0
+            stages.append(
+                PipelineStage(
+                    stage="DT fields",
+                    at=dtf_log.created_at,
+                    detail=(
+                        f"{key_n} fields · extracted"
+                        if passed
+                        else f"DT extract failed · {(dtf_log.detail or {}).get('fail_reason') or 'error'}"
+                    ),
+                    state="done" if passed else "fail",
                 )
             )
 

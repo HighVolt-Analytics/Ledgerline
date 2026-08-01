@@ -5,7 +5,13 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.master_data import EmployeeMasterResponse
-from app.schemas.rule_book_config import RuleBookConfigPayload, TeamExpenseRule
+from app.schemas.rule_book_config import (
+    TEAM_EXPENSE_KIND_ADVANCE,
+    TEAM_EXPENSE_KIND_AGAINST_ADVANCE,
+    RuleBookConfigPayload,
+    TeamExpenseRule,
+    normalize_team_expense_kind,
+)
 from app.services.ingest.capture_channel import infer_capture_channel, normalize_phone
 from app.services.invoice.invoice_data import InvoiceData
 from app.services.invoice.invoice_evaluation_service import ROUTE_TEAM, load_config_for_tenant
@@ -46,7 +52,11 @@ def find_employee_by_sender(
         email = (employee.email or "").strip().lower()
         if email and email == key:
             return employee
-        for field in (employee.whatsapp_number, employee.viber_number or ""):
+        for field in (
+            employee.whatsapp_number,
+            employee.whatsapp_number_2 or "",
+            employee.viber_number or "",
+        ):
             digits = normalize_phone(field)
             if digits and phone and digits == phone:
                 return employee
@@ -85,7 +95,17 @@ def vr_te01_employee(
 def vr_te02_budget(
     employee: EmployeeMasterResponse | None,
     amount: float | None,
+    *,
+    team_expense_kind: str | None = None,
 ) -> ValidationResult:
+    """Period spend caps — not applied to advance float (cash out ≠ expense yet)."""
+    if normalize_team_expense_kind(team_expense_kind) == TEAM_EXPENSE_KIND_ADVANCE:
+        return ValidationResult(
+            "VR-TE02",
+            True,
+            "Budget check skipped — advance requisition is float, not period spend",
+            skipped=True,
+        )
     if employee is None or amount is None:
         return ValidationResult("VR-TE02", True, "Budget check skipped")
 
@@ -123,7 +143,16 @@ def vr_te03_receipt(
     amount: float | None,
     *,
     has_receipt_file: bool = False,
+    team_expense_kind: str | None = None,
 ) -> ValidationResult:
+    """Merchant receipt policy — not applied to advance float requests."""
+    if normalize_team_expense_kind(team_expense_kind) == TEAM_EXPENSE_KIND_ADVANCE:
+        return ValidationResult(
+            "VR-TE03",
+            True,
+            "Receipt check skipped — advance requisition is a funding request, not a merchant spend",
+            skipped=True,
+        )
     if team_rule is None or amount is None:
         return ValidationResult("VR-TE03", True, "Receipt policy check skipped")
 
@@ -151,15 +180,36 @@ def vr_te03_receipt(
     )
 
 
-def vr_te04_bank(employee: EmployeeMasterResponse | None) -> ValidationResult:
+def vr_te04_bank(
+    employee: EmployeeMasterResponse | None,
+    *,
+    team_expense_kind: str | None = None,
+) -> ValidationResult:
+    """Bank required when cash is paid out (claim reimbursement or advance).
+
+    Expense against advance clears float already held — no new disbursement.
+    """
+    if normalize_team_expense_kind(team_expense_kind) == TEAM_EXPENSE_KIND_AGAINST_ADVANCE:
+        return ValidationResult(
+            "VR-TE04",
+            True,
+            "Bank check skipped — expense against advance does not disburse cash",
+            skipped=True,
+        )
     if employee is None:
         return ValidationResult("VR-TE04", True, "Bank check skipped")
     account = (employee.bank.account_number or "").strip()
     if not account:
+        kind = normalize_team_expense_kind(team_expense_kind)
+        purpose = (
+            "advance payout"
+            if kind == TEAM_EXPENSE_KIND_ADVANCE
+            else "reimbursement"
+        )
         return ValidationResult(
             "VR-TE04",
             False,
-            "Employee bank account required for reimbursement",
+            f"Employee bank account required for {purpose}",
         )
     return ValidationResult("VR-TE04", True, "Bank account on file")
 
@@ -189,7 +239,17 @@ def vr_te06_category_cap(
     employee: EmployeeMasterResponse | None,
     amount: float | None,
     team_rule: TeamExpenseRule | None,
+    *,
+    team_expense_kind: str | None = None,
 ) -> ValidationResult:
+    """Category spend caps — not applied to advance float."""
+    if normalize_team_expense_kind(team_expense_kind) == TEAM_EXPENSE_KIND_ADVANCE:
+        return ValidationResult(
+            "VR-TE06",
+            True,
+            "Category cap skipped — advance requisition is float, not period spend",
+            skipped=True,
+        )
     if employee is None or amount is None or team_rule is None:
         return ValidationResult("VR-TE06", True, "Category cap check skipped")
     ledger = (team_rule.post_to.ledger or "").strip()
@@ -209,6 +269,41 @@ def vr_te06_category_cap(
     return ValidationResult("VR-TE06", True, "No matching category cap")
 
 
+def vr_te07_advance_balance(
+    employee: EmployeeMasterResponse | None,
+    amount: float | None,
+    *,
+    team_expense_kind: str | None,
+    advance_balance: float | None,
+    ledger_balance: float | None = None,
+    pending_reserved: float = 0,
+) -> ValidationResult:
+    """Expense against advance must not clear more than available (ledger − pending)."""
+    if normalize_team_expense_kind(team_expense_kind) != TEAM_EXPENSE_KIND_AGAINST_ADVANCE:
+        return ValidationResult("VR-TE07", True, "Advance balance check not applicable")
+    if employee is None or amount is None:
+        return ValidationResult("VR-TE07", True, "Advance balance check skipped")
+    available = float(advance_balance) if advance_balance is not None else 0.0
+    outstanding = float(ledger_balance) if ledger_balance is not None else available
+    pending = max(float(pending_reserved or 0), 0.0)
+    if amount > available:
+        detail = f"outstanding advance {outstanding:.2f}"
+        if pending > 0:
+            detail += f", pending other claims {pending:.2f}"
+        return ValidationResult(
+            "VR-TE07",
+            False,
+            (
+                f"Claim {amount:.2f} exceeds available advance {available:.2f} "
+                f"({detail}) for {employee.name} — reduce the claim or post it as an expense claim"
+            ),
+        )
+    msg = f"Within available advance ({available:.2f})"
+    if pending > 0:
+        msg += f" after reserving pending {pending:.2f}"
+    return ValidationResult("VR-TE07", True, msg)
+
+
 async def run_team_expense_validations(
     data: InvoiceData,
     session: AsyncSession,
@@ -218,6 +313,8 @@ async def run_team_expense_validations(
     email_sender: str | None,
     config: RuleBookConfigPayload | None = None,
     has_receipt_file: bool = False,
+    team_expense_kind: str | None = None,
+    exclude_invoice_id: int | None = None,
 ) -> list[ValidationResult]:
     if route_target != ROUTE_TEAM:
         return []
@@ -236,13 +333,50 @@ async def run_team_expense_validations(
         amount=amount,
     )
 
+    available: float | None = None
+    ledger_balance: float | None = None
+    pending_reserved = 0.0
+    if (
+        employee is not None
+        and normalize_team_expense_kind(team_expense_kind) == TEAM_EXPENSE_KIND_AGAINST_ADVANCE
+    ):
+        from app.services.purchase.team_expense_advance_service import (
+            employee_available_advance,
+        )
+
+        avail, ledger, pending = await employee_available_advance(
+            session,
+            tenant_id,
+            config,
+            employee,
+            exclude_invoice_id=exclude_invoice_id,
+        )
+        available = float(avail)
+        ledger_balance = float(ledger)
+        pending_reserved = float(pending)
+
     return [
         vr_te01_employee(employee, email_sender),
-        vr_te02_budget(employee, amount),
-        vr_te03_receipt(team_rule, amount, has_receipt_file=has_receipt_file),
-        vr_te04_bank(employee),
+        vr_te02_budget(employee, amount, team_expense_kind=team_expense_kind),
+        vr_te03_receipt(
+            team_rule,
+            amount,
+            has_receipt_file=has_receipt_file,
+            team_expense_kind=team_expense_kind,
+        ),
+        vr_te04_bank(employee, team_expense_kind=team_expense_kind),
         vr_te05_status(employee),
-        vr_te06_category_cap(employee, amount, team_rule),
+        vr_te06_category_cap(
+            employee, amount, team_rule, team_expense_kind=team_expense_kind
+        ),
+        vr_te07_advance_balance(
+            employee,
+            amount,
+            team_expense_kind=team_expense_kind,
+            advance_balance=available,
+            ledger_balance=ledger_balance,
+            pending_reserved=pending_reserved,
+        ),
     ]
 
 

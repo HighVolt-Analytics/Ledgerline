@@ -127,6 +127,8 @@ async def reset_invoice_for_reprocess(
     inv.document_heading = None
     inv.extracted_fields = None
     inv.route_target = None
+    inv.team_expense_kind = None
+    inv.linked_advance_invoice_id = None
     inv.matched_rule_ids = None
     inv.evaluation_status = None
     inv.so_reference = None
@@ -160,6 +162,9 @@ async def reset_invoice_for_reprocess(
 async def reset_invoice_for_approval(session: AsyncSession, inv: Invoice) -> None:
     """Re-queue for pipeline while preserving user-corrected extracted fields."""
     inv.status = InvoiceStatus.PENDING
+    # Approval is the resume path for sticky pending_approval / await PO|SO holds.
+    # Leaving evaluation_status set would re-stick the hold after a successful reprocess.
+    inv.evaluation_status = None
     inv.validation_results = None
     inv.account_code = None
     inv.account_name = None
@@ -293,6 +298,8 @@ async def clear_stale_not_understood_for_understood_path(
     inv.sales_document_type = None
     inv.matched_rule_ids = None
     inv.route_target = None
+    inv.team_expense_kind = None
+    inv.linked_advance_invoice_id = None
 
     dt_cleared = False
     if not preserve_document_type:

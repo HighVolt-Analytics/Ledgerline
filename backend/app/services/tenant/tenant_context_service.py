@@ -49,6 +49,30 @@ async def list_active_tenant_ids(session: AsyncSession) -> list[uuid.UUID]:
     return list(rows)
 
 
+async def list_active_tenant_ids_with_mailboxes(
+    session: AsyncSession,
+) -> list[uuid.UUID]:
+    """Active tenants that have at least one active connected mailbox.
+
+    Inline poll cycles must not walk every empty sandbox tenant — that alone
+    stretches a 2-minute interval into 5–7 minutes before the real mailbox is hit.
+    """
+    rows = (
+        await session.execute(
+            select(Tenant.id)
+            .join(ConnectedMailbox, ConnectedMailbox.tenant_id == Tenant.id)
+            .where(
+                Tenant.is_active.is_(True),
+                Tenant.lifecycle_status == "active",
+                ConnectedMailbox.is_active.is_(True),
+            )
+            .distinct()
+            .order_by(Tenant.id)
+        )
+    ).scalars().all()
+    return list(rows)
+
+
 async def ensure_connected_mailbox(
     session: AsyncSession,
     tenant_id: uuid.UUID,

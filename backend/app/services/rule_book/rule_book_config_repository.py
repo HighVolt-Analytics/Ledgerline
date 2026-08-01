@@ -13,7 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.models.tenant import Tenant
 from app.models.tenant_rule_book_config import TenantRuleBookConfig
-from app.schemas.rule_book_config import PostingDefaults, RuleBookConfigPayload, validate_rule_book_config_payload
+from app.schemas.rule_book_config import (
+    PostingDefaults,
+    RuleBookConfigPayload,
+    TeamExpensePostingDefaults,
+    validate_rule_book_config_payload,
+)
 from app.services.rule_book.account_mapper import coa_functional_for_journaling
 from app.services.master_data.starter_chart_of_accounts import (
     build_starter_chart_of_accounts,
@@ -39,6 +44,9 @@ def _default_config_dict_for_country(country_code: str | None) -> dict[str, Any]
     data = _base_template_config_dict()
     posting = PostingDefaults.for_country(country_code)
     data["posting_defaults"] = posting.model_dump()
+    data["team_expense_posting"] = TeamExpensePostingDefaults.for_posting_defaults(
+        posting
+    ).model_dump()
     data["chart_of_accounts"] = [
         entry.model_dump()
         for entry in build_starter_chart_of_accounts(country_code, posting_defaults=posting)

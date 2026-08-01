@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from app.schemas.document_type import DocumentTypeDefinition
@@ -377,9 +379,13 @@ async def test_llm_fallback_passes_few_shots_and_org(
     )
     assert result.reason == "llm_matched"
     assert result.code == "DT-16"
-    assert captured["user"]["few_shot_examples"][0]["human_confirmed_dt"] == "DT-16"
-    assert captured["user"]["tenant"]["legal_name"] == "Highvolt Industries Pty Ltd"
-    assert "Despatch" in captured["user"]["tenant"]["classification_hints"]
+    # Azure rejects a non-string message content with a 400, so the payload must
+    # already be serialised by the time it reaches the client.
+    assert isinstance(captured["user"], str)
+    sent = json.loads(captured["user"])
+    assert sent["few_shot_examples"][0]["human_confirmed_dt"] == "DT-16"
+    assert sent["tenant"]["legal_name"] == "Highvolt Industries Pty Ltd"
+    assert "Despatch" in sent["tenant"]["classification_hints"]
 
 
 @pytest.mark.asyncio
@@ -655,3 +661,228 @@ def test_effective_signals_uses_playbook_recommended_identity() -> None:
     )
     assert "has_po_reference" in effective.recognition_signals
     assert effective.classifier.enabled is True
+
+
+@pytest.mark.asyncio
+async def test_llm_payload_includes_document_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict = {}
+
+    async def _fake_chat(*, system, user, **_kwargs):
+        captured["user"] = user
+        return {
+            "suggested_dt": "DT-03",
+            "confidence": 0.9,
+            "reasoning": "summary says PO-backed supplier invoice",
+        }
+
+    monkeypatch.setattr(
+        "app.services.extraction.azure_openai_client.chat_json_async",
+        _fake_chat,
+    )
+    monkeypatch.setattr(
+        "app.services.prompt_registry.service.resolve_system_prompt_text",
+        lambda _key: "test prompt",
+    )
+
+    from app.models.invoice import Invoice, InvoiceStatus
+    from app.services.invoice.vision_document_type_map import VisionDocumentTypeMapResult
+    from app.tenant_ids import TESTING_TENANT_UUID
+
+    def _ambiguous_rule(**_kwargs):
+        return VisionDocumentTypeMapResult(
+            code=None,
+            confidence=0.0,
+            heading_kind="tax_invoice",
+            reason="ambiguous",
+            method="heading_kind_score",
+            runner_up_code="DT-03",
+            runner_up_score=0.9,
+        )
+
+    monkeypatch.setattr(
+        "app.services.invoice.vision_document_type_map.map_vision_label_to_document_type",
+        _ambiguous_rule,
+    )
+
+    catalogue = [
+        DocumentTypeDefinition(
+            code="DT-01",
+            title="Non-PO vendor invoice",
+            shortTitle="Non-PO Invoice",
+            klass="Transactional",
+            posting="Yes",
+            recognitionMode="prompt",
+            recognitionSignals=[],
+            llmPrompt="",
+            routeTarget="Purchase Management",
+            enabled=True,
+            playbookProfile="standard_transactional",
+            classifier={"enabled": False, "priority": 80, "confidence": 0.85},
+        ),
+        DocumentTypeDefinition(
+            code="DT-03",
+            title="PO-based goods invoice",
+            shortTitle="PO Goods Invoice",
+            klass="Transactional",
+            posting="Yes",
+            recognitionMode="prompt",
+            recognitionSignals=[],
+            llmPrompt="",
+            routeTarget="Purchase Management",
+            enabled=True,
+            playbookProfile="po_goods",
+            classifier={"enabled": False, "priority": 40, "confidence": 0.9},
+        ),
+    ]
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PARSING,
+        document_heading="TAX INVOICE",
+        extracted_fields={
+            "canonical_document_type": "Tax Invoice",
+            "document_summary": (
+                "Supplier tax invoice against purchase order PO-TEST-001 "
+                "addressed to the buyer."
+            ),
+            "document_role_hints": {
+                "has_po_reference": "true",
+                "has_invoice_number": "true",
+                "is_supporting_only": "false",
+            },
+        },
+    )
+    result = await map_vision_label_to_document_type_with_llm_fallback(
+        document_heading="TAX INVOICE",
+        canonical_document_type="Tax Invoice",
+        document_types=catalogue,
+        invoice=inv,
+    )
+    assert result.code == "DT-03"
+    assert result.method == "llm_catalogue_fallback"
+    sent = json.loads(captured["user"])
+    assert "PO-TEST-001" in sent["document_summary"]
+    assert sent["document_role_hints"]["has_po_reference"] == "true"
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_with_summary_skips_generic_classifier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ambiguous Non-PO vs PO-goods must not lock Non-PO when summary is present."""
+    classifier_calls = {"n": 0}
+
+    async def _fake_llm(**kwargs):
+        from app.services.invoice.vision_document_type_map import VisionDocumentTypeMapResult
+
+        assert "PO-TEST" in (kwargs.get("document_summary") or "")
+        return VisionDocumentTypeMapResult(
+            code="DT-03",
+            confidence=0.92,
+            heading_kind=kwargs.get("heading_kind"),
+            reason="llm_matched",
+            method="llm_catalogue_fallback",
+            rule_reason=kwargs.get("rule_fail_reason"),
+            llm_reasoning="summary prefers PO-based",
+        )
+
+    def _counting_classifier(**_kwargs):
+        classifier_calls["n"] += 1
+        from app.services.invoice.vision_document_type_map import VisionDocumentTypeMapResult
+
+        return VisionDocumentTypeMapResult(
+            code="DT-01",
+            confidence=0.85,
+            heading_kind="tax_invoice",
+            reason="classifier_matched",
+            method="config_classifier",
+            rule_reason="ambiguous",
+        )
+
+    def _ambiguous_rule(**_kwargs):
+        from app.services.invoice.vision_document_type_map import VisionDocumentTypeMapResult
+
+        return VisionDocumentTypeMapResult(
+            code=None,
+            confidence=0.0,
+            heading_kind="tax_invoice",
+            reason="ambiguous",
+            method="heading_kind_score",
+            runner_up_code="DT-03",
+            runner_up_score=0.9,
+        )
+
+    monkeypatch.setattr(
+        "app.services.invoice.vision_document_type_map._llm_pick_catalogue_dt",
+        _fake_llm,
+    )
+    monkeypatch.setattr(
+        "app.services.invoice.vision_document_type_map.map_vision_via_configured_classifiers",
+        _counting_classifier,
+    )
+    monkeypatch.setattr(
+        "app.services.invoice.vision_document_type_map.map_vision_label_to_document_type",
+        _ambiguous_rule,
+    )
+
+    from app.models.invoice import Invoice, InvoiceStatus
+    from app.tenant_ids import TESTING_TENANT_UUID
+
+    catalogue = [
+        DocumentTypeDefinition(
+            code="DT-01",
+            title="Non-PO vendor invoice",
+            shortTitle="Non-PO Invoice",
+            klass="Transactional",
+            posting="Yes",
+            recognitionMode="prompt",
+            recognitionSignals=[],
+            llmPrompt="",
+            routeTarget="Purchase Management",
+            enabled=True,
+            playbookProfile="standard_transactional",
+            classifier={"enabled": False, "priority": 80, "confidence": 0.85},
+        ),
+        DocumentTypeDefinition(
+            code="DT-03",
+            title="PO-based goods invoice",
+            shortTitle="PO Goods Invoice",
+            klass="Transactional",
+            posting="Yes",
+            recognitionMode="prompt",
+            recognitionSignals=[],
+            llmPrompt="",
+            routeTarget="Purchase Management",
+            enabled=True,
+            playbookProfile="po_goods",
+            classifier={"enabled": False, "priority": 40, "confidence": 0.9},
+        ),
+    ]
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PARSING,
+        document_heading="TAX INVOICE",
+        # No po_reference column — summary alone must drive LLM path
+        extracted_fields={
+            "document_summary": (
+                "Supplier tax invoice for goods against PO-TEST-001."
+            ),
+            "document_role_hints": {"has_po_reference": "true"},
+        },
+    )
+    result = await map_vision_label_to_document_type_with_llm_fallback(
+        document_heading="TAX INVOICE",
+        canonical_document_type="Tax Invoice",
+        document_types=catalogue,
+        invoice=inv,
+    )
+    assert result.code == "DT-03"
+    assert result.method == "llm_catalogue_fallback"
+    assert classifier_calls["n"] == 0
+
+
+def test_dt_map_fallback_prompt_mentions_summary() -> None:
+    body = catalog_default_body("vision.dt_map_fallback.system") or ""
+    assert "document_summary" in body
+    assert "document_role_hints" in body

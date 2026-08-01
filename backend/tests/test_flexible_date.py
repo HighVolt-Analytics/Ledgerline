@@ -54,6 +54,12 @@ def test_date_ocr_match_tokens_includes_unpadded_slash_date() -> None:
     assert "04/09/2025" in tokens
 
 
+def test_date_ocr_match_tokens_includes_unpadded_month_name() -> None:
+    tokens = date_ocr_match_tokens(date(2026, 6, 3))
+    assert "3 June 2026" in tokens
+    assert "03 June 2026" in tokens
+
+
 def test_recover_labeled_invoice_date_from_text() -> None:
     text = (
         "COMMERCIAL INVOICE\n"
@@ -62,6 +68,17 @@ def test_recover_labeled_invoice_date_from_text() -> None:
         + ("padding " * 20)
     )
     assert recover_labeled_invoice_date_from_text(text) == date(2025, 9, 4)
+
+
+def test_recover_claim_form_header_date_column() -> None:
+    text = (
+        "EMPLOYEE EXPENSE CLAIM FORM\n"
+        "CLAIM NO. DATE\n"
+        "EXP-2026-091 3 June 2026\n"
+        "EMPLOYEE NAME\n"
+        "Vishnu\n"
+    )
+    assert recover_labeled_invoice_date_from_text(text) == date(2026, 6, 3)
 
 
 def test_recover_labeled_invoice_date_skips_validity_label() -> None:

@@ -215,10 +215,21 @@ def chat_json(
         logger.warning(
             "azure_openai_chat_failed",
             error=str(last_error),
+            # The status line alone cannot distinguish a bad payload from a bad key.
+            response_body=_error_response_body(last_error),
             require_runtime=require_runtime,
             attempts=max_attempts,
         )
     return None
+
+
+def _error_response_body(exc: Exception) -> str | None:
+    if not isinstance(exc, httpx.HTTPStatusError):
+        return None
+    try:
+        return exc.response.text[:500]
+    except Exception:
+        return None
 
 
 async def chat_json_async(

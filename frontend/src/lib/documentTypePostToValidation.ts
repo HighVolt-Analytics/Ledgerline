@@ -13,12 +13,17 @@ export type PostToConfigWarning = {
   message: string;
 };
 
-export function documentTypeRequiresPostTo(docType: Pick<DocumentTypeDefinition, "posting">): boolean {
-  return (docType.posting ?? "").trim().toLowerCase() !== "no";
+export function documentTypeRequiresPostTo(
+  docType: Pick<DocumentTypeDefinition, "posting" | "teamExpenseKind">
+): boolean {
+  if ((docType.posting ?? "").trim().toLowerCase() === "no") return false;
+  // Advance requisitions post Dr employee advance / Cr settlement — no expense ledger.
+  if ((docType.teamExpenseKind ?? "").trim() === "advance_requisition") return false;
+  return true;
 }
 
 export function hasValidPostTo(
-  docType: Pick<DocumentTypeDefinition, "posting" | "postTo">,
+  docType: Pick<DocumentTypeDefinition, "posting" | "postTo" | "teamExpenseKind">,
   accounts: ChartOfAccountRow[]
 ): boolean {
   if (!documentTypeRequiresPostTo(docType)) return true;

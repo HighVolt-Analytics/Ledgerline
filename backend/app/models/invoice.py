@@ -6,7 +6,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Boolean, Date, DateTime, Enum, Float, ForeignKey, JSON, Numeric, String, Text, UniqueConstraint, func, Uuid
+from sqlalchemy import Boolean, Date, DateTime, Enum, Float, ForeignKey, Integer, JSON, Numeric, String, Text, UniqueConstraint, func, Uuid
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -111,6 +111,8 @@ class Invoice(Base):
     account_code: Mapped[str | None] = mapped_column(String(20))
     account_name: Mapped[str | None] = mapped_column(String(255))
     route_target: Mapped[str | None] = mapped_column(String(100), index=True)
+    team_expense_kind: Mapped[str | None] = mapped_column(String(32))
+    linked_advance_invoice_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     matched_rule_ids: Mapped[str | None] = mapped_column(Text)
     vendor_confidence: Mapped[float | None] = mapped_column(Float)
     evaluation_status: Mapped[str | None] = mapped_column(String(32), index=True)

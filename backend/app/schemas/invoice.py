@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.journal import JournalEntryResponse
 from app.schemas.line_item import LineItemResponse
+from app.schemas.rule_book_config import TeamExpenseKind
 from app.services.invoice.processing_override_catalog import ProcessingOverridesPayload
 
 PipelineStageState = Literal["done", "pending", "fail", "skipped"]
@@ -87,6 +88,8 @@ class InvoiceResponse(BaseModel):
     account_code: str | None = None
     account_name: str | None = None
     route_target: str | None = None
+    team_expense_kind: str | None = None
+    linked_advance_invoice_id: int | None = None
     matched_rule_ids: list[str] | None = None
     vendor_confidence: float | None = None
     evaluation_status: EvaluationStatus | None = None
@@ -167,6 +170,13 @@ class InvoiceUpdateRequest(BaseModel):
 
         cleaned = normalize_extracted_fields_map(value)
         return cleaned or None
+
+
+class TeamExpenseKindRequest(BaseModel):
+    """Set which Team Expenses journal template a claim posts with."""
+
+    team_expense_kind: TeamExpenseKind
+    linked_advance_invoice_id: int | None = None
 
 
 class ProcessInvoicesBatchRequest(BaseModel):

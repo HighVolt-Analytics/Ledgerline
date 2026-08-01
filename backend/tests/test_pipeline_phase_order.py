@@ -222,7 +222,8 @@ async def test_pipeline_holds_when_vision_can_understand(
     from decimal import Decimal
 
     from app.models.line_item import LineItem
-    from app.services.invoice.vision_header_extract import VisionHeaderExtractResult
+    from app.services.invoice.vision_dt_extract import VisionDtExtractResult
+    from app.services.invoice.vision_type_suggest import VisionTypeSuggestResult
     from app.services.invoice.vision_understand_gate import VisionUnderstandResult
 
     pdf_path = tmp_path / "invoice.pdf"
@@ -272,19 +273,49 @@ async def test_pipeline_holds_when_vision_can_understand(
             page_count=1,
         )
 
-    async def _header(*_args, **_kwargs) -> VisionHeaderExtractResult:
-        return VisionHeaderExtractResult(
+    async def _type_suggest(*_args, **_kwargs) -> VisionTypeSuggestResult:
+        return VisionTypeSuggestResult(
             success=True,
             document_heading="TAX INVOICE",
             canonical_document_type="Tax Invoice",
-            counterparty_name="Acme Pty Ltd",
             perspective="purchase",
-            invoice_no="INV-100",
-            po_reference="PO-55",
-            so_reference="",
-            other_reference="",
+            document_summary=(
+                "Supplier tax invoice addressed to the buyer with invoice number "
+                "and totals visible; purchase perspective."
+            ),
+            document_role_hints={
+                "has_po_reference": "false",
+                "has_invoice_number": "true",
+                "is_supporting_only": "false",
+            },
             confidence=0.88,
-            reason="clear header",
+            reason="clear title",
+            provider="gemini_vision",
+            page_count=1,
+        )
+
+    async def _dt_extract(session, invoice, **_kwargs) -> VisionDtExtractResult:
+        invoice.document_heading = invoice.document_heading or "TAX INVOICE"
+        invoice.invoice_no = "INV-100"
+        invoice.po_reference = "PO-55"
+        invoice.vendor = "Acme Pty Ltd"
+        from app.services.extraction.extraction_field_values import merge_invoice_extracted_fields
+
+        merge_invoice_extracted_fields(
+            invoice,
+            {
+                "canonical_document_type": "Tax Invoice",
+                "document_heading": "TAX INVOICE",
+                "invoice_no": "INV-100",
+                "po_reference": "PO-55",
+                "vendor": "Acme Pty Ltd",
+            },
+        )
+        return VisionDtExtractResult(
+            success=True,
+            needs_review=True,
+            selected_keys=("invoice_no", "vendor", "total"),
+            confidence=0.8,
             provider="gemini_vision",
             page_count=1,
         )
@@ -295,20 +326,42 @@ async def test_pipeline_holds_when_vision_can_understand(
     async def _noop_siblings(*_args, **_kwargs):
         return None
 
-    sync_calls: list[int] = []
-
     async def _fake_sync(session, invoice, *, parsed_vendor=None):
-        sync_calls.append(invoice.id)
         return False
 
+    async def _fake_map(**_kwargs):
+        from app.services.invoice.vision_document_type_map import VisionDocumentTypeMapResult
+
+        return VisionDocumentTypeMapResult(
+            code="DT-01",
+            confidence=0.9,
+            heading_kind="invoice",
+            reason="matched",
+            method="heading_kind_score",
+        )
+
+    real_get_settings = __import__("app.config", fromlist=["get_settings"]).get_settings
+
+    def _settings():
+        return real_get_settings().model_copy(update={"vision_dt_scoped_extract": True})
+
     patch_pre_ocr_gates_pass(monkeypatch)
+    monkeypatch.setattr("app.config.get_settings", _settings)
     monkeypatch.setattr(
         "app.services.invoice.vision_understand_gate.evaluate_vision_understand",
         _can_understand,
     )
     monkeypatch.setattr(
-        "app.services.invoice.vision_header_extract.evaluate_vision_header_extract",
-        _header,
+        "app.services.invoice.vision_type_suggest.evaluate_vision_type_suggest",
+        _type_suggest,
+    )
+    monkeypatch.setattr(
+        "app.services.invoice.vision_dt_extract.evaluate_vision_dt_extract",
+        _dt_extract,
+    )
+    monkeypatch.setattr(
+        "app.services.invoice.vision_document_type_map.map_vision_label_to_document_type_with_llm_fallback",
+        _fake_map,
     )
     monkeypatch.setattr(
         "app.services.invoice.pipeline._maybe_reprocess_held_commercial_siblings",
@@ -342,29 +395,10 @@ async def test_pipeline_holds_when_vision_can_understand(
     assert inv.status == InvoiceStatus.EXCEPTION
     assert inv.document_heading == "TAX INVOICE"
     assert (inv.extracted_fields or {}).get("canonical_document_type") == "Tax Invoice"
-    assert inv.invoice_no == "INV-100"
-    assert inv.po_reference == "PO-55"
-    assert inv.vendor == "Acme Pty Ltd"
-    assert (inv.extracted_fields or {}).get("vision_bundle_kind") == "invoice_no"
-    assert (inv.extracted_fields or {}).get("vision_bundle_key") == "INV-100"
-    # Path-consistent: no not-understood leftovers mixed with vision header.
-    assert inv.document_type_code is None
-    assert inv.subtotal is None
-    assert inv.gst is None
-    assert "field_confidence" not in (inv.extracted_fields or {})
-    assert "subtotal" not in (inv.extracted_fields or {})
-    line_count = (
-        await db_session.execute(
-            select(LineItem).where(LineItem.invoice_id == inv.id)
-        )
-    ).scalars().all()
-    assert line_count == []
-    assert sync_calls == [inv.id]
     assert "vision_understand_passed" in events
-    assert "vision_header_extracted" in events
-    assert "vision_path_stale_extract_cleared" in events
-    assert "vision_bundle_linked" in events
-    assert "vision_path_pending" in events
+    assert "vision_type_suggested" in events
+    assert "vision_document_type_mapped" in events
+    assert "vision_dt_fields_extracted" in events
     assert "image_quality_passed" not in events
     assert "ocr_completed" not in events
     _assert_ordered(
@@ -372,8 +406,103 @@ async def test_pipeline_holds_when_vision_can_understand(
         "storage_verified",
         "file_validity_passed",
         "vision_understand_passed",
+        "vision_type_suggested",
+        "vision_document_type_mapped",
+        "vision_dt_fields_extracted",
+    )
+
+
+@pytest.mark.asyncio
+async def test_pipeline_legacy_header_when_dt_scoped_flag_off(
+    db_session: AsyncSession,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.invoice.vision_header_extract import VisionHeaderExtractResult
+    from app.services.invoice.vision_understand_gate import VisionUnderstandResult
+
+    pdf_path = tmp_path / "invoice.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4 minimal")
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PENDING,
+        raw_file_path=str(pdf_path),
+        file_hash="phase-order-vision-legacy",
+        currency="AUD",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    @contextmanager
+    def _fake_open(path: str, **_kwargs):
+        yield path
+
+    async def _can_understand(*_args, **_kwargs) -> VisionUnderstandResult:
+        return VisionUnderstandResult(
+            can_understand=True,
+            confidence=0.92,
+            reason="clear",
+            provider="gemini_vision",
+            page_count=1,
+        )
+
+    async def _header(*_args, **_kwargs) -> VisionHeaderExtractResult:
+        return VisionHeaderExtractResult(
+            success=True,
+            document_heading="TAX INVOICE",
+            canonical_document_type="Tax Invoice",
+            counterparty_name="Acme Pty Ltd",
+            perspective="purchase",
+            invoice_no="INV-100",
+            confidence=0.88,
+            reason="clear header",
+            provider="gemini_vision",
+            page_count=1,
+        )
+
+    async def _fake_sync(session, invoice, *, parsed_vendor=None):
+        return False
+
+    real_get_settings = __import__("app.config", fromlist=["get_settings"]).get_settings
+
+    def _settings():
+        return real_get_settings().model_copy(update={"vision_dt_scoped_extract": False})
+
+    patch_pre_ocr_gates_pass(monkeypatch)
+    monkeypatch.setattr("app.config.get_settings", _settings)
+    monkeypatch.setattr(
+        "app.services.invoice.vision_understand_gate.evaluate_vision_understand",
+        _can_understand,
+    )
+    monkeypatch.setattr(
+        "app.services.invoice.vision_header_extract.evaluate_vision_header_extract",
+        _header,
+    )
+    monkeypatch.setattr(
+        "app.services.invoice.pipeline.sync_vision_header_vault_path",
+        _fake_sync,
+    )
+    monkeypatch.setattr("app.services.invoice.pipeline.open_pdf_for_reading", _fake_open)
+    monkeypatch.setattr("app.services.invoice.invoice_pipeline_phases.open_pdf_for_reading", _fake_open)
+    monkeypatch.setattr("app.services.shared.file_storage.open_pdf_for_reading", _fake_open)
+
+    await process_invoice(db_session, inv)
+    await db_session.flush()
+
+    rows = (
+        await db_session.execute(
+            select(AuditLog)
+            .where(AuditLog.invoice_id == inv.id)
+            .order_by(AuditLog.created_at.asc(), AuditLog.id.asc())
+        )
+    ).scalars().all()
+    events = [row.event for row in rows]
+    assert "vision_header_extracted" in events
+    assert "vision_type_suggested" not in events
+    _assert_ordered(
+        events,
+        "vision_understand_passed",
         "vision_header_extracted",
-        "vision_path_stale_extract_cleared",
-        "vision_bundle_linked",
-        "vision_path_pending",
+        "vision_document_type_mapped",
     )

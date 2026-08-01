@@ -261,7 +261,7 @@ def test_refine_splits_completed_page_of_one_then_new_title() -> None:
     assert [(s.start_page, s.end_page, s.heading_kind) for s in refined.segments] == [
         (0, 0, "tax_invoice"),
         (1, 1, "packing_list"),
-        (2, 2, "grn"),
+        (2, 2, "delivery_note"),
     ]
 
 
@@ -500,6 +500,98 @@ def test_same_kind_identity_split_consecutive_invoices() -> None:
     assert [(s.start_page, s.end_page, s.heading_kind) for s in refined.segments] == [
         (0, 0, "invoice"),
         (1, 1, "invoice"),
+    ]
+
+
+def test_orphan_disclaimer_page_merges_into_prior_statement() -> None:
+    """LLM over-split: settlement page + trailing disclaimer must stay one invoice."""
+    from app.services.extraction.pdf_segment_llm_service import refine_llm_segments
+
+    pages = [
+        _page(
+            0,
+            "ADVANCE SETTLEMENT STATEMENT\n"
+            "ADS-2026-014\n"
+            "Employee: Vishnu\n"
+            "Amount utilised: AUD 6600.00\n"
+            "Date: 15/07/2026\n"
+            "Balance remaining: AUD 0.00\n",
+        ),
+        _page(
+            1,
+            "DISCLAIMER\n"
+            "This document is confidential and for information only.\n"
+            "Computer generated. No signature required.\n"
+            "Please do not reply to this automated message.\n"
+            "End of document.\n",
+        ),
+    ]
+    raw = PdfSegmentResult(
+        segments=[
+            PdfDocumentSegment(0, 0, "statement", 0.9),
+            PdfDocumentSegment(1, 1, "statement", 0.9),
+        ],
+        detected_boundary_count=2,
+        segmentation_method="llm",
+    )
+    refined = refine_llm_segments(raw, pages)
+    assert len(refined.segments) == 1
+    assert refined.segments[0].start_page == 0
+    assert refined.segments[0].end_page == 1
+    assert "orphan" in refined.segmentation_method
+
+
+def test_orphan_not_a_tax_invoice_page_merges_even_when_llm_says_tax_invoice() -> None:
+    """LLM labeled a disclaimer page tax_invoice because of 'not a tax invoice'."""
+    from app.services.extraction.pdf_segment_llm_service import refine_llm_segments
+
+    pages = [
+        _page(
+            0,
+            "ADVANCE SETTLEMENT STATEMENT\n"
+            "SETTLEMENT NO. DATE\n"
+            "ADS-2026-014 26 May 2026\n"
+            "Total Utilised AUD 6,600.00\n",
+        ),
+        _page(
+            1,
+            "This statement settles the advance previously issued.\n"
+            "This document is not a tax invoice.\n"
+            "End of document.\n",
+        ),
+    ]
+    raw = PdfSegmentResult(
+        segments=[
+            PdfDocumentSegment(0, 0, "statement", 0.9),
+            PdfDocumentSegment(1, 1, "tax_invoice", 0.9),
+        ],
+        detected_boundary_count=2,
+        segmentation_method="llm",
+    )
+    refined = refine_llm_segments(raw, pages)
+    assert len(refined.segments) == 1
+    assert refined.segments[0].end_page == 1
+
+
+def test_orphan_merge_keeps_invoice_and_packing_list_separate() -> None:
+    from app.services.extraction.pdf_segment_llm_service import refine_llm_segments
+
+    pages = [
+        _page(0, "INVOICE\nInvoice No: INV-9001\nTotal $110.00"),
+        _page(1, "PACKING LIST\nInvoice No: INV-9001\nCartons: 4"),
+    ]
+    raw = PdfSegmentResult(
+        segments=[
+            PdfDocumentSegment(0, 0, "invoice", 0.9),
+            PdfDocumentSegment(1, 1, "packing_list", 0.9),
+        ],
+        detected_boundary_count=2,
+        segmentation_method="llm",
+    )
+    refined = refine_llm_segments(raw, pages)
+    assert [(s.start_page, s.end_page, s.heading_kind) for s in refined.segments] == [
+        (0, 0, "invoice"),
+        (1, 1, "packing_list"),
     ]
 
 

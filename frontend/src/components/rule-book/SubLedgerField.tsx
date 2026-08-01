@@ -16,6 +16,8 @@ type SubLedgerFieldProps = {
   placeholder?: string;
   className?: string;
   size?: "sm" | "md";
+  includeEmpty?: boolean;
+  emptyLabel?: string;
   "data-testid"?: string;
 };
 
@@ -28,6 +30,8 @@ export function SubLedgerField({
   placeholder = "Optional",
   className,
   size = "md",
+  includeEmpty = true,
+  emptyLabel = "— Optional —",
   "data-testid": dataTestId,
 }: SubLedgerFieldProps) {
   const ledgerTrimmed = ledger.trim();
@@ -52,7 +56,7 @@ export function SubLedgerField({
       <Select
         value={value}
         onValueChange={onChange}
-        options={subLedgersToSelectOptions(catalog)}
+        options={subLedgersToSelectOptions(catalog, { includeEmpty, emptyLabel })}
         disabled={disabled}
         className={className ?? "w-full"}
         size={size}

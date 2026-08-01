@@ -118,6 +118,21 @@ def is_noise_line_item_row(
         return _drop("bare_qty_uom")
     words = [word for word in re.split(r"\s+", desc) if word]
     if len(words) <= 3 and qty is not None and qty > Decimal("1000"):
-        if not re.search(r"\b(?:cpu|chip|part|widget|item|unit|kg|pcs)\b", desc, re.I):
+        # Keep short product descriptions (e.g. "Sale of VERs"); only drop when the
+        # text looks like address/contact OCR bleed with a postal/phone qty.
+        if re.search(
+            r"\b(?:cpu|chip|part|widget|item|unit|kg|pcs|sale|ver|service|goods|"
+            r"product|software|license|hosting|cloud|subscription)\b",
+            desc,
+            re.I,
+        ):
+            return False
+        if (
+            ADDRESS_LIKE.search(desc)
+            or POSTAL_RUN.search(desc)
+            or PHONE_FRAGMENT.match(desc)
+            or re.search(r"(?i)\b(?:plot|street|road|avenue|office|ph:?|phone|mandal|village)\b", desc)
+        ):
             return _drop("short_high_qty")
+        return False
     return False

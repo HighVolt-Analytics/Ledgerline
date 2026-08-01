@@ -345,6 +345,8 @@ export interface Invoice {
   account_code: string | null;
   account_name: string | null;
   route_target: string | null;
+  team_expense_kind: string | null;
+  linked_advance_invoice_id: number | null;
   matched_rule_ids: string[] | null;
   vendor_confidence: number | null;
   evaluation_status:
@@ -359,6 +361,8 @@ export interface Invoice {
     | "awaiting_so"
     | "vision_vaulted"
     | "vision_header_review"
+    | "line_gl_review"
+    | "line_items_review"
     | null;
   /** Ingest T4: weak/unsure duplicate signals — distinct from evaluation needs_review. */
   duplicate_review_suggested?: boolean;
@@ -1627,6 +1631,10 @@ export interface RuleBookConfig {
     payable_account: string;
     receivable_account?: string;
     fallback_account: string;
+  };
+  team_expense_posting?: {
+    default_advance_parent_ledger: string;
+    settlement_account: string;
   };
   document_sets: Array<{
     id: string;

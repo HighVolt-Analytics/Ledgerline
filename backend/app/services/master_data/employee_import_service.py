@@ -27,7 +27,20 @@ EmployeeImportMode = Literal["register", "payment"]
 
 _MAX_IMPORT_ROWS = 500
 
-_REGISTER_FIELDS = ("name", "email", "whatsapp_number", "role", "status")
+_REGISTER_FIELDS = (
+    "name",
+    "email",
+    "whatsapp_number",
+    "whatsapp_number_2",
+    "date_of_joining",
+    "department",
+    "role",
+    "location",
+    "division",
+    "supervisor_1",
+    "supervisor_2",
+    "status",
+)
 _PAYMENT_FIELDS = (
     "email",
     "bsb",
@@ -52,8 +65,52 @@ _HEADER_ALIASES: dict[str, tuple[str, ...]] = {
         "work mobile",
         "whatsapp number",
         "whatsapp / mobile",
+        "whatsapp / mobile 1",
+        "whatsapp mobile 1",
+        "mobile 1",
     ),
-    "role": ("role", "department", "job title", "title", "dept", "role / department"),
+    "whatsapp_number_2": (
+        "whatsapp_number_2",
+        "whatsapp 2",
+        "mobile 2",
+        "phone 2",
+        "whatsapp / mobile 2",
+        "whatsapp mobile 2",
+        "secondary mobile",
+        "secondary phone",
+    ),
+    "date_of_joining": (
+        "date_of_joining",
+        "date of joining",
+        "joining date",
+        "start date",
+        "doj",
+    ),
+    "department": ("department", "dept"),
+    "role": (
+        "role",
+        "designation",
+        "job title",
+        "title",
+        "role / department",
+    ),
+    "location": ("location", "office", "site", "work location"),
+    "division": ("division", "business unit", "bu"),
+    "supervisor_1": (
+        "supervisor_1",
+        "supervisor 1",
+        "supervisor",
+        "manager",
+        "manager 1",
+        "reporting manager",
+    ),
+    "supervisor_2": (
+        "supervisor_2",
+        "supervisor 2",
+        "manager 2",
+        "secondary supervisor",
+        "secondary manager",
+    ),
     "status": ("status", "employment status", "active"),
     "bsb": ("bsb", "bank bsb"),
     "account_number": ("account_number", "account number", "bank account", "account no"),
@@ -94,8 +151,15 @@ _TEMPLATE_BORDER = Border(
 _REGISTER_TEMPLATE_COLUMNS: tuple[tuple[str, str, int], ...] = (
     ("name", "Full name *", 24),
     ("email", "Work email *", 30),
-    ("whatsapp_number", "WhatsApp / mobile", 18),
-    ("role", "Role / department", 20),
+    ("whatsapp_number", "WhatsApp / Mobile 1", 18),
+    ("whatsapp_number_2", "WhatsApp / Mobile 2", 18),
+    ("date_of_joining", "Date of joining", 16),
+    ("department", "Department", 16),
+    ("role", "Designation", 18),
+    ("location", "Location", 14),
+    ("division", "Division", 14),
+    ("supervisor_1", "Supervisor 1", 18),
+    ("supervisor_2", "Supervisor 2", 18),
     ("status", "Status", 20),
 )
 
@@ -290,7 +354,14 @@ def _extract_register_row(
         "name": name,
         "email": email,
         "whatsapp_number": get("whatsapp_number"),
+        "whatsapp_number_2": get("whatsapp_number_2"),
+        "date_of_joining": get("date_of_joining"),
+        "department": get("department"),
         "role": get("role"),
+        "location": get("location"),
+        "division": get("division"),
+        "supervisor_1": get("supervisor_1"),
+        "supervisor_2": get("supervisor_2"),
         "status": _normalize_status(get("status"), default="Pending verification"),
     }, None
 
@@ -360,10 +431,11 @@ def _write_instructions_sheet(ws, *, mode: EmployeeImportMode) -> None:
 
     if mode == "register":
         rows = [
-            ("Purpose", "Add or update employee identity for team expense claims."),
+            ("Purpose", "Add or update employee identity and organisation for team expense claims."),
             ("Required", "Full name and work email on every row."),
             ("Matching", "Rows are matched by work email (case-insensitive)."),
-            ("WhatsApp", "Include country code, e.g. +61412345678."),
+            ("WhatsApp", "Include country code, e.g. +61412345678. Mobile 2 is optional."),
+            ("Organisation", "Department, Designation, Location, Division, and Supervisors are optional."),
             ("Status", "Active, Pending verification, or Suspended."),
             ("Default", "Leave status blank for Pending verification."),
             ("Limits", f"Maximum {_MAX_IMPORT_ROWS} data rows per upload."),
@@ -374,7 +446,14 @@ def _write_instructions_sheet(ws, *, mode: EmployeeImportMode) -> None:
             "Jane Smith",
             "jane.smith@company.com",
             "+61412345678",
+            "+61498765432",
+            "2024-03-15",
             "Finance",
+            "Accounts Payable",
+            "Sydney",
+            "Corporate",
+            "Alex Manager",
+            "Sam Director",
             "Pending verification",
         ]
     else:
@@ -552,15 +631,25 @@ async def import_employee_masters(
 
         if mode == "register":
             preview_name = parsed["name"]
+            org_fields = (
+                "whatsapp_number",
+                "whatsapp_number_2",
+                "date_of_joining",
+                "department",
+                "role",
+                "location",
+                "division",
+                "supervisor_1",
+                "supervisor_2",
+                "status",
+            )
             if existing:
                 if not dry_run:
                     existing.name = parsed["name"]
-                    if parsed["whatsapp_number"]:
-                        existing.whatsapp_number = parsed["whatsapp_number"]
-                    if parsed["role"]:
-                        existing.role = parsed["role"]
-                    if parsed["status"]:
-                        existing.status = parsed["status"]
+                    for field in org_fields:
+                        value = parsed.get(field) or ""
+                        if value:
+                            setattr(existing, field, value)
                 result.updated += 1
                 result.previews.append(
                     EmployeeImportRowPreview(
@@ -581,7 +670,14 @@ async def import_employee_masters(
                             role=parsed.get("role") or "",
                             email=email,
                             whatsapp_number=parsed.get("whatsapp_number") or "",
+                            whatsapp_number_2=parsed.get("whatsapp_number_2") or "",
                             viber_number=None,
+                            date_of_joining=parsed.get("date_of_joining") or "",
+                            department=parsed.get("department") or "",
+                            location=parsed.get("location") or "",
+                            division=parsed.get("division") or "",
+                            supervisor_1=parsed.get("supervisor_1") or "",
+                            supervisor_2=parsed.get("supervisor_2") or "",
                             bank={},
                             budget=EmployeeBudget().model_dump(),
                             status=parsed.get("status") or "Pending verification",

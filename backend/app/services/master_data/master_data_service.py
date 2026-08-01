@@ -6,6 +6,7 @@ import json
 import re
 import uuid
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import func, select
@@ -85,9 +86,18 @@ def employee_record_to_schema(row: EmployeeMasterRecord) -> EmployeeMasterRespon
         role=row.role or "",
         email=row.email or "",
         whatsapp_number=row.whatsapp_number or "",
+        whatsapp_number_2=row.whatsapp_number_2 or "",
         viber_number=row.viber_number,
+        date_of_joining=row.date_of_joining or "",
+        department=row.department or "",
+        location=row.location or "",
+        division=row.division or "",
+        supervisor_1=row.supervisor_1 or "",
+        supervisor_2=row.supervisor_2 or "",
         bank=row.bank or {},
         budget=row.budget or {},
+        advance_parent_ledger=row.advance_parent_ledger or "",
+        advance_sub_ledger=row.advance_sub_ledger or "",
         ytd_spent=row.ytd_spent or 0,
         mtd_spent=row.mtd_spent or 0,
         qtd_spent=row.qtd_spent or 0,
@@ -106,6 +116,7 @@ def vendor_master_to_dict(vendor: VendorMaster) -> dict[str, Any]:
 def employee_master_to_dict(employee: EmployeeMaster) -> dict[str, Any]:
     data = employee.model_dump()
     data.pop("db_id", None)
+    data.pop("advance_balance", None)
     return data
 
 
@@ -194,9 +205,18 @@ async def import_masters_from_config_file(db: AsyncSession, tenant_id: uuid.UUID
                 role=str(item.get("role") or ""),
                 email=str(item.get("email") or ""),
                 whatsapp_number=str(item.get("whatsapp_number") or ""),
+                whatsapp_number_2=str(item.get("whatsapp_number_2") or ""),
                 viber_number=item.get("viber_number"),
+                date_of_joining=str(item.get("date_of_joining") or ""),
+                department=str(item.get("department") or ""),
+                location=str(item.get("location") or ""),
+                division=str(item.get("division") or ""),
+                supervisor_1=str(item.get("supervisor_1") or ""),
+                supervisor_2=str(item.get("supervisor_2") or ""),
                 bank=item.get("bank") or {},
                 budget=item.get("budget") or {},
+                advance_parent_ledger=str(item.get("advance_parent_ledger") or ""),
+                advance_sub_ledger=str(item.get("advance_sub_ledger") or ""),
                 ytd_spent=float(item.get("ytd_spent") or 0),
                 mtd_spent=float(item.get("mtd_spent") or 0),
                 qtd_spent=float(item.get("qtd_spent") or 0),
@@ -238,7 +258,9 @@ async def classification_config_with_db_masters(
 ) -> RuleBookConfigPayload:
     """Merge DB masters into rule book config for pipeline evaluation."""
     vendors = await list_vendor_masters(db, tenant_id)
-    employees = await list_employee_masters(db, tenant_id)
+    employees = await list_employee_masters(
+        db, tenant_id, include_advance_balances=False
+    )
     updates: dict[str, list] = {}
     if vendors:
         updates["vendor_masters"] = vendors
@@ -249,7 +271,36 @@ async def classification_config_with_db_masters(
     return config.model_copy(update=updates)
 
 
-async def list_employee_masters(db: AsyncSession, tenant_id: int) -> list[EmployeeMasterResponse]:
+async def _attach_employee_advance_balances(
+    db: AsyncSession,
+    tenant_id: uuid.UUID | int | str,
+    employees: list[EmployeeMasterResponse],
+) -> None:
+    """Stamp read-only advance_balance from Staff Advance journals onto response rows."""
+    if not employees:
+        return
+    from app.schemas.rule_book_config import validate_rule_book_config_payload
+    from app.services.purchase.team_expense_advance_service import (
+        employee_advance_balances_by_ids,
+    )
+    from app.services.rule_book.rule_book_config_io import load_rule_book_config_dict
+
+    tid = _tenant_id(tenant_id)
+    # Load raw rule-book config only — never load_config_for_tenant (that re-enters
+    # list_employee_masters via attach_masters and recurses).
+    raw = await load_rule_book_config_dict(db, tid)
+    config = validate_rule_book_config_payload(raw)
+    balances = await employee_advance_balances_by_ids(db, tid, config, employees)
+    for employee in employees:
+        employee.advance_balance = float(balances.get(employee.id, Decimal("0")))
+
+
+async def list_employee_masters(
+    db: AsyncSession,
+    tenant_id: int,
+    *,
+    include_advance_balances: bool = True,
+) -> list[EmployeeMasterResponse]:
     await ensure_masters_imported(db, tenant_id)
     rows = (
         await db.execute(
@@ -258,7 +309,10 @@ async def list_employee_masters(db: AsyncSession, tenant_id: int) -> list[Employ
             .order_by(EmployeeMasterRecord.name)
         )
     ).scalars().all()
-    return [employee_record_to_schema(row) for row in rows]
+    employees = [employee_record_to_schema(row) for row in rows]
+    if include_advance_balances:
+        await _attach_employee_advance_balances(db, tenant_id, employees)
+    return employees
 
 
 async def get_vendor_master_by_id(
@@ -400,9 +454,17 @@ async def create_employee_master(
         role=body.role,
         email=body.email,
         whatsapp_number=body.whatsapp_number,
+        whatsapp_number_2=body.whatsapp_number_2,
         viber_number=body.viber_number,
+        date_of_joining=body.date_of_joining,
+        department=body.department,
+        location=body.location,
+        division=body.division,
+        supervisor_1=body.supervisor_1,
+        supervisor_2=body.supervisor_2,
         bank=body.bank.model_dump(exclude_none=True),
         budget=body.budget.model_dump(),
+        advance_parent_ledger=(body.advance_parent_ledger or "").strip(),
         ytd_spent=body.ytd_spent,
         mtd_spent=body.mtd_spent,
         qtd_spent=body.qtd_spent,
@@ -412,8 +474,32 @@ async def create_employee_master(
     )
     db.add(row)
     await db.flush()
+    await _sync_employee_advance_sub_ledger(db, tenant_id, row)
     await sync_masters_to_config_file(db, tenant_id)
-    return employee_record_to_schema(row)
+    employee = employee_record_to_schema(row)
+    await _attach_employee_advance_balances(db, tenant_id, [employee])
+    return employee
+
+
+async def _sync_employee_advance_sub_ledger(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    row: EmployeeMasterRecord,
+) -> None:
+    """Create/refresh the employee's COA advance child under their selected parent."""
+    from app.services.master_data.party_coa_subledger_service import (
+        ensure_employee_party_coa_sub_ledger,
+    )
+
+    child = await ensure_employee_party_coa_sub_ledger(
+        db,
+        tenant_id,
+        slug=row.master_id,
+        employee_name=row.name,
+        parent_ledger_name=row.advance_parent_ledger or "",
+    )
+    row.advance_sub_ledger = child.account_name if child else ""
+    await db.flush()
 
 
 async def update_employee_master(
@@ -431,10 +517,16 @@ async def update_employee_master(
         if key in {"bank", "budget"} and value is not None:
             if hasattr(value, "model_dump"):
                 value = value.model_dump(exclude_none=True) if key == "bank" else value.model_dump()
+        if key == "advance_parent_ledger" and value is not None:
+            value = str(value).strip()
         setattr(row, key, value)
     await db.flush()
+    if {"advance_parent_ledger", "name"} & set(patch):
+        await _sync_employee_advance_sub_ledger(db, tenant_id, row)
     await sync_masters_to_config_file(db, tenant_id)
-    return employee_record_to_schema(row)
+    employee = employee_record_to_schema(row)
+    await _attach_employee_advance_balances(db, tenant_id, [employee])
+    return employee
 
 
 async def delete_employee_master(db: AsyncSession, tenant_id: int, master_id: str) -> None:
@@ -664,7 +756,9 @@ async def attach_masters_to_config_dict(
 ) -> dict[str, Any]:
     """Merge DB masters into a rule book config dict for API responses."""
     vendors = await list_vendor_masters(db, tenant_id)
-    employees = await list_employee_masters(db, tenant_id)
+    employees = await list_employee_masters(
+        db, tenant_id, include_advance_balances=False
+    )
     merged = dict(data)
     merged["vendor_masters"] = [vendor_master_to_dict(v) for v in vendors]
     merged["employee_masters"] = [employee_master_to_dict(e) for e in employees]

@@ -1028,6 +1028,17 @@ function DocumentTypeEditDialog({
             <DocumentTypePostToEditor
               draft={draft}
               onChange={(postTo) => onChange({ ...draft, postTo })}
+              onChangeTeamExpenseKind={(teamExpenseKind) =>
+                onChange({
+                  ...draft,
+                  teamExpenseKind,
+                  // Advance journals never debit an expense Post to ledger.
+                  postTo:
+                    teamExpenseKind === "advance_requisition"
+                      ? { ...draft.postTo, ledger: "", subLedger: "" }
+                      : draft.postTo,
+                })
+              }
             />
           </DetailCard>
 

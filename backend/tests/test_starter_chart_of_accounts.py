@@ -16,6 +16,7 @@ from app.services.master_data.starter_chart_of_accounts import (
     GENERIC_REVENUE_ACCOUNT,
     SALES_RECEIVABLE_ACCOUNT,
     SALES_TAX_ACCOUNT,
+    STAFF_ADVANCE_ACCOUNT,
     build_starter_chart_of_accounts,
     merge_missing_starter_accounts,
 )
@@ -93,7 +94,8 @@ def test_build_starter_chart_of_accounts_includes_both_routes() -> None:
     assert "Accounts Payable" in names
     assert "Bank Account" in names
     assert "Suspense Account" in names
-    assert len(entries) == 8
+    assert STAFF_ADVANCE_ACCOUNT in names
+    assert len(entries) == 9
 
 
 @pytest.mark.asyncio

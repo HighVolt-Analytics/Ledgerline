@@ -187,7 +187,14 @@ export type EmployeeMaster = {
   role: string;
   email: string;
   whatsappNumber: string;
+  whatsappNumber2?: string;
   viberNumber?: string;
+  dateOfJoining?: string;
+  department?: string;
+  location?: string;
+  division?: string;
+  supervisor1?: string;
+  supervisor2?: string;
   bank: {
     bsb?: string;
     accountNumber: string;
@@ -202,6 +209,10 @@ export type EmployeeMaster = {
     annual: number;
     categories: Array<{ ledger: string; cap: number }>;
   };
+  advanceParentLedger: string;
+  advanceSubLedger: string;
+  /** Live Staff Advance child balance from journals (read-only). */
+  advanceBalance?: number;
   ytdSpent: number;
   mtdSpent: number;
   qtdSpent: number;
@@ -251,6 +262,25 @@ export type PostingDefaults = {
   fallbackAccount: string;
 };
 
+export type TeamExpensePostingDefaults = {
+  defaultAdvanceParentLedger: string;
+  settlementAccount: string;
+};
+
+export const TEAM_EXPENSE_KINDS = [
+  "expense_claim",
+  "advance_requisition",
+  "expense_against_advance",
+] as const;
+
+export type TeamExpenseKind = (typeof TEAM_EXPENSE_KINDS)[number];
+
+export const TEAM_EXPENSE_KIND_LABELS: Record<TeamExpenseKind, string> = {
+  expense_claim: "Expense claim",
+  advance_requisition: "Advance requisition",
+  expense_against_advance: "Expense against advance",
+};
+
 export type { DocumentTypeDefinition } from "./v5DocumentTypes";
 
 export type DocumentClassificationConfig = {
@@ -296,6 +326,7 @@ export type RuleBookConfigState = {
   vendorDetectionConfig: VendorDetectionConfig;
   employeeMasters: EmployeeMaster[];
   postingDefaults: PostingDefaults;
+  teamExpensePosting: TeamExpensePostingDefaults;
   documentSets: DocumentSetRule[];
 };
 

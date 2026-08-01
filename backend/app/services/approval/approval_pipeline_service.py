@@ -11,9 +11,13 @@ from app.services.classification.document_type_approval_service import has_docum
 
 
 def payable_fields_complete(invoice: Invoice) -> bool:
+    """Core payable identity for posting/approval gates.
+
+    Vendor + positive total are required. Due date is *not* hard-coded here —
+    many invoices (export LUT, due-on-receipt) omit it. Payment scheduling still
+    checks due_date separately; DT playbook / VR03 enforce it only when configured.
+    """
     if not (invoice.vendor or "").strip():
-        return False
-    if invoice.due_date is None:
         return False
     if invoice.total is None or invoice.total <= Decimal("0"):
         return False

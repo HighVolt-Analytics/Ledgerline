@@ -1,5 +1,6 @@
 import raw from "./v4MockData.json";
 import { money } from "@/lib/format";
+import type { TeamExpenseKind } from "@/lib/v4RuleBookTypes";
 
 export type ExpenseState =
   | "New"
@@ -21,6 +22,12 @@ export type ExpenseClaim = {
   /** Org document label (DOC-… / document_ref) — not the legacy INV- prefix. */
   documentRef?: string;
   submitter: string;
+  /** Matched employee master id (empty when unmatched). */
+  employeeId?: string;
+  division?: string;
+  location?: string;
+  /** Live net advance from employee master (Staff Advance child). */
+  advanceBalance?: number;
   channel: string;
   category: string;
   amount: number;
@@ -33,6 +40,7 @@ export type ExpenseClaim = {
   merchant: string;
   budgetGroup: string;
   approvers: ApproverStep[];
+  kind: TeamExpenseKind;
 };
 
 export type ExpenseBudget = {

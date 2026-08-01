@@ -42,6 +42,11 @@ const PostingDefaultsPanel = lazy(() =>
     default: m.PostingDefaultsPanel,
   }))
 );
+const TeamExpensePostingPanel = lazy(() =>
+  import("@/components/rule-book/TeamExpensePostingPanel").then((m) => ({
+    default: m.TeamExpensePostingPanel,
+  }))
+);
 
 const RULEBOOK_TABS = [
   { value: "ingestion", label: "Ingestion", testid: "tab-ingestion", icon: Inbox },
@@ -351,6 +356,10 @@ export function RulesPage() {
         <PostingDefaultsPanel
           defaults={ruleBook.postingDefaults}
           onChange={(postingDefaults) => patch({ postingDefaults })}
+        />
+        <TeamExpensePostingPanel
+          defaults={ruleBook.teamExpensePosting}
+          onChange={(teamExpensePosting) => patch({ teamExpensePosting })}
         />
         <DocumentSetsPanel
           sets={ruleBook.documentSets}

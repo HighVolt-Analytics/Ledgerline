@@ -65,6 +65,10 @@ _INVOICE_DATE_LINE = re.compile(
     r"issued[ \t]+on|"
     r"document[ \t]+date|"
     r"billing[ \t]+date|"
+    r"claim[ \t]+date|"
+    r"settlement[ \t]+date|"
+    r"request[ \t]+date|"
+    r"expense[ \t]+date|"
     r"dated"
     r")"
     r"(?:[ \t]*(?:is|:))?[ \t]*"
@@ -73,6 +77,20 @@ _INVOICE_DATE_LINE = re.compile(
 
 _GENERIC_DATE_LINE = re.compile(
     r"(?im)(?<![a-z])(?P<label>date)[ \t]*:[ \t]*(?P<value>[^\n\r]{4,24})"
+)
+
+# TE / internal forms: header row "CLAIM NO. DATE" then value row "EXP-… 3 June 2026".
+_FORM_NO_DATE_HEADER = re.compile(
+    r"(?is)\b(?:claim|settlement|request|advance|document|invoice)\s+no\.?\b"
+    r"[^\n]{0,48}\bdate\b\s*\n(?P<body>[^\n\r]{4,96})"
+)
+_DATE_TOKEN_IN_LINE = re.compile(
+    r"(?i)(?P<value>"
+    r"\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{4}"
+    r"|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2},?\s+\d{4}"
+    r"|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}"
+    r"|\d{4}-\d{2}-\d{2}"
+    r")"
 )
 
 
@@ -168,6 +186,18 @@ def date_ocr_match_tokens(value: date) -> tuple[str, ...]:
         except ValueError:
             continue
 
+    # strftime %d is zero-padded; forms/OCR often print "3 June 2026".
+    mon_abbr = value.strftime("%b")
+    mon_full = value.strftime("%B")
+    _add(f"{d} {mon_abbr} {y}")
+    _add(f"{d} {mon_full} {y}")
+    _add(f"{mon_abbr} {d}, {y}")
+    _add(f"{mon_full} {d}, {y}")
+    _add(f"{mon_abbr} {d} {y}")
+    _add(f"{mon_full} {d} {y}")
+    _add(f"{d}-{mon_abbr}-{y}")
+    _add(f"{d}-{mon_full}-{y}")
+
     _add(f"{d}/{m}/{y}")
     _add(f"{m}/{d}/{y}")
     _add(f"{d}-{m}-{y}")
@@ -204,6 +234,16 @@ def recover_labeled_invoice_date_from_text(
         if _EXCLUDED_DATE_LABEL.search(prefix):
             continue
         parsed = parse_flexible_date(match.group("value"), date_order=date_order)
+        if parsed is not None:
+            return parsed
+
+    # Internal claim/settlement forms put DATE as a column header, not "Date:".
+    for match in _FORM_NO_DATE_HEADER.finditer(text or ""):
+        body = match.group("body") or ""
+        token_match = _DATE_TOKEN_IN_LINE.search(body)
+        if not token_match:
+            continue
+        parsed = parse_flexible_date(token_match.group("value"), date_order=date_order)
         if parsed is not None:
             return parsed
 

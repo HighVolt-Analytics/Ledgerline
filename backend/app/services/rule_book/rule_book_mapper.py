@@ -191,3 +191,25 @@ def get_receivable_account_mapping(config: RuleBookConfigPayload) -> AccountMapp
 
 def get_bank_account_mapping(config: RuleBookConfigPayload) -> AccountMapping:
     return resolve_category_for_config(config.posting_defaults.bank_account, config)
+
+
+def team_settlement_account_label(config: RuleBookConfigPayload) -> str:
+    """
+    Settlement ledger label for Team Expenses payouts and reimbursements.
+
+    Tenants provisioned before Team Expenses posting existed keep the shared bank account,
+    so an unconfigured or unknown settlement label resolves to it rather than blocking.
+    """
+    from app.services.rule_book.account_mapper import category_resolved_in_coa
+
+    bank = (config.posting_defaults.bank_account or "").strip()
+    label = (config.team_expense_posting.settlement_account or "").strip()
+    if not label:
+        return bank
+    if category_resolved_in_coa(label, config):
+        return label
+    return bank or label
+
+
+def get_team_settlement_account_mapping(config: RuleBookConfigPayload) -> AccountMapping:
+    return resolve_category_for_config(team_settlement_account_label(config), config)

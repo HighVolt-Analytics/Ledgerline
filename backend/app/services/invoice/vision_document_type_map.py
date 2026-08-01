@@ -10,6 +10,7 @@ Hybrid resolve order:
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
@@ -493,10 +494,17 @@ async def _llm_pick_catalogue_dt(
     org: Any | None = None,
     few_shots: Sequence[dict[str, str]] | None = None,
     perspective: str | None = None,
+    document_summary: str = "",
+    document_role_hints: dict[str, str] | None = None,
+    invoice: Any | None = None,
 ) -> VisionDocumentTypeMapResult:
     from app.config import get_settings
     from app.services.extraction.azure_openai_client import chat_json_async
     from app.services.extraction.llm_catalogue_rows import build_llm_catalogue_rows
+    from app.services.invoice.vision_type_suggest import (
+        document_role_hints_from_invoice,
+        document_summary_from_invoice,
+    )
     from app.services.prompt_registry.service import resolve_system_prompt_text
 
     enabled = [dt for dt in document_types if getattr(dt, "enabled", True)]
@@ -511,11 +519,16 @@ async def _llm_pick_catalogue_dt(
             rule_reason=rule_fail_reason,
         )
 
+    summary = (document_summary or "").strip() or document_summary_from_invoice(invoice)
+    hints = dict(document_role_hints or {}) or document_role_hints_from_invoice(invoice)
+
     system = resolve_system_prompt_text(_PROMPT_KEY)
     user: dict[str, Any] = {
         "task": "map_vision_label_to_catalogue_dt",
         "document_heading": (document_heading or "").strip(),
         "canonical_document_type": (canonical_document_type or "").strip(),
+        "document_summary": summary[:1200],
+        "document_role_hints": hints,
         "heading_kind": heading_kind or "",
         "rule_fail_reason": rule_fail_reason,
         "perspective": (perspective or "").strip().lower(),
@@ -529,7 +542,7 @@ async def _llm_pick_catalogue_dt(
     try:
         raw = await chat_json_async(
             system=system,
-            user=user,
+            user=json.dumps(user, default=str),
             timeout_seconds=settings.runtime_llm_timeout_seconds,
             require_runtime=True,
         )
@@ -661,7 +674,28 @@ async def map_vision_label_to_document_type_with_llm_fallback(
             )
 
     invoice_like = (rule.heading_kind or "") in _INVOICE_LIKE_HEADING_KINDS
-    if invoice is not None and (rule.reason in _LLM_FALLBACK_REASONS or invoice_like):
+    from app.services.invoice.vision_type_suggest import document_summary_from_invoice
+    from app.services.purchase.po_reference import effective_po_reference
+    from app.services.sales.so_reference import effective_so_reference
+
+    summary_text = document_summary_from_invoice(invoice)
+    has_distinguishing_link = bool(
+        effective_po_reference(getattr(invoice, "po_reference", None) if invoice else None)
+        or effective_so_reference(getattr(invoice, "so_reference", None) if invoice else None)
+    )
+    # Ambiguous/weak heading + summary: prefer LLM over a generic classifier win,
+    # unless link columns are already seeded (classifier can resolve PO vs Non-PO).
+    prefer_llm_over_classifier = bool(
+        summary_text
+        and rule.reason in _LLM_FALLBACK_REASONS
+        and not has_distinguishing_link
+    )
+
+    if (
+        invoice is not None
+        and not prefer_llm_over_classifier
+        and (rule.reason in _LLM_FALLBACK_REASONS or invoice_like)
+    ):
         classifier_pool = _role_perspective_pool(
             document_types, heading_kind=rule.heading_kind, invoice=invoice
         )
@@ -704,7 +738,10 @@ async def map_vision_label_to_document_type_with_llm_fallback(
                     runner_up_score=classifier.runner_up_score or rule.runner_up_score,
                 )
 
-    if rule.reason not in _LLM_FALLBACK_REASONS:
+    # Prefer LLM + document summary when heading rules are ambiguous/weak,
+    # or when we skipped a generic classifier win because summary is available.
+    run_llm = rule.reason in _LLM_FALLBACK_REASONS or prefer_llm_over_classifier
+    if not run_llm:
         return rule
 
     llm_pool = _role_perspective_pool(
@@ -733,6 +770,8 @@ async def map_vision_label_to_document_type_with_llm_fallback(
         org=org,
         few_shots=few_shots,
         perspective=perspective_from_invoice(invoice),
+        document_summary=summary_text,
+        invoice=invoice,
     )
     if llm.reason == "llm_matched" and llm.code:
         return replace(

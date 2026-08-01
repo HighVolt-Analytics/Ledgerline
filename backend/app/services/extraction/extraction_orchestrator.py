@@ -918,6 +918,36 @@ def _merge_line_items_from_sources(
         charge_rows = parse_charge_lines_from_text(text)
         return charge_rows if charge_rows else list(llm_rows)
 
+    # Money invoices with vertical / atypical headers often miss product-table
+    # detection — still attempt grounded text parse rather than returning empty
+    # and relying solely on sample-specific fallbacks.
+    from app.services.extraction.line_items_parser import text_has_money_product_signals
+
+    if text_has_money_product_signals(text):
+        text_rows = list(enrich_parsed_line_items(parse_line_items_from_text(text, payload_dict)))
+        money_rows = [
+            row for row in text_rows if row.amount is not None or row.unit_price is not None
+        ]
+        llm_enriched = enrich_line_items_from_text(llm_rows, text) if llm_rows else []
+        if money_rows:
+            if llm_enriched and _llm_line_items_fully_trusted(
+                llm_enriched,
+                text,
+                table_row_count=len(money_rows),
+                doc_confidence=doc_confidence,
+            ):
+                return list(llm_enriched)
+            if llm_enriched and _llm_rows_worth_merging(llm_enriched):
+                return _merge_llm_rows_with_partial_trust(
+                    llm_enriched,
+                    money_rows,
+                    doc_confidence=doc_confidence,
+                    table_row_count=len(money_rows),
+                )
+            return money_rows
+        if llm_enriched:
+            return list(llm_enriched)
+
     return []
 
 

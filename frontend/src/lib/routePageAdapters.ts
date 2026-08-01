@@ -12,8 +12,10 @@ import type {
   EmployeeMaster,
   ExpenseRule,
   PurchaseRule,
+  TeamExpenseKind,
   TeamExpenseRule,
 } from "@/lib/v4RuleBookTypes";
+import { TEAM_EXPENSE_KINDS } from "@/lib/v4RuleBookTypes";
 import type {
   ExpenseBudget,
   ExpenseCategoryPolicy,
@@ -266,6 +268,10 @@ export function invoiceToTeamClaim(
     id: String(inv.id),
     documentRef: documentDisplayRef(inv),
     submitter: matched?.name ?? inferSubmitter(inv),
+    employeeId: matched?.id ?? "",
+    division: matched?.division ?? "",
+    location: matched?.location ?? "",
+    advanceBalance: matched?.advanceBalance ?? 0,
     channel: inferClaimChannel(inv.email_sender, inv.capture_source),
     category: inv.account_name ?? "Uncategorised",
     amount,
@@ -278,7 +284,15 @@ export function invoiceToTeamClaim(
     merchant: inv.vendor ?? "—",
     budgetGroup: inv.account_name ?? "Team",
     approvers: [],
+    kind: normalizeTeamExpenseKind(inv.team_expense_kind),
   };
+}
+
+export function normalizeTeamExpenseKind(value: string | null | undefined): TeamExpenseKind {
+  const cleaned = (value ?? "").trim().toLowerCase();
+  return TEAM_EXPENSE_KINDS.includes(cleaned as TeamExpenseKind)
+    ? (cleaned as TeamExpenseKind)
+    : "expense_claim";
 }
 
 export type RecentClaimValidation = {

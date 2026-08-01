@@ -521,6 +521,8 @@ export function evaluationStatusLabel(
   if (status === "awaiting_classification") return "Awaiting classification";
   if (status === "vision_vaulted") return "Vision vaulted";
   if (status === "vision_header_review") return "Vision header review";
+  if (status === "line_gl_review") return "Line GL review";
+  if (status === "line_items_review") return "Line items review";
   if (status === "needs_rescan") return "Needs rescan";
   if (status === "pending_vendor") {
     return (routeTarget ?? "").trim() === ROUTE_SALES ? "Pending customer" : "Pending vendor";
@@ -554,6 +556,12 @@ export function evaluationStatusDescription(
   }
   if (status === "vision_header_review") {
     return "Vision understood the file but header extraction was incomplete — complete Fields, then Confirm & process.";
+  }
+  if (status === "line_gl_review") {
+    return "One or more line items need a sub-ledger under the document-type ledger before posting.";
+  }
+  if (status === "line_items_review") {
+    return "Required line items were missing or could not be extracted reliably — review or re-enter lines before posting.";
   }
   if (status === "needs_rescan") {
     return "Image or OCR quality was too poor — ask the sender for a flat, well-lit scan or PDF.";
@@ -650,6 +658,14 @@ export function evaluationReviewTooltip(
 
   if (status === "vision_header_review") {
     return "Fields tab — complete header fields, save, then Confirm & process";
+  }
+
+  if (status === "line_gl_review") {
+    return "Lines tab — pick a sub-ledger for each line under the document-type ledger";
+  }
+
+  if (status === "line_items_review") {
+    return "Lines tab — add or correct required product lines, then continue processing";
   }
 
   if (status === "needs_review") {

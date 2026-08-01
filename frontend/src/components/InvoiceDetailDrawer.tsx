@@ -1537,6 +1537,18 @@ export function InvoiceDetailDrawer({
                   ) : null}
                   <DuplicateReviewBadge suggested={inv.duplicate_review_suggested} />
                 </div>
+                {(inv.evaluation_status ?? "").trim() === "line_gl_review" ? (
+                  <p className="text-xs text-destructive mt-1">
+                    Assign a sub-ledger on each line under the document-type ledger, then save and
+                    resume posting.
+                  </p>
+                ) : null}
+                {(inv.evaluation_status ?? "").trim() === "line_items_review" ? (
+                  <p className="text-xs text-destructive mt-1">
+                    Required line items are missing or unreliable — correct lines on the Lines tab,
+                    then continue processing.
+                  </p>
+                ) : null}
                 <p className="text-xs text-muted-foreground tnum mt-0.5">
                   {inv.invoice_no ?? "—"} · {inv.invoice_date ?? "—"} · {fmt(inv.total)}
                 </p>

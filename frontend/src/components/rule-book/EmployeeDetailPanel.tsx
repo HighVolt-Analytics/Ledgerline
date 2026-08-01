@@ -20,6 +20,7 @@ import {
   mergeCoaOptionsWithSavedValue,
 } from "@/lib/coaAccountOptions";
 import type { EmployeeMaster } from "@/lib/v4RuleBookTypes";
+import { fmtAud } from "@/lib/v4MockData";
 import { BankDetailsSection } from "./BankDetailsSection";
 import { BudgetProgressBar } from "./BudgetProgressBar";
 import { FieldLabel } from "./FieldLabel";
@@ -108,31 +109,10 @@ export function EmployeeDetailPanel({
               className="h-8 text-sm"
             />
           </FieldLabel>
-          <FieldLabel label="Role">
-            <Input
-              value={emp.role}
-              onChange={(e) => onChange({ role: e.target.value })}
-              className="h-8 text-xs"
-            />
-          </FieldLabel>
           <FieldLabel label="Email">
             <Input
               value={emp.email}
               onChange={(e) => onChange({ email: e.target.value })}
-              className="h-8 text-xs font-mono"
-            />
-          </FieldLabel>
-          <FieldLabel label="WhatsApp">
-            <Input
-              value={emp.whatsappNumber}
-              onChange={(e) => onChange({ whatsappNumber: e.target.value })}
-              className="h-8 text-xs font-mono"
-            />
-          </FieldLabel>
-          <FieldLabel label="Viber (optional)">
-            <Input
-              value={emp.viberNumber ?? ""}
-              onChange={(e) => onChange({ viberNumber: e.target.value })}
               className="h-8 text-xs font-mono"
             />
           </FieldLabel>
@@ -145,7 +125,126 @@ export function EmployeeDetailPanel({
               className="w-full text-xs"
             />
           </FieldLabel>
+          <FieldLabel label="WhatsApp / Mobile 1">
+            <Input
+              value={emp.whatsappNumber}
+              onChange={(e) => onChange({ whatsappNumber: e.target.value })}
+              className="h-8 text-xs font-mono"
+            />
+          </FieldLabel>
+          <FieldLabel label="WhatsApp / Mobile 2">
+            <Input
+              value={emp.whatsappNumber2 ?? ""}
+              onChange={(e) => onChange({ whatsappNumber2: e.target.value })}
+              className="h-8 text-xs font-mono"
+            />
+          </FieldLabel>
+          <FieldLabel label="Viber (optional)">
+            <Input
+              value={emp.viberNumber ?? ""}
+              onChange={(e) => onChange({ viberNumber: e.target.value })}
+              className="h-8 text-xs font-mono"
+            />
+          </FieldLabel>
         </div>
+      </div>
+
+      <div>
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+          Organisation
+        </h4>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+          <FieldLabel label="Date of joining">
+            <Input
+              value={emp.dateOfJoining ?? ""}
+              onChange={(e) => onChange({ dateOfJoining: e.target.value })}
+              placeholder="YYYY-MM-DD"
+              className="h-8 text-xs"
+            />
+          </FieldLabel>
+          <FieldLabel label="Department">
+            <Input
+              value={emp.department ?? ""}
+              onChange={(e) => onChange({ department: e.target.value })}
+              className="h-8 text-xs"
+            />
+          </FieldLabel>
+          <FieldLabel label="Designation">
+            <Input
+              value={emp.role}
+              onChange={(e) => onChange({ role: e.target.value })}
+              className="h-8 text-xs"
+            />
+          </FieldLabel>
+          <FieldLabel label="Location">
+            <Input
+              value={emp.location ?? ""}
+              onChange={(e) => onChange({ location: e.target.value })}
+              className="h-8 text-xs"
+            />
+          </FieldLabel>
+          <FieldLabel label="Division">
+            <Input
+              value={emp.division ?? ""}
+              onChange={(e) => onChange({ division: e.target.value })}
+              className="h-8 text-xs"
+            />
+          </FieldLabel>
+          <FieldLabel label="Supervisor 1">
+            <Input
+              value={emp.supervisor1 ?? ""}
+              onChange={(e) => onChange({ supervisor1: e.target.value })}
+              className="h-8 text-xs"
+            />
+          </FieldLabel>
+          <FieldLabel label="Supervisor 2">
+            <Input
+              value={emp.supervisor2 ?? ""}
+              onChange={(e) => onChange({ supervisor2: e.target.value })}
+              className="h-8 text-xs"
+            />
+          </FieldLabel>
+        </div>
+      </div>
+
+      <div>
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+          Advance posting
+        </h4>
+        <div className="grid sm:grid-cols-2 gap-2.5">
+          <FieldLabel label="Advance parent ledger">
+            <Select
+              value={emp.advanceParentLedger}
+              onValueChange={(advanceParentLedger) => onChange({ advanceParentLedger })}
+              options={mergeCoaOptionsWithSavedValue(ledgerOptions, emp.advanceParentLedger)}
+              size="sm"
+              className="w-full text-xs"
+              data-testid={`employee-advance-parent-${emp.id}`}
+            />
+          </FieldLabel>
+          <FieldLabel label="Sub-ledger (created automatically)">
+            <Input
+              value={emp.advanceSubLedger || "Created when you save"}
+              readOnly
+              disabled
+              className="h-8 text-xs"
+            />
+          </FieldLabel>
+          <FieldLabel label="Net advance outstanding">
+            <Input
+              value={fmtAud(emp.advanceBalance ?? 0)}
+              readOnly
+              disabled
+              className="h-8 text-xs tnum"
+              data-testid={`employee-advance-balance-${emp.id}`}
+            />
+          </FieldLabel>
+        </div>
+        <p className="text-[11px] text-muted-foreground mt-1.5">
+          Advances given − expenses cleared against advance, from this employee&apos;s Staff Advance
+          sub-ledger. Advances and expenses settled against them post to this employee&apos;s own
+          sub-ledger under the parent selected here.
+        </p>
       </div>
 
       <BankDetailsSection

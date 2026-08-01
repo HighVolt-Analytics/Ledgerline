@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, ExternalLink, HelpCircle, X } from "lucide-react";
 import type { InvoiceStatus } from "@/api/types";
 import { ApprovalPolicyNote } from "@/components/ApprovalPolicyNote";
@@ -8,8 +8,11 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { NumericInput } from "@/components/ui/numeric-input";
 import { cn } from "@/lib/cn";
-import { fmtAud, type ExpenseBudget, type ExpenseClaim } from "@/lib/v4MockData";
+import { money } from "@/lib/format";
+import type { ExpenseBudget, ExpenseClaim } from "@/lib/v4MockData";
+import type { TeamExpenseKind } from "@/lib/v4RuleBookTypes";
 import { BudgetUtilBar } from "./BudgetUtilBar";
+import { ClaimKindField } from "./ClaimKindField";
 import { ExpenseStateBadge } from "./ExpenseBadges";
 import { ReceiptThumb } from "./ReceiptThumb";
 
@@ -55,9 +58,14 @@ export function ClaimDetailPanel({
   canApprove,
   canReject,
   canRequestInfo,
+  advanceLedger = "",
+  settlementLedger = "",
+  advanceBalance,
+  currency,
   onApprove,
   onReject,
   onRequestInfo,
+  onChangeKind,
   onOpenInvoice,
 }: {
   claim: ExpenseClaim;
@@ -69,16 +77,35 @@ export function ClaimDetailPanel({
   canApprove: boolean;
   canReject: boolean;
   canRequestInfo: boolean;
+  advanceLedger?: string;
+  settlementLedger?: string;
+  advanceBalance?: number;
+  /** Document currency when set; otherwise org/institution currency. */
+  currency: string;
   onApprove: () => void | Promise<void>;
   onReject: () => void | Promise<void>;
   onRequestInfo: () => void | Promise<void>;
+  /** Team Expenses only — omit on routes that do not post advance journals. */
+  onChangeKind?: (kind: TeamExpenseKind) => void | Promise<void>;
   onOpenInvoice?: () => void;
 }) {
+  // Must reset when switching claims — useState alone keeps the prior claim's amount
+  // (e.g. advance 1000 stuck on against-advance 250 after kind toggle).
   const [amount, setAmount] = useState(claim.amount);
+  useEffect(() => {
+    setAmount(claim.amount);
+  }, [claim.id, claim.amount]);
+
   const editable =
     (claim.state === "New" || claim.state === "In Review") &&
     invoiceStatus !== "processed" &&
     invoiceStatus !== "rejected";
+  const netAdvance = advanceBalance ?? claim.advanceBalance ?? 0;
+  const claimAmount = Number.isFinite(amount) ? amount : claim.amount;
+  const remainingAfterClaim = netAdvance - claimAmount;
+  const againstAdvanceOver =
+    claim.kind === "expense_against_advance" && claimAmount > netAdvance;
+  const fmt = (n: number) => money(n, currency);
 
   return (
     <div>
@@ -115,17 +142,53 @@ export function ClaimDetailPanel({
           date={claim.date}
           amount={claim.amount}
           gst={claim.gst}
+          currency={currency}
         />
         <div className="space-y-2 text-sm min-w-0">
-          <DetailField label="Submitter" value={claim.submitter} />
+          <DetailField label="Employee name" value={claim.submitter} />
+          <DetailField label="Employee ID" value={claim.employeeId || "—"} mono />
+          <DetailField label="Division" value={claim.division || "—"} />
+          <DetailField label="Location" value={claim.location || "—"} />
           <DetailField label="Category" value={claim.category} />
-          <ClaimAmountInput value={amount} onChange={setAmount} disabled={!editable} />
+          <ClaimAmountInput value={claimAmount} onChange={setAmount} disabled={!editable} />
           <DetailField label="Date" value={claim.date} />
-          <DetailField label="GST" value={fmtAud(claim.gst)} mono />
+          <DetailField label="GST" value={fmt(claim.gst)} mono />
           <DetailField label="Business purpose" value={claim.purpose} />
           <DetailField label="Project tag" value={claim.projectTag} mono />
+          <DetailField label="Advance left" value={fmt(netAdvance)} mono />
+          {claim.kind === "expense_against_advance" ? (
+            <>
+              <DetailField label="This claim" value={fmt(claimAmount)} mono />
+              <div>
+                <div className="text-[11px] text-muted-foreground uppercase tracking-wide">
+                  Remaining after claim
+                </div>
+                <div
+                  className={cn(
+                    "text-sm tnum",
+                    againstAdvanceOver && "ds-warning-text font-medium"
+                  )}
+                  data-testid="claim-remaining-after-advance"
+                >
+                  {fmt(remainingAfterClaim)}
+                  {againstAdvanceOver ? " — exceeds available advance" : ""}
+                </div>
+              </div>
+            </>
+          ) : null}
         </div>
       </div>
+
+      {onChangeKind && (
+        <ClaimKindField
+          kind={claim.kind}
+          expenseLedger={claim.category}
+          advanceLedger={advanceLedger}
+          settlementLedger={settlementLedger}
+          disabled={busy || !editable}
+          onChange={(kind) => void onChangeKind(kind)}
+        />
+      )}
 
       {!hasStoredFile && canApprove && (
         <p className="text-xs ds-warning-text mt-3">
@@ -136,8 +199,8 @@ export function ClaimDetailPanel({
       {budget && (
         <Card className="p-3 mt-3 bg-muted/30">
           <div className="text-xs font-medium mb-1.5">
-            {budget.category} — {budget.period} · {fmtAud(budget.used)} used of{" "}
-            {fmtAud(budget.monthlyBudget)} ({Math.round((budget.used / budget.monthlyBudget) * 100)}
+            {budget.category} — {budget.period} · {fmt(budget.used)} used of{" "}
+            {fmt(budget.monthlyBudget)} ({Math.round((budget.used / budget.monthlyBudget) * 100)}
             %)
           </div>
           <BudgetUtilBar used={budget.used} total={budget.monthlyBudget} />

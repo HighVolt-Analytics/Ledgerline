@@ -35,8 +35,40 @@ export function InvoiceClassificationPanel({
       </div>
     );
   }
+
+  const showDtPicker =
+    requiresConfirm && Boolean(onChangeDt) && catalogueCodes.length > 0;
+
+  // Vision understood hold (no OCR classify audit): still show DT picker.
   if (!audit) {
-    return null;
+    if (!showDtPicker) return null;
+    return (
+      <div className="rounded-md border border-border bg-muted/20 px-3 py-2.5 text-xs space-y-3">
+        <div className="font-medium text-foreground">Document type</div>
+        <p className="text-amber-800 dark:text-amber-300">
+          Catalogue document type is not mapped yet. Select one to extract fields and continue.
+        </p>
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <select
+            className="rounded-md border border-border bg-card px-2 py-1 text-[11px] text-foreground"
+            defaultValue=""
+            onChange={(e) => {
+              const code = e.target.value;
+              if (code) onChangeDt?.(code);
+            }}
+          >
+            <option value="" disabled>
+              Select document type…
+            </option>
+            {catalogueCodes.map((code) => (
+              <option key={code} value={code}>
+                {formatDtCodeWithName(documentTypes, code)}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+    );
   }
 
   const llmDt = audit.llm_suggested_dt ?? "";
@@ -45,8 +77,7 @@ export function InvoiceClassificationPanel({
   const chips = classificationReviewReasons(audit);
   const statusMessage = classificationStatusMessage(audit);
   const thresholdSummary = autoRouteThresholdSummary(audit);
-  const showActions =
-    requiresConfirm && Boolean(onConfirmDt || onChangeDt) && catalogueCodes.length > 0;
+  const showActions = showDtPicker && Boolean(onConfirmDt || onChangeDt);
 
   return (
     <div className="rounded-md border border-border bg-muted/20 px-3 py-2.5 text-xs space-y-3">

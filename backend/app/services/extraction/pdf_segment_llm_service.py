@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Sequence
 
 from app.config import get_settings
@@ -15,6 +16,7 @@ from app.services.extraction.azure_openai_client import chat_json_async
 from app.services.extraction.document_heading_utils import (
     HeadingKind,
     extract_document_heading_signals,
+    infer_page_document_kind_with_source,
     is_continuation_page,
     parse_page_of_marker,
 )
@@ -32,6 +34,43 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 _PAGE_EXCERPT_MAX = 400
+
+# Trailing boilerplate that must not become its own invoice.
+_NON_DOCUMENT_MARKERS = (
+    "disclaimer",
+    "confidential",
+    "terms and conditions",
+    "terms & conditions",
+    "this page intentionally left blank",
+    "intentionally left blank",
+    "for information only",
+    "computer generated",
+    "no signature required",
+    "please do not reply",
+    "this is an automated",
+    "end of document",
+    "continued on next page",  # alone on a page without content
+    "not a tax invoice",
+    "not an invoice",
+    "is not a tax invoice",
+)
+_AMOUNT_RE = re.compile(
+    r"""
+    (?:
+        \b(?:total|amount|subtotal|gst|balance|utilised|utilized)\b
+        |\btax\s*(?:amount|total|inclusive|payable)\b
+        |(?:AUD|USD|SGD|EUR|GBP|INR)\s*[$]?[\d,]+\.?\d*
+        |[$€£₹]\s*[\d,]+\.?\d*
+    )
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+_REF_IN_IDENTITY = ("invoice_no=", "po_reference=", "so_reference=", "bol_no=", "tracking_no=")
+# Body-keyword kinds that often false-positive on T&Cs / footer pages.
+_WEAK_STANDALONE_KINDS = frozenset(
+    {"statement", "remittance", "quote", "contract", "timesheet"}
+)
+
 
 _HEADING_KINDS: tuple[str, ...] = (
     "tax_invoice",
@@ -485,6 +524,122 @@ def _merge_continuation_segments(
     )
 
 
+def _page_is_non_document_orphan(text: str) -> bool:
+    """True for disclaimer / T&Cs / empty scrap pages that must not become invoices.
+
+    Conservative: only merge when the page is blank, matches known boilerplate
+    markers, or is a near-empty OCR scrap with no document signals. Short but
+    real pages (item receipts, LLM placeholder text, etc.) stay separate.
+    """
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return True
+    if is_continuation_page(cleaned):
+        return False
+
+    inferred = infer_page_document_kind_with_source(cleaned)
+    if inferred is not None and inferred.source == "title_line":
+        return False
+    if (
+        inferred is not None
+        and inferred.source == "body_keyword"
+        and inferred.kind not in _WEAK_STANDALONE_KINDS
+    ):
+        return False
+
+    if bool(_AMOUNT_RE.search(cleaned)):
+        return False
+    identity = page_identity_signature(cleaned, page_kind_token=None) or ""
+    if any(token in identity for token in _REF_IN_IDENTITY):
+        return False
+
+    lowered = " ".join(cleaned.lower().split())
+    if any(marker in lowered for marker in _NON_DOCUMENT_MARKERS):
+        # Weak mislabels like "statement" on a disclaimer page still orphan.
+        return True
+
+    # Near-empty OCR scrap only — do not glue ordinary short pages together.
+    return inferred is None and len(cleaned) < 40
+
+
+def _segment_is_non_document_orphan(
+    segment: PdfDocumentSegment,
+    pages: list[PdfPageText],
+) -> bool:
+    """True when every non-blank page in the segment is disclaimer/junk."""
+    for index in range(segment.start_page, segment.end_page + 1):
+        page = pages[index]
+        if page_is_blank_for_segment(page):
+            continue
+        if not _page_is_non_document_orphan(page.text or ""):
+            return False
+    return True
+
+
+def _adjacent_or_blank_gap(
+    prev: PdfDocumentSegment,
+    nxt: PdfDocumentSegment,
+    pages: list[PdfPageText],
+) -> bool:
+    if nxt.start_page == prev.end_page + 1:
+        return True
+    if nxt.start_page <= prev.end_page:
+        return False
+    gap = range(prev.end_page + 1, nxt.start_page)
+    return bool(gap) and all(page_is_blank_for_segment(pages[i]) for i in gap)
+
+
+def merge_orphan_non_document_segments(
+    result: PdfSegmentResult,
+    pages: list[PdfPageText],
+) -> PdfSegmentResult:
+    """Attach disclaimer / structureless trailing pages to the previous segment.
+
+    LLM and rules sometimes open a new segment on a T&Cs / disclaimer page that
+    shares a weak body keyword with the prior form. Those pages must not become
+    their own invoices (needs_rescan junk in the queue).
+    """
+    ordered = sorted(result.segments, key=lambda s: s.start_page)
+    if len(ordered) <= 1:
+        return result
+
+    merged: list[PdfDocumentSegment] = [ordered[0]]
+    changed = False
+    for nxt in ordered[1:]:
+        prev = merged[-1]
+        if (
+            _adjacent_or_blank_gap(prev, nxt, pages)
+            and _segment_is_non_document_orphan(nxt, pages)
+        ):
+            changed = True
+            merged[-1] = _clone_segment(
+                prev,
+                start_page=prev.start_page,
+                end_page=nxt.end_page,
+                heading_kind=prev.heading_kind or nxt.heading_kind,
+            )
+        else:
+            merged.append(nxt)
+
+    if not changed:
+        return result
+    logger.info(
+        "pdf_segment_orphan_non_document_merged",
+        before=len(result.segments),
+        after=len(merged),
+    )
+    method = result.segmentation_method
+    if "orphan" not in method:
+        method = f"{method}+orphan" if method else "orphan"
+    return PdfSegmentResult(
+        segments=merged,
+        detected_boundary_count=len(merged),
+        segmentation_method=method,
+        llm_reasoning=result.llm_reasoning,
+        cap_exceeded=result.cap_exceeded,
+    )
+
+
 def _primary_identity_key(text: str, *, kind: str | None) -> str | None:
     """Compact primary ref for same-kind identity splits (invoice_no / bol / tracking)."""
     fields = page_identity_signature(
@@ -597,6 +752,8 @@ def refine_segment_boundaries(
     # Drop blanks before continuation merge so blank-only gaps can be bridged.
     refined = drop_blank_pages_from_segments(refined, pages)
     refined = _merge_continuation_segments(refined, pages)
+    # Disclaimer / structureless pages must attach to the prior instrument.
+    refined = merge_orphan_non_document_segments(refined, pages)
     refined = _split_same_kind_on_identity_change(refined, pages)
     return _relabel_segments_from_page_text(refined, pages)
 

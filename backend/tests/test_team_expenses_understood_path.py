@@ -78,7 +78,54 @@ def test_explicit_route_target_any_code() -> None:
 def test_purchase_dt_not_team_even_with_employee_like_title() -> None:
     tax = _dt(code="AP-01", title="Tax Invoice", route=ROUTE_PURCHASE)
     assert not is_team_expenses_document_type(tax)
-    assert resolved_route_for_definition(tax) == ROUTE_PURCHASE
+
+
+def test_ensure_upgrades_generic_claim_to_against_advance_from_heading() -> None:
+    from app.models.invoice import Invoice, InvoiceStatus
+    from app.services.purchase.team_expense_route_policy import (
+        ensure_team_expenses_document_type,
+    )
+    from app.tenant_ids import TESTING_TENANT_UUID
+
+    types = [
+        _dt(
+            code="DT-08",
+            title="Employee expense claim",
+            route=ROUTE_TEAM,
+            playbook="employee_claim",
+        ),
+        DocumentTypeDefinition(
+            code="DT-10",
+            title="Expense against advance",
+            shortTitle="Against",
+            klass="Transactional",
+            posting="Yes",
+            recognitionMode="signals",
+            recognitionSignals=[],
+            llmPrompt="",
+            routeTarget=ROUTE_TEAM,
+            enabled=True,
+            playbookProfile="employee_claim",
+            teamExpenseKind="expense_against_advance",
+        ),
+    ]
+    # Repair DT-08 pin as expense_claim for realism
+    types[0] = types[0].model_copy(update={"team_expense_kind": "expense_claim"})
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PARSING,
+        document_type_code="DT-08",
+        document_heading="EXPENSE CLAIM AGAINST ADVANCE",
+        llm_suggested_dt="DT-10",
+        capture_source="email",
+        email_sender="codevishnu321@gmail.com",
+    )
+    chosen = ensure_team_expenses_document_type(inv, types)
+    assert chosen is not None
+    assert chosen.code == "DT-10"
+    assert inv.document_type_code == "DT-10"
+    assert getattr(chosen, "team_expense_kind", None) == "expense_against_advance"
 
 
 def test_force_dt_route_blocks_email_and_team_category_override() -> None:

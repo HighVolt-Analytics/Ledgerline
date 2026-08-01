@@ -603,7 +603,13 @@ export function applyRoutePlaybookDefaults(
   draft: DocumentTypeDefinition,
   nextRoute: string
 ): DocumentTypeDefinition {
-  const withRoute = { ...draft, routeTarget: nextRoute };
+  const withRoute: DocumentTypeDefinition = {
+    ...draft,
+    routeTarget: nextRoute,
+    // Claim kind is meaningless off the Team Expenses route; leaving it set would
+    // silently reapply if the type is routed back later.
+    teamExpenseKind: nextRoute === "Team Expenses" ? draft.teamExpenseKind : "",
+  };
   const currentMode = effectiveMatchPolicy(withRoute).mode;
   if (matchModeAllowedForRoute(nextRoute, currentMode)) {
     return reconcilePlaybookDraft(withRoute);

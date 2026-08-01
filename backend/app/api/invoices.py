@@ -24,6 +24,7 @@ from app.schemas.invoice import (
     InvoiceWithDetails,
     parse_evaluation_status,
     ProcessInvoicesBatchRequest,
+    TeamExpenseKindRequest,
     ValidationResultItem,
 )
 from app.schemas.classification_api import ClassificationResolveRequest, ClassificationReviewItem
@@ -470,6 +471,45 @@ async def patch_invoice(
                 JournalEntryResponse.model_validate(je) for je in inv.journal_entries
             ],
         )
+    )
+
+
+@router.post(
+    "/{invoice_id:int}/team-expense-kind",
+    response_model=ApiEnvelope[InvoiceResponse],
+)
+async def set_team_expense_kind(
+    invoice_id: int,
+    body: TeamExpenseKindRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[InvoiceResponse]:
+    """Choose the claim kind (advance, against advance, claim) before the journal posts."""
+    from app.services.integration.publish_service import is_published_to_ledger
+    from app.services.rule_book.rule_book_mapper import ROUTE_TEAM
+
+    inv = await _get_invoice_for_tenant(db, invoice_id, ctx.tenant_id)
+    if (inv.route_target or "").strip() != ROUTE_TEAM:
+        raise HTTPException(400, "Claim kind applies to Team Expenses documents only")
+    if await is_published_to_ledger(db, inv.id):
+        raise HTTPException(409, "Claim kind cannot change after the journal is published")
+
+    before = inv.team_expense_kind
+    inv.team_expense_kind = body.team_expense_kind
+    inv.linked_advance_invoice_id = body.linked_advance_invoice_id
+    await db.flush()
+    actor_name, actor_email = await actor_from_context(db, ctx)
+    await log_event(
+        db,
+        "team_expense_kind_changed",
+        tenant_id=ctx.tenant_id,
+        invoice_id=inv.id,
+        detail={"from": before, "to": inv.team_expense_kind},
+        actor_name=actor_name,
+        actor_email=actor_email,
+    )
+    return ApiEnvelope(
+        data=await _response_for_invoice(db, inv, tenant_id=ctx.tenant_id)
     )
 
 

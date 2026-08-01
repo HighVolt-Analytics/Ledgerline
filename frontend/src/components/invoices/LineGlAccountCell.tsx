@@ -5,9 +5,11 @@ import type { LineItem } from "@/api/types";
 import { SubLedgerField } from "@/components/rule-book/SubLedgerField";
 import { useChartOfAccounts } from "@/hooks/useChartOfAccounts";
 import { ledgerHasSubLedgerCatalog } from "@/lib/coaAccountOptions";
+import { cn } from "@/lib/cn";
 import {
   effectiveLineLedger,
   lineGlMappingReason,
+  lineSubLedgerRequired,
   suggestLineSubLedger,
 } from "@/lib/lineGlAccount";
 
@@ -28,6 +30,7 @@ export function LineGlAccountCell({
 }: LineGlAccountCellProps) {
   const { data: accounts = [] } = useChartOfAccounts();
   const hasCatalog = ledgerHasSubLedgerCatalog(parentLedger, accounts);
+  const required = lineSubLedgerRequired(line, parentLedger, accounts);
   const suggested = useMemo(
     () => suggestLineSubLedger(line, accounts, parentLedger),
     [accounts, line, parentLedger]
@@ -68,7 +71,7 @@ export function LineGlAccountCell({
   }
 
   return (
-    <>
+    <div className={cn(required && "rounded-md ring-1 ring-destructive/40 p-1")}>
       <p className="text-[10px] text-muted-foreground mb-1 truncate" title={parentLedger}>
         {parentLedger}
       </p>
@@ -83,16 +86,25 @@ export function LineGlAccountCell({
           accounts={accounts}
           className="invoice-drawer-gl-select w-full"
           data-testid="invoice-gl-select"
+          includeEmpty
+          emptyLabel={required ? "— Select sub-ledger —" : "— Optional —"}
         />
       ) : (
-        <span className="text-xs text-foreground block">
-          {subLedger || "— Optional —"}
+        <span
+          className={cn(
+            "text-xs block",
+            required ? "text-destructive font-medium" : "text-foreground"
+          )}
+        >
+          {subLedger || (required ? "— Required —" : "— Optional —")}
         </span>
       )}
       <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground min-w-0">
         <Sparkles className="h-3 w-3 text-primary shrink-0" />
-        <span className="truncate">{reason}</span>
+        <span className="truncate">
+          {required ? "Pick a sub-ledger under the document-type ledger to post" : reason}
+        </span>
       </div>
-    </>
+    </div>
   );
 }

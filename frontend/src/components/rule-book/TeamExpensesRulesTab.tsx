@@ -115,7 +115,9 @@ export function TeamExpensesRulesTab({
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-sm text-muted-foreground max-w-2xl">
           GL coding and policy for documents routed to Team Expenses (employee claims). Channel
-          rules here refine ledger and limits — they do not set workspace routing.
+          rules here refine ledger and limits — they do not set workspace routing. Credit sides
+          come from the claim kind: Rule Book → Posting → Team expense posting sets the settlement
+          and advance parent, and each employee posts to their own advance sub-ledger.
         </p>
         <Button size="sm" onClick={addRule} data-testid="button-new-team-rule">
           <Plus className="h-4 w-4 mr-1" /> New Rule

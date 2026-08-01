@@ -54,9 +54,12 @@ from app.services.invoice.processing_override_catalog import (
 from app.services.invoice.invoice_evaluation_service import (
     EVAL_AUTO_CODED as EVAL_STATUS_AUTO_CODED,
     EVAL_AWAITING_CLASSIFICATION,
+    EVAL_LINE_GL_REVIEW,
+    EVAL_LINE_ITEMS_REVIEW,
     EVAL_NEEDS_RESCAN,
     EVAL_NEEDS_REVIEW,
     EVAL_PENDING_VENDOR,
+    EVAL_VISION_HEADER_REVIEW,
     EVAL_VISION_VAULTED,
     ROUTE_EXPENSES,
     ROUTE_PURCHASE,
@@ -100,7 +103,9 @@ from app.services.invoice.invoice_pipeline_phases import (
     phase_file_validity,
     phase_ocr,
     phase_storage_verify,
+    phase_vision_dt_extract,
     phase_vision_header_extract,
+    phase_vision_type_suggest,
     phase_vision_understand,
 )
 from app.services.extraction.llm_document_service import (
@@ -566,6 +571,46 @@ def _apply_parsed_scalar(invoice: Invoice, field: str, value: object) -> None:
     if not _scalar_field_empty(getattr(invoice, field)):
         return
     setattr(invoice, field, value)
+
+
+async def _hold_for_missing_line_sub_ledgers(
+    session: AsyncSession,
+    invoice: Invoice,
+    loaded: Invoice,
+    config,
+    *,
+    bypass_review_gates: bool,
+) -> bool:
+    """Hold posting when parent has a sub-ledger catalogue and any line is blank."""
+    if bypass_review_gates or should_skip(invoice, "line_gl_mapping"):
+        return False
+    from app.services.invoice.line_item_gl_service import (
+        line_sub_ledger_review_required,
+        missing_line_sub_ledger_indexes,
+        resolve_parent_ledger,
+    )
+
+    if not line_sub_ledger_review_required(loaded, config):
+        return False
+    missing = missing_line_sub_ledger_indexes(loaded)
+    parent = resolve_parent_ledger(loaded, config)
+    invoice.status = InvoiceStatus.EXCEPTION
+    invoice.evaluation_status = EVAL_LINE_GL_REVIEW
+    loaded.status = InvoiceStatus.EXCEPTION
+    loaded.evaluation_status = EVAL_LINE_GL_REVIEW
+    await log_event(
+        session,
+        "line_gl_review_required",
+        invoice_id=invoice.id,
+        detail={
+            "reason": "missing_line_sub_ledger",
+            "parent_ledger": parent,
+            "missing_line_indexes": missing,
+            "missing_count": len(missing),
+        },
+    )
+    send_notification(invoice, InvoiceStatus.EXCEPTION)
+    return True
 
 
 async def _replace_line_items(
@@ -1742,6 +1787,17 @@ async def resume_invoice_posting_pipeline(
         purchase_order=linked_po,
         sales_order=linked_so,
     )
+    from app.services.purchase.team_expense_kind_service import (
+        resolve_team_expense_header_mapping,
+    )
+
+    mapping, mapping_detail = await resolve_team_expense_header_mapping(
+        session,
+        loaded,
+        map_config,
+        mapping=mapping,
+        detail=mapping_detail,
+    )
     invoice.account_code = mapping.account_code
     invoice.account_name = mapping.account_name
     await _sync_counterparty_and_evaluate(
@@ -1776,6 +1832,15 @@ async def resume_invoice_posting_pipeline(
         from app.services.classification.line_gl_mapping_service import apply_line_gl_mapping
 
         await apply_line_gl_mapping(session, loaded, map_config)
+
+    if await _hold_for_missing_line_sub_ledgers(
+        session,
+        invoice,
+        loaded,
+        map_config,
+        bypass_review_gates=bypass_review_gates,
+    ):
+        return
 
     if (
         requires_gl_mapping_review(
@@ -2144,13 +2209,16 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     )
 
     if understand.can_understand:
-        # Drop stale OCR / full-extract leftovers BEFORE vision header persist so
+        # Drop stale OCR / full-extract leftovers BEFORE vision persist so
         # posting fields (amounts, tax ids, line items) are not wiped after write.
+        from app.config import get_settings
         from app.services.invoice.invoice_reset import (
             clear_stale_not_understood_for_understood_path,
             restore_prior_document_type_if_unmapped,
             restore_unrefilled_vision_stale_snapshot,
         )
+
+        use_dt_scoped = bool(get_settings().vision_dt_scoped_extract)
 
         stale_clear = await clear_stale_not_understood_for_understood_path(
             session,
@@ -2188,28 +2256,6 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                 ),
             )
 
-        # Vision-native header extract; do not enter legacy OCR stack yet.
-        header = await phase_vision_header_extract(
-            session,
-            invoice,
-            org=org,
-            doc_provider=doc_provider,
-            document_ai_provider=provider_token,
-            vision_page_images=vision_page_images,
-        )
-        retained = restore_unrefilled_vision_stale_snapshot(invoice, stale_clear)
-        if retained.get("restored_columns") or retained.get("restored_extracted_keys"):
-            await log_event(
-                session,
-                "vision_path_stale_values_retained",
-                invoice_id=invoice.id,
-                detail=audit_document_detail(invoice, **retained),
-            )
-        await session.flush()
-
-        # Map vision heading/canonical label → Rule Book DT-xx (no posting yet).
-        # Rules → tenant heading learning → classifiers → text LLM catalogue fallback.
-        from app.services.extraction.llm_document_service import apply_document_type_to_invoice
         from app.services.invoice.vision_document_type_map import (
             map_vision_label_to_document_type_with_llm_fallback,
         )
@@ -2217,7 +2263,6 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         from app.services.rule_book.rule_book_mapper import load_classification_config
 
         rb_config = await load_classification_config(session, invoice.tenant_id)
-        fields = invoice.extracted_fields if isinstance(invoice.extracted_fields, dict) else {}
         enabled_dt_codes = {
             (dt.code or "").strip().upper()
             for dt in (rb_config.document_types or [])
@@ -2231,64 +2276,292 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             vendor_key=vendor_learning_key,
             vendor_limit=ai_cfg.vendor_few_shot_limit,
         )
-        dt_map = await map_vision_label_to_document_type_with_llm_fallback(
-            document_heading=invoice.document_heading or "",
-            canonical_document_type=str(fields.get(CANONICAL_DOCUMENT_TYPE_KEY) or ""),
-            document_types=rb_config.document_types or [],
-            human_locked_dt=human_locked_dt or "",
-            invoice=invoice,
-            session=session,
-            tenant_id=invoice.tenant_id,
-            org=org,
-            few_shots=vision_few_shots,
-            vendor_key=vendor_learning_key,
-        )
-        if dt_map.reason != "human_locked" and dt_map.code:
-            apply_document_type_to_invoice(
+
+        header = None
+        dt_extract = None
+        header_ok = False
+
+        if use_dt_scoped:
+            # type-suggest → DT map → DT-scoped extract
+            type_suggest = await phase_vision_type_suggest(
+                session,
                 invoice,
-                code=dt_map.code,
-                confidence=dt_map.confidence,
-                llm_suggested_dt=dt_map.code if dt_map.method == "llm_catalogue_fallback" else None,
-                llm_confidence=dt_map.confidence
-                if dt_map.method == "llm_catalogue_fallback"
-                else None,
+                org=org,
+                doc_provider=doc_provider,
+                document_ai_provider=provider_token,
+                vision_page_images=vision_page_images,
             )
-        await log_event(
-            session,
-            "vision_document_type_mapped",
-            invoice_id=invoice.id,
-            detail=audit_document_detail(
-                invoice,
-                code=dt_map.code,
-                confidence=dt_map.confidence,
-                heading_kind=dt_map.heading_kind,
-                reason=dt_map.reason,
-                method=dt_map.method,
-                rule_reason=dt_map.rule_reason,
-                llm_reasoning=dt_map.llm_reasoning,
-                runner_up_code=dt_map.runner_up_code,
-                runner_up_score=dt_map.runner_up_score,
-                document_heading=invoice.document_heading,
-                canonical_document_type=fields.get(CANONICAL_DOCUMENT_TYPE_KEY),
-                document_type_code=invoice.document_type_code,
-            ),
-        )
-        # Remap produced no code — put prior DT back so Fields / posting config
-        # do not go blank after the intentional clear above.
-        if not (invoice.document_type_code or "").strip() and not human_locked_dt:
-            dt_restore = restore_prior_document_type_if_unmapped(
-                invoice,
-                stale_clear,
-                preserve_document_type=False,
-            )
-            if dt_restore.get("restored"):
+            await session.flush()
+
+            if not type_suggest.success and not human_locked_dt:
+                await sync_vision_header_vault_path(
+                    session, invoice, parsed_vendor=invoice.vendor
+                )
+                await session.flush()
+                invoice.status = InvoiceStatus.EXCEPTION
+                invoice.evaluation_status = EVAL_VISION_HEADER_REVIEW
                 await log_event(
                     session,
-                    "vision_document_type_restored_prior",
+                    "vision_path_pending",
                     invoice_id=invoice.id,
-                    detail=audit_document_detail(invoice, **dt_restore),
+                    detail=audit_document_detail(
+                        invoice,
+                        reason="type_suggest_failed",
+                        path=invoice.raw_file_path,
+                        document_ai_provider=provider_token,
+                        can_understand=True,
+                        understand_confidence=understand.confidence,
+                        evaluation_status=invoice.evaluation_status,
+                    ),
                 )
-        await session.flush()
+                send_notification(invoice, InvoiceStatus.EXCEPTION)
+                return
+
+            fields = invoice.extracted_fields if isinstance(invoice.extracted_fields, dict) else {}
+            dt_map = await map_vision_label_to_document_type_with_llm_fallback(
+                document_heading=invoice.document_heading or "",
+                canonical_document_type=str(fields.get(CANONICAL_DOCUMENT_TYPE_KEY) or ""),
+                document_types=rb_config.document_types or [],
+                human_locked_dt=human_locked_dt or "",
+                invoice=invoice,
+                session=session,
+                tenant_id=invoice.tenant_id,
+                org=org,
+                few_shots=vision_few_shots,
+                vendor_key=vendor_learning_key,
+            )
+            if dt_map.reason != "human_locked" and dt_map.code:
+                apply_document_type_to_invoice(
+                    invoice,
+                    code=dt_map.code,
+                    confidence=dt_map.confidence,
+                    llm_suggested_dt=dt_map.code if dt_map.method == "llm_catalogue_fallback" else None,
+                    llm_confidence=dt_map.confidence
+                    if dt_map.method == "llm_catalogue_fallback"
+                    else None,
+                )
+            await log_event(
+                session,
+                "vision_document_type_mapped",
+                invoice_id=invoice.id,
+                detail=audit_document_detail(
+                    invoice,
+                    code=dt_map.code,
+                    confidence=dt_map.confidence,
+                    heading_kind=dt_map.heading_kind,
+                    reason=dt_map.reason,
+                    method=dt_map.method,
+                    rule_reason=dt_map.rule_reason,
+                    llm_reasoning=dt_map.llm_reasoning,
+                    runner_up_code=dt_map.runner_up_code,
+                    runner_up_score=dt_map.runner_up_score,
+                    document_heading=invoice.document_heading,
+                    canonical_document_type=fields.get(CANONICAL_DOCUMENT_TYPE_KEY),
+                    document_type_code=invoice.document_type_code,
+                ),
+            )
+            if not (invoice.document_type_code or "").strip() and not human_locked_dt:
+                dt_restore = restore_prior_document_type_if_unmapped(
+                    invoice,
+                    stale_clear,
+                    preserve_document_type=False,
+                )
+                if dt_restore.get("restored"):
+                    await log_event(
+                        session,
+                        "vision_document_type_restored_prior",
+                        invoice_id=invoice.id,
+                        detail=audit_document_detail(invoice, **dt_restore),
+                    )
+            await session.flush()
+
+            if not (invoice.document_type_code or "").strip() and not human_locked_dt:
+                await sync_vision_header_vault_path(
+                    session, invoice, parsed_vendor=invoice.vendor
+                )
+                await session.flush()
+                invoice.status = InvoiceStatus.EXCEPTION
+                invoice.evaluation_status = EVAL_VISION_HEADER_REVIEW
+                await log_event(
+                    session,
+                    "vision_path_pending",
+                    invoice_id=invoice.id,
+                    detail=audit_document_detail(
+                        invoice,
+                        reason="dt_map_unresolved",
+                        path=invoice.raw_file_path,
+                        document_ai_provider=provider_token,
+                        can_understand=True,
+                        understand_confidence=understand.confidence,
+                        document_heading=invoice.document_heading,
+                        evaluation_status=invoice.evaluation_status,
+                    ),
+                )
+                send_notification(invoice, InvoiceStatus.EXCEPTION)
+                return
+
+            posting_defn_early = None
+            from app.services.invoice.vision_posting_continue import (
+                resolve_vision_posting_definition,
+            )
+
+            posting_defn_early = resolve_vision_posting_definition(invoice, rb_config)
+            dt_extract = await phase_vision_dt_extract(
+                session,
+                invoice,
+                org=org,
+                document_types=rb_config.document_types or [],
+                confirmed_dt=invoice.document_type_code or "",
+                doc_provider=doc_provider,
+                document_ai_provider=provider_token,
+                vision_page_images=vision_page_images,
+                few_shots=vision_few_shots,
+                definition=posting_defn_early,
+            )
+            # Safety net: if extract revealed link signals that prefer another DT,
+            # flip once and re-extract (never when human-locked).
+            if (
+                not human_locked_dt
+                and dt_extract.success
+                and (invoice.document_type_code or "").strip()
+            ):
+                from app.services.invoice.vision_dt_reaffirm import (
+                    rematch_document_type_after_extract,
+                )
+
+                prior_dt = (invoice.document_type_code or "").strip().upper()
+                rematch = rematch_document_type_after_extract(
+                    invoice=invoice,
+                    document_types=rb_config.document_types or [],
+                    heading_kind=dt_map.heading_kind,
+                    current_code=prior_dt,
+                )
+                if rematch is not None and rematch.code:
+                    apply_document_type_to_invoice(
+                        invoice,
+                        code=rematch.code,
+                        confidence=rematch.confidence,
+                    )
+                    await log_event(
+                        session,
+                        "vision_document_type_reaffirmed",
+                        invoice_id=invoice.id,
+                        detail=audit_document_detail(
+                            invoice,
+                            prior_document_type_code=prior_dt,
+                            document_type_code=rematch.code,
+                            method=rematch.method,
+                            reason=rematch.reason,
+                            confidence=rematch.confidence,
+                            heading_kind=rematch.heading_kind,
+                            po_reference=getattr(invoice, "po_reference", None),
+                            so_reference=getattr(invoice, "so_reference", None),
+                        ),
+                    )
+                    await session.flush()
+                    posting_defn_early = resolve_vision_posting_definition(
+                        invoice, rb_config
+                    )
+                    dt_extract = await phase_vision_dt_extract(
+                        session,
+                        invoice,
+                        org=org,
+                        document_types=rb_config.document_types or [],
+                        confirmed_dt=invoice.document_type_code or "",
+                        doc_provider=doc_provider,
+                        document_ai_provider=provider_token,
+                        vision_page_images=vision_page_images,
+                        few_shots=vision_few_shots,
+                        definition=posting_defn_early,
+                    )
+            retained = restore_unrefilled_vision_stale_snapshot(invoice, stale_clear)
+            if retained.get("restored_columns") or retained.get("restored_extracted_keys"):
+                await log_event(
+                    session,
+                    "vision_path_stale_values_retained",
+                    invoice_id=invoice.id,
+                    detail=audit_document_detail(invoice, **retained),
+                )
+            await session.flush()
+            header_ok = bool(dt_extract.success) and not bool(dt_extract.needs_review)
+        else:
+            # Legacy: fixed header extract → DT map
+            header = await phase_vision_header_extract(
+                session,
+                invoice,
+                org=org,
+                doc_provider=doc_provider,
+                document_ai_provider=provider_token,
+                vision_page_images=vision_page_images,
+            )
+            retained = restore_unrefilled_vision_stale_snapshot(invoice, stale_clear)
+            if retained.get("restored_columns") or retained.get("restored_extracted_keys"):
+                await log_event(
+                    session,
+                    "vision_path_stale_values_retained",
+                    invoice_id=invoice.id,
+                    detail=audit_document_detail(invoice, **retained),
+                )
+            await session.flush()
+
+            fields = invoice.extracted_fields if isinstance(invoice.extracted_fields, dict) else {}
+            dt_map = await map_vision_label_to_document_type_with_llm_fallback(
+                document_heading=invoice.document_heading or "",
+                canonical_document_type=str(fields.get(CANONICAL_DOCUMENT_TYPE_KEY) or ""),
+                document_types=rb_config.document_types or [],
+                human_locked_dt=human_locked_dt or "",
+                invoice=invoice,
+                session=session,
+                tenant_id=invoice.tenant_id,
+                org=org,
+                few_shots=vision_few_shots,
+                vendor_key=vendor_learning_key,
+            )
+            if dt_map.reason != "human_locked" and dt_map.code:
+                apply_document_type_to_invoice(
+                    invoice,
+                    code=dt_map.code,
+                    confidence=dt_map.confidence,
+                    llm_suggested_dt=dt_map.code if dt_map.method == "llm_catalogue_fallback" else None,
+                    llm_confidence=dt_map.confidence
+                    if dt_map.method == "llm_catalogue_fallback"
+                    else None,
+                )
+            await log_event(
+                session,
+                "vision_document_type_mapped",
+                invoice_id=invoice.id,
+                detail=audit_document_detail(
+                    invoice,
+                    code=dt_map.code,
+                    confidence=dt_map.confidence,
+                    heading_kind=dt_map.heading_kind,
+                    reason=dt_map.reason,
+                    method=dt_map.method,
+                    rule_reason=dt_map.rule_reason,
+                    llm_reasoning=dt_map.llm_reasoning,
+                    runner_up_code=dt_map.runner_up_code,
+                    runner_up_score=dt_map.runner_up_score,
+                    document_heading=invoice.document_heading,
+                    canonical_document_type=fields.get(CANONICAL_DOCUMENT_TYPE_KEY),
+                    document_type_code=invoice.document_type_code,
+                ),
+            )
+            if not (invoice.document_type_code or "").strip() and not human_locked_dt:
+                dt_restore = restore_prior_document_type_if_unmapped(
+                    invoice,
+                    stale_clear,
+                    preserve_document_type=False,
+                )
+                if dt_restore.get("restored"):
+                    await log_event(
+                        session,
+                        "vision_document_type_restored_prior",
+                        invoice_id=invoice.id,
+                        detail=audit_document_detail(invoice, **dt_restore),
+                    )
+            await session.flush()
+            header_ok = bool(header.success) and not bool(getattr(header, "needs_review", False))
 
         from app.services.dossier.vision_bundle_linkage import apply_vision_bundle_on_hold
         from app.tenant_settings import tenant_custom_bundle_field_key
@@ -2341,7 +2614,6 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                 ),
             )
 
-        header_ok = bool(header.success) and not bool(getattr(header, "needs_review", False))
         from app.services.invoice.vision_posting_continue import (
             continue_vision_understood_posting,
             resolve_vision_posting_definition,
@@ -2349,6 +2621,36 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             vision_posting_skip_reason,
             vision_should_continue_posting,
         )
+        from app.services.master_data.master_data_service import list_employee_masters
+        from app.services.purchase.team_expense_route_policy import (
+            ensure_team_expenses_document_type,
+            should_force_team_expenses,
+        )
+        from app.services.extraction.line_item_extraction_policy import (
+            team_expense_hard_requires_line_items,
+        )
+
+        # Known employee on email/WhatsApp/Viber must land on Team Expenses *before*
+        # the posting gate — otherwise line_items_review on a wrong Expense Claim DT
+        # skips continue and force-TE never runs.
+        employees = await list_employee_masters(
+            session, invoice.tenant_id, include_advance_balances=False
+        )
+        if should_force_team_expenses(invoice, employees):
+            ensure_team_expenses_document_type(invoice, rb_config.document_types)
+            invoice.route_target = ROUTE_TEAM
+            posting_defn = resolve_vision_posting_definition(invoice, rb_config)
+            if (
+                (invoice.evaluation_status or "").strip() == EVAL_LINE_ITEMS_REVIEW
+                and not team_expense_hard_requires_line_items(
+                    posting_defn,
+                    team_expense_kind=getattr(invoice, "team_expense_kind", None),
+                )
+            ):
+                invoice.evaluation_status = None
+                if invoice.total is not None:
+                    header_ok = True
+            await session.flush()
 
         posting_defn = resolve_vision_posting_definition(invoice, rb_config)
         if vision_should_continue_posting(invoice, posting_defn, header_ok=header_ok):
@@ -2479,6 +2781,26 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             posting_defn,
             header_ok=header_ok,
         )
+        extract_success = (
+            bool(dt_extract.success)
+            if dt_extract is not None
+            else bool(header.success if header is not None else False)
+        )
+        extract_confidence = (
+            float(dt_extract.confidence)
+            if dt_extract is not None
+            else float(getattr(header, "confidence", 0.0) or 0.0)
+        )
+        extract_needs_review = (
+            bool(dt_extract.needs_review)
+            if dt_extract is not None
+            else bool(getattr(header, "needs_review", False) if header is not None else False)
+        )
+        extract_page_count = (
+            getattr(dt_extract, "page_count", None)
+            if dt_extract is not None
+            else getattr(header, "page_count", None) if header is not None else None
+        )
         await log_event(
             session,
             "vision_path_pending",
@@ -2490,10 +2812,11 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                 document_ai_provider=provider_token,
                 can_understand=True,
                 understand_confidence=understand.confidence,
-                header_success=header.success,
-                header_confidence=header.confidence,
-                header_needs_review=bool(getattr(header, "needs_review", False)),
-                header_page_count=getattr(header, "page_count", None),
+                header_success=extract_success,
+                header_confidence=extract_confidence,
+                header_needs_review=extract_needs_review,
+                header_page_count=extract_page_count,
+                dt_scoped_extract=use_dt_scoped,
                 document_heading=invoice.document_heading,
                 canonical_document_type=(invoice.extracted_fields or {}).get(
                     "canonical_document_type"
@@ -3130,24 +3453,46 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         parsed,
         dt_definition=dt_definition,
     )
-    if not li_passed and "line_items" in confidence_gate_fields(dt_definition):
-        loaded.evaluation_status = EVAL_NEEDS_REVIEW
-        invoice.evaluation_status = EVAL_NEEDS_REVIEW
-        await log_event(
-            session,
-            "routing_review_required",
-            invoice_id=invoice.id,
-            detail={
-                "gate": "line_item_confidence",
-                "line_items_confidence": li_confidence,
-                "review_reasons": li_reasons,
-            },
-        )
+    if not li_passed:
+        reasons = list(li_reasons or [])
+        if "line_items_missing" in reasons:
+            loaded.evaluation_status = EVAL_LINE_ITEMS_REVIEW
+            invoice.evaluation_status = EVAL_LINE_ITEMS_REVIEW
+            loaded.status = InvoiceStatus.EXCEPTION
+            invoice.status = InvoiceStatus.EXCEPTION
+            await log_event(
+                session,
+                "line_items_review_required",
+                invoice_id=invoice.id,
+                detail={
+                    "gate": "line_items_missing",
+                    "review_reasons": reasons,
+                    "line_items_confidence": li_confidence,
+                    "fallback_tier": fallback_tier,
+                },
+            )
+        elif "line_items" in confidence_gate_fields(dt_definition):
+            loaded.evaluation_status = EVAL_NEEDS_REVIEW
+            invoice.evaluation_status = EVAL_NEEDS_REVIEW
+            await log_event(
+                session,
+                "routing_review_required",
+                invoice_id=invoice.id,
+                detail={
+                    "gate": "line_item_confidence",
+                    "line_items_confidence": li_confidence,
+                    "review_reasons": reasons,
+                },
+            )
 
     if _trace_settings().runtime_line_item_trace_enabled and line_item_trace.entries:
         raw_fields = dict(parsed.raw_fields or {})
         raw_fields["_line_item_trace"] = line_item_trace.to_dict()
         parsed = replace(parsed, raw_fields=raw_fields)
+
+    from app.services.invoice.due_date_defaults import apply_due_on_receipt_to_parsed
+
+    apply_due_on_receipt_to_parsed(parsed, dt_definition)
 
     resolved_vendor = await _apply_parsed_to_invoice(
         session,
@@ -3730,6 +4075,17 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         purchase_order=linked_po,
         sales_order=linked_so,
     )
+    from app.services.purchase.team_expense_kind_service import (
+        resolve_team_expense_header_mapping,
+    )
+
+    mapping, mapping_detail = await resolve_team_expense_header_mapping(
+        session,
+        loaded,
+        map_config,
+        mapping=mapping,
+        detail=mapping_detail,
+    )
     invoice.account_code = mapping.account_code
     invoice.account_name = mapping.account_name
     await _sync_counterparty_and_evaluate(
@@ -3765,6 +4121,15 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         await apply_line_gl_mapping(session, loaded, map_config)
     else:
         await _log_processing_override_skip(session, invoice, "line_gl_mapping")
+
+    if await _hold_for_missing_line_sub_ledgers(
+        session,
+        invoice,
+        loaded,
+        map_config,
+        bypass_review_gates=bypass_review_gates,
+    ):
+        return
 
     if requires_gl_mapping_review(
         loaded,

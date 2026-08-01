@@ -226,3 +226,23 @@ def test_extract_debit_note_heading() -> None:
     from app.services.extraction.document_heading_utils import infer_page_document_kind
 
     assert infer_page_document_kind("DEBIT NOTE\nRef DN-1") == "credit_note"
+
+
+def test_not_a_tax_invoice_disclaimer_is_not_tax_invoice_kind() -> None:
+    from app.services.extraction.document_heading_utils import infer_page_document_kind
+
+    text = (
+        "EMPLOYEE EXPENSE CLAIM FORM\n"
+        "CLAIM NO. DATE\n"
+        "EXP-2026-091 3 June 2026\n"
+        "Total Claimed AUD 2,200.00\n"
+        "Internal form. This document is an out-of-pocket expense reimbursement "
+        "claim and is not a tax invoice.\n"
+    )
+    assert infer_page_document_kind(text) is None
+
+    disclaimer_only = (
+        "This page is for information only and is not a tax invoice.\n"
+        "End of document.\n"
+    )
+    assert infer_page_document_kind(disclaimer_only) is None

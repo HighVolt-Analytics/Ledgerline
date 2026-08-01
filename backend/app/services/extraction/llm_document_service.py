@@ -159,6 +159,7 @@ def build_llm_extract_rule_lines(
     di_scalars_active: bool = False,
     di_populated_keys: set[str] | None = None,
     charge_lines_present: bool = False,
+    vision_images_present: bool = False,
     country: str | None = None,
 ) -> str:
     pack = jurisdiction_pack_for_country(country)
@@ -183,6 +184,7 @@ def build_llm_extract_rule_lines(
                 ocr_table_present=ocr_table_present,
                 qty_only_table_present=qty_only_table_present,
                 charge_lines_present=charge_lines_present,
+                vision_images_present=vision_images_present,
             )
         )
     if not di_scalars_active:
@@ -297,6 +299,7 @@ def build_extract_system_prompt(
     playbook_profile: str | None = None,
     selected_keys: Sequence[str] | None = None,
     ocr: OcrArtifact | None = None,
+    vision_images_present: bool = False,
 ) -> str:
     keys = list(selected_keys or ())
     di_line_items_present = False
@@ -332,6 +335,13 @@ def build_extract_system_prompt(
             if di_scalars_active and ocr.text
             else set()
         )
+    # Prefer DI/OCR table modes when present; otherwise allow page-image line extract.
+    use_vision_line_items = bool(vision_images_present) and not (
+        di_line_items_present
+        or ocr_table_present
+        or qty_only_table_present
+        or charge_lines_present
+    )
     json_keys = build_llm_extract_json_keys(keys)
     rule_lines = build_llm_extract_rule_lines(
         keys,
@@ -341,6 +351,7 @@ def build_extract_system_prompt(
         di_scalars_active=di_scalars_active,
         di_populated_keys=di_populated_keys,
         charge_lines_present=charge_lines_present,
+        vision_images_present=use_vision_line_items,
         country=org.country,
     )
     party_rules = party_llm_rules(jurisdiction_pack_for_country(org.country))
@@ -620,14 +631,23 @@ def build_structure_extract_prompts(
     profile = playbook_profile if playbook_profile is not None else _playbook_profile_for_dt(
         document_types, dt_token
     )
+    # Sparse/vision path attaches page images; enable image line-item rules when
+    # OCR body is empty (understood DT-scoped extract uses a minimal OCR stub).
+    vision_images_present = bool(sparse) and not (ocr.text or "").strip()
     system = build_extract_system_prompt(
         org,
         playbook_profile=profile,
         selected_keys=keys,
         ocr=ocr,
+        vision_images_present=vision_images_present,
     )
     if sparse:
         system = f"{system}{_sparse_image_extract_hint()}"
+        if vision_images_present:
+            system = (
+                f"{system}\nPage images are the primary source for this extract. "
+                "Read configured fields (including line_items when requested) from the images."
+            )
     user = build_llm_user_payload(
         ocr=ocr,
         org=org,

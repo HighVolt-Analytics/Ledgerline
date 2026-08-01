@@ -80,6 +80,7 @@ describe("standardExtractionFieldsForRoute", () => {
     expect(keys).toContain("po_reference");
     expect(keys).toContain("invoice_no");
     expect(keys).toContain("so_reference");
+    expect(keys).toContain("currency");
   });
 
   it("returns sales-oriented fields for Sales Management", () => {

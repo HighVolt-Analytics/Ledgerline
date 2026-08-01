@@ -159,6 +159,13 @@ class Settings(BaseSettings):
         validation_alias="GRAPH_BACKFILL_MAX_DAYS",
     )
     graph_poll_interval_minutes: int = Field(default=2, ge=1, le=60)
+    mailbox_poll_concurrency: int = Field(
+        default=3,
+        ge=1,
+        le=16,
+        validation_alias="MAILBOX_POLL_CONCURRENCY",
+        description="Max tenants polled in parallel during an inbox poll cycle",
+    )
     graph_folder_moves_enabled: bool = True
     graph_processed_folder: str = "Processed"
     graph_exceptions_folder: str = "Exceptions"
@@ -421,6 +428,14 @@ class Settings(BaseSettings):
         description=(
             "Default vision document AI: azure_di | azure_foundry | "
             "gemini_vision | claude_vision"
+        ),
+    )
+    vision_dt_scoped_extract: bool = Field(
+        default=True,
+        validation_alias="VISION_DT_SCOPED_EXTRACT",
+        description=(
+            "Understood path: type-suggest → DT map → DT-scoped field extract. "
+            "When false, keep legacy fixed vision header extract → DT map."
         ),
     )
     azure_ai_foundry_endpoint: str = Field(

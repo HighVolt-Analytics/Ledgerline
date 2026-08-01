@@ -73,6 +73,25 @@ def test_has_valid_document_type_post_to() -> None:
     assert has_valid_document_type_post_to(optional, accounts)
 
 
+def test_advance_requisition_does_not_require_expense_post_to() -> None:
+    accounts = [ChartOfAccountEntry(code="6100", name="Operating Expenses", type="Expense")]
+    advance_dt = DocumentTypeDefinition(
+        code="DT-09",
+        title="Employee advance request",
+        short_title="Advance",
+        klass="Transactional",
+        posting="Yes",
+        recognition_mode="prompt",
+        recognition_signals=[],
+        llm_prompt="",
+        route_target="Team Expenses",
+        team_expense_kind="advance_requisition",
+        post_to=DocumentTypePostTo(ledger=""),
+    )
+    assert not document_type_requires_post_to(advance_dt)
+    assert has_valid_document_type_post_to(advance_dt, accounts)
+
+
 def test_validate_rule_book_config_for_save_rejects_missing_post_to() -> None:
     import pytest
 
@@ -283,7 +302,8 @@ def test_validate_rule_book_allows_matrix_playbook_drift_as_catalogue_warning() 
     assert payload.document_types[0].playbook_profile == "direct_expense"
 
 
-def test_commercial_due_date_forced_on_save() -> None:
+def test_commercial_due_date_not_forced_on_save() -> None:
+    """Unstarring due_date on po_goods must survive save (no silent re-star)."""
     from app.schemas.rule_book_config import validate_rule_book_config_for_save
 
     payload = validate_rule_book_config_for_save(
@@ -312,4 +332,5 @@ def test_commercial_due_date_forced_on_save() -> None:
             ],
         }
     )
-    assert "due_date" in payload.document_types[0].required_fields
+    assert payload.document_types[0].required_fields == ["vendor", "total"]
+    assert "due_date" not in payload.document_types[0].required_fields

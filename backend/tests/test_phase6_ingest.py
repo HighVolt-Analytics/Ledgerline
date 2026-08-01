@@ -302,6 +302,7 @@ async def test_run_all_validations_includes_team_rules(
         "VR-TE04",
         "VR-TE05",
         "VR-TE06",
+        "VR-TE07",
     ]
 
 

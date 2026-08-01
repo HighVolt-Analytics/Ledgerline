@@ -14,9 +14,18 @@ from app.services.rule_book.account_mapper import (
 from app.services.invoice.invoice_amounts import resolve_invoice_amounts
 from app.services.rule_book.rule_book_mapper import (
     ROUTE_SALES,
+    ROUTE_TEAM,
     get_payable_account_mapping,
     get_tax_account_mapping,
+    get_team_settlement_account_mapping,
     resolve_sales_post_accounts,
+    team_settlement_account_label,
+)
+from app.schemas.rule_book_config import (
+    TEAM_EXPENSE_KIND_ADVANCE,
+    TEAM_EXPENSE_KIND_AGAINST_ADVANCE,
+    TEAM_EXPENSE_KIND_CLAIM,
+    normalize_team_expense_kind,
 )
 
 
@@ -84,6 +93,216 @@ def _with_accrual_fx(
     return enriched
 
 
+def resolve_team_advance_parent_mapping(config: RuleBookConfigPayload) -> AccountMapping:
+    """Org default Staff Advance parent used when an employee child is unavailable."""
+    label = (config.team_expense_posting.default_advance_parent_ledger or "").strip()
+    return resolve_category_for_config(label, config)
+
+
+def _team_expense_entries(
+    invoice: Invoice,
+    mapping: AccountMapping,
+    config: RuleBookConfigPayload,
+    *,
+    entry_date: date,
+    subtotal: Decimal,
+    gst: Decimal,
+    total: Decimal,
+    control_mapping: AccountMapping | None,
+) -> list[JournalLine]:
+    """
+    Team Expenses journals keyed by claim kind.
+
+    Advance requisition   Dr employee advance / Cr settlement
+    Expense against adv.  Dr expense (+ tax) / Cr employee advance
+    Expense claim         Dr expense (+ tax) / Cr settlement
+    """
+    kind = normalize_team_expense_kind(invoice.team_expense_kind)
+    settlement = get_team_settlement_account_mapping(config)
+    advance = control_mapping or resolve_team_advance_parent_mapping(config)
+
+    if kind == TEAM_EXPENSE_KIND_ADVANCE:
+        return [
+            JournalLine(
+                entry_date,
+                advance.account_code,
+                advance.account_name,
+                total,
+                Decimal("0"),
+                EntryType.DEBIT,
+            ),
+            JournalLine(
+                entry_date,
+                settlement.account_code,
+                settlement.account_name,
+                Decimal("0"),
+                total,
+                EntryType.CREDIT,
+            ),
+        ]
+
+    credit = advance if kind == TEAM_EXPENSE_KIND_AGAINST_ADVANCE else settlement
+    lines = [
+        JournalLine(
+            entry_date,
+            mapping.account_code,
+            mapping.account_name,
+            subtotal,
+            Decimal("0"),
+            EntryType.DEBIT,
+        )
+    ]
+    if gst != Decimal("0"):
+        tax = get_tax_account_mapping(config)
+        lines.append(
+            JournalLine(
+                entry_date,
+                tax.account_code,
+                tax.account_name,
+                gst,
+                Decimal("0"),
+                EntryType.DEBIT,
+            )
+        )
+    lines.append(
+        JournalLine(
+            entry_date,
+            credit.account_code,
+            credit.account_name,
+            Decimal("0"),
+            total,
+            EntryType.CREDIT,
+        )
+    )
+    return lines
+
+
+def _quantize_money(value: Decimal) -> Decimal:
+    return value.quantize(Decimal("0.01"))
+
+
+def _line_effective_amount_groups(
+    invoice: Invoice,
+    *,
+    parent_ledger: str,
+    header_subtotal: Decimal,
+) -> list[tuple[str, Decimal]]:
+    """Group line net amounts by effective ledger; residual to parent when needed."""
+    from app.services.invoice.line_item_gl_service import effective_line_ledger
+
+    parent = (parent_ledger or "").strip()
+    amounts: dict[str, Decimal] = {}
+    ordered: list[str] = []
+    for line in getattr(invoice, "line_items", None) or []:
+        raw = getattr(line, "amount", None)
+        if raw is None:
+            continue
+        try:
+            amount = _quantize_money(Decimal(str(raw)))
+        except Exception:
+            continue
+        if amount == 0:
+            continue
+        name = effective_line_ledger(
+            sub_ledger=getattr(line, "sub_ledger", None),
+            parent_ledger=parent,
+        )
+        if not name:
+            name = parent
+        if name not in amounts:
+            ordered.append(name)
+            amounts[name] = Decimal("0.00")
+        amounts[name] = _quantize_money(amounts[name] + amount)
+
+    if not amounts:
+        return [(parent, _quantize_money(header_subtotal))] if parent else []
+
+    line_sum = _quantize_money(sum(amounts.values(), Decimal("0.00")))
+    residual = _quantize_money(_quantize_money(header_subtotal) - line_sum)
+    if residual != 0 and parent:
+        if parent not in amounts:
+            ordered.append(parent)
+            amounts[parent] = Decimal("0.00")
+        amounts[parent] = _quantize_money(amounts[parent] + residual)
+
+    return [(name, amounts[name]) for name in ordered if amounts[name] != 0]
+
+
+def _journal_legs_for_effective_ledgers(
+    *,
+    entry_date: date,
+    invoice: Invoice,
+    mapping: AccountMapping,
+    config: RuleBookConfigPayload,
+    header_subtotal: Decimal,
+    debit: bool,
+) -> list[JournalLine]:
+    parent_name = (mapping.account_name or "").strip()
+    groups = _line_effective_amount_groups(
+        invoice,
+        parent_ledger=parent_name,
+        header_subtotal=header_subtotal,
+    )
+    if not groups:
+        if debit:
+            return [
+                JournalLine(
+                    entry_date,
+                    mapping.account_code,
+                    mapping.account_name,
+                    header_subtotal,
+                    Decimal("0"),
+                    EntryType.DEBIT,
+                )
+            ]
+        return [
+            JournalLine(
+                entry_date,
+                mapping.account_code,
+                mapping.account_name,
+                Decimal("0"),
+                header_subtotal,
+                EntryType.CREDIT,
+            )
+        ]
+
+    legs: list[JournalLine] = []
+    for ledger_name, amount in groups:
+        from app.services.invoice.line_item_gl_service import resolve_effective_ledger_mapping
+
+        if ledger_name.strip().lower() == parent_name.lower():
+            resolved = mapping
+        else:
+            resolved = resolve_effective_ledger_mapping(
+                parent_ledger=parent_name,
+                effective_ledger=ledger_name,
+                config=config,
+            )
+        if debit:
+            legs.append(
+                JournalLine(
+                    entry_date,
+                    resolved.account_code,
+                    resolved.account_name,
+                    amount,
+                    Decimal("0"),
+                    EntryType.DEBIT,
+                )
+            )
+        else:
+            legs.append(
+                JournalLine(
+                    entry_date,
+                    resolved.account_code,
+                    resolved.account_name,
+                    Decimal("0"),
+                    amount,
+                    EntryType.CREDIT,
+                )
+            )
+    return legs
+
+
 def generate_entries(
     invoice: Invoice,
     mapping: AccountMapping,
@@ -103,6 +322,19 @@ def generate_entries(
     entry_date = invoice.invoice_date
     subtotal, gst, total = resolve_invoice_amounts(invoice)
 
+    if (invoice.route_target or "").strip() == ROUTE_TEAM:
+        lines = _team_expense_entries(
+            invoice,
+            mapping,
+            cfg,
+            entry_date=entry_date,
+            subtotal=subtotal,
+            gst=gst,
+            total=total,
+            control_mapping=control_mapping,
+        )
+        return _with_accrual_fx(lines, invoice=invoice, base_currency=base_currency)
+
     if (invoice.route_target or "").strip() == ROUTE_SALES:
         recv_label, tax_label = resolve_sales_post_accounts(
             invoice,
@@ -111,6 +343,14 @@ def generate_entries(
         )
         receivable = control_mapping or resolve_category_for_config(recv_label, cfg)
         tax = resolve_category_for_config(tax_label, cfg)
+        revenue_legs = _journal_legs_for_effective_ledgers(
+            entry_date=entry_date,
+            invoice=invoice,
+            mapping=mapping,
+            config=cfg,
+            header_subtotal=subtotal,
+            debit=False,
+        )
         lines = [
             JournalLine(
                 entry_date,
@@ -121,14 +361,7 @@ def generate_entries(
                 EntryType.DEBIT,
                 customer_registry_id=customer_registry_id,
             ),
-            JournalLine(
-                entry_date,
-                mapping.account_code,
-                mapping.account_name,
-                Decimal("0"),
-                subtotal,
-                EntryType.CREDIT,
-            ),
+            *revenue_legs,
             JournalLine(
                 entry_date,
                 tax.account_code,
@@ -142,16 +375,17 @@ def generate_entries(
 
     tax = get_tax_account_mapping(cfg)
     payable = control_mapping or get_payable_account_mapping(cfg)
+    expense_legs = _journal_legs_for_effective_ledgers(
+        entry_date=entry_date,
+        invoice=invoice,
+        mapping=mapping,
+        config=cfg,
+        header_subtotal=subtotal,
+        debit=True,
+    )
 
     lines = [
-        JournalLine(
-            entry_date,
-            mapping.account_code,
-            mapping.account_name,
-            subtotal,
-            Decimal("0"),
-            EntryType.DEBIT,
-        ),
+        *expense_legs,
         JournalLine(
             entry_date,
             tax.account_code,
@@ -193,6 +427,24 @@ def get_unresolved_control_accounts(
         if not category_resolved_in_coa(recv_label, config):
             unresolved.append("receivable_account")
         if not category_resolved_in_coa(tax_label, config):
+            unresolved.append("tax_account")
+        return unresolved
+
+    if (invoice.route_target or "").strip() == ROUTE_TEAM:
+        team = config.team_expense_posting
+        kind = normalize_team_expense_kind(invoice.team_expense_kind)
+        settlement_label = team_settlement_account_label(config)
+        if kind != TEAM_EXPENSE_KIND_AGAINST_ADVANCE and not category_resolved_in_coa(
+            settlement_label, config
+        ):
+            unresolved.append("settlement_account")
+        if kind != TEAM_EXPENSE_KIND_CLAIM and not category_resolved_in_coa(
+            team.default_advance_parent_ledger, config
+        ):
+            unresolved.append("staff_advance_account")
+        if kind != TEAM_EXPENSE_KIND_ADVANCE and not category_resolved_in_coa(
+            config.posting_defaults.tax_account, config
+        ):
             unresolved.append("tax_account")
         return unresolved
 

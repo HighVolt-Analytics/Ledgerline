@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
-from app.schemas.rule_book_config import ChartOfAccountEntry, PostingDefaults
+from app.schemas.rule_book_config import (
+    DEFAULT_STAFF_ADVANCE_ACCOUNT,
+    ChartOfAccountEntry,
+    PostingDefaults,
+)
 
 SALES_RECEIVABLE_ACCOUNT = "Accounts Receivable"
 SALES_TAX_ACCOUNT = "Tax Collected"
 BANK_ACCOUNT = "Bank Account"
 GENERIC_EXPENSE_ACCOUNT = "Operating Expenses"
 GENERIC_REVENUE_ACCOUNT = "Sales Revenue"
+STAFF_ADVANCE_ACCOUNT = DEFAULT_STAFF_ADVANCE_ACCOUNT
 
 
 def build_starter_chart_of_accounts(
@@ -21,6 +26,7 @@ def build_starter_chart_of_accounts(
     return [
         ChartOfAccountEntry(code="1000", name=posting.bank_account, type="Asset"),
         ChartOfAccountEntry(code="1200", name=SALES_RECEIVABLE_ACCOUNT, type="Asset"),
+        ChartOfAccountEntry(code="1300", name=STAFF_ADVANCE_ACCOUNT, type="Asset"),
         ChartOfAccountEntry(code="1400", name=posting.tax_account, type="Asset"),
         ChartOfAccountEntry(code="2000", name=posting.payable_account, type="Liability"),
         ChartOfAccountEntry(code="2300", name=SALES_TAX_ACCOUNT, type="Liability"),

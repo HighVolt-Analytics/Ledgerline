@@ -10,6 +10,10 @@ from collections.abc import Sequence
 from typing import Any
 
 from app.schemas.document_type import DocumentTypeDefinition
+from app.schemas.rule_book_config import (
+    TEAM_EXPENSE_KIND_ADVANCE,
+    TEAM_EXPENSE_KIND_AGAINST_ADVANCE,
+)
 from app.services.classification.document_type_catalog import (
     ROUTE_TEAM,
     is_team_expenses_document_type,
@@ -18,6 +22,9 @@ from app.services.classification.document_type_catalog import (
 from app.services.purchase.team_expense_validator import find_employee_by_sender
 
 TEAM_EXPENSE_CAPTURE_CHANNELS = frozenset({"email", "whatsapp", "viber"})
+_PINNED_ADVANCE_KINDS = frozenset(
+    {TEAM_EXPENSE_KIND_ADVANCE, TEAM_EXPENSE_KIND_AGAINST_ADVANCE}
+)
 
 
 def normalize_capture_source(invoice: Any) -> str:
@@ -49,18 +56,90 @@ def should_force_team_expenses(invoice: Any, employees: Sequence[Any] | None) ->
     return find_employee_by_sender(list(employees or []), sender) is not None
 
 
+def infer_preferred_team_expense_kind(
+    invoice: Any,
+    document_types: Sequence[DocumentTypeDefinition] | None = None,
+) -> str | None:
+    """Best claim-kind hint from invoice state / heading / LLM suggestion label."""
+    from app.services.purchase.team_expense_kind_service import (
+        document_type_team_expense_kind,
+    )
+
+    existing = (getattr(invoice, "team_expense_kind", None) or "").strip().lower()
+    if existing in _PINNED_ADVANCE_KINDS:
+        return existing
+
+    heading = (getattr(invoice, "document_heading", None) or "").strip().lower()
+    summary = ""
+    fields = getattr(invoice, "extracted_fields", None)
+    if isinstance(fields, dict):
+        summary = str(fields.get("document_summary") or "").strip().lower()
+    blob = f"{heading} {summary}"
+    if "against advance" in blob or "against_advance" in blob:
+        return TEAM_EXPENSE_KIND_AGAINST_ADVANCE
+    if "advance requisition" in blob or "advance request" in blob:
+        return TEAM_EXPENSE_KIND_ADVANCE
+
+    llm_code = (getattr(invoice, "llm_suggested_dt", None) or "").strip().upper()
+    if llm_code and document_types:
+        for row in document_types:
+            if (row.code or "").strip().upper() != llm_code:
+                continue
+            pinned = document_type_team_expense_kind(row)
+            if pinned in _PINNED_ADVANCE_KINDS:
+                return pinned
+            break
+
+    if existing:
+        return existing
+    return None
+
+
 def primary_team_expenses_document_type(
     document_types: Sequence[DocumentTypeDefinition] | None,
+    *,
+    preferred_kind: str | None = None,
+    preferred_code: str | None = None,
 ) -> DocumentTypeDefinition | None:
     rows = team_expenses_document_types(document_types)
-    return rows[0] if rows else None
+    if not rows:
+        return None
+
+    code = (preferred_code or "").strip().upper()
+    if code:
+        for row in rows:
+            if (row.code or "").strip().upper() == code:
+                return row
+
+    kind = (preferred_kind or "").strip().lower()
+    if kind:
+        from app.services.purchase.team_expense_kind_service import (
+            document_type_team_expense_kind,
+        )
+
+        for row in rows:
+            pinned = document_type_team_expense_kind(row)
+            if pinned and pinned == kind:
+                return row
+    return rows[0]
 
 
 def ensure_team_expenses_document_type(
     invoice: Any,
     document_types: Sequence[DocumentTypeDefinition] | None,
+    *,
+    preferred_kind: str | None = None,
 ) -> DocumentTypeDefinition | None:
-    """If invoice DT is not a TE type, assign the catalogue primary TE DT."""
+    """If invoice DT is not a TE type, assign the best matching catalogue TE DT.
+
+    Prefer (in order): current TE DT, LLM-suggested TE code, kind inferred from
+    heading/kind pin, then catalogue primary. Never replace a TE DT that already
+    pins advance_requisition / expense_against_advance with a generic claim DT.
+    """
+    from app.services.purchase.team_expense_kind_service import (
+        document_type_team_expense_kind,
+    )
+
     code = (getattr(invoice, "document_type_code", None) or "").strip().upper()
     current = None
     if code and document_types:
@@ -69,8 +148,35 @@ def ensure_team_expenses_document_type(
                 current = dt
                 break
     if is_team_expenses_document_type(current):
+        current_kind = document_type_team_expense_kind(current)
+        # Keep a specific advance DT even if a later force-TE pass prefers primary.
+        if current_kind in _PINNED_ADVANCE_KINDS:
+            return current
+        preferred = preferred_kind or infer_preferred_team_expense_kind(
+            invoice, document_types
+        )
+        if preferred in _PINNED_ADVANCE_KINDS:
+            better = primary_team_expenses_document_type(
+                document_types,
+                preferred_kind=preferred,
+                preferred_code=(getattr(invoice, "llm_suggested_dt", None) or ""),
+            )
+            if better is not None and document_type_team_expense_kind(better) == preferred:
+                invoice.document_type_code = (better.code or "").strip().upper()
+                if getattr(invoice, "document_type_confidence", None) is None or float(
+                    invoice.document_type_confidence or 0.0
+                ) < 0.9:
+                    invoice.document_type_confidence = 0.95
+                return better
         return current
-    primary = primary_team_expenses_document_type(document_types)
+
+    kind = preferred_kind or infer_preferred_team_expense_kind(invoice, document_types)
+    preferred_code = (getattr(invoice, "llm_suggested_dt", None) or "").strip().upper()
+    primary = primary_team_expenses_document_type(
+        document_types,
+        preferred_kind=kind,
+        preferred_code=preferred_code,
+    )
     if primary is None:
         return None
     invoice.document_type_code = (primary.code or "").strip().upper()

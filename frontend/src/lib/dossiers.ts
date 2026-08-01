@@ -53,19 +53,20 @@ export const UNDERSTOOD_PIPELINE_STAGES = [
   { id: "storage", order: 3, label: "Storage", phase: "capture" as const },
   { id: "file_validity", order: 4, label: "File validity", phase: "capture" as const },
   { id: "vision_understand", order: 5, label: "Vision understand", phase: "capture" as const },
-  { id: "extract", order: 6, label: "Vision header", phase: "capture" as const },
+  { id: "type_suggest", order: 6, label: "Type suggest", phase: "capture" as const },
   { id: "document_type", order: 7, label: "DT mapped", phase: "capture" as const },
-  { id: "bundle", order: 8, label: "Bundle", phase: "process" as const },
+  { id: "extract", order: 8, label: "DT fields", phase: "capture" as const },
+  { id: "bundle", order: 9, label: "Bundle", phase: "process" as const },
   // Vault sits mid-continuum before validate/post — keep in process so the phase strip order matches runtime.
-  { id: "archive", order: 9, label: "Vault", phase: "process" as const },
-  { id: "validate", order: 10, label: "Validate", phase: "process" as const },
+  { id: "archive", order: 10, label: "Vault", phase: "process" as const },
+  { id: "validate", order: 11, label: "Validate", phase: "process" as const },
   // Finance continuum: Match amounts → Approve variance/policy → Map GL → Journal.
-  { id: "match", order: 11, label: "Match", phase: "process" as const },
-  { id: "approve", order: 12, label: "Approve", phase: "process" as const },
-  { id: "map_gl", order: 13, label: "Map GL", phase: "process" as const },
-  { id: "journal", order: 14, label: "Journal", phase: "process" as const },
-  { id: "reconcile", order: 15, label: "Reconcile", phase: "process" as const },
-  { id: "post", order: 16, label: "Post", phase: "finish" as const },
+  { id: "match", order: 12, label: "Match", phase: "process" as const },
+  { id: "approve", order: 13, label: "Approve", phase: "process" as const },
+  { id: "map_gl", order: 14, label: "Map GL", phase: "process" as const },
+  { id: "journal", order: 15, label: "Journal", phase: "process" as const },
+  { id: "reconcile", order: 16, label: "Reconcile", phase: "process" as const },
+  { id: "post", order: 17, label: "Post", phase: "finish" as const },
 ] as const;
 
 
@@ -125,6 +126,9 @@ export const DOSSIER_PIPELINE_BACKEND_MAP: Record<
   vision_understand: {
     auditEvents: ["vision_understand_passed", "vision_understand_failed"],
   },
+  type_suggest: {
+    auditEvents: ["vision_type_suggested", "vision_type_suggest_failed"],
+  },
   ocr: {
     auditEvents: ["ocr_completed", "parsing_failed"],
     invoiceStatus: "parsing",
@@ -148,6 +152,8 @@ export const DOSSIER_PIPELINE_BACKEND_MAP: Record<
   },
   extract: {
     auditEvents: [
+      "vision_dt_fields_extracted",
+      "vision_dt_fields_extract_failed",
       "vision_header_extracted",
       "parse_completed",
       "invoice_parsed",
@@ -160,6 +166,7 @@ export const DOSSIER_PIPELINE_BACKEND_MAP: Record<
       "document_classified",
       "classification_resolved",
       "vision_document_type_mapped",
+      "vision_document_type_reaffirmed",
     ],
   },
   bundle: {
@@ -702,11 +709,12 @@ export function dossierStageDescription(stageId: DossierPipelineStageId): string
     storage: "Stored file verified before processing.",
     file_validity: "File type and readability checked.",
     vision_understand: "Vision model decided the document can be understood.",
+    type_suggest: "Vision suggested the printed document type for catalogue mapping.",
     ocr: "Layout and text read from the document.",
     quality: "Image quality and OCR readability gate.",
     llm_classify: "LLM suggests document type from OCR.",
     confidence_gate: "Auto-route confidence and catalogue gate.",
-    extract: "Header fields captured from vision understanding.",
+    extract: "Fields extracted for the mapped document type.",
     document_type: "Document type mapped for the understood path (or catalogue confirm).",
     bundle: "Soft-bundled with linked supporting documents.",
     vendor_hold: "Vendor registration status verified.",

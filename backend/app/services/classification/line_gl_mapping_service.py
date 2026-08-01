@@ -145,6 +145,25 @@ async def _llm_sub_ledger_suggestions(
     return _parse_llm_suggestions(raw)
 
 
+def _accept_llm_sub_ledger(
+    candidate: str,
+    confidence: float | None,
+    *,
+    parent_ledger: str,
+    accounts: list,
+    min_confidence: float,
+) -> bool:
+    if not candidate:
+        return False
+    if confidence is None or confidence < min_confidence:
+        return False
+    return validate_sub_ledger_for_parent(
+        candidate,
+        parent_ledger=parent_ledger,
+        accounts=accounts,
+    )
+
+
 async def apply_line_gl_mapping(
     session: AsyncSession,
     invoice: Invoice,
@@ -198,6 +217,7 @@ async def apply_line_gl_mapping(
             continue
         suggestion_by_index[index] = row
 
+    min_confidence = float(get_settings().runtime_llm_min_confidence)
     applied = 0
     for index, line in enumerate(invoice.line_items):
         row = suggestion_by_index.get(index)
@@ -209,11 +229,14 @@ async def apply_line_gl_mapping(
                 confidence = float(confidence_raw) if confidence_raw is not None else None
             except (TypeError, ValueError):
                 confidence = None
-            if candidate and validate_sub_ledger_for_parent(
+            llm_confident = _accept_llm_sub_ledger(
                 candidate,
+                confidence,
                 parent_ledger=parent_ledger,
                 accounts=config.chart_of_accounts,
-            ):
+                min_confidence=min_confidence,
+            )
+            if llm_confident:
                 apply_sub_ledger_to_line(
                     line,
                     sub_ledger=candidate,
@@ -236,6 +259,7 @@ async def apply_line_gl_mapping(
                 )
                 applied += 1
                 continue
+            # Invalid or low-confidence LLM name → fall through to keyword/defaults.
 
         hint = _keyword_sub_ledger_hint(line.description or "", catalogue)
         if hint:

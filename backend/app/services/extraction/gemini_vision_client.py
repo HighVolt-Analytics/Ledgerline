@@ -175,6 +175,41 @@ async def extract_header_gemini(
     )
 
 
+def _vision_type_suggest_user_payload(org: OrgContext) -> dict[str, Any]:
+    from app.services.invoice.vision_type_suggest import VISION_TYPE_SUGGEST_JSON_KEYS
+
+    return {
+        "task": "vision_type_suggest",
+        "required_keys": list(VISION_TYPE_SUGGEST_JSON_KEYS),
+        "tenant": _org_tenant_block(org),
+    }
+
+
+async def extract_type_suggest_gemini(
+    images: list[bytes],
+    *,
+    org: OrgContext,
+) -> dict[str, Any] | None:
+    """Lean type suggest: heading + canonical type + perspective only."""
+    settings = get_settings()
+    if not images:
+        return None
+    parts = _image_parts(images)
+    parts.append(
+        {
+            "text": json.dumps(
+                _vision_type_suggest_user_payload(org),
+                default=str,
+            )
+        }
+    )
+    return await _generate_json(
+        system=resolve_system_prompt_text("vision.type_suggest.system"),
+        user_parts=parts,
+        timeout_seconds=settings.runtime_llm_timeout_seconds,
+    )
+
+
 async def read_for_classification_gemini(
     file_path: str | Path,
     *,
@@ -288,6 +323,7 @@ async def extract_fields_gemini(
     confirmed_dt: str,
     few_shots: Sequence[dict[str, str]] | None = None,
     vision_page_images: list[bytes] | None = None,
+    prefer_vision_images: bool = False,
 ) -> LlmDocumentResult | None:
     settings = get_settings()
     dt_token = confirmed_dt.strip().upper()
@@ -300,11 +336,11 @@ async def extract_fields_gemini(
         confirmed_dt=dt_token,
         few_shots=few_shots,
         selected_keys=selected_keys,
-        sparse=ocr.sparse,
+        sparse=ocr.sparse or prefer_vision_images,
     )
 
     parts: list[dict[str, Any]] = [{"text": user_text}]
-    if ocr.sparse and file_path is not None:
+    if (prefer_vision_images or ocr.sparse) and file_path is not None:
         path = Path(file_path)
         images = resolve_pdf_page_images(path, vision_page_images)
         if images:

@@ -119,11 +119,22 @@ def _catalog_upgrade_markers() -> dict[str, tuple[str, ...]]:
 
     return {
         "vision.header_extract.system": VISION_HEADER_PROMPT_MARKERS,
+        "vision.type_suggest.system": (
+            "TYPE SUGGEST — understand the document",
+            "document_summary",
+            "document_role_hints",
+            "Do not extract amounts",
+            "Do not map to a catalogue DT code",
+            "canonical_document_type",
+            "SELF-CHECK BEFORE RETURNING",
+        ),
         "vision.dt_map_fallback.system": (
-            "You map a vision-extracted document title to ONE Rule Book catalogue code",
+            "You map a vision document understanding (title + summary) to ONE Rule Book catalogue code",
+            "document_summary",
+            "document_role_hints",
             "NEVER invent a DT code",
             "Prefer \"\" over a weak guess",
-            "When two catalogue rows fit equally well, return \"\"",
+            "When two catalogue rows fit equally well even after reading the summary, return \"\"",
             "few_shot_examples",
             "human_confirmed_dt",
             "DESPATCH ADVICE",

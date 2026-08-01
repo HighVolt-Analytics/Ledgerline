@@ -32,6 +32,7 @@ def is_known_messaging_sender(
     for employee in employees:
         for field in (
             getattr(employee, "whatsapp_number", None),
+            getattr(employee, "whatsapp_number_2", None),
             getattr(employee, "viber_number", None),
         ):
             if field and normalize_phone(str(field)) == phone:

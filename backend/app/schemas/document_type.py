@@ -55,6 +55,16 @@ DocumentTypeRouteTarget = Literal[
 
 PurchaseBundleRole = Literal["", "po", "grn"]
 SalesBundleRole = Literal["", "so", "dn"]
+# Empty means auto: the claim kind is inferred from the employee's advance balance.
+DocumentTypeTeamExpenseKind = Literal[
+    "",
+    "advance_requisition",
+    "expense_against_advance",
+    "expense_claim",
+]
+TEAM_EXPENSE_KIND_CHOICES = frozenset(
+    {"advance_requisition", "expense_against_advance", "expense_claim"}
+)
 RecognitionMode = Literal["signals", "prompt"]
 CounterpartySource = Literal["letterhead", "consignee", "applicant", "bill_to"]
 
@@ -149,6 +159,11 @@ class DocumentTypeDefinition(BaseModel):
         default="letterhead",
         alias="counterpartySource",
     )
+    team_expense_kind: DocumentTypeTeamExpenseKind = Field(
+        default="",
+        alias="teamExpenseKind",
+        description="Claim kind stamped on Team Expenses documents; empty infers from advance balance.",
+    )
     sample_analysis: DocumentTypeSampleAnalysis | None = Field(
         default=None,
         alias="sampleAnalysis",
@@ -182,6 +197,12 @@ class DocumentTypeDefinition(BaseModel):
     def _normalize_recognition_mode(cls, value: Any) -> str:
         token = str(value or "signals").strip().lower()
         return token if token in {"signals", "prompt"} else "signals"
+
+    @field_validator("team_expense_kind", mode="before")
+    @classmethod
+    def _normalize_team_expense_kind(cls, value: Any) -> str:
+        token = str(value or "").strip().lower()
+        return token if token in TEAM_EXPENSE_KIND_CHOICES else ""
 
     @field_validator("recognition_signals", mode="before")
     @classmethod

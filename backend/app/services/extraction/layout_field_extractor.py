@@ -634,6 +634,55 @@ def extract_line_items_from_tables(
     return items
 
 
+def parse_line_items_from_pdf_path(
+    file_path: str | object,
+    *,
+    max_pages: int = 8,
+    trace: object | None = None,
+) -> list[ParsedLineItem]:
+    """Parse product line rows from native PDF tables (PyMuPDF find_tables).
+
+    Used when OCR/LLM left line_items empty but the PDF still has an embedded
+    quantity/price grid (common on the vision understood path with sparse OCR).
+    """
+    try:
+        import fitz
+    except ImportError:
+        return []
+
+    path = str(file_path or "").strip()
+    if not path:
+        return []
+
+    items: list[ParsedLineItem] = []
+    try:
+        doc = fitz.open(path)
+    except Exception:
+        return []
+    try:
+        page_limit = max(1, int(max_pages or 8))
+        for page_index, page in enumerate(doc):
+            if page_index >= page_limit:
+                break
+            try:
+                finder = page.find_tables()
+            except Exception:
+                continue
+            tables = getattr(finder, "tables", None) or []
+            for table in tables:
+                try:
+                    raw = table.extract()
+                except Exception:
+                    continue
+                if not raw or len(raw) < 2:
+                    continue
+                rows = [[str(cell or "").strip() for cell in row] for row in raw]
+                items.extend(parse_line_items_from_table_grid(rows, trace=trace))
+    finally:
+        doc.close()
+    return items
+
+
 def infer_doc_family_hint(
     layout: DocumentLayoutResult | None,
     heading: str | None,

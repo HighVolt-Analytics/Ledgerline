@@ -166,9 +166,18 @@ export function employeeMasterToCreateBody(employee: Partial<EmployeeMaster>) {
     role: employee.role ?? "",
     email: employee.email ?? "",
     whatsappNumber: employee.whatsappNumber ?? "",
+    whatsappNumber2: employee.whatsappNumber2 ?? "",
     viberNumber: employee.viberNumber,
+    dateOfJoining: employee.dateOfJoining ?? "",
+    department: employee.department ?? "",
+    location: employee.location ?? "",
+    division: employee.division ?? "",
+    supervisor1: employee.supervisor1 ?? "",
+    supervisor2: employee.supervisor2 ?? "",
     bank: employee.bank ?? { accountNumber: "", accountName: "", bankName: "" },
     budget: employee.budget ?? { monthly: 0, quarterly: 0, annual: 0, categories: [] },
+    advanceParentLedger: employee.advanceParentLedger ?? "",
+    advanceSubLedger: employee.advanceSubLedger ?? "",
     ytdSpent: employee.ytdSpent ?? 0,
     mtdSpent: employee.mtdSpent ?? 0,
     qtdSpent: employee.qtdSpent ?? 0,
@@ -186,7 +195,14 @@ export function employeeMasterToUpdateBody(patch: Partial<EmployeeMaster>): Reco
   if (patch.role != null) out.role = patch.role;
   if (patch.email != null) out.email = patch.email;
   if (patch.whatsappNumber != null) out.whatsapp_number = patch.whatsappNumber;
+  if (patch.whatsappNumber2 != null) out.whatsapp_number_2 = patch.whatsappNumber2;
   if (patch.viberNumber != null) out.viber_number = patch.viberNumber;
+  if (patch.dateOfJoining != null) out.date_of_joining = patch.dateOfJoining;
+  if (patch.department != null) out.department = patch.department;
+  if (patch.location != null) out.location = patch.location;
+  if (patch.division != null) out.division = patch.division;
+  if (patch.supervisor1 != null) out.supervisor_1 = patch.supervisor1;
+  if (patch.supervisor2 != null) out.supervisor_2 = patch.supervisor2;
   if (patch.bank != null) {
     out.bank = {
       ...(patch.bank.bsb != null ? { bsb: patch.bank.bsb } : {}),
@@ -198,6 +214,7 @@ export function employeeMasterToUpdateBody(patch: Partial<EmployeeMaster>): Reco
     };
   }
   if (patch.budget != null) out.budget = patch.budget;
+  if (patch.advanceParentLedger != null) out.advance_parent_ledger = patch.advanceParentLedger;
   if (patch.ytdSpent != null) out.ytd_spent = patch.ytdSpent;
   if (patch.mtdSpent != null) out.mtd_spent = patch.mtdSpent;
   if (patch.qtdSpent != null) out.qtd_spent = patch.qtdSpent;

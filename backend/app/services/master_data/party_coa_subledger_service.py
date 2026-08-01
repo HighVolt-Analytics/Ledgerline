@@ -249,6 +249,89 @@ async def ensure_customer_party_coa_sub_ledger(
     )
 
 
+def employee_advance_parent_ledger(
+    config: RuleBookConfigPayload,
+    *,
+    employee_parent_ledger: str | None = None,
+) -> str:
+    """Employee-selected advance parent, else the Team Expenses org default."""
+    chosen = (employee_parent_ledger or "").strip()
+    if chosen:
+        return chosen
+    return (config.team_expense_posting.default_advance_parent_ledger or "").strip()
+
+
+async def ensure_employee_party_coa_sub_ledger(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    *,
+    slug: str,
+    employee_name: str,
+    parent_ledger_name: str | None = None,
+    config: RuleBookConfigPayload | None = None,
+    updated_by_user_id: int | None = None,
+) -> AccountMapping | None:
+    """Ensure the employee advance child under the parent chosen on the employee master."""
+    if config is None:
+        raw = await load_rule_book_config_dict(session, tenant_id)
+        config = validate_rule_book_config_payload(raw)
+    parent_name = employee_advance_parent_ledger(
+        config,
+        employee_parent_ledger=parent_ledger_name,
+    )
+    if not parent_name:
+        return None
+    existing = resolve_party_child_mapping(
+        config, parent_ledger_name=parent_name, slug=slug
+    )
+    if existing is not None and existing.account_name.strip() == (employee_name or "").strip():
+        return existing
+    return await upsert_party_coa_sub_ledger(
+        session,
+        tenant_id,
+        parent_ledger_name=parent_name,
+        slug=slug,
+        party_name=employee_name,
+        updated_by_user_id=updated_by_user_id,
+    )
+
+
+async def resolve_employee_advance_mapping(
+    session: AsyncSession,
+    invoice,
+    config: RuleBookConfigPayload,
+) -> AccountMapping:
+    """
+    Resolve the employee advance control line for Team Expenses journals.
+
+    Falls back to the org default advance parent when the sender is not a known employee.
+    """
+    from app.services.rule_book.account_mapper import resolve_category_for_config
+    from app.services.purchase.team_expense_validator import resolve_employee_for_sender
+
+    parent_fallback = resolve_category_for_config(
+        employee_advance_parent_ledger(config),
+        config,
+    )
+    employee = await resolve_employee_for_sender(
+        session,
+        invoice.tenant_id,
+        invoice.email_sender,
+    )
+    if employee is None:
+        return parent_fallback
+
+    child = await ensure_employee_party_coa_sub_ledger(
+        session,
+        invoice.tenant_id,
+        slug=employee.id,
+        employee_name=employee.name,
+        parent_ledger_name=getattr(employee, "advance_parent_ledger", "") or "",
+        config=config,
+    )
+    return child or parent_fallback
+
+
 async def resolve_party_control_mapping_for_journal(
     session: AsyncSession,
     tenant_id: uuid.UUID,
@@ -332,7 +415,10 @@ async def resolve_invoice_control_mapping(
     """Resolve AP/AR control mapping for accrual journals (party child when registered)."""
     from app.models.customer import CustomerRegistry
     from app.models.vendor import VendorRegistry
-    from app.services.rule_book.rule_book_mapper import ROUTE_SALES
+    from app.services.rule_book.rule_book_mapper import ROUTE_SALES, ROUTE_TEAM
+
+    if (invoice.route_target or "").strip() == ROUTE_TEAM:
+        return await resolve_employee_advance_mapping(session, invoice, config)
 
     if (invoice.route_target or "").strip() == ROUTE_SALES:
         if customer_registry_id is not None:

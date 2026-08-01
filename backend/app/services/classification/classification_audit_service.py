@@ -19,6 +19,12 @@ _CLASSIFICATION_DETAIL_EVENTS = frozenset(
         "classification_gate_failed",
         "llm_classified",
         "routing_review_required",
+        # Understood / Claude path — otherwise Confirmed falls back to a stale
+        # classic classify row (or empty) while LLM suggested shows the vision DT.
+        "vision_document_type_mapped",
+        "vision_document_type_reaffirmed",
+        "vision_posting_continued",
+        "classification_resolved",
     }
 )
 
@@ -63,6 +69,29 @@ def merge_classification_audit_detail(
         if row.event == "routing_review_required":
             if str(detail.get("gate") or "").strip().lower() != "classification":
                 continue
+        # Vision map events use ``code``; normalize to confirmed/document_type keys.
+        if row.event in {
+            "vision_document_type_mapped",
+            "vision_document_type_reaffirmed",
+            "vision_posting_continued",
+        }:
+            code = str(detail.get("document_type_code") or detail.get("code") or "").strip()
+            if code:
+                detail = {
+                    **detail,
+                    "document_type_code": code,
+                    "confirmed_dt": detail.get("confirmed_dt") or code,
+                    "confirmed_confidence": detail.get("confirmed_confidence")
+                    or detail.get("confidence")
+                    or detail.get("document_type_confidence"),
+                }
+                if row.event == "vision_document_type_mapped" and (
+                    str(detail.get("method") or "") == "llm_catalogue_fallback"
+                    or detail.get("llm_reasoning")
+                ):
+                    detail.setdefault("llm_suggested_dt", code)
+                    if detail.get("confidence") is not None:
+                        detail.setdefault("llm_confidence", detail.get("confidence"))
         for key in _DETAIL_KEYS:
             if key in merged:
                 continue
@@ -83,6 +112,14 @@ def merge_classification_audit_detail(
         merged["document_type_code"] = invoice.document_type_code
     if "document_type_confidence" not in merged and invoice.document_type_confidence is not None:
         merged["document_type_confidence"] = invoice.document_type_confidence
+    # Live invoice DT is source of truth for Confirmed when no explicit confirm.
+    if invoice.document_type_code:
+        live = (invoice.document_type_code or "").strip().upper()
+        if live:
+            merged["confirmed_dt"] = live
+            if invoice.document_type_confidence is not None:
+                merged["confirmed_confidence"] = invoice.document_type_confidence
+            merged["document_type_code"] = live
 
     return merged
 

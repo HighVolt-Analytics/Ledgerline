@@ -70,11 +70,11 @@ VERTICAL_DESC_HEADER_RE = re.compile(
 )
 VERTICAL_QTY_HEADER_RE = re.compile(
     r"^(?:qty|quantity|q'?ty|recd\s*qty|received\s*qty|accepted(?:\s*qty)?|"
-    r"po\s*qty|ordered(?:\s*qty)?)$",
+    r"po\s*qty|ordered(?:\s*qty)?|qty\s*in\s*units?)$",
     re.I,
 )
 VERTICAL_UNIT_PRICE_HEADER_RE = re.compile(
-    r"^(?:unit\s*price|unit\s*rate|u/?price|rate)(?:\s*\([^)]*\))?$",
+    r"^(?:unit\s*price|unit\s*rate|u/?price|rate|price\s*per)(?:\s*\([^)]*\))?$",
     re.I,
 )
 VERTICAL_TAX_HEADER_RE = re.compile(
@@ -82,11 +82,12 @@ VERTICAL_TAX_HEADER_RE = re.compile(
     re.I,
 )
 VERTICAL_AMOUNT_HEADER_RE = re.compile(
-    r"^(?:amount|line\s*total|extended|value)(?:\s*\([^)]*\))?$",
+    r"^(?:amount|line\s*total|extended|value)(?:\s*(?:\([^)]*\)|in\s+[a-z]{3}))?$",
     re.I,
 )
 VERTICAL_SKIP_HEADER_RE = re.compile(
-    r"^(?:s/?n|s\.?\s*n\.?|type|unit(?:\s*\([^)]*\))?|uom|pcs|tray|nos?)$",
+    r"^(?:s/?n|s\.?\s*n\.?|si\.?\s*no\.?|sl\.?\s*no\.?|type|unit(?:\s*\([^)]*\))?|"
+    r"uom|pcs|tray|nos?|hsn(?:\s*code)?)$",
     re.I,
 )
 

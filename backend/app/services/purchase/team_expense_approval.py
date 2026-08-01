@@ -72,13 +72,25 @@ def requires_manual_approval(
 ) -> bool:
     """Claims at/above auto_approve_below need manager approval before posting.
 
-    Threshold preference:
+    Advance requisitions always require manager approval (cash out / float) — never
+    touchless regardless of threshold.
+
+    For expense_claim / expense_against_advance, threshold preference:
     1. Matched ``team_expense_rules`` policy (category rule)
     2. DT playbook ``Require approval at/above ($)`` when Manager gate is active
     3. No threshold configured → hold for manager (Manager gate default)
     """
     if invoice.route_target != ROUTE_TEAM or manager_approved:
         return False
+
+    from app.schemas.rule_book_config import (
+        TEAM_EXPENSE_KIND_ADVANCE,
+        normalize_team_expense_kind,
+    )
+
+    if normalize_team_expense_kind(invoice.team_expense_kind) == TEAM_EXPENSE_KIND_ADVANCE:
+        return True
+
     if invoice.total is None:
         return True
 
@@ -102,7 +114,10 @@ async def apply_team_expense_approval_gate(
     invoice: Invoice,
 ) -> bool:
     """
-    Hold team claims for manager approval after mapping when above auto-approve threshold.
+    Hold team claims for manager approval after mapping.
+
+    Advance requisitions always hold. Expense claims / against-advance hold when
+    at or above the auto-approve threshold (or when no threshold is configured).
 
     Returns True when the invoice is held (status set to exception).
     """
@@ -169,6 +184,18 @@ async def apply_team_expense_approval_gate(
             await session.flush()
         return False
 
+    from app.schemas.rule_book_config import (
+        TEAM_EXPENSE_KIND_ADVANCE,
+        normalize_team_expense_kind,
+    )
+
+    kind = normalize_team_expense_kind(invoice.team_expense_kind)
+    hold_reason = (
+        "advance_requisition_requires_approval"
+        if kind == TEAM_EXPENSE_KIND_ADVANCE
+        else "above_auto_approve_threshold"
+    )
+
     invoice.status = InvoiceStatus.EXCEPTION
     invoice.evaluation_status = EVAL_PENDING_APPROVAL
     await log_event(
@@ -183,6 +210,8 @@ async def apply_team_expense_approval_gate(
                 else playbook_auto_approve_below
             ),
             "rule_id": team_rule.id if team_rule else None,
+            "reason": hold_reason,
+            "team_expense_kind": kind,
         },
     )
     await session.flush()
@@ -202,6 +231,50 @@ async def assert_team_expense_approvable(
     amount = float(invoice.total) if invoice.total is not None else None
     has_file = has_receipt_attachment(invoice.raw_file_path)
 
-    receipt = vr_te03_receipt(team_rule, amount, has_receipt_file=has_file)
+    receipt = vr_te03_receipt(
+        team_rule,
+        amount,
+        has_receipt_file=has_file,
+        team_expense_kind=invoice.team_expense_kind,
+    )
     if not receipt.passed:
         raise ValueError(receipt.message)
+
+    from app.schemas.rule_book_config import (
+        TEAM_EXPENSE_KIND_AGAINST_ADVANCE,
+        normalize_team_expense_kind,
+    )
+    from app.services.purchase.team_expense_advance_service import employee_available_advance
+    from app.services.purchase.team_expense_validator import (
+        resolve_employee_for_sender,
+        vr_te07_advance_balance,
+    )
+
+    if normalize_team_expense_kind(invoice.team_expense_kind) != TEAM_EXPENSE_KIND_AGAINST_ADVANCE:
+        return
+
+    employee = await resolve_employee_for_sender(
+        session,
+        invoice.tenant_id,
+        invoice.email_sender,
+    )
+    if employee is None or amount is None:
+        return
+
+    available, ledger, pending = await employee_available_advance(
+        session,
+        invoice.tenant_id,
+        config,
+        employee,
+        exclude_invoice_id=invoice.id,
+    )
+    result = vr_te07_advance_balance(
+        employee,
+        amount,
+        team_expense_kind=invoice.team_expense_kind,
+        advance_balance=float(available),
+        ledger_balance=float(ledger),
+        pending_reserved=float(pending),
+    )
+    if not result.passed:
+        raise ValueError(result.message)

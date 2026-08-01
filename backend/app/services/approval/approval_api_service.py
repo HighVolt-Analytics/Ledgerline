@@ -36,9 +36,12 @@ from app.services.audit.audit_service import log_event
 from app.services.shared.file_storage import ensure_stored_file_for_approval
 from app.services.invoice.invoice_access_service import get_invoice_for_tenant
 from app.services.invoice.invoice_evaluation_service import (
+    EVAL_PENDING_APPROVAL,
     EVAL_VISION_HEADER_REVIEW,
+    ROUTE_TEAM,
     load_config_for_tenant,
 )
+from app.services.invoice.invoice_reset import reset_invoice_for_approval
 from app.services.invoice.invoice_response_service import (
     response_for_invoice,
     responses_for_approval_board,
@@ -193,6 +196,70 @@ def _is_vision_header_review_hold(inv: Invoice) -> bool:
     return (inv.evaluation_status or "").strip().lower() == EVAL_VISION_HEADER_REVIEW
 
 
+def _is_team_expense_approval_hold(inv: Invoice) -> bool:
+    return (
+        (inv.route_target or "").strip() == ROUTE_TEAM
+        and (inv.evaluation_status or "").strip().lower() == EVAL_PENDING_APPROVAL
+    )
+
+
+async def _approve_team_expense_for_posting(
+    db: AsyncSession,
+    inv: Invoice,
+    *,
+    actor_name: str | None,
+    actor_email: str | None,
+) -> None:
+    """Resume mapping→journal after manager approval — do not re-run vision/OCR."""
+    from app.services.invoice.pipeline import resume_invoice_posting_pipeline
+
+    loaded = (
+        await db.execute(
+            select(Invoice)
+            .where(Invoice.id == inv.id)
+            .options(selectinload(Invoice.line_items))
+        )
+    ).scalar_one()
+
+    await assert_team_expense_approvable(db, loaded)
+    config = await load_config_for_tenant(db, loaded.tenant_id)
+    definition = resolve_vision_posting_definition(loaded, config)
+    _assert_invoice_ready_for_approval(loaded, definition=definition)
+    if payable_fields_complete(loaded):
+        apply_human_approval_processing_defaults(loaded)
+
+    previous_status = loaded.status.value
+    await log_event(
+        db,
+        "invoice_approved",
+        invoice_id=loaded.id,
+        detail={
+            "previous_status": previous_status,
+            "resolution": resolution_for_review_action(
+                action="approve",
+                previous_status=previous_status,
+            ),
+            "team_expense_posting_resume": True,
+        },
+        actor_name=actor_name,
+        actor_email=actor_email,
+    )
+    # Clears sticky pending_approval so the gate lets the claim through.
+    await reset_invoice_for_approval(db, loaded)
+    await resume_invoice_posting_pipeline(db, loaded, config=config)
+
+    inv.status = loaded.status
+    inv.evaluation_status = loaded.evaluation_status
+    inv.route_target = loaded.route_target
+    inv.vendor = loaded.vendor
+    inv.raw_file_path = loaded.raw_file_path
+    inv.validation_results = loaded.validation_results
+    inv.document_type_code = loaded.document_type_code
+    inv.account_code = loaded.account_code
+    inv.account_name = loaded.account_name
+    inv.team_expense_kind = loaded.team_expense_kind
+
+
 async def _approve_vision_header_review_for_posting(
     db: AsyncSession,
     inv: Invoice,
@@ -244,6 +311,33 @@ async def _approve_vision_header_review_for_posting(
     tenant_row = await db.get(Tenant, loaded.tenant_id)
     org = org_context_from_config(config, tenant_row)
     assert definition is not None
+
+    from app.config import get_settings
+
+    if get_settings().vision_dt_scoped_extract and (loaded.document_type_code or "").strip():
+        from app.services.extraction.document_ai_provider import DocumentAiProvider
+        from app.services.invoice.invoice_pipeline_phases import phase_vision_dt_extract
+
+        provider = DocumentAiProvider.from_config(get_settings().vision_llm_provider)
+        await phase_vision_dt_extract(
+            db,
+            loaded,
+            org=org,
+            document_types=list(config.document_types or []),
+            confirmed_dt=loaded.document_type_code or "",
+            doc_provider=provider,
+            document_ai_provider=provider.value,
+            definition=definition,
+        )
+        await db.flush()
+        # Re-check readiness after re-extract.
+        header_ok = vision_header_ok_from_invoice(loaded, definition)
+        if not vision_should_continue_posting(loaded, definition, header_ok=header_ok):
+            raise ValueError(
+                vision_posting_skip_user_message(loaded, definition, header_ok=header_ok)
+            )
+        _assert_invoice_ready_for_approval(loaded, definition=definition)
+
     await continue_vision_understood_posting(
         db,
         loaded,
@@ -285,6 +379,16 @@ async def approve_invoice_action(
 
     if _is_vision_header_review_hold(inv):
         await _approve_vision_header_review_for_posting(
+            db,
+            inv,
+            actor_name=actor_name,
+            actor_email=actor_email,
+        )
+        response = await response_for_invoice(db, inv, tenant_id=ctx.tenant_id)
+        return ApproveInvoiceResult(response=response, enqueue_pipeline=False)
+
+    if _is_team_expense_approval_hold(inv):
+        await _approve_team_expense_for_posting(
             db,
             inv,
             actor_name=actor_name,

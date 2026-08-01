@@ -203,9 +203,18 @@ class EmployeeMaster(BaseModel):
     role: str = ""
     email: str = ""
     whatsapp_number: str = ""
+    whatsapp_number_2: str = ""
     viber_number: str | None = None
+    date_of_joining: str = ""
+    department: str = ""
+    location: str = ""
+    division: str = ""
+    supervisor_1: str = ""
+    supervisor_2: str = ""
     bank: BankDetails = Field(default_factory=BankDetails)
     budget: EmployeeBudget = Field(default_factory=EmployeeBudget)
+    advance_parent_ledger: str = ""
+    advance_sub_ledger: str = ""
     ytd_spent: float = Field(default=0, ge=0)
     mtd_spent: float = Field(default=0, ge=0)
     qtd_spent: float = Field(default=0, ge=0)
@@ -285,6 +294,54 @@ class PostingDefaults(BaseModel):
             receivable_account=pack.posting_defaults.receivable_account,
             fallback_account=pack.posting_defaults.fallback_account,
             bank_account=pack.posting_defaults.bank_account,
+        )
+
+
+TEAM_EXPENSE_KIND_ADVANCE = "advance_requisition"
+TEAM_EXPENSE_KIND_AGAINST_ADVANCE = "expense_against_advance"
+TEAM_EXPENSE_KIND_CLAIM = "expense_claim"
+
+TeamExpenseKind = Literal[
+    "advance_requisition",
+    "expense_against_advance",
+    "expense_claim",
+]
+
+DEFAULT_TEAM_EXPENSE_KIND: TeamExpenseKind = TEAM_EXPENSE_KIND_CLAIM
+DEFAULT_STAFF_ADVANCE_ACCOUNT = "Staff Advance"
+
+
+def normalize_team_expense_kind(value: str | None) -> TeamExpenseKind:
+    """Coerce a stored/user kind to a supported value (legacy null → expense claim)."""
+    cleaned = (value or "").strip().lower()
+    if cleaned in {
+        TEAM_EXPENSE_KIND_ADVANCE,
+        TEAM_EXPENSE_KIND_AGAINST_ADVANCE,
+        TEAM_EXPENSE_KIND_CLAIM,
+    }:
+        return cleaned  # type: ignore[return-value]
+    return DEFAULT_TEAM_EXPENSE_KIND
+
+
+class TeamExpensePostingDefaults(BaseModel):
+    """Team Expenses posting accounts — kept out of shared posting defaults."""
+
+    default_advance_parent_ledger: str = DEFAULT_STAFF_ADVANCE_ACCOUNT
+    settlement_account: str = "Bank Account"
+
+    @field_validator("default_advance_parent_ledger", "settlement_account", mode="before")
+    @classmethod
+    def _strip_text(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+    @classmethod
+    def for_posting_defaults(cls, posting: PostingDefaults) -> "TeamExpensePostingDefaults":
+        """Seed settlement from the jurisdiction bank account; editable independently after."""
+        return cls(
+            default_advance_parent_ledger=DEFAULT_STAFF_ADVANCE_ACCOUNT,
+            settlement_account=(posting.bank_account or "").strip() or "Bank Account",
         )
 
 
@@ -484,6 +541,9 @@ class RuleBookConfigPayload(BaseModel):
     )
     employee_masters: list[EmployeeMaster] = Field(default_factory=list)
     posting_defaults: PostingDefaults = Field(default_factory=PostingDefaults)
+    team_expense_posting: TeamExpensePostingDefaults = Field(
+        default_factory=TeamExpensePostingDefaults
+    )
     chart_of_accounts: list[ChartOfAccountEntry] = Field(default_factory=list)
     document_sets: list[DocumentSetRule] = Field(default_factory=list)
     legacy_cascade: LegacyCascadeConfig = Field(default_factory=LegacyCascadeConfig)
@@ -546,6 +606,9 @@ class RuleBookRulesPayload(BaseModel):
         default_factory=VendorDetectionConfig
     )
     posting_defaults: PostingDefaults = Field(default_factory=PostingDefaults)
+    team_expense_posting: TeamExpensePostingDefaults = Field(
+        default_factory=TeamExpensePostingDefaults
+    )
     document_sets: list[DocumentSetRule] = Field(default_factory=list)
     legacy_cascade: LegacyCascadeConfig = Field(default_factory=LegacyCascadeConfig)
     purchase_match: PurchaseMatchConfig = Field(
@@ -1335,13 +1398,11 @@ def validate_rule_book_config_for_save(data: dict[str, Any]) -> RuleBookConfigPa
     from app.services.classification.document_type_recognition_migration import (
         sync_classifier_from_recognition,
     )
-    from app.services.classification.route_compulsory_fields import (
-        merge_route_compulsory_into_config,
-    )
 
+    # Do NOT merge route compulsory baselines or force due_date here.
+    # Stars (required_fields) are tenant-authored: Apply route recommendations /
+    # new templates seed them; save must preserve explicit unstars.
     synced_types = [sync_classifier_from_recognition(defn) for defn in payload.document_types]
-    synced_types = merge_route_compulsory_into_config(synced_types)
-    synced_types = [_ensure_commercial_due_date_required(defn) for defn in synced_types]
     payload = payload.model_copy(update={"document_types": synced_types})
     _validate_transactional_document_type_post_to(payload)
     _validate_document_type_bundle_invariants(payload)
@@ -1359,26 +1420,6 @@ class RuleBookDocumentTypeInvariantError(ValueError):
 _COMMERCIAL_PLAYBOOKS = frozenset({"po_goods", "ar_goods", "ar_goods_2way", "direct_expense"})
 _SUPPORTING_BUNDLE_PURCHASE = frozenset({"po", "grn"})
 _SUPPORTING_BUNDLE_SALES = frozenset({"so", "dn"})
-
-
-def _ensure_commercial_due_date_required(definition: DocumentTypeDefinition) -> DocumentTypeDefinition:
-    from app.services.classification.document_type_playbook_profile_service import (
-        effective_playbook_profile,
-    )
-    from app.services.classification.document_type_field_keys import normalize_extraction_field_keys
-
-    profile = effective_playbook_profile(definition)
-    if profile not in {"po_goods", "ar_goods", "ar_goods_2way"}:
-        return definition
-    required = normalize_extraction_field_keys(list(definition.required_fields or []))
-    extraction = normalize_extraction_field_keys(list(definition.extraction_fields or []))
-    if "due_date" not in required:
-        required.append("due_date")
-    if "due_date" not in extraction:
-        extraction.append("due_date")
-    return definition.model_copy(
-        update={"required_fields": required, "extraction_fields": extraction}
-    )
 
 
 def _validate_transactional_document_type_post_to(payload: RuleBookConfigPayload) -> None:

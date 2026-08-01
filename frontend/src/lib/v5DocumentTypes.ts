@@ -63,6 +63,11 @@ export function emptyDocumentTypePostTo(): DocumentTypePostTo {
 
 export type RecognitionMode = "signals" | "prompt";
 
+/** Empty means auto: the claim kind is inferred from the employee's outstanding advance. */
+export type DocumentTypeTeamExpenseKind =
+  | ""
+  | import("@/lib/v4RuleBookTypes").TeamExpenseKind;
+
 export type V5DocumentType = {
   code: string;
   title: string;
@@ -98,6 +103,7 @@ export type V5DocumentType = {
   sampleAnalysis?: DocumentTypeSampleAnalysis;
   /** Shipped matrix template this org type was created from (e.g. DT-07). Org code is separate. */
   matrixTemplateCode?: string;
+  teamExpenseKind: DocumentTypeTeamExpenseKind;
   postTo: DocumentTypePostTo;
 };
 
@@ -168,6 +174,7 @@ export function createBlankDocumentType(existing: DocumentTypeDefinition[]): Doc
     bundleConditional: [],
     purchaseBundleRole: "",
     salesBundleRole: "",
+    teamExpenseKind: "",
     postTo: emptyDocumentTypePostTo(),
   };
 }

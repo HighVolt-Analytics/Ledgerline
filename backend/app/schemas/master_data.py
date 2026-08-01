@@ -60,9 +60,17 @@ class EmployeeMasterCreate(BaseModel):
     role: str = ""
     email: str = ""
     whatsapp_number: str = ""
+    whatsapp_number_2: str = ""
     viber_number: str | None = None
+    date_of_joining: str = ""
+    department: str = ""
+    location: str = ""
+    division: str = ""
+    supervisor_1: str = ""
+    supervisor_2: str = ""
     bank: BankDetails = Field(default_factory=BankDetails)
     budget: EmployeeBudget = Field(default_factory=EmployeeBudget)
+    advance_parent_ledger: str = ""
     ytd_spent: float = Field(default=0, ge=0)
     mtd_spent: float = Field(default=0, ge=0)
     qtd_spent: float = Field(default=0, ge=0)
@@ -76,9 +84,17 @@ class EmployeeMasterUpdate(BaseModel):
     role: str | None = None
     email: str | None = None
     whatsapp_number: str | None = None
+    whatsapp_number_2: str | None = None
     viber_number: str | None = None
+    date_of_joining: str | None = None
+    department: str | None = None
+    location: str | None = None
+    division: str | None = None
+    supervisor_1: str | None = None
+    supervisor_2: str | None = None
     bank: BankDetails | None = None
     budget: EmployeeBudget | None = None
+    advance_parent_ledger: str | None = None
     ytd_spent: float | None = Field(None, ge=0)
     mtd_spent: float | None = Field(None, ge=0)
     qtd_spent: float | None = Field(None, ge=0)
@@ -89,6 +105,11 @@ class EmployeeMasterUpdate(BaseModel):
 
 class EmployeeMasterResponse(EmployeeMaster):
     db_id: int
+    advance_balance: float = Field(
+        default=0,
+        ge=0,
+        description="Live Staff Advance child balance from journals; not persisted.",
+    )
 
 
 class EmployeeImportRowErrorResponse(BaseModel):

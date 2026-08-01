@@ -55,12 +55,24 @@ async def record_team_expense_processed(
     session: AsyncSession,
     invoice: Invoice,
 ) -> None:
-    """Increment employee MTD/YTD spend when a team expense invoice is processed."""
+    """Increment employee MTD/YTD spend when a real expense claim is processed.
+
+    Advance requisitions are cash float, not period spend — they must not inflate
+    budget counters. Spend is recorded on expense_claim / expense_against_advance.
+    """
     if invoice.status != InvoiceStatus.PROCESSED:
         return
     if invoice.route_target != ROUTE_TEAM:
         return
     if not invoice.email_sender or invoice.total is None:
+        return
+
+    from app.schemas.rule_book_config import (
+        TEAM_EXPENSE_KIND_ADVANCE,
+        normalize_team_expense_kind,
+    )
+
+    if normalize_team_expense_kind(invoice.team_expense_kind) == TEAM_EXPENSE_KIND_ADVANCE:
         return
 
     employees = await list_employee_masters(session, invoice.tenant_id)

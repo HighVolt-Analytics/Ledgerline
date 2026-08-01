@@ -1,12 +1,14 @@
 """Tests for line-item sub-ledger GL mapping."""
 
 from decimal import Decimal
+from types import SimpleNamespace
 import uuid
 
 from app.models.line_item import LineItem
 from app.schemas.document_type import DocumentTypeDefinition, DocumentTypePostTo
 from app.schemas.rule_book_config import ChartOfAccountEntry, RuleBookConfigPayload
 from app.services.classification.line_gl_mapping_service import (
+    _accept_llm_sub_ledger,
     _fallback_sub_ledger,
     _keyword_sub_ledger_hint,
 )
@@ -17,6 +19,10 @@ from app.services.extraction.llm_coa_catalogue import (
 from app.services.invoice.line_item_gl_service import (
     build_line_item_response,
     effective_line_ledger,
+    line_gl_mapping_applicable,
+    line_sub_ledger_review_required,
+    missing_line_sub_ledger_indexes,
+    resolve_effective_ledger_mapping,
 )
 
 
@@ -45,6 +51,19 @@ def _config_with_sub_ledgers() -> RuleBookConfigPayload:
                 llm_prompt="",
                 route_target="Purchase Management",
                 post_to=DocumentTypePostTo(ledger="Cloud Hosting Expense", sub_ledger="AWS Production"),
+            ),
+            DocumentTypeDefinition(
+                code="DT-08",
+                title="Employee expense claim / reimbursement",
+                short_title="Expense claim",
+                klass="Transactional",
+                posting="Yes",
+                recognition_mode="signals",
+                recognition_signals=[],
+                llm_prompt="",
+                route_target="Team Expenses",
+                playbook_profile="employee_claim",
+                post_to=DocumentTypePostTo(ledger="Cloud Hosting Expense", sub_ledger=""),
             ),
         ],
     )
@@ -91,8 +110,6 @@ def test_build_line_item_response() -> None:
 
 
 def test_fallback_sub_ledger_uses_doc_type_default() -> None:
-    from types import SimpleNamespace
-
     config = _config_with_sub_ledgers()
     invoice = SimpleNamespace(vendor="Amazon Web Services", document_type_code="DT-01")
     sub, source, _reason = _fallback_sub_ledger(
@@ -108,3 +125,103 @@ def test_keyword_sub_ledger_hint() -> None:
         _config_with_sub_ledgers().chart_of_accounts,
     )
     assert _keyword_sub_ledger_hint("AWS monthly hosting", catalogue) == "AWS Production"
+
+
+def test_line_gl_mapping_skips_team_expenses() -> None:
+    config = _config_with_sub_ledgers()
+    invoice = SimpleNamespace(
+        document_type_code="DT-08",
+        route_target="Team Expenses",
+        account_name="Cloud Hosting Expense",
+        gl_posting_applicable=True,
+    )
+    assert line_gl_mapping_applicable(invoice, config) is False
+
+
+def test_line_sub_ledger_review_required_when_catalogue_and_blank() -> None:
+    config = _config_with_sub_ledgers()
+    line = SimpleNamespace(sub_ledger=None)
+    invoice = SimpleNamespace(
+        document_type_code="DT-01",
+        route_target="Purchase Management",
+        account_name="Cloud Hosting Expense",
+        gl_posting_applicable=True,
+        line_items=[line],
+    )
+    assert line_sub_ledger_review_required(invoice, config) is True
+    assert missing_line_sub_ledger_indexes(invoice) == [0]
+
+
+def test_line_sub_ledger_review_not_required_without_catalogue() -> None:
+    config = RuleBookConfigPayload(
+        chart_of_accounts=[
+            ChartOfAccountEntry(code="6100", name="Operating Expenses", type="Expense"),
+        ],
+        document_types=[
+            DocumentTypeDefinition(
+                code="DT-01",
+                title="Invoice",
+                short_title="Invoice",
+                klass="Transactional",
+                posting="Yes",
+                recognition_mode="signals",
+                recognition_signals=[],
+                llm_prompt="",
+                route_target="Purchase Management",
+                post_to=DocumentTypePostTo(ledger="Operating Expenses", sub_ledger=""),
+            ),
+        ],
+    )
+    invoice = SimpleNamespace(
+        document_type_code="DT-01",
+        route_target="Purchase Management",
+        account_name="Operating Expenses",
+        gl_posting_applicable=True,
+        line_items=[SimpleNamespace(sub_ledger=None)],
+    )
+    assert line_sub_ledger_review_required(invoice, config) is False
+
+
+def test_resolve_effective_ledger_mapping_nested_sub() -> None:
+    config = _config_with_sub_ledgers()
+    mapping = resolve_effective_ledger_mapping(
+        parent_ledger="Cloud Hosting Expense",
+        effective_ledger="AWS Production",
+        config=config,
+    )
+    assert mapping.account_code == "6110-01"
+    assert mapping.account_name == "AWS Production"
+
+
+def test_accept_llm_sub_ledger_requires_min_confidence() -> None:
+    config = _config_with_sub_ledgers()
+    assert (
+        _accept_llm_sub_ledger(
+            "AWS Production",
+            0.9,
+            parent_ledger="Cloud Hosting Expense",
+            accounts=config.chart_of_accounts,
+            min_confidence=0.85,
+        )
+        is True
+    )
+    assert (
+        _accept_llm_sub_ledger(
+            "AWS Production",
+            0.5,
+            parent_ledger="Cloud Hosting Expense",
+            accounts=config.chart_of_accounts,
+            min_confidence=0.85,
+        )
+        is False
+    )
+    assert (
+        _accept_llm_sub_ledger(
+            "AWS Production",
+            None,
+            parent_ledger="Cloud Hosting Expense",
+            accounts=config.chart_of_accounts,
+            min_confidence=0.85,
+        )
+        is False
+    )

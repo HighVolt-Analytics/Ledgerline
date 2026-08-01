@@ -120,14 +120,14 @@ def _legacy_awaiting_maps_to_vision_vaulted(inv: Invoice) -> bool:
 
 
 def _is_vision_header_fields_contract(inv: Invoice) -> bool:
-    """Vision understood path: use header field keys (no OCR body / no DT yet)."""
+    """Vision understood path lean fields before catalogue DT is mapped."""
     from app.services.invoice.invoice_evaluation_service import VISION_UNDERSTOOD_EVAL_STATUSES
 
     if (inv.evaluation_status or "").strip() not in VISION_UNDERSTOOD_EVAL_STATUSES:
         return False
     body = _document_text_if_loaded(inv)
     if body is None:
-        # Deferred text — still the header contract when no catalogue DT is mapped.
+        # Deferred text — still the lean contract when no catalogue DT is mapped.
         return not (inv.document_type_code or "").strip()
     return not body.strip()
 
@@ -135,8 +135,17 @@ def _is_vision_header_fields_contract(inv: Invoice) -> bool:
 async def document_type_extraction_fields(
     db: AsyncSession, tenant_id: uuid.UUID, inv: Invoice
 ) -> list[str]:
-    # Vision header hold: Fields tab uses the vision header contract (no DT mapped yet).
+    # Pre-DT understood hold: lean type-suggest keys for new path; legacy header keys otherwise.
     if _is_vision_header_fields_contract(inv):
+        fields = inv.extracted_fields if isinstance(inv.extracted_fields, dict) else {}
+        if fields.get("vision_type_suggest_confidence") or not fields.get(
+            "vision_header_confidence"
+        ):
+            from app.services.invoice.vision_type_suggest import (
+                VISION_TYPE_SUGGEST_PERSISTED_FIELD_KEYS,
+            )
+
+            return list(VISION_TYPE_SUGGEST_PERSISTED_FIELD_KEYS)
         from app.services.invoice.vision_header_schema import VISION_HEADER_PERSISTED_FIELD_KEYS
 
         return list(VISION_HEADER_PERSISTED_FIELD_KEYS)
@@ -282,6 +291,8 @@ def invoice_to_response(
         account_code=display_account_code,
         account_name=display_account_name,
         route_target=inv.route_target,
+        team_expense_kind=getattr(inv, "team_expense_kind", None),
+        linked_advance_invoice_id=getattr(inv, "linked_advance_invoice_id", None),
         matched_rule_ids=parse_matched_rule_ids(inv.matched_rule_ids) or None,
         vendor_confidence=vendor_confidence,
         evaluation_status=evaluation_status,

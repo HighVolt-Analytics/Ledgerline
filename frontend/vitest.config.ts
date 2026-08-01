@@ -37,6 +37,8 @@ export default defineConfig({
       "src/lib/reconciliation.currency.test.ts",
       "src/lib/matrixIssue.test.ts",
       "src/lib/processingOverrides.test.ts",
+      "src/lib/teamExpensePosting.test.ts",
+      "src/lib/teamExpenseAdvanceMapping.test.ts",
       "src/lib/pipelineAuditPaths.test.ts",
       "src/lib/salesRegister.test.ts",
       "src/lib/salesRegisterQueue.test.ts",

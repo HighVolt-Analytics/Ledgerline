@@ -1,21 +1,25 @@
 import { useMemo } from "react";
-import { fmtAud } from "@/lib/v4MockData";
+import { money } from "@/lib/format";
 
 export function ReceiptThumb({
   merchant,
   date,
   amount,
   gst,
+  currency,
 }: {
   merchant: string;
   date: string;
   amount: number;
   gst: number;
+  /** Document currency when known; otherwise org/institution fallback. */
+  currency: string;
 }) {
   const ref = useMemo(
     () => Math.floor((merchant.length * 997 + amount) % 9000) + 1000,
     [merchant, amount]
   );
+  const fmt = (n: number) => money(n, currency);
   return (
     <div
       className="mx-auto w-full max-w-[260px] rounded-md bg-white text-slate-800 shadow-sm border border-slate-200 font-mono text-[11px] leading-relaxed"
@@ -38,16 +42,16 @@ export function ReceiptThumb({
         <div className="border-t border-dashed border-slate-300 my-2" />
         <div className="flex justify-between">
           <span>Subtotal</span>
-          <span>{fmtAud(amount - gst)}</span>
+          <span>{fmt(amount - gst)}</span>
         </div>
         <div className="flex justify-between">
           <span>GST</span>
-          <span>{fmtAud(gst)}</span>
+          <span>{fmt(gst)}</span>
         </div>
         <div className="border-t border-dashed border-slate-300 my-2" />
         <div className="flex justify-between font-bold text-[12px]">
           <span>TOTAL</span>
-          <span>{fmtAud(amount)}</span>
+          <span>{fmt(amount)}</span>
         </div>
       </div>
     </div>

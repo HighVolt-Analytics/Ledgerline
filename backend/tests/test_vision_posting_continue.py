@@ -161,7 +161,6 @@ def test_vision_header_ok_from_invoice_requires_payable_fields() -> None:
         document_type_code="DT-07",
         vendor="Acme",
         total=Decimal("100"),
-        due_date=date(2026, 6, 1),
     )
     assert vision_header_ok_from_invoice(complete, defn) is True
 

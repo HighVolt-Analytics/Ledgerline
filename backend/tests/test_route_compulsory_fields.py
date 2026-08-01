@@ -84,27 +84,33 @@ def test_save_validation_preserves_unstarred_purchase_route_fields() -> None:
     }
     body = {
         "schema_version": 1,
+        "chart_of_accounts": [
+            {"code": "6100", "name": "Operating Expenses", "type": "Expense"},
+        ],
         "document_types": [
             {
                 "code": "DT-50",
                 "title": "Purchase invoice",
                 "short_title": "Purchase",
                 "klass": "Transactional",
-                "posting": "No",
+                "posting": "Yes",
+                "playbook_profile": "po_goods",
                 "route_target": "Purchase Management",
-                "enabled": False,
+                "enabled": True,
                 "recognition_mode": "signals",
                 "recognition_signals": [],
                 "llm_prompt": "",
                 "classifier": minimal_classifier,
-                "extraction_fields": ["vendor", "total", "subtotal", "due_date"],
-                "required_fields": ["vendor"],
-                "post_to": {"ledger": "", "sub_ledger": ""},
+                "extraction_fields": ["vendor", "total", "subtotal", "gst", "due_date"],
+                # User unstarred subtotal / gst / due_date — save must keep that.
+                "required_fields": ["vendor", "total"],
+                "post_to": {"ledger": "Operating Expenses", "sub_ledger": ""},
             }
         ],
     }
     saved = validate_rule_book_config_for_save(body)
     row = saved.document_types[0]
-    assert row.required_fields == ["vendor"]
+    assert row.required_fields == ["vendor", "total"]
     assert "subtotal" not in row.required_fields
+    assert "gst" not in row.required_fields
     assert "due_date" not in row.required_fields

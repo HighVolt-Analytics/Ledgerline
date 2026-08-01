@@ -454,6 +454,13 @@ const EMPLOYEE_MASTERS: EmployeeMaster[] = [
     role: "Operations Manager",
     email: "marcus.webb@acme-hospitality.com.au",
     whatsappNumber: "+61 412 345 678",
+    whatsappNumber2: "+61 412 345 679",
+    dateOfJoining: "2021-04-12",
+    department: "Operations",
+    location: "Sydney",
+    division: "Hospitality",
+    supervisor1: "Alex Morgan",
+    supervisor2: "Sam Rivera",
     bank: {
       bsb: "062-001",
       accountNumber: "11223344",
@@ -470,6 +477,8 @@ const EMPLOYEE_MASTERS: EmployeeMaster[] = [
         { ledger: "Office", cap: 300 },
       ],
     },
+    advanceParentLedger: 'Staff Advance',
+    advanceSubLedger: "",
     ytdSpent: 9840,
     mtdSpent: 1420,
     qtdSpent: 4180,
@@ -498,6 +507,8 @@ const EMPLOYEE_MASTERS: EmployeeMaster[] = [
         { ledger: "Travel Expense", cap: 300 },
       ],
     },
+    advanceParentLedger: 'Staff Advance',
+    advanceSubLedger: "",
     ytdSpent: 7210,
     mtdSpent: 980,
     qtdSpent: 2840,
@@ -526,6 +537,8 @@ const EMPLOYEE_MASTERS: EmployeeMaster[] = [
         { ledger: "Travel Expense", cap: 800 },
       ],
     },
+    advanceParentLedger: 'Staff Advance',
+    advanceSubLedger: "",
     ytdSpent: 14520,
     mtdSpent: 2180,
     qtdSpent: 6420,
@@ -554,6 +567,8 @@ const EMPLOYEE_MASTERS: EmployeeMaster[] = [
         { ledger: "Travel Expense", cap: 200 },
       ],
     },
+    advanceParentLedger: 'Staff Advance',
+    advanceSubLedger: "",
     ytdSpent: 3840,
     mtdSpent: 620,
     qtdSpent: 1840,
@@ -574,6 +589,8 @@ const EMPLOYEE_MASTERS: EmployeeMaster[] = [
       annual: 4500,
       categories: [],
     },
+    advanceParentLedger: 'Staff Advance',
+    advanceSubLedger: "",
     ytdSpent: 0,
     mtdSpent: 0,
     qtdSpent: 0,
@@ -647,6 +664,11 @@ export const DEFAULT_POSTING_DEFAULTS = {
   fallbackAccount: "Suspense Account",
 } as const;
 
+export const DEFAULT_TEAM_EXPENSE_POSTING = {
+  defaultAdvanceParentLedger: "Staff Advance",
+  settlementAccount: "Bank Account",
+} as const;
+
 export const DEFAULT_DOCUMENT_SETS = [
   {
     id: "ds1",
@@ -680,6 +702,7 @@ export function createDefaultRuleBookConfig(): RuleBookConfigState {
     },
     employeeMasters: EMPLOYEE_MASTERS,
     postingDefaults: { ...DEFAULT_POSTING_DEFAULTS },
+    teamExpensePosting: { ...DEFAULT_TEAM_EXPENSE_POSTING },
     documentSets: DEFAULT_DOCUMENT_SETS.map((set) => ({ ...set })),
   };
 }

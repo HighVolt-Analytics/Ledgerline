@@ -24,6 +24,8 @@ _PO_TEXT_PATTERNS = (
         r"\bNo\.?\s*[:\s#]+(PO[-\s][A-Z0-9][A-Z0-9\-/_]{2,})",
         re.I,
     ),
+    # Free-text / type-suggest summary: "against PO-TEST-001"
+    re.compile(r"\b(PO[-][A-Z0-9][A-Z0-9\-/_]{2,})\b", re.I),
 )
 
 

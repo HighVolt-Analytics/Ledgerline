@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from app.services.extraction.line_items_fallback_service import (
     FALLBACK_GRN_QTY,
+    FALLBACK_PDF_TABLES,
     apply_line_items_fallback,
 )
 from app.services.invoice.invoice_data import InvoiceData, ParsedLineItem
@@ -114,3 +115,30 @@ def test_structured_fallback_ignores_text_qty_bleed_when_di_money_present() -> N
     assert not any("Prinsengracht" in (row.description or "") for row in updated.line_items)
     assert not any("due" in (row.description or "").lower() for row in updated.line_items)
     assert not any((row.description or "").lower().startswith("page") for row in updated.line_items)
+
+
+def test_pdf_table_fallback_when_ocr_empty(monkeypatch, tmp_path) -> None:
+    pdf = tmp_path / "invoice.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+
+    def _fake_pdf_rows(_path: str, **_kwargs):
+        return [
+            ParsedLineItem(
+                description="Office chairs – ergonomic",
+                qty=Decimal("10"),
+                unit_price=Decimal("500.00"),
+                amount=Decimal("5000.00"),
+                source="table",
+            )
+        ]
+
+    monkeypatch.setattr(
+        "app.services.extraction.layout_field_extractor.parse_line_items_from_pdf_path",
+        _fake_pdf_rows,
+    )
+    parsed = InvoiceData()
+    updated, tier = apply_line_items_fallback(parsed, pdf_path=str(pdf))
+    assert tier == FALLBACK_PDF_TABLES
+    assert len(updated.line_items) == 1
+    assert updated.line_items[0].amount == Decimal("5000.00")
+    assert (updated.raw_fields or {}).get("_line_items_fallback") == FALLBACK_PDF_TABLES

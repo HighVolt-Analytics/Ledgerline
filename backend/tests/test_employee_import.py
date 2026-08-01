@@ -64,12 +64,14 @@ async def test_parse_register_csv_aliases() -> None:
 @pytest.mark.asyncio
 async def test_register_import_creates_and_updates(db_session: AsyncSession) -> None:
     clear_classification_config_cache()
-    csv_bytes = _register_csv(
-        [
-            ["Alex Chen", "alex@example.com", "+61400000001", "Ops", "Pending verification"],
-            ["Alex Chen", "alex@example.com", "+61400000099", "Engineering", "Active"],
-        ]
-    )
+    csv_bytes = (
+        "name,email,whatsapp_number,whatsapp_number_2,date_of_joining,department,role,"
+        "location,division,supervisor_1,supervisor_2,status\n"
+        "Alex Chen,alex@example.com,+61400000001,+61400000002,2024-01-10,Ops,Engineer,"
+        "Sydney,Corporate,Pat Boss,Sam Dir,Pending verification\n"
+        "Alex Chen,alex@example.com,+61400000099,,2024-01-10,Engineering,Senior Engineer,"
+        "Melbourne,Corporate,Pat Boss,,Active\n"
+    ).encode("utf-8")
     rows = parse_employee_import_file(csv_bytes, "register.csv")
 
     result = await import_employee_masters(
@@ -87,7 +89,9 @@ async def test_register_import_creates_and_updates(db_session: AsyncSession) -> 
             )
         )
     ).scalar_one()
-    assert row.role == "Engineering"
+    assert row.role == "Senior Engineer"
+    assert row.department == "Engineering"
+    assert row.location == "Melbourne"
     assert row.whatsapp_number == "+61400000099"
     assert row.status == "Active"
 
@@ -163,6 +167,21 @@ async def test_build_import_templates() -> None:
 
     register_wb = load_workbook(io.BytesIO(register), read_only=True)
     assert register_wb.sheetnames == ["Employee data", "Instructions"]
+    headers = [cell.value for cell in next(register_wb["Employee data"].iter_rows(min_row=4, max_row=4))]
+    assert headers == [
+        "Full name *",
+        "Work email *",
+        "WhatsApp / Mobile 1",
+        "WhatsApp / Mobile 2",
+        "Date of joining",
+        "Department",
+        "Designation",
+        "Location",
+        "Division",
+        "Supervisor 1",
+        "Supervisor 2",
+        "Status",
+    ]
     payment_wb = load_workbook(io.BytesIO(payment), read_only=True)
     assert payment_wb.sheetnames == ["Employee data", "Instructions"]
 

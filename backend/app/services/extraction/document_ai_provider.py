@@ -16,6 +16,7 @@ from app.services.extraction.azure_foundry_vision_client import (
     classify_only_azure_foundry,
     extract_fields_azure_foundry,
     extract_header_azure_foundry,
+    extract_type_suggest_azure_foundry,
     is_azure_foundry_vision_available,
     probe_understand_azure_foundry,
     read_for_classification_azure_foundry,
@@ -24,6 +25,7 @@ from app.services.extraction.claude_vision_client import (
     classify_only_claude,
     extract_fields_claude,
     extract_header_claude,
+    extract_type_suggest_claude,
     is_claude_vision_available,
     probe_understand_claude,
     read_for_classification_claude,
@@ -37,6 +39,7 @@ from app.services.extraction.gemini_vision_client import (
     classify_only_gemini,
     extract_fields_gemini,
     extract_header_gemini,
+    extract_type_suggest_gemini,
     is_gemini_vision_available,
     probe_understand_gemini,
     read_for_classification_gemini,
@@ -136,6 +139,22 @@ async def extract_vision_header(
         return await extract_header_azure_foundry(images, org=org)
     if provider == DocumentAiProvider.CLAUDE_VISION:
         return await extract_header_claude(images, org=org)
+    return None
+
+
+async def extract_vision_type_suggest(
+    *,
+    provider: DocumentAiProvider,
+    images: list[bytes],
+    org: OrgContext,
+) -> dict[str, Any] | None:
+    """Lean type suggest (heading + canonical type + perspective)."""
+    if provider == DocumentAiProvider.GEMINI_VISION:
+        return await extract_type_suggest_gemini(images, org=org)
+    if provider == DocumentAiProvider.AZURE_FOUNDRY_VISION:
+        return await extract_type_suggest_azure_foundry(images, org=org)
+    if provider == DocumentAiProvider.CLAUDE_VISION:
+        return await extract_type_suggest_claude(images, org=org)
     return None
 
 
@@ -250,6 +269,7 @@ async def extract_fields(
     few_shots: Sequence[dict[str, str]] | None,
     provider: DocumentAiProvider,
     vision_page_images: list[bytes] | None = None,
+    prefer_vision_images: bool = False,
 ) -> ExtractFieldsResult:
     path = Path(file_path)
     dt_token = confirmed_dt.strip().upper()
@@ -278,6 +298,7 @@ async def extract_fields(
             confirmed_dt=confirmed_dt,
             few_shots=few_shots,
             vision_page_images=vision_page_images,
+            prefer_vision_images=prefer_vision_images,
         )
         return ExtractFieldsResult(llm=llm, ocr=enriched, di_enrich_detail=di_detail)
     if provider == DocumentAiProvider.AZURE_FOUNDRY_VISION:
@@ -289,6 +310,7 @@ async def extract_fields(
             confirmed_dt=confirmed_dt,
             few_shots=few_shots,
             vision_page_images=vision_page_images,
+            prefer_vision_images=prefer_vision_images,
         )
         return ExtractFieldsResult(llm=llm, ocr=enriched, di_enrich_detail=di_detail)
     if provider == DocumentAiProvider.CLAUDE_VISION:
@@ -300,6 +322,7 @@ async def extract_fields(
             confirmed_dt=confirmed_dt,
             few_shots=few_shots,
             vision_page_images=vision_page_images,
+            prefer_vision_images=prefer_vision_images,
         )
         return ExtractFieldsResult(llm=llm, ocr=enriched, di_enrich_detail=di_detail)
     llm = await extract_document_fields(

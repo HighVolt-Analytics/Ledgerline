@@ -286,6 +286,8 @@ async def run_configured_validations(ctx: ValidationRunContext) -> list[Validati
             route_target=ctx.route_target,
             email_sender=ctx.sender,
             has_receipt_file=ctx.has_receipt_file,
+            team_expense_kind=getattr(ctx.invoice, "team_expense_kind", None),
+            exclude_invoice_id=ctx.exclude_id,
         )
         results: list[ValidationResult] = list(team_results)
         duplicate = await _run_universal_duplicate(ctx)
@@ -338,6 +340,8 @@ async def run_configured_validations(ctx: ValidationRunContext) -> list[Validati
                 route_target=ctx.route_target,
                 email_sender=ctx.sender,
                 has_receipt_file=ctx.has_receipt_file,
+                team_expense_kind=getattr(ctx.invoice, "team_expense_kind", None),
+                exclude_invoice_id=ctx.exclude_id,
             )
             results.extend(team_extra)
 

@@ -26,6 +26,11 @@ import {
   invoiceToTeamClaim,
   teamRulesToCategories,
 } from "@/lib/routePageAdapters";
+import {
+  TEAM_EXPENSE_KINDS,
+  TEAM_EXPENSE_KIND_LABELS,
+  type TeamExpenseKind,
+} from "@/lib/v4RuleBookTypes";
 
 const ROUTE_TARGET = "Team Expenses";
 const CLAIM_POLL_MS = 15_000;
@@ -61,6 +66,24 @@ export function TeamExpensesPage() {
   const [drawerInvoiceId, setDrawerInvoiceId] = useState<number | null>(null);
   const [tab, setTab] = useState("claims");
   const [searchQuery, setSearchQuery] = useState("");
+  const [kindFilter, setKindFilter] = useState<TeamExpenseKind>("expense_claim");
+  const kindCounts = useMemo(() => {
+    const counts = Object.fromEntries(
+      TEAM_EXPENSE_KINDS.map((kind) => [kind, 0])
+    ) as Record<TeamExpenseKind, number>;
+    for (const claim of claims) counts[claim.kind] += 1;
+    return counts;
+  }, [claims]);
+  const settlementLedger = ruleBook?.teamExpensePosting?.settlementAccount ?? "";
+  const advanceLedgerFor = (submitter: string) => {
+    const employee = employees.find((emp) => emp.name === submitter);
+    return (
+      employee?.advanceSubLedger ||
+      employee?.advanceParentLedger ||
+      ruleBook?.teamExpensePosting?.defaultAdvanceParentLedger ||
+      ""
+    );
+  };
 
   useVisibilityPolling(() => {
     void refetch();
@@ -97,10 +120,14 @@ export function TeamExpensesPage() {
     };
   }, [claims, budgets, routed, institutionCurrency]);
 
-  const selected = claims.find((e) => e.id === selectedId) ?? claims[0] ?? null;
+  const kindClaims = useMemo(
+    () => claims.filter((claim) => claim.kind === kindFilter),
+    [claims, kindFilter]
+  );
+  const selected = kindClaims.find((e) => e.id === selectedId) ?? kindClaims[0] ?? null;
   const filteredClaims = useMemo(
     () =>
-      claims.filter((claim) =>
+      kindClaims.filter((claim) =>
         matchesListSearch(
           searchQuery,
           claim.id,
@@ -113,7 +140,7 @@ export function TeamExpensesPage() {
           claim.amount
         )
       ),
-    [claims, searchQuery]
+    [kindClaims, searchQuery]
   );
   const selectedInvoice = selected ? invoiceById.get(Number(selected.id)) : undefined;
   const budget = selected
@@ -132,6 +159,36 @@ export function TeamExpensesPage() {
         title="Team Expenses"
         subtitle="Employee claims captured from messaging channels, approved against per-category budgets, posted to the ledger."
       />
+
+      <div
+        className="mb-4 inline-flex flex-wrap gap-1 rounded-lg border border-border bg-card p-1"
+        role="tablist"
+        aria-label="Claim kind"
+        data-testid="team-expense-kind-toggle"
+      >
+        {TEAM_EXPENSE_KINDS.map((kind) => (
+          <button
+            key={kind}
+            type="button"
+            role="tab"
+            aria-selected={kindFilter === kind}
+            onClick={() => {
+              setKindFilter(kind);
+              setSelectedId(null);
+            }}
+            data-testid={`kind-toggle-${kind}`}
+            className={cn(
+              "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+              kindFilter === kind
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover-elevate"
+            )}
+          >
+            {TEAM_EXPENSE_KIND_LABELS[kind]}
+            <span className="ml-1.5 tnum opacity-70">{kindCounts[kind]}</span>
+          </button>
+        ))}
+      </div>
 
       <TeamExpenseChannelsStrip />
 
@@ -183,10 +240,10 @@ export function TeamExpensesPage() {
       <PageTabPanel value="claims" active={tab} className="mt-4">
         {isLoading ? (
           <ListDetailSkeleton />
-        ) : claims.length === 0 ? (
+        ) : kindClaims.length === 0 ? (
           <EmptyState
-            title="No team expense claims yet"
-            hint="Claims arrive via Email, WhatsApp, or Viber when the sender matches an employee in the registry. Manual Upload does not create Team Expenses."
+            title={`No ${TEAM_EXPENSE_KIND_LABELS[kindFilter].toLowerCase()} documents yet`}
+            hint="Claims arrive via Email, WhatsApp, or Viber when the sender matches an employee in the registry. Switch the kind above or change a claim's kind in its detail panel."
           />
         ) : (
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
@@ -225,12 +282,30 @@ export function TeamExpensesPage() {
                         <span className="font-medium text-sm truncate">{claim.submitter}</span>
                         <ChannelBadge channel={claim.channel} />
                       </div>
+                      {(() => {
+                        const identity = [claim.employeeId, claim.division, claim.location]
+                          .map((part) => (part || "").trim())
+                          .filter(Boolean);
+                        return identity.length > 0 ? (
+                          <div className="text-[10px] text-muted-foreground truncate mt-0.5">
+                            {identity.join(" · ")}
+                          </div>
+                        ) : null;
+                      })()}
                       <div className="text-xs text-muted-foreground truncate mt-0.5">
                         {claim.category} · {claim.merchant}
                       </div>
                       {claim.documentRef ? (
                         <div className="text-[10px] text-muted-foreground tnum mt-0.5 truncate">
                           {claim.documentRef}
+                        </div>
+                      ) : null}
+                      {typeof claim.advanceBalance === "number" ? (
+                        <div className="text-[10px] text-muted-foreground tnum mt-0.5">
+                          Advance left {money(
+                            claim.advanceBalance,
+                            invoiceById.get(Number(claim.id))?.currency || institutionCurrency
+                          )}
                         </div>
                       ) : null}
                     </div>
@@ -255,6 +330,7 @@ export function TeamExpensesPage() {
               {selected && selectedInvoice ? (
                 <Card className="p-4">
                   <ClaimDetailPanel
+                    key={selected.id}
                     claim={selected}
                     invoiceId={selectedInvoice.id}
                     invoiceStatus={selectedInvoice.status}
@@ -264,6 +340,16 @@ export function TeamExpensesPage() {
                     canApprove={actions.canApproveClaim(selectedInvoice.status)}
                     canReject={actions.canRejectClaim(selectedInvoice.status)}
                     canRequestInfo={actions.canRequestInfo(selectedInvoice.status)}
+                    advanceLedger={advanceLedgerFor(selected.submitter)}
+                    settlementLedger={settlementLedger}
+                    advanceBalance={selected.advanceBalance ?? 0}
+                    currency={
+                      (selectedInvoice.currency || institutionCurrency).trim().toUpperCase() ||
+                      institutionCurrency
+                    }
+                    onChangeKind={async (kind) => {
+                      await actions.setKind(selectedInvoice, kind);
+                    }}
                     onApprove={async () => {
                       await actions.approve(selectedInvoice);
                     }}

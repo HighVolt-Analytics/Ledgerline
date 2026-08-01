@@ -66,6 +66,8 @@ EVAL_PENDING_VENDOR = "pending_vendor"
 # Vision understood path (bundle + vault) — distinct from OCR classification hold.
 EVAL_VISION_VAULTED = "vision_vaulted"
 EVAL_VISION_HEADER_REVIEW = "vision_header_review"
+EVAL_LINE_GL_REVIEW = "line_gl_review"
+EVAL_LINE_ITEMS_REVIEW = "line_items_review"
 # Match-register holds (string tokens; owned by purchase/sales sync flows).
 EVAL_AWAITING_PO = "awaiting_po"
 EVAL_AWAITING_SO = "awaiting_so"
@@ -536,11 +538,13 @@ async def apply_invoice_evaluation(
     apply_evaluation_to_invoice(invoice, result)
 
     if (invoice.route_target or "").strip() == ROUTE_TEAM:
+        from app.services.purchase.team_expense_kind_service import stamp_team_expense_kind
         from app.services.purchase.team_expense_service import (
             stamp_team_expense_employee_identity,
         )
 
         await stamp_team_expense_employee_identity(session, invoice)
+        await stamp_team_expense_kind(session, invoice, config)
 
     if prior_eval in STICKY_WORKFLOW_HOLD_EVAL_STATUSES:
         # Remap / catalogue refresh must not clear approval or PO/SO holds.

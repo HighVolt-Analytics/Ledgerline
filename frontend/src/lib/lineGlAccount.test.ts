@@ -5,6 +5,7 @@ import {
   effectiveLineLedger,
   lineGlMappingReason,
   lineGlSourceLabel,
+  lineSubLedgerRequired,
   suggestLineSubLedger,
 } from "@/lib/lineGlAccount";
 
@@ -82,5 +83,17 @@ describe("lineGlAccount", () => {
         true
       )
     ).toContain("LLM");
+  });
+
+  it("marks blank sub-ledger required when parent has catalogue", () => {
+    expect(lineSubLedgerRequired(baseLine, "Cloud Hosting Expense", coa)).toBe(true);
+    expect(
+      lineSubLedgerRequired(
+        { ...baseLine, sub_ledger: "AWS Production" },
+        "Cloud Hosting Expense",
+        coa
+      )
+    ).toBe(false);
+    expect(lineSubLedgerRequired(baseLine, "Operating Expenses", coa)).toBe(false);
   });
 });

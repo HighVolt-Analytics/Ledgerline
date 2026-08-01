@@ -11,7 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.invoice import Invoice
 from app.schemas.rule_book_config import RuleBookConfigPayload
 
-ControlAccountRole = Literal["payable_account", "receivable_account", "tax_account"]
+ControlAccountRole = Literal[
+    "payable_account",
+    "receivable_account",
+    "tax_account",
+    "settlement_account",
+    "staff_advance_account",
+]
 
 
 @dataclass

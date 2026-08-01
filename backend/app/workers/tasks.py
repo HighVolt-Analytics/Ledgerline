@@ -19,7 +19,56 @@ from app.workers.celery_app import celery_app
 logger = get_logger(__name__)
 
 _last_run: str | None = None
-_inline_active = False
+# Per-tenant in-process pipeline activity (not a global lock).
+_inline_active_tenants: set[uuid.UUID] = set()
+_inline_active_unscoped = 0
+
+
+def _mark_pipeline_enter(tenant_id: uuid.UUID | None) -> None:
+    global _inline_active_unscoped
+    if tenant_id is None:
+        _inline_active_unscoped += 1
+    else:
+        _inline_active_tenants.add(tenant_id)
+
+
+def _mark_pipeline_exit(tenant_id: uuid.UUID | None) -> None:
+    global _inline_active_unscoped
+    if tenant_id is None:
+        _inline_active_unscoped = max(0, _inline_active_unscoped - 1)
+    else:
+        _inline_active_tenants.discard(tenant_id)
+
+
+def is_inline_pipeline_active(*, tenant_id: uuid.UUID | None = None) -> bool:
+    """True while an in-process invoice pipeline is running.
+
+    When ``tenant_id`` is set, only that tenant's activity counts — mailbox
+    polling for other tenants must not wait on unrelated work.
+    """
+    if tenant_id is not None:
+        return tenant_id in _inline_active_tenants
+    return bool(_inline_active_tenants) or _inline_active_unscoped > 0
+
+
+def get_processing_status() -> dict[str, str | int | None]:
+    celery_active = 0
+    try:
+        from celery import current_app
+
+        inspect = current_app.control.inspect(timeout=0.8)
+        active = inspect.active() if inspect else None
+        celery_active = sum(len(t or []) for t in (active or {}).values())
+    except Exception:
+        pass
+
+    inline_count = len(_inline_active_tenants) + _inline_active_unscoped
+    running = celery_active > 0 or inline_count > 0
+    return {
+        "state": "running" if running else "idle",
+        "last_run": _last_run,
+        "active_tasks": celery_active + inline_count,
+    }
 
 
 def _pipeline_error_message(exc: BaseException) -> str:
@@ -45,30 +94,6 @@ _TERMINAL_STATUSES = frozenset(
         InvoiceStatus.REJECTED,
     }
 )
-
-
-def is_inline_pipeline_active() -> bool:
-    """True while an in-process invoice pipeline batch/task is running."""
-    return _inline_active
-
-
-def get_processing_status() -> dict[str, str | int | None]:
-    celery_active = 0
-    try:
-        from celery import current_app
-
-        inspect = current_app.control.inspect(timeout=0.8)
-        active = inspect.active() if inspect else None
-        celery_active = sum(len(t or []) for t in (active or {}).values())
-    except Exception:
-        pass
-
-    running = celery_active > 0 or _inline_active
-    return {
-        "state": "running" if running else "idle",
-        "last_run": _last_run,
-        "active_tasks": celery_active + (1 if _inline_active else 0),
-    }
 
 
 async def _resolve_invoice_tenant_id(
@@ -148,15 +173,16 @@ async def process_invoice_background(
     tenant_id: uuid.UUID | None = None,
 ) -> None:
     """FastAPI background task — must be async (uvicorn already has a running loop)."""
-    global _last_run, _inline_active
+    global _last_run
 
+    resolved_tid = await _resolve_invoice_tenant_id(invoice_id, tenant_id)
     lock = await _invoice_pipeline_lock(invoice_id)
     async with lock:
-        _inline_active = True
+        _mark_pipeline_enter(resolved_tid)
         try:
             await _run_invoice_pipeline(invoice_id, tenant_id=tenant_id)
         finally:
-            _inline_active = False
+            _mark_pipeline_exit(resolved_tid)
             _last_run = datetime.now(timezone.utc).isoformat()
 
 
@@ -170,12 +196,12 @@ async def process_invoices_batch_background(
     Yields between invoices so uvicorn can keep serving HTTP while SYNC_PROCESSING
     runs in the same process.
     """
-    global _last_run, _inline_active
+    global _last_run
 
     settings = get_settings()
     limit = max(1, int(settings.invoice_pipeline_concurrency))
     sem = asyncio.Semaphore(limit)
-    _inline_active = True
+    _mark_pipeline_enter(tenant_id)
     try:
 
         async def _one(invoice_id: int) -> None:
@@ -188,7 +214,7 @@ async def process_invoices_batch_background(
 
         await asyncio.gather(*(_one(invoice_id) for invoice_id in invoice_ids))
     finally:
-        _inline_active = False
+        _mark_pipeline_exit(tenant_id)
         _last_run = datetime.now(timezone.utc).isoformat()
 
 
@@ -427,15 +453,23 @@ async def run_pipeline(
     mailbox_id: int | None = None,
     tenant_id: uuid.UUID | None = None,
     poll_inbox: bool = False,
+    skip_pending_check: bool = False,
 ) -> dict[str, int]:
-    """Poll mailboxes (optional) and process pending invoices."""
+    """Poll mailboxes (optional) and process pending invoices.
+
+    ``skip_pending_check``: when True, skip the pre-poll pending sweep so a
+    mailbox-only cycle is not coupled to unrelated invoice-processing load.
+    Newly ingested mail is still processed after the poll.
+    """
     if tenant_id is None:
         return {"ingested": 0, "processed": 0}
 
-    processed = await _process_pending(
-        await _fetch_pending_ids(tenant_id=tenant_id),
-        tenant_id=tenant_id,
-    )
+    processed = 0
+    if not skip_pending_check:
+        processed = await _process_pending(
+            await _fetch_pending_ids(tenant_id=tenant_id),
+            tenant_id=tenant_id,
+        )
 
     ingested = 0
     message_ids: list[str] = []
@@ -464,6 +498,8 @@ async def run_pipeline(
     else:
         ingest_result = EmailIngestResult()
 
+    # Always process newly ingested mail. Invoice-level locks prevent double-runs;
+    # do not couple mailbox latency to a pre-poll sweep of unrelated pending work.
     if ingested:
         processed += await _process_pending(
             await _fetch_pending_ids(tenant_id=tenant_id),
@@ -497,9 +533,9 @@ async def run_pipeline_background(
     poll_inbox: bool = False,
 ) -> None:
     """FastAPI background task — must be async (uvicorn already has a running loop)."""
-    global _last_run, _inline_active
+    global _last_run
 
-    _inline_active = True
+    _mark_pipeline_enter(tenant_id)
     try:
         logger.info(
             "inline_pipeline_started",
@@ -521,7 +557,7 @@ async def run_pipeline_background(
             error=str(exc),
         )
     finally:
-        _inline_active = False
+        _mark_pipeline_exit(tenant_id)
         _last_run = datetime.now(timezone.utc).isoformat()
 
 
@@ -564,16 +600,31 @@ def poll_all_tenants_task(self) -> dict[str, int]:
 
     async def run_with_cleanup() -> dict[str, int]:
         from app.database import async_session_factory
-        from app.services.tenant.tenant_context_service import list_active_tenant_ids
+        from app.services.tenant.tenant_context_service import (
+            list_active_tenant_ids_with_mailboxes,
+        )
 
         totals = {"ingested": 0, "processed": 0}
         try:
             async with async_session_factory() as session:
-                tenant_ids = await list_active_tenant_ids(session)
-            for tid in tenant_ids:
-                result = await run_pipeline(tenant_id=tid, poll_inbox=True)
-                totals["ingested"] += result.get("ingested", 0)
-                totals["processed"] += result.get("processed", 0)
+                tenant_ids = await list_active_tenant_ids_with_mailboxes(session)
+            settings = get_settings()
+            concurrency = max(1, int(settings.mailbox_poll_concurrency))
+            sem = asyncio.Semaphore(concurrency)
+            lock = asyncio.Lock()
+
+            async def _one(tid: uuid.UUID) -> None:
+                async with sem:
+                    result = await run_pipeline(
+                        tenant_id=tid,
+                        poll_inbox=True,
+                        skip_pending_check=True,
+                    )
+                    async with lock:
+                        totals["ingested"] += result.get("ingested", 0)
+                        totals["processed"] += result.get("processed", 0)
+
+            await asyncio.gather(*(_one(tid) for tid in tenant_ids))
             return totals
         finally:
             await dispose_engine()
@@ -622,16 +673,16 @@ async def run_mailbox_backfill_background(
     tenant_id: uuid.UUID | None = None,
 ) -> None:
     """FastAPI background task entry for historical mailbox import."""
-    global _last_run, _inline_active
+    global _last_run
 
-    _inline_active = True
+    _mark_pipeline_enter(tenant_id)
     try:
         from app.services.ingest.mailbox_backfill_service import run_mailbox_backfill_job
 
         logger.info("mailbox_backfill_started", job_id=job_id, tenant_id=str(tenant_id))
         await run_mailbox_backfill_job(job_id, tenant_id=tenant_id)
     finally:
-        _inline_active = False
+        _mark_pipeline_exit(tenant_id)
         _last_run = datetime.now(timezone.utc).isoformat()
 
 

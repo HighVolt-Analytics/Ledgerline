@@ -407,6 +407,9 @@ def parse_vertical_line_items_from_text(text: str) -> list[ParsedLineItem]:
             start = index
         roles.append(matched_role)
         index += 1
+        # Multi-line header tails e.g. "Price per" + "VER (USD)" are not extra columns.
+        while index < len(lines) and _vertical_header_continuation(lines[index], matched_role):
+            index += 1
         # Stop header scan once we have description + money/qty structure.
         if "description" in roles and (
             ("qty" in roles and "amount" in roles)
@@ -417,9 +420,16 @@ def parse_vertical_line_items_from_text(text: str) -> list[ParsedLineItem]:
             while index < len(lines):
                 more = vertical_header_role(lines[index])
                 if more is None:
+                    if _vertical_header_continuation(lines[index], roles[-1] if roles else ""):
+                        index += 1
+                        continue
                     break
                 roles.append(more)
                 index += 1
+                while index < len(lines) and _vertical_header_continuation(
+                    lines[index], more
+                ):
+                    index += 1
             break
 
     if start < 0 or "description" not in roles:
@@ -428,7 +438,8 @@ def parse_vertical_line_items_from_text(text: str) -> list[ParsedLineItem]:
         return []
 
     col_count = len(roles)
-    data_start = start + col_count
+    # `index` already accounts for multi-line header continuations.
+    data_start = index if index > start else start + col_count
     items: list[ParsedLineItem] = []
     cursor = data_start
     while cursor + col_count <= len(lines):
@@ -458,6 +469,20 @@ def parse_vertical_line_items_from_text(text: str) -> list[ParsedLineItem]:
             )
         )
     return enrich_parsed_line_items(items)
+
+
+def _vertical_header_continuation(line: str, prior_role: str) -> bool:
+    """True when a line is a non-column continuation of the prior header cell."""
+    token = (line or "").strip()
+    if not token or not prior_role:
+        return False
+    if prior_role in {"unit_price", "amount", "qty"} and re.match(
+        r"^(?:ver\b|[a-z]{3})\s*\([^)]*\)$",
+        token,
+        re.I,
+    ):
+        return True
+    return False
 
 
 def parse_line_items_from_text(
@@ -1369,12 +1394,33 @@ def document_has_qty_only_table(
     text = (ocr_text or "").strip()
     if not text:
         return False
+    # Money invoices (amount/price headers or $ totals) must not be treated as
+    # packing-list qty-only tables — address PIN / phone OCR bleed otherwise wins.
+    if _text_has_money_product_signals(text):
+        return False
     if _find_qty_only_header_line(text) is not None:
         return len(parse_qty_only_line_items_from_text(text)) >= 1
     qty_rows = [_parse_qty_only_row(line) for line in text.splitlines()]
     parsed_rows = [row for row in qty_rows if row is not None]
     return len(parsed_rows) >= 1
 
+
+def text_has_money_product_signals(text: str) -> bool:
+    """True when OCR/document text shows money product columns or currency amounts."""
+    blob = text or ""
+    if re.search(
+        r"(?i)\b(?:amount(?:\s+in\s+[a-z]{3})?|unit\s*price|price\s*per|line\s*total|"
+        r"total\s*amount|invoice\s*amount)\b",
+        blob,
+    ):
+        return True
+    if re.search(r"(?i)\$\s*[\d,]+(?:\.\d{2})?", blob):
+        return True
+    return False
+
+
+# Back-compat alias for internal call sites.
+_text_has_money_product_signals = text_has_money_product_signals
 
 def document_has_line_item_table(
     ocr_text: str | None,
@@ -1525,6 +1571,7 @@ def build_line_items_presentation_prompt(
     ocr_table_present: bool,
     qty_only_table_present: bool = False,
     charge_lines_present: bool = False,
+    vision_images_present: bool = False,
 ) -> list[str]:
     """Mode-specific LLM rules for line_items (DI copy / OCR table / charge / not applicable)."""
     if di_rows_present:
@@ -1567,6 +1614,16 @@ def build_line_items_presentation_prompt(
             "- FREIGHT: USD 400.00 → {{description: \"Freight\", qty: 1, unit_price: 400, amount: 400}}.",
             "- DESCRIPTION OF GOODS block → description row; pair with FREIGHT amount when separate.",
             "- Do not invent rows beyond labeled charge blocks.",
+            "- field_confidence.line_items: per-row confidence; 0.0 when line_items is [].",
+        ]
+    if vision_images_present:
+        return [
+            "",
+            "LINE ITEMS — PAGE IMAGES (no OCR/DI table):",
+            "- Read product/service line rows from the attached page images.",
+            "- Each row: {{description, qty, unit_price, amount}} when those cells are visible.",
+            "- Exclude TOTAL, SUBTOTAL, tax-only rows, and header/party blocks.",
+            "- Do not invent rows that are not printed on the page.",
             "- field_confidence.line_items: per-row confidence; 0.0 when line_items is [].",
         ]
     return [

@@ -136,3 +136,100 @@ def test_sales_route_journal() -> None:
     receivable = [ln for ln in lines if ln.debit > 0]
     assert receivable[0].account_code == "1200"
     assert receivable[0].debit == Decimal("2200")
+
+
+def test_purchase_journal_splits_by_line_sub_ledger() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        invoice_date=date(2026, 4, 1),
+        subtotal=Decimal("300"),
+        gst=Decimal("30"),
+        total=Decimal("330"),
+        status=InvoiceStatus.JOURNALING,
+        currency="AUD",
+        account_name="Cloud Hosting Expense",
+    )
+    inv.line_items = [
+        LineItem(
+            tenant_id=TESTING_TENANT_UUID,
+            description="AWS",
+            amount=Decimal("200"),
+            sub_ledger="AWS Production",
+        ),
+        LineItem(
+            tenant_id=TESTING_TENANT_UUID,
+            description="Azure",
+            amount=Decimal("100"),
+            sub_ledger="Azure Staging",
+        ),
+    ]
+    config = RuleBookConfigPayload(
+        posting_defaults=PostingDefaults(),
+        chart_of_accounts=[
+            ChartOfAccountEntry(
+                code="6110",
+                name="Cloud Hosting Expense",
+                type="Expense",
+                sub_ledgers=[
+                    {"code": "01", "name": "AWS Production"},
+                    {"code": "02", "name": "Azure Staging"},
+                ],
+            ),
+            ChartOfAccountEntry(code="1400", name="Tax Paid", type="Asset"),
+            ChartOfAccountEntry(code="2000", name="Accounts Payable", type="Liability"),
+        ],
+    )
+    lines = generate_entries(
+        inv,
+        AccountMapping("6110", "Cloud Hosting Expense"),
+        config=config,
+    )
+    assert is_balanced(lines)
+    expense = [ln for ln in lines if ln.debit > 0 and ln.account_code.startswith("6110")]
+    assert {ln.account_code: ln.debit for ln in expense} == {
+        "6110-01": Decimal("200"),
+        "6110-02": Decimal("100"),
+    }
+
+
+def test_purchase_journal_residual_goes_to_parent() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        invoice_date=date(2026, 4, 2),
+        subtotal=Decimal("250"),
+        gst=Decimal("25"),
+        total=Decimal("275"),
+        status=InvoiceStatus.JOURNALING,
+        currency="AUD",
+        account_name="Cloud Hosting Expense",
+    )
+    inv.line_items = [
+        LineItem(
+            tenant_id=TESTING_TENANT_UUID,
+            description="AWS",
+            amount=Decimal("200"),
+            sub_ledger="AWS Production",
+        ),
+    ]
+    config = RuleBookConfigPayload(
+        posting_defaults=PostingDefaults(),
+        chart_of_accounts=[
+            ChartOfAccountEntry(
+                code="6110",
+                name="Cloud Hosting Expense",
+                type="Expense",
+                sub_ledgers=[{"code": "01", "name": "AWS Production"}],
+            ),
+            ChartOfAccountEntry(code="1400", name="Tax Paid", type="Asset"),
+            ChartOfAccountEntry(code="2000", name="Accounts Payable", type="Liability"),
+        ],
+    )
+    lines = generate_entries(
+        inv,
+        AccountMapping("6110", "Cloud Hosting Expense"),
+        config=config,
+    )
+    assert is_balanced(lines)
+    by_code = {ln.account_code: ln.debit for ln in lines if ln.debit > 0}
+    assert by_code["6110-01"] == Decimal("200")
+    assert by_code["6110"] == Decimal("50")

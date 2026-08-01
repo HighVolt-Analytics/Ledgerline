@@ -1,0 +1,198 @@
+"""Team Expenses journal templates for the three claim kinds."""
+
+from datetime import date
+from decimal import Decimal
+
+import pytest
+
+from app.tenant_ids import TESTING_TENANT_UUID
+from app.models.invoice import Invoice, InvoiceStatus
+from app.models.journal import EntryType
+from app.schemas.rule_book_config import (
+    ChartOfAccountEntry,
+    PostingDefaults,
+    RuleBookConfigPayload,
+    SubLedgerEntry,
+    TeamExpensePostingDefaults,
+    normalize_team_expense_kind,
+)
+from app.services.master_data.party_coa_subledger_service import (
+    party_sub_ledger_code,
+    resolve_party_child_mapping,
+)
+from app.services.payments.journal_generator import (
+    generate_entries,
+    get_unresolved_control_accounts,
+    is_balanced,
+)
+from app.services.rule_book.account_mapper import AccountMapping
+from app.services.rule_book.rule_book_mapper import ROUTE_TEAM
+
+EMPLOYEE_SLUG = "em-marcus"
+
+
+def _config() -> RuleBookConfigPayload:
+    employee_child = SubLedgerEntry(
+        code=party_sub_ledger_code(EMPLOYEE_SLUG),
+        name="Marcus Webb",
+        origin="party",
+    )
+    return RuleBookConfigPayload(
+        posting_defaults=PostingDefaults(),
+        team_expense_posting=TeamExpensePostingDefaults(
+            default_advance_parent_ledger="Staff Advance",
+            settlement_account="Bank Account",
+        ),
+        chart_of_accounts=[
+            ChartOfAccountEntry(code="1000", name="Bank Account", type="Asset"),
+            ChartOfAccountEntry(
+                code="1300",
+                name="Staff Advance",
+                type="Asset",
+                sub_ledgers=[employee_child],
+            ),
+            ChartOfAccountEntry(code="1400", name="Tax Paid", type="Asset"),
+            ChartOfAccountEntry(code="2000", name="Accounts Payable", type="Liability"),
+            ChartOfAccountEntry(code="6100", name="Travel Expense", type="Expense"),
+        ],
+    )
+
+
+def _employee_mapping(config: RuleBookConfigPayload) -> AccountMapping:
+    mapping = resolve_party_child_mapping(
+        config,
+        parent_ledger_name="Staff Advance",
+        slug=EMPLOYEE_SLUG,
+    )
+    assert mapping is not None
+    return mapping
+
+
+def _invoice(kind: str | None) -> Invoice:
+    return Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        invoice_date=date(2026, 4, 2),
+        subtotal=Decimal("1000"),
+        gst=Decimal("100"),
+        total=Decimal("1100"),
+        status=InvoiceStatus.JOURNALING,
+        currency="AUD",
+        route_target=ROUTE_TEAM,
+        team_expense_kind=kind,
+    )
+
+
+def test_advance_requisition_debits_employee_child_and_credits_settlement() -> None:
+    config = _config()
+    lines = generate_entries(
+        _invoice("advance_requisition"),
+        AccountMapping("6100", "Travel Expense"),
+        config=config,
+        control_mapping=_employee_mapping(config),
+    )
+
+    assert is_balanced(lines)
+    assert len(lines) == 2
+    debit, credit = lines
+    assert debit.entry_type == EntryType.DEBIT
+    assert debit.account_name == "Marcus Webb"
+    assert debit.debit == Decimal("1100")
+    assert credit.account_name == "Bank Account"
+    assert credit.credit == Decimal("1100")
+
+
+def test_expense_against_advance_credits_employee_child() -> None:
+    config = _config()
+    lines = generate_entries(
+        _invoice("expense_against_advance"),
+        AccountMapping("6100", "Travel Expense"),
+        config=config,
+        control_mapping=_employee_mapping(config),
+    )
+
+    assert is_balanced(lines)
+    assert [ln.account_name for ln in lines] == ["Travel Expense", "Tax Paid", "Marcus Webb"]
+    assert lines[0].debit == Decimal("1000")
+    assert lines[1].debit == Decimal("100")
+    assert lines[2].credit == Decimal("1100")
+
+
+def test_expense_claim_credits_settlement_not_payable() -> None:
+    config = _config()
+    lines = generate_entries(
+        _invoice("expense_claim"),
+        AccountMapping("6100", "Travel Expense"),
+        config=config,
+        control_mapping=_employee_mapping(config),
+    )
+
+    assert is_balanced(lines)
+    credits = [ln for ln in lines if ln.credit > 0]
+    assert len(credits) == 1
+    assert credits[0].account_name == "Bank Account"
+    assert all(ln.account_name != "Accounts Payable" for ln in lines)
+
+
+def test_missing_kind_defaults_to_expense_claim() -> None:
+    config = _config()
+    lines = generate_entries(
+        _invoice(None),
+        AccountMapping("6100", "Travel Expense"),
+        config=config,
+        control_mapping=_employee_mapping(config),
+    )
+    claim_lines = generate_entries(
+        _invoice("expense_claim"),
+        AccountMapping("6100", "Travel Expense"),
+        config=config,
+        control_mapping=_employee_mapping(config),
+    )
+
+    assert [(ln.account_name, ln.debit, ln.credit) for ln in lines] == [
+        (ln.account_name, ln.debit, ln.credit) for ln in claim_lines
+    ]
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (None, "expense_claim"),
+        ("", "expense_claim"),
+        ("nonsense", "expense_claim"),
+        ("Advance_Requisition", "advance_requisition"),
+        ("expense_against_advance", "expense_against_advance"),
+    ],
+)
+def test_normalize_team_expense_kind(value: str | None, expected: str) -> None:
+    assert normalize_team_expense_kind(value) == expected
+
+
+def test_advance_requisition_posts_gross_without_tax_line() -> None:
+    config = _config()
+    lines = generate_entries(
+        _invoice("advance_requisition"),
+        AccountMapping("6100", "Travel Expense"),
+        config=config,
+        control_mapping=_employee_mapping(config),
+    )
+    assert all(ln.account_name != "Tax Paid" for ln in lines)
+
+
+def test_control_account_gate_ignores_payable_for_team_expenses() -> None:
+    config = _config()
+    config.posting_defaults.payable_account = "Nonexistent Payable"
+    unresolved = get_unresolved_control_accounts(
+        invoice=_invoice("expense_claim"),
+        config=config,
+    )
+    assert unresolved == []
+
+
+def test_control_account_gate_flags_missing_staff_advance() -> None:
+    config = _config()
+    config.team_expense_posting.default_advance_parent_ledger = "Missing Advance"
+    unresolved = get_unresolved_control_accounts(
+        invoice=_invoice("advance_requisition"),
+        config=config,
+    )
+    assert unresolved == ["staff_advance_account"]

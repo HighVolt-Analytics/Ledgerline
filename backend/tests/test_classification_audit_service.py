@@ -113,3 +113,40 @@ def test_merge_uses_document_classified_when_present() -> None:
     )
     assert merged["policy_winner_dt"] == "DT-03"
     assert merged["compare_passed"] is True
+
+
+def test_merge_vision_map_sets_confirmed_and_live_invoice_wins() -> None:
+    invoice = SimpleNamespace(
+        llm_suggested_dt="DT-10",
+        llm_confidence=1.0,
+        document_type_code="DT-10",
+        document_type_confidence=0.92,
+    )
+    merged = merge_classification_audit_detail(
+        invoice=invoice,
+        logs=[
+            _log(
+                "vision_document_type_mapped",
+                {
+                    "code": "DT-10",
+                    "method": "llm_catalogue_fallback",
+                    "confidence": 1.0,
+                    "llm_reasoning": "Against advance form.",
+                },
+                offset=3,
+            ),
+            _log(
+                "document_classified",
+                {
+                    "llm_suggested_dt": "DT-08",
+                    "confirmed_dt": "DT-08",
+                    "document_type_code": "DT-08",
+                    "compare_passed": True,
+                },
+                offset=1,
+            ),
+        ],
+    )
+    assert merged["llm_suggested_dt"] == "DT-10"
+    assert merged["confirmed_dt"] == "DT-10"
+    assert merged["document_type_code"] == "DT-10"

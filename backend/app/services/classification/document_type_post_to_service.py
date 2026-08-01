@@ -34,7 +34,14 @@ _CONTROL_LEDGER_NAME = re.compile(
 def document_type_requires_post_to(definition: DocumentTypeDefinition | None) -> bool:
     if definition is None or not definition.enabled:
         return False
-    return (definition.posting or "").strip().lower() != "no"
+    if (definition.posting or "").strip().lower() == "no":
+        return False
+    # Advance requisitions journal Dr employee advance / Cr settlement — the
+    # expense Post to ledger is not used and must not be required.
+    kind = (getattr(definition, "team_expense_kind", "") or "").strip().lower()
+    if kind == "advance_requisition":
+        return False
+    return True
 
 
 def ledger_exists_in_coa(ledger: str, accounts: Sequence[ChartOfAccountEntry]) -> bool:
