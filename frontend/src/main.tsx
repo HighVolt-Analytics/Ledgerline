@@ -11,7 +11,9 @@ import { startOpenReplay } from "@/third-party/sessionRecorder/OpenReplay/OpenRe
 import "./index.css";
 
 normalizeBareBasenameUrl();
-void startOpenReplay();
+void startOpenReplay().catch(() => {
+  // startOpenReplay already logs; never let a rejection tear down bootstrap.
+});
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

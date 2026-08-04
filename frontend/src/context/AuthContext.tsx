@@ -101,11 +101,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (user?.email) {
       identifyOpenReplayUser(user.email, {
         user_id: String(user.id),
+        customer_id: user.tenant_id,
         tenant_id: user.tenant_id,
+        tenant_name: user.tenant_name,
         role: user.role,
       });
     }
-  }, [user?.id, user?.email, user?.tenant_id, user?.role]);
+  }, [user?.id, user?.email, user?.tenant_id, user?.tenant_name, user?.role]);
 
   const applySession = useCallback(
     (
