@@ -96,11 +96,27 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with factory() as session:
+        from app.currency_catalog import CURRENCY_SEEDS
+        from app.models.currency import Currency
+
+        for row in CURRENCY_SEEDS:
+            session.add(
+                Currency(
+                    code=row["code"],
+                    name=row["name"],
+                    symbol=row["symbol"],
+                    decimal_places=row["decimal_places"],
+                    is_active=True,
+                )
+            )
+        await session.flush()
+
         session.add(
             Tenant(
                 id=TESTING_TENANT_UUID,
                 name="High Volt Analytics",
                 slug="hv-org",
+                currency="AUD",
                 settings_json={"country": "AU"},
             )
         )

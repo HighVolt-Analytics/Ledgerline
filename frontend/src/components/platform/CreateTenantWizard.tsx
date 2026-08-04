@@ -4,7 +4,8 @@ import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { api } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { COUNTRIES, INDUSTRIES, SelectField, type Industry } from "@/data/orgSetup.tsx";
+import { INDUSTRIES, SelectField, type Industry } from "@/data/orgSetup.tsx";
+import { useSetupCatalogs } from "@/hooks/useSetupCatalogs";
 
 type CreateTenantWizardProps = {
   open: boolean;
@@ -24,11 +25,14 @@ function slugify(name: string): string {
 const STEPS = ["Organisation", "First admin", "Review"] as const;
 
 export function CreateTenantWizard({ open, onClose, onCreated }: CreateTenantWizardProps) {
+  const { countries, currencies } = useSetupCatalogs();
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [slugTouched, setSlugTouched] = useState(false);
   const [country, setCountry] = useState("SG");
+  const [currency, setCurrency] = useState("SGD");
+  const [currencyTouched, setCurrencyTouched] = useState(false);
   const [industry, setIndustry] = useState<Industry>("Hospitality");
   const [adminName, setAdminName] = useState("");
   const [adminEmail, setAdminEmail] = useState("");
@@ -42,6 +46,8 @@ export function CreateTenantWizard({ open, onClose, onCreated }: CreateTenantWiz
     setSlug("");
     setSlugTouched(false);
     setCountry("SG");
+    setCurrency("SGD");
+    setCurrencyTouched(false);
     setIndustry("Hospitality");
     setAdminName("");
     setAdminEmail("");
@@ -63,10 +69,20 @@ export function CreateTenantWizard({ open, onClose, onCreated }: CreateTenantWiz
 
   if (!open) return null;
 
+  const currencyAllow = new Set(currencies.map((c) => c.code));
+  const countryLabel = countries.find((c) => c.code === country)?.name ?? country;
+  const currencyMeta =
+    currencies.find((c) => c.code === currency) ??
+    currencies[0] ?? { code: currency, symbol: "", name: currency };
+
   function validateStep(current: number): string | null {
     if (current === 0) {
       if (!name.trim()) return "Client name is required.";
       if (!slug.trim()) return "Slug is required.";
+      if (!currency.trim()) return "Select a currency.";
+      if (!currencyAllow.has(currency.trim().toUpperCase())) {
+        return "Select a supported currency.";
+      }
       return null;
     }
     if (current === 1) {
@@ -110,6 +126,7 @@ export function CreateTenantWizard({ open, onClose, onCreated }: CreateTenantWiz
         name: name.trim(),
         slug: slug.trim().toLowerCase(),
         country,
+        currency,
         industry,
         first_admin_email: adminEmail.trim(),
         first_admin_name: adminName.trim(),
@@ -122,8 +139,6 @@ export function CreateTenantWizard({ open, onClose, onCreated }: CreateTenantWiz
       setBusy(false);
     }
   }
-
-  const countryLabel = COUNTRIES.find((c) => c.code === country)?.name ?? country;
 
   return createPortal(
     <div className="app-modal-root" role="presentation">
@@ -208,10 +223,37 @@ export function CreateTenantWizard({ open, onClose, onCreated }: CreateTenantWiz
               <label className="text-sm font-medium">Country</label>
               <SelectField
                 value={country}
-                onChange={setCountry}
-                options={COUNTRIES.map((c) => ({ value: c.code, label: c.name }))}
+                onChange={(code) => {
+                  setCountry(code);
+                  if (!currencyTouched) {
+                    const match = countries.find((c) => c.code === code);
+                    setCurrency(match?.defaultCurrency || currency);
+                  }
+                }}
+                options={countries.map((c) => ({ value: c.code, label: c.name }))}
                 testId="select-country"
+                searchable
               />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Currency</label>
+              <SelectField
+                value={currency}
+                onChange={(code) => {
+                  setCurrencyTouched(true);
+                  setCurrency(code);
+                }}
+                options={currencies.map((c) => ({
+                  value: c.code,
+                  label: `${c.code}${c.symbol ? ` (${c.symbol})` : ""}`,
+                }))}
+                testId="select-currency"
+                searchable
+              />
+              <p className="text-xs text-muted-foreground tnum">
+                {currencyMeta.code}
+                {currencyMeta.symbol ? ` ${currencyMeta.symbol}` : ""} — books / reporting currency
+              </p>
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium">Industry</label>
@@ -273,6 +315,13 @@ export function CreateTenantWizard({ open, onClose, onCreated }: CreateTenantWiz
             <div className="flex justify-between gap-4">
               <span className="text-muted-foreground">Country</span>
               <span>{countryLabel}</span>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span className="text-muted-foreground">Currency</span>
+              <span>
+                {currencyMeta.code}
+                {currencyMeta.symbol ? ` (${currencyMeta.symbol})` : ""}
+              </span>
             </div>
             <div className="flex justify-between gap-4">
               <span className="text-muted-foreground">Industry</span>

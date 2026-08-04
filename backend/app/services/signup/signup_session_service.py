@@ -33,6 +33,7 @@ class SignupSession:
     organization_name: str | None = None
     organization_slug: str | None = None
     country: str | None = None
+    currency: str | None = None
     industry: str | None = None
     phone: str | None = None
     plan: str | None = None
@@ -51,6 +52,7 @@ class SignupSession:
             "organization_name": self.organization_name,
             "organization_slug": self.organization_slug,
             "country": self.country,
+            "currency": self.currency,
             "industry": self.industry,
             "phone": self.phone,
             "plan": self.plan,
@@ -71,6 +73,7 @@ class SignupSession:
             organization_name=data.get("organization_name"),
             organization_slug=data.get("organization_slug"),
             country=data.get("country"),
+            currency=data.get("currency"),
             industry=data.get("industry"),
             phone=data.get("phone"),
             plan=data.get("plan"),

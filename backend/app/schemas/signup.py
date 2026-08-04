@@ -16,6 +16,7 @@ class SignupVerifyOtpRequest(BaseModel):
 class SignupOrganizationRequest(BaseModel):
     organization_name: str = Field(min_length=1, max_length=255)
     country: str = Field(min_length=2, max_length=2)
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
     industry: str | None = Field(default=None, max_length=64)
     phone: str | None = Field(default=None, max_length=32)
 
@@ -44,6 +45,7 @@ class SignupSessionInfo(BaseModel):
     status: str
     organization_name: str | None = None
     country: str | None = None
+    currency: str | None = None
     industry: str | None = None
     phone: str | None = None
     plan: str | None = None

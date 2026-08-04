@@ -20,19 +20,25 @@ from app.tenant_roles import (
 from app.models.user import UserRole
 
 
-def test_normalize_legacy_member_to_approver() -> None:
-    assert normalize_tenant_role("member") == TenantRole.APPROVER
+def test_normalize_legacy_member_to_functional_manager() -> None:
+    assert normalize_tenant_role("member") == TenantRole.FUNCTIONAL_MANAGER
+    assert normalize_tenant_role("approver") == TenantRole.FUNCTIONAL_MANAGER
+    assert normalize_tenant_role("viewer") == TenantRole.USER
 
 
 @pytest.mark.parametrize(
     ("slug", "matrix_row"),
     [
         ("admin", "Admin"),
-        ("approver", "Approver"),
+        ("functional_manager", "Functional manager"),
+        ("functional_supervisor", "Functional supervisor"),
+        ("finance_head", "Finance head"),
         ("bookkeeper", "Bookkeeper"),
-        ("viewer", "Viewer"),
         ("auditor", "Auditor"),
-        ("member", "Approver"),
+        ("user", "User"),
+        ("approver", "Functional manager"),
+        ("viewer", "User"),
+        ("member", "Functional manager"),
     ],
 )
 def test_matrix_row_for_all_roles(slug: str, matrix_row: str) -> None:
@@ -57,11 +63,17 @@ def test_bookkeeper_cannot_approve_with_default_matrix() -> None:
     assert user_has_privilege(ctx, "Approve") is False
 
 
-def test_viewer_cannot_comment_with_default_matrix() -> None:
-    perms = permissions_for_role(TESTING_TENANT_UUID, "viewer")
+def test_user_cannot_comment_with_default_matrix() -> None:
+    perms = permissions_for_role(TESTING_TENANT_UUID, "user")
     assert perms["View"] is True
     assert perms["Comment"] is False
 
 
-def test_unknown_role_defaults_to_viewer_matrix_row() -> None:
-    assert matrix_row_for_role("unknown-role") == "Viewer"
+def test_functional_supervisor_cannot_post_with_default_matrix() -> None:
+    perms = permissions_for_role(TESTING_TENANT_UUID, "functional_supervisor")
+    assert perms["Approve"] is True
+    assert perms["Post"] is False
+
+
+def test_unknown_role_defaults_to_user_matrix_row() -> None:
+    assert matrix_row_for_role("unknown-role") == "User"

@@ -41,7 +41,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { documentDisplayRef, normalizeCurrencyCode, vendorInvoiceNo } from "@/lib/format";
-import { COUNTRIES } from "@/lib/settingsData";
+import { CURRENCIES } from "@/lib/settingsData";
 import { fetchDossierById, type DossierSummaryWithInvoiceId } from "@/lib/dossierApi";
 import {
   additionalExtractedFieldKeys,
@@ -349,9 +349,9 @@ const INVOICE_CURRENCY_OPTIONS = Array.from(
   new Map(
     [
       ...COMMON_CURRENCY_OPTIONS,
-      ...COUNTRIES.map((country) => ({
-        value: country.currency,
-        label: `${country.currency} (${country.symbol})`,
+      ...CURRENCIES.map((currency) => ({
+        value: currency.code,
+        label: `${currency.code} (${currency.symbol})`,
       })),
     ].map((option) => [option.value, option])
   ).values()

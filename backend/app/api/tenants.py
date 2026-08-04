@@ -3,10 +3,11 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, get_auth_context, get_db, require_admin, require_super_admin
+from app.models.invoice import Invoice
 from app.models.tenant import Tenant
 from app.schemas.common import ApiEnvelope
 from app.schemas.institution_settings import (
@@ -29,6 +30,7 @@ from app.schemas.setup_checklist import SetupChecklistStateResponse
 from app.services.tenant.tenant_setup_checklist_service import build_setup_checklist_state
 from app.jurisdiction.packs import jurisdiction_api_view, tenant_jurisdiction
 from app.tenant_settings import (
+    DEFAULT_CURRENCY,
     default_institution_settings,
     institution_settings_view,
     merge_institution_settings,
@@ -37,6 +39,7 @@ from app.tenant_settings import (
     tenant_currency,
     tenant_industry,
     tenant_onboarding_completed,
+    UnsupportedCurrencyError,
 )
 
 router = APIRouter(prefix="/tenants", tags=["tenants"])
@@ -81,7 +84,12 @@ async def create_tenant(
     if taken:
         raise HTTPException(409, f"Tenant slug '{slug}' is already taken")
 
-    tenant = Tenant(name=body.name.strip(), slug=slug, settings_json=default_institution_settings())
+    tenant = Tenant(
+        name=body.name.strip(),
+        slug=slug,
+        currency=DEFAULT_CURRENCY,
+        settings_json=default_institution_settings(),
+    )
     db.add(tenant)
     await db.flush()
     await ensure_membership(db, user_id=ctx.user_id, tenant_id=tenant.id, role="admin")
@@ -92,10 +100,24 @@ async def create_tenant(
     )
 
 
-def _institution_response(tenant: Tenant) -> InstitutionSettingsResponse:
+def _institution_response(tenant: Tenant, *, has_ledger_activity: bool = False) -> InstitutionSettingsResponse:
     view = institution_settings_view(tenant)
     juris = jurisdiction_api_view(tenant_jurisdiction(tenant))
-    return InstitutionSettingsResponse(name=tenant.name, **view, **juris)
+    return InstitutionSettingsResponse(
+        name=tenant.name,
+        **view,
+        **juris,
+        has_ledger_activity=has_ledger_activity,
+    )
+
+
+async def _tenant_has_ledger_activity(db: AsyncSession, tenant_id: uuid.UUID) -> bool:
+    count = (
+        await db.execute(
+            select(func.count()).select_from(Invoice).where(Invoice.tenant_id == tenant_id)
+        )
+    ).scalar_one()
+    return int(count or 0) > 0
 
 
 @router.get("/current/institution", response_model=ApiEnvelope[InstitutionSettingsResponse])
@@ -106,7 +128,8 @@ async def get_institution_settings(
     tenant = await db.get(Tenant, ctx.tenant_id)
     if not tenant:
         raise HTTPException(404, "Tenant not found")
-    return ApiEnvelope(data=_institution_response(tenant))
+    has_activity = await _tenant_has_ledger_activity(db, tenant.id)
+    return ApiEnvelope(data=_institution_response(tenant, has_ledger_activity=has_activity))
 
 
 def _onboarding_steps(*, completed: bool, has_industry: bool) -> list[str]:
@@ -240,6 +263,7 @@ async def update_institution_settings(
     if (
         body.name is None
         and body.country is None
+        and body.currency is None
         and body.timezone is None
         and body.locale is None
         and body.custom_bundle_field_key is None
@@ -257,16 +281,26 @@ async def update_institution_settings(
             updated_by_user_id=ctx.user_id,
         )
 
-    tenant.settings_json = merge_institution_settings(
-        tenant.settings_json,
-        country=body.country,
-        timezone=body.timezone,
-        locale=body.locale,
-        custom_bundle_field_key=body.custom_bundle_field_key,
-    )
+    try:
+        tenant.settings_json = merge_institution_settings(
+            tenant.settings_json,
+            country=body.country,
+            timezone=body.timezone,
+            locale=body.locale,
+            custom_bundle_field_key=body.custom_bundle_field_key,
+            currency=body.currency,
+        )
+        if body.currency is not None and str(body.currency).strip():
+            from app.services.shared.currency_catalog_service import ensure_currency_row
+
+            tenant.currency = await ensure_currency_row(db, body.currency)
+    except UnsupportedCurrencyError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
     await db.commit()
     await db.refresh(tenant)
-    return ApiEnvelope(data=_institution_response(tenant))
+    has_activity = await _tenant_has_ledger_activity(db, tenant.id)
+    return ApiEnvelope(data=_institution_response(tenant, has_ledger_activity=has_activity))
 
 
 @router.get("/current/setup-checklist", response_model=ApiEnvelope[SetupChecklistStateResponse])

@@ -88,7 +88,7 @@ describe("tenant-scoped request guards", () => {
           envelope({
             email: "invitee@example.com",
             full_name: "Invitee",
-            role: "viewer",
+            role: "user",
             tenant_name: "Acme",
             tenant_slug: "acme",
             expired: false,

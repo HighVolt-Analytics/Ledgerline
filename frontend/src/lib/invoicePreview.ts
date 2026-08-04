@@ -1379,6 +1379,9 @@ type JurisdictionTaxSource =
 
 type DocumentTaxAmounts = {
   currency?: string | null;
+  /** Tenant / document tax jurisdiction — preferred over currency for tax label. */
+  country?: string | null;
+  tax_label?: string | null;
   gst_rate?: string | number | null;
   subtotal?: string | number | null;
   gst?: string | number | null;
@@ -1440,18 +1443,20 @@ export function taxMetaForJurisdiction(countryOrInstitution: JurisdictionTaxSour
   return { label: match.taxLabel, rate: null };
 }
 
-/** Thin currency→country lookup for tax label only (no assumed rate). */
-export function taxMetaForCurrency(currency: string): TaxMeta {
-  const code = String(currency ?? "").trim().toUpperCase();
-  if (!code) return { label: "Tax", rate: null };
-  const match = COUNTRIES.find((c) => c.currency === code);
-  if (!match) return { label: "Tax", rate: null };
-  return taxMetaForJurisdiction(match.code);
+/**
+ * @deprecated Do not derive tax jurisdiction from books currency.
+ * Prefer taxMetaForJurisdiction(country) / invoiceTaxMeta with country or tax_label.
+ */
+export function taxMetaForCurrency(_currency: string): TaxMeta {
+  return { label: "Tax", rate: null };
 }
 
-/** Label from jurisdiction/currency + rate from the document (extract or calculate). */
+/** Label from jurisdiction when provided; rate from the document (extract or calculate). */
 export function invoiceTaxMeta(amounts: DocumentTaxAmounts): TaxMeta {
-  const { label } = taxMetaForCurrency(String(amounts.currency ?? ""));
+  const fromJurisdiction =
+    amounts.tax_label?.trim() ||
+    (amounts.country ? taxMetaForJurisdiction(amounts.country).label : "");
+  const label = fromJurisdiction || "Tax";
   return { label, rate: resolveDocumentTaxRatePercent(amounts) };
 }
 

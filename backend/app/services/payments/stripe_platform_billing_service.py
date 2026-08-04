@@ -48,7 +48,7 @@ from app.services.payments.stripe_service import StripeServiceError
 from app.services.rule_book.rule_book_config_repository import ensure_default_config
 from app.services.tenant.platform_service import _seed_modules
 from app.tenant_rls import apply_platform_lookup_session, clear_platform_lookup_session, apply_rls_session_context
-from app.tenant_settings import build_tenant_settings, tenant_country
+from app.tenant_settings import build_tenant_settings, resolve_books_currency, tenant_country
 from app.services.shared.public_app_url import build_oauth_frontend_path, build_public_app_path
 from app.tenant_roles import TenantRole
 from app.utils.logger import get_logger
@@ -317,16 +317,21 @@ async def _create_self_serve_tenant(
 ) -> Tenant:
     base_slug = (slug or _slugify_org(organisation_name)).strip()
     resolved_slug = await _unique_slug(session, base_slug)
+    from app.services.shared.currency_catalog_service import ensure_currency_row
+
+    books_currency = await ensure_currency_row(session, resolve_books_currency(country, None))
     tenant = Tenant(
         name=organisation_name.strip(),
         slug=resolved_slug,
         is_active=True,
         is_platform=False,
         lifecycle_status="active",
+        currency=books_currency,
         settings_json=build_tenant_settings(
             country=country,
             industry=industry,
             onboarding_completed=onboarding_completed,
+            currency=books_currency,
         ),
     )
     session.add(tenant)

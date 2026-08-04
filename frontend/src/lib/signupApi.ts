@@ -11,6 +11,7 @@ export type SignupSessionInfo = {
   status: string;
   organization_name?: string | null;
   country?: string | null;
+  currency?: string | null;
   industry?: string | null;
   phone?: string | null;
   plan?: string | null;
@@ -110,6 +111,7 @@ export async function signupSetOrganization(
   signupToken: string,
   organizationName: string,
   country: string,
+  currency: string,
   industry?: string,
   phone?: string
 ): Promise<SignupSessionInfo> {
@@ -119,6 +121,7 @@ export async function signupSetOrganization(
     body: JSON.stringify({
       organization_name: organizationName,
       country,
+      currency,
       industry: industry?.trim() || undefined,
       phone: phone?.trim() || undefined,
     }),

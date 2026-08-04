@@ -123,7 +123,7 @@ async def test_admin_revokes_pending_invite(
         json={
             "email": f"revoke-me@{INVITE_DOMAIN}",
             "full_name": "Revoke Me",
-            "role": "viewer",
+            "role": "user",
         },
     )
     assert invited.status_code == 200, invited.text
@@ -143,7 +143,7 @@ async def test_admin_revokes_pending_invite(
 
 
 @pytest.mark.asyncio
-async def test_viewer_cannot_invite(
+async def test_user_cannot_invite(
     client: AsyncClient,
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
@@ -154,10 +154,10 @@ async def test_viewer_cannot_invite(
     viewer = await _seed_user(
         db_session,
         email="viewer-members@test.com",
-        role="viewer",
-        full_name="Viewer User",
+        role="user",
+        full_name="User Role",
     )
-    headers = _headers(_token_for(viewer, role="viewer"))
+    headers = _headers(_token_for(viewer, role="user"))
 
     res = await client.post(
         "/api/tenants/current/members/invite",
@@ -165,7 +165,7 @@ async def test_viewer_cannot_invite(
         json={
             "email": f"blocked@{INVITE_DOMAIN}",
             "full_name": "Blocked",
-            "role": "viewer",
+            "role": "user",
         },
     )
     assert res.status_code == 403
@@ -182,18 +182,17 @@ async def test_last_admin_cannot_be_demoted(
     monkeypatch.setenv("AUTH_REQUIRED", "true")
     get_settings.cache_clear()
 
-    admin = await _seed_user(
-        db_session,
-        email="sole-admin@test.com",
-        role="admin",
-        full_name="Sole Admin",
-    )
-    headers = _headers(_token_for(admin, role="admin"))
+    # client fixture already seeds the sole tenant admin
+    listed = await client.get("/api/tenants/current/members")
+    assert listed.status_code == 200
+    members = listed.json()["data"]["members"]
+    admins = [m for m in members if m["role"] == "admin"]
+    assert len(admins) == 1
+    admin_id = admins[0]["user_id"]
 
     res = await client.patch(
-        f"/api/tenants/current/members/{admin.id}",
-        headers=headers,
-        json={"role": "viewer"},
+        f"/api/tenants/current/members/{admin_id}",
+        json={"role": "user"},
     )
     assert res.status_code == 400
 
@@ -299,7 +298,7 @@ async def test_invite_preview_uses_platform_lookup_session(
         json={
             "email": f"lookup-preview@{INVITE_DOMAIN}",
             "full_name": "Lookup Preview",
-            "role": "viewer",
+            "role": "user",
         },
     )
     assert invited.status_code == 200, invited.text

@@ -1,30 +1,36 @@
 export const TENANT_ROLES = [
   "admin",
-  "approver",
+  "functional_manager",
+  "functional_supervisor",
+  "finance_head",
   "bookkeeper",
-  "viewer",
   "auditor",
+  "user",
 ] as const;
 
 export type TenantRoleSlug = (typeof TENANT_ROLES)[number];
 
 const LABELS: Record<TenantRoleSlug, string> = {
   admin: "Admin",
-  approver: "Approver",
+  functional_manager: "Functional manager",
+  functional_supervisor: "Functional supervisor",
+  finance_head: "Finance head",
   bookkeeper: "Bookkeeper",
-  viewer: "Viewer",
   auditor: "Auditor",
+  user: "User",
 };
 
 const LEGACY: Record<string, TenantRoleSlug> = {
-  member: "approver",
+  member: "functional_manager",
+  approver: "functional_manager",
+  viewer: "user",
 };
 
 export function normalizeTenantRoleSlug(raw: string | undefined | null): TenantRoleSlug {
   const slug = (raw ?? "").trim().toLowerCase();
   if (slug in LABELS) return slug as TenantRoleSlug;
   if (slug in LEGACY) return LEGACY[slug];
-  return "viewer";
+  return "user";
 }
 
 export function formatTenantRole(raw: string | undefined | null): string {

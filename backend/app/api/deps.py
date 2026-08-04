@@ -1,12 +1,11 @@
 import uuid
-from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
-from fastapi import Depends, HTTPException, Request, Response
+from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.config import get_settings
 from app.database import get_db, get_preauth_db
@@ -58,14 +57,30 @@ class AuthContext:
     tenant: Tenant | None = None
 
 
-class CorrelationIdMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        cid = request.headers.get("X-Correlation-ID") or str(uuid.uuid4())
+class CorrelationIdMiddleware:
+    """Pure ASGI middleware — avoids Starlette BaseHTTPMiddleware deadlocks under load."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
+        cid = headers.get("x-correlation-id") or str(uuid.uuid4())
         token = correlation_id_ctx.set(cid)
+
+        async def send_with_correlation(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                raw_headers = list(message.get("headers") or [])
+                raw_headers.append((b"x-correlation-id", cid.encode("latin-1")))
+                message = {**message, "headers": raw_headers}
+            await send(message)
+
         try:
-            response = await call_next(request)
-            response.headers["X-Correlation-ID"] = cid
-            return response
+            await self.app(scope, receive, send_with_correlation)
         finally:
             correlation_id_ctx.reset(token)
 

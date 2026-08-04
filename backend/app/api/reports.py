@@ -3,7 +3,7 @@
 from datetime import date
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +19,11 @@ from app.schemas.reports_api import (
 )
 from app.schemas.subledger import SubledgerBalancesResponse
 from app.schemas.subledger_api import SubledgerBalancesRequest
+from app.schemas.team_expense_reports import (
+    EmployeeAdvanceSettlementRow,
+    EmployeeBudgetUtilizationRow,
+    EmployeeExpenseSummaryRow,
+)
 from app.services.reports.documents_bundle_export_service import (
     build_documents_bundle_export,
 )
@@ -29,6 +34,12 @@ from app.services.reports.reports_workbook_service import (
     upload_workbook_blob,
     workbook_path,
 )
+from app.services.reports.team_expense_reports_service import (
+    build_advance_settlement_rows,
+    build_budget_utilization_rows,
+    build_employee_expense_summary_rows,
+)
+from app.services.reports.team_expense_reports_excel import build_team_expense_excel_export
 from app.services.reports.workbook_writer import write_workbook
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -139,6 +150,98 @@ async def reports_ar_balances(
             limit=params.limit,
             offset=params.offset,
         )
+    )
+
+
+@router.get(
+    "/team-expenses/advance-settlement",
+    response_model=ApiEnvelope[list[EmployeeAdvanceSettlementRow]],
+)
+async def reports_team_expense_advance_settlement(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[list[EmployeeAdvanceSettlementRow]]:
+    """Employee advance ledger, pending against-advance, and available float."""
+    rows = await build_advance_settlement_rows(db, ctx.tenant_id)
+    return ApiEnvelope(data=rows)
+
+
+@router.get(
+    "/team-expenses/budget-utilization",
+    response_model=ApiEnvelope[list[EmployeeBudgetUtilizationRow]],
+)
+async def reports_team_expense_budget_utilization(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[list[EmployeeBudgetUtilizationRow]]:
+    """Employee budget caps vs MTD/QTD/YTD claim spend counters."""
+    rows = await build_budget_utilization_rows(db, ctx.tenant_id)
+    return ApiEnvelope(data=rows)
+
+
+@router.get(
+    "/team-expenses/expense-summary",
+    response_model=ApiEnvelope[list[EmployeeExpenseSummaryRow]],
+)
+async def reports_team_expense_expense_summary(
+    date_from: Annotated[
+        date | None, Query(description="Inclusive start of invoice date range")
+    ] = None,
+    date_to: Annotated[
+        date | None, Query(description="Inclusive end of invoice date range")
+    ] = None,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[list[EmployeeExpenseSummaryRow]]:
+    """Team expense documents with employee, line item, ledger, and status."""
+    params = ReportsDocumentsRequest(date_from=date_from, date_to=date_to)
+    try:
+        rows = await build_employee_expense_summary_rows(
+            db,
+            ctx.tenant_id,
+            date_from=params.date_from,
+            date_to=params.date_to,
+        )
+    except ValueError as exc:
+        raise http_bad_request(exc) from exc
+    return ApiEnvelope(data=rows)
+
+
+@router.get("/team-expenses/{report}/export")
+async def export_team_expense_report(
+    report: Annotated[
+        Literal["advance-settlement", "budget-utilization", "expense-summary"],
+        Path(description="Which team expense report workbook to build"),
+    ],
+    date_from: Annotated[
+        date | None, Query(description="Inclusive start of invoice date range")
+    ] = None,
+    date_to: Annotated[
+        date | None, Query(description="Inclusive end of invoice date range")
+    ] = None,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> Response:
+    """Download a styled Excel workbook for one Team Expense report."""
+    try:
+        payload = await build_team_expense_excel_export(
+            db,
+            ctx.tenant_id,
+            report=report,
+            tenant_slug=ctx.tenant_slug or "tenant",
+            date_from=date_from,
+            date_to=date_to,
+        )
+    except ValueError as exc:
+        raise http_bad_request(exc) from exc
+
+    return Response(
+        content=payload.xlsx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="{payload.filename}"',
+            "X-Data-Rows": str(payload.data_rows),
+        },
     )
 
 

@@ -36,7 +36,7 @@ from app.services.credit_service import (
     tenant_azure_cost_total_usd,
     tenant_credits_consumed,
 )
-from app.tenant_settings import tenant_country
+from app.tenant_settings import build_tenant_settings, resolve_books_currency, tenant_country
 from app.services.auth.membership_service import ensure_membership
 from app.services.rule_book.rule_book_config_io import _legacy_file_paths_for_tenant
 from app.services.rule_book.rule_book_config_repository import ensure_default_config
@@ -46,7 +46,6 @@ from app.services.tenant.tenant_members_service import (
     list_tenant_members,
 )
 from app.tenant_rls import apply_rls_session_context
-from app.tenant_settings import build_tenant_settings
 from app.schemas.platform import (
     CreatePlatformTenantRequest,
     DeletePlatformTenantRequest,
@@ -386,6 +385,12 @@ async def create_client_tenant(
         country=body.country,
         industry=body.industry,
         onboarding_completed=False,
+        currency=body.currency,
+    )
+    from app.services.shared.currency_catalog_service import ensure_currency_row
+
+    books_currency = await ensure_currency_row(
+        session, resolve_books_currency(body.country, body.currency)
     )
     tenant = Tenant(
         name=body.name.strip(),
@@ -393,6 +398,7 @@ async def create_client_tenant(
         is_active=True,
         is_platform=False,
         lifecycle_status="active",
+        currency=books_currency,
         settings_json=settings_json,
     )
     session.add(tenant)

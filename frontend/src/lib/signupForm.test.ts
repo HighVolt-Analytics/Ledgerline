@@ -23,6 +23,7 @@ const validFields = {
 const validStudioInput = buildSignupValidationInput(validFields, {
   industry: "Technology",
   countryCode: "SG",
+  currencyCode: "SGD",
   selectedPlan: "studio",
   platformBillingEnabled: true,
   billingPlansLoading: false,
@@ -76,6 +77,7 @@ describe("signupForm", () => {
         fields,
         industry: "Technology",
         countryCode: "SG",
+        currencyCode: "SGD",
         platformBillingEnabled: true,
         billingPlansLoading: false,
         busy: false,
@@ -93,11 +95,21 @@ describe("signupForm", () => {
         fields,
         industry: "Technology",
         countryCode: "SG",
+        currencyCode: "SGD",
         platformBillingEnabled: true,
         billingPlansLoading: false,
         busy: false,
       })
     ).toBeNull();
+  });
+
+  it("rejects missing currency", () => {
+    expect(
+      getSignupDisabledReason({
+        ...validStudioInput,
+        currencyCode: "",
+      })
+    ).toMatch(/currency/i);
   });
 
   it("uses signup wording for primary CTA labels", () => {

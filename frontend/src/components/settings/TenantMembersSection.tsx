@@ -22,7 +22,7 @@ function InviteMemberDialog({
 }) {
   const [email, setEmail] = useState("");
   const [fullName, setFullName] = useState("");
-  const [role, setRole] = useState("approver");
+  const [role, setRole] = useState("user");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{
@@ -35,7 +35,7 @@ function InviteMemberDialog({
     if (!open) {
       setEmail("");
       setFullName("");
-      setRole("approver");
+      setRole("user");
       setError(null);
       setResult(null);
     }

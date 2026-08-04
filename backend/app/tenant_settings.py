@@ -1,8 +1,9 @@
 """Institution (tenant) locale and timezone — stored in tenant.settings_json.
 
-Currency / timezone / locale per country come from jurisdiction pack JSON
-(see ``data/jurisdiction_packs.json``). Platform DEFAULT_* constants are
-SG/Singapore for schemas and empty-settings fallbacks.
+Currency / timezone / locale *suggestions* per country come from jurisdiction pack JSON
+(see ``data/jurisdiction_packs.json``) and ISO catalogs. Books currency is stored on
+``tenants.currency`` and is independent of country (tax jurisdiction). Platform
+DEFAULT_* constants are SG/Singapore for schemas and empty-settings fallbacks.
 """
 
 from __future__ import annotations
@@ -16,6 +17,15 @@ from app.models.tenant import Tenant
 DEFAULT_COUNTRY = "SG"
 DEFAULT_TIMEZONE = "Asia/Singapore"
 DEFAULT_LOCALE = "en-SG"
+DEFAULT_CURRENCY = "SGD"
+
+
+class UnsupportedCurrencyError(ValueError):
+    """Raised when a currency code is not a valid ISO 4217 code."""
+
+
+class UnsupportedCountryError(ValueError):
+    """Raised when a country code is not a valid ISO 3166-1 alpha-2 code."""
 
 
 def _country_defaults_from_packs() -> dict[str, dict[str, str]]:
@@ -30,7 +40,7 @@ def _country_currency_from_packs() -> dict[str, str]:
     return country_currency_map()
 
 
-# Populated from pack JSON at import — source of truth for currency/TZ/locale.
+# Pack-backed maps (rich tax jurisdictions). Full ISO defaults use iso_geo_catalog.
 COUNTRY_DEFAULTS: dict[str, dict[str, str]] = _country_defaults_from_packs()
 COUNTRY_CURRENCY: dict[str, str] = _country_currency_from_packs()
 
@@ -72,14 +82,49 @@ def tenant_country(tenant: Tenant | None) -> str:
 
 
 def country_currency(country_code: str) -> str:
-    code = (country_code or "").strip().upper()
-    currencies = COUNTRY_CURRENCY
-    if code in currencies:
-        return currencies[code]
-    return currencies.get(DEFAULT_COUNTRY, "SGD")
+    """Suggested default books currency for a country (not an enforced mapping)."""
+    from app.services.shared.iso_geo_catalog import default_currency_for_country
+
+    return default_currency_for_country(country_code)
+
+
+def validate_country_code(code: str | None) -> str:
+    """Normalize and whitelist against ISO 3166-1 alpha-2."""
+    from app.services.shared.iso_geo_catalog import is_iso3166_country
+
+    token = (code or "").strip().upper()
+    if not is_iso3166_country(token):
+        raise UnsupportedCountryError(f"Unsupported country: {code!r}")
+    return token
+
+
+def validate_currency_code(code: str | None) -> str:
+    """Normalize and whitelist against ISO 4217 (pycountry)."""
+    from app.services.shared.iso4217_catalog import is_iso4217_currency
+
+    token = (code or "").strip().upper()
+    if not is_iso4217_currency(token):
+        raise UnsupportedCurrencyError(f"Unsupported currency: {code!r}")
+    return token
+
+
+def resolve_books_currency(country: str, currency: str | None = None) -> str:
+    """Resolve books currency for create/update.
+
+    Explicit ``currency`` wins (after validation). If omitted, use the country's
+    suggested default for backward compatibility with older clients.
+    """
+    if currency is not None and str(currency).strip():
+        return validate_currency_code(currency)
+    return country_currency(country)
 
 
 def tenant_currency(tenant: Tenant | None) -> str:
+    """Tenant books / reporting currency from ``tenants.currency`` (column)."""
+    if tenant is not None:
+        raw = getattr(tenant, "currency", None)
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip().upper()
     return country_currency(tenant_country(tenant))
 
 
@@ -176,8 +221,14 @@ def build_tenant_settings(
     country: str = DEFAULT_COUNTRY,
     industry: str | None = None,
     onboarding_completed: bool = False,
+    currency: str | None = None,
 ) -> dict[str, Any]:
-    """Initial settings_json for a new client tenant."""
+    """Initial settings_json for a new client tenant.
+
+    ``currency`` is accepted for API symmetry but is *not* stored in settings_json;
+    callers must set ``tenant.currency`` via :func:`resolve_books_currency`.
+    """
+    _ = currency  # resolved at call sites onto tenants.currency
     settings = merge_institution_settings(None, country=country)
     if industry:
         settings["industry"] = industry.strip()
@@ -192,8 +243,16 @@ def merge_institution_settings(
     timezone: str | None = None,
     locale: str | None = None,
     custom_bundle_field_key: str | None = None,
+    currency: str | None = None,
 ) -> dict[str, Any]:
-    """Apply institution profile updates to settings_json."""
+    """Apply institution profile updates to settings_json.
+
+    ``currency`` is validated when provided but never written into settings_json;
+    callers persist it on ``tenants.currency``.
+    """
+    if currency is not None and str(currency).strip():
+        validate_currency_code(currency)
+
     out: dict[str, Any] = dict(current or {})
 
     if country is not None:

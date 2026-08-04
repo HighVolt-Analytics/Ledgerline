@@ -19,7 +19,7 @@ from app.services.rule_book.rule_book_config_repository import ensure_default_co
 from app.services.signup.signup_session_service import SignupSession
 from app.services.tenant.platform_service import _seed_modules
 from app.tenant_roles import TenantRole
-from app.tenant_settings import DEFAULT_COUNTRY, build_tenant_settings
+from app.tenant_settings import DEFAULT_COUNTRY, build_tenant_settings, resolve_books_currency
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -114,9 +114,16 @@ async def fulfill_signup_tenant(
     slug = await ensure_unique_tenant_slug(session, base_slug)
     plan = (signup.plan or PLAN_FREE).strip().lower()
 
+    country = (signup.country or DEFAULT_COUNTRY).strip().upper()
+    from app.services.shared.currency_catalog_service import ensure_currency_row
+
+    books_currency = await ensure_currency_row(
+        session, resolve_books_currency(country, signup.currency)
+    )
     settings_json = build_tenant_settings(
-        country=(signup.country or DEFAULT_COUNTRY).strip().upper(),
+        country=country,
         onboarding_completed=True,
+        currency=books_currency,
     )
     settings_json["setup_checklist_complete"] = False
 
@@ -126,6 +133,7 @@ async def fulfill_signup_tenant(
         is_active=True,
         is_platform=False,
         lifecycle_status="active",
+        currency=books_currency,
         settings_json=settings_json,
     )
     session.add(tenant)

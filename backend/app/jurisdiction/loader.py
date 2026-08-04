@@ -82,9 +82,13 @@ def _pack_from_dict(country: str, data: dict[str, Any]) -> JurisdictionPack:
     bank_routing_label = str(data.get("bank_routing_label") or "Bank code")
     match_cap = _decimal_or_none(data.get("match_cap_amount")) or Decimal("100")
     code = str(data.get("country") or country).strip().upper() or country
+    # default_currency is the UI suggestion only; keep dataclass attr as currency.
+    default_ccy = data.get("default_currency")
+    if default_ccy is None or str(default_ccy).strip() == "":
+        default_ccy = data.get("currency")
     return JurisdictionPack(
         country=code,
-        currency=str(data.get("currency") or "SGD").strip().upper() or "SGD",
+        currency=str(default_ccy or "SGD").strip().upper() or "SGD",
         timezone=str(data.get("timezone") or "Asia/Singapore"),
         locale=str(data.get("locale") or "en-SG"),
         tax_label=tax_label,

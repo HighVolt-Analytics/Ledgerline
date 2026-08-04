@@ -42,6 +42,7 @@ class CreatePlatformTenantRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     slug: str = Field(min_length=1, max_length=100, pattern=r"^[a-z0-9-]+$")
     country: str = Field(default="SG", min_length=2, max_length=2)
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
     industry: str | None = Field(default=None, max_length=100)
     first_admin_email: EmailStr
     first_admin_name: str = Field(min_length=1, max_length=255)

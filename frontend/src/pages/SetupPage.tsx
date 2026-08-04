@@ -11,11 +11,10 @@ import { persistAuthSuccess } from "@/lib/authSession";
 import { hydrateUserAndMemberships } from "@/lib/authHydrate";
 import { withRouterBasename } from "@/lib/routerBasename";
 import {
-  COUNTRIES,
   INDUSTRIES,
-  countryByCode,
   type Industry,
 } from "@/data/orgSetup.tsx";
+import { useSetupCatalogs } from "@/hooks/useSetupCatalogs";
 import { pricingRegionForCountry, type PlanId } from "@/lib/pricingPlans";
 import {
   EMPTY_SIGNUP_FIELDS,
@@ -66,7 +65,10 @@ export function SetupPage() {
   const [form, setForm] = useState<SignupFormFields>(EMPTY_SIGNUP_FIELDS);
   const [industry, setIndustry] = useState<Industry>("Hospitality");
   const [countryCode, setCountryCode] = useState("AU");
+  const [currencyCode, setCurrencyCode] = useState("AUD");
+  const [currencyTouched, setCurrencyTouched] = useState(false);
   const [otp, setOtp] = useState("");
+  const { countries, currencies } = useSetupCatalogs();
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -79,31 +81,67 @@ export function SetupPage() {
   const studioCheckoutActive = useRef(false);
   const studioCompleteStarted = useRef<string | null>(null);
   const [confirmingMode, setConfirmingMode] = useState<"free" | "studio" | null>(null);
-  const country = countryByCode(countryCode);
+  const country =
+    countries.find((c) => c.code === countryCode) ??
+    countries[0] ?? {
+      code: "AU",
+      name: "Australia",
+      defaultCurrency: "AUD",
+      locale: "en-AU",
+      taxRate: 10 as number | null,
+      taxLabel: "GST",
+      dialCode: "+61",
+    };
+  const selectedCurrency =
+    currencies.find((c) => c.code === currencyCode) ??
+    currencies[0] ?? {
+      code: "AUD",
+      name: "Australian Dollar",
+      symbol: "A$",
+      decimalPlaces: 2,
+    };
   const pricingRegion = pricingRegionForCountry(countryCode);
-
-  const updateField = <K extends keyof SignupFormFields>(key: K, value: SignupFormFields[K]) => {
-    setForm((current) => ({ ...current, [key]: value }));
-  };
 
   const planValidationBase = useMemo(
     () => ({
       fields: form,
       industry,
       countryCode,
+      currencyCode,
+      currencyCodes: currencies.map((c) => c.code),
+      countryCodes: countries.map((c) => c.code),
       platformBillingEnabled,
       billingPlansLoading,
       busy,
     }),
-    [billingPlansLoading, busy, countryCode, form, industry, platformBillingEnabled]
+    [
+      billingPlansLoading,
+      busy,
+      countries,
+      countryCode,
+      currencies,
+      currencyCode,
+      form,
+      industry,
+      platformBillingEnabled,
+    ]
   );
+
+  const updateField = <K extends keyof SignupFormFields>(key: K, value: SignupFormFields[K]) => {
+    setForm((current) => ({ ...current, [key]: value }));
+  };
 
   const identityDisabledReason = getIdentityDisabledReason(form, busy);
   const organizationDisabledReason = getOrganizationDisabledReason(
     form,
     industry,
     countryCode,
-    busy
+    currencyCode,
+    busy,
+    {
+      countryCodes: countries.map((c) => c.code),
+      currencyCodes: currencies.map((c) => c.code),
+    }
   );
   const planDisabledReason = (plan: PlanId) => getPlanActionDisabledReason(plan, planValidationBase);
 
@@ -132,7 +170,16 @@ export function SetupPage() {
           phone: session.phone ?? current.phone,
         }));
         setIdentityViaOAuth(session.identity_via_oauth);
-        if (session.country) setCountryCode(session.country);
+        if (session.country) {
+          setCountryCode(session.country);
+          const match = countries.find((c) => c.code === session.country);
+          if (!currencyTouched) {
+            setCurrencyCode(
+              session.currency || match?.defaultCurrency || "AUD"
+            );
+          }
+        }
+        if (session.currency) setCurrencyCode(session.currency);
         if (session.industry) setIndustry(session.industry as Industry);
         setStep((current) => {
           if (current === "confirming" || studioCheckoutActive.current) return current;
@@ -314,7 +361,17 @@ export function SetupPage() {
       setStep("identity");
       return;
     }
-    const reason = getOrganizationDisabledReason(form, industry, countryCode, busy);
+    const reason = getOrganizationDisabledReason(
+      form,
+      industry,
+      countryCode,
+      currencyCode,
+      busy,
+      {
+        countryCodes: countries.map((c) => c.code),
+        currencyCodes: currencies.map((c) => c.code),
+      }
+    );
     if (reason) {
       setError(reason);
       return;
@@ -326,6 +383,7 @@ export function SetupPage() {
         signupToken,
         form.businessName.trim(),
         countryCode,
+        currencyCode,
         industry,
         form.phone.trim()
       );
@@ -579,13 +637,45 @@ export function SetupPage() {
                   id="setup-country"
                   data-testid="select-country"
                   value={countryCode}
-                  onValueChange={setCountryCode}
+                  onValueChange={(code) => {
+                    setCountryCode(code);
+                    if (!currencyTouched) {
+                      const match = countries.find((c) => c.code === code);
+                      setCurrencyCode(match?.defaultCurrency || currencyCode);
+                    }
+                  }}
                   size="md"
-                  options={COUNTRIES.map((c) => ({ value: c.code, label: c.name }))}
+                  searchable
+                  options={countries.map((c) => ({ value: c.code, label: c.name }))}
+                  className="w-full"
+                />
+              </div>
+
+              <div className="signup-page__field">
+                <label className="signup-page__label" htmlFor="setup-currency">
+                  Currency
+                </label>
+                <Select
+                  id="setup-currency"
+                  data-testid="select-currency"
+                  value={currencyCode}
+                  onValueChange={(code) => {
+                    setCurrencyTouched(true);
+                    setCurrencyCode(code);
+                  }}
+                  size="md"
+                  searchable
+                  options={currencies.map((c) => ({
+                    value: c.code,
+                    label: `${c.code}${c.symbol ? ` (${c.symbol})` : ""} — ${c.name}`,
+                  }))}
                   className="w-full"
                 />
                 <p className="signup-page__hint tnum">
-                  {country.currency} {country.symbol} · {country.taxLabel} {country.taxRate}%
+                  {selectedCurrency.code}
+                  {selectedCurrency.symbol ? ` ${selectedCurrency.symbol}` : ""} ·{" "}
+                  {country.taxLabel}
+                  {country.taxRate != null ? ` ${country.taxRate}%` : ""}
                 </p>
               </div>
 
@@ -594,14 +684,16 @@ export function SetupPage() {
                   Phone
                 </label>
                 <div className="signup-page__phone">
-                  <span
-                    className={cn(
-                      selectClassMd,
-                      "signup-page__dial-code text-muted-foreground"
-                    )}
-                  >
-                    {country.dialCode}
-                  </span>
+                  {country.dialCode ? (
+                    <span
+                      className={cn(
+                        selectClassMd,
+                        "signup-page__dial-code text-muted-foreground"
+                      )}
+                    >
+                      {country.dialCode}
+                    </span>
+                  ) : null}
                   <Input
                     id="setup-phone"
                     type="tel"

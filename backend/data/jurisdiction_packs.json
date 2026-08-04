@@ -2,7 +2,6 @@
   "default_country": "SG",
   "packs": {
     "AU": {
-      "currency": "AUD",
       "timezone": "Australia/Sydney",
       "locale": "en-AU",
       "tax_label": "GST",
@@ -20,13 +19,15 @@
       },
       "tax_invoice": {
         "enabled": true,
-        "phrase_patterns": ["tax\\s+invoice"],
+        "phrase_patterns": [
+          "tax\\s+invoice"
+        ],
         "amount_threshold": 1000,
         "enforce_when_tax_present": true
-      }
+      },
+      "default_currency": "AUD"
     },
     "NZ": {
-      "currency": "NZD",
       "timezone": "Pacific/Auckland",
       "locale": "en-NZ",
       "tax_label": "GST",
@@ -44,13 +45,15 @@
       },
       "tax_invoice": {
         "enabled": true,
-        "phrase_patterns": ["tax\\s+invoice"],
+        "phrase_patterns": [
+          "tax\\s+invoice"
+        ],
         "amount_threshold": 1000,
         "enforce_when_tax_present": true
-      }
+      },
+      "default_currency": "NZD"
     },
     "SG": {
-      "currency": "SGD",
       "timezone": "Asia/Singapore",
       "locale": "en-SG",
       "tax_label": "GST",
@@ -68,13 +71,15 @@
       },
       "tax_invoice": {
         "enabled": true,
-        "phrase_patterns": ["tax\\s+invoice"],
+        "phrase_patterns": [
+          "tax\\s+invoice"
+        ],
         "amount_threshold": null,
         "enforce_when_tax_present": true
-      }
+      },
+      "default_currency": "SGD"
     },
     "GB": {
-      "currency": "GBP",
       "timezone": "Europe/London",
       "locale": "en-GB",
       "tax_label": "VAT",
@@ -92,13 +97,16 @@
       },
       "tax_invoice": {
         "enabled": true,
-        "phrase_patterns": ["vat\\s+invoice", "tax\\s+invoice"],
+        "phrase_patterns": [
+          "vat\\s+invoice",
+          "tax\\s+invoice"
+        ],
         "amount_threshold": null,
         "enforce_when_tax_present": true
-      }
+      },
+      "default_currency": "GBP"
     },
     "IN": {
-      "currency": "INR",
       "timezone": "Asia/Kolkata",
       "locale": "en-IN",
       "tax_label": "GST",
@@ -116,13 +124,15 @@
       },
       "tax_invoice": {
         "enabled": true,
-        "phrase_patterns": ["tax\\s+invoice"],
+        "phrase_patterns": [
+          "tax\\s+invoice"
+        ],
         "amount_threshold": null,
         "enforce_when_tax_present": true
-      }
+      },
+      "default_currency": "INR"
     },
     "AE": {
-      "currency": "AED",
       "timezone": "Asia/Dubai",
       "locale": "ar-AE",
       "tax_label": "VAT",
@@ -140,13 +150,16 @@
       },
       "tax_invoice": {
         "enabled": true,
-        "phrase_patterns": ["vat\\s+invoice", "tax\\s+invoice"],
+        "phrase_patterns": [
+          "vat\\s+invoice",
+          "tax\\s+invoice"
+        ],
         "amount_threshold": null,
         "enforce_when_tax_present": true
-      }
+      },
+      "default_currency": "AED"
     },
     "DE": {
-      "currency": "EUR",
       "timezone": "Europe/Berlin",
       "locale": "de-DE",
       "tax_label": "VAT",
@@ -164,13 +177,18 @@
       },
       "tax_invoice": {
         "enabled": true,
-        "phrase_patterns": ["rechnung", "\\bust\\b", "mwst", "tax\\s+invoice"],
+        "phrase_patterns": [
+          "rechnung",
+          "\\bust\\b",
+          "mwst",
+          "tax\\s+invoice"
+        ],
         "amount_threshold": null,
         "enforce_when_tax_present": true
-      }
+      },
+      "default_currency": "EUR"
     },
     "US": {
-      "currency": "USD",
       "timezone": "America/New_York",
       "locale": "en-US",
       "tax_label": "Sales Tax",
@@ -191,12 +209,12 @@
         "phrase_patterns": [],
         "amount_threshold": null,
         "enforce_when_tax_present": false
-      }
+      },
+      "default_currency": "USD"
     }
   },
   "generic": {
     "country": "XX",
-    "currency": "SGD",
     "timezone": "Asia/Singapore",
     "locale": "en-SG",
     "tax_label": "Tax",
@@ -212,6 +230,7 @@
       "fallback_account": "Suspense Account",
       "sales_tax_account": "Tax Collected"
     },
-    "tax_invoice": null
+    "tax_invoice": null,
+    "default_currency": "SGD"
   }
 }

@@ -10,7 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@openreplay/tracker": "^18.1.1",
+    "@openreplay/tracker": "^18.1.2",
     "@openreplay/tracker-assist": "^11.0.20",
     "@tanstack/react-query": "^5.101.0",
     "lucide-react": "^0.468.0",

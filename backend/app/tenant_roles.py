@@ -16,29 +16,48 @@ APPROVAL_ACTIONS: tuple[str, ...] = (
     "Manage Users",
 )
 
+# Display labels used as privilege-matrix row keys (must stay in sync with frontend).
+APPROVAL_ROLES: tuple[str, ...] = (
+    "Admin",
+    "Functional manager",
+    "Functional supervisor",
+    "Finance head",
+    "Bookkeeper",
+    "Auditor",
+    "User",
+)
+
 
 class TenantRole(str, enum.Enum):
     ADMIN = "admin"
-    APPROVER = "approver"
+    FUNCTIONAL_MANAGER = "functional_manager"
+    FUNCTIONAL_SUPERVISOR = "functional_supervisor"
+    FINANCE_HEAD = "finance_head"
     BOOKKEEPER = "bookkeeper"
-    VIEWER = "viewer"
     AUDITOR = "auditor"
+    USER = "user"
 
 
 _MATRIX_ROW_BY_SLUG: dict[str, str] = {
     TenantRole.ADMIN.value: "Admin",
-    TenantRole.APPROVER.value: "Approver",
+    TenantRole.FUNCTIONAL_MANAGER.value: "Functional manager",
+    TenantRole.FUNCTIONAL_SUPERVISOR.value: "Functional supervisor",
+    TenantRole.FINANCE_HEAD.value: "Finance head",
     TenantRole.BOOKKEEPER.value: "Bookkeeper",
-    TenantRole.VIEWER.value: "Viewer",
     TenantRole.AUDITOR.value: "Auditor",
-    # Legacy aliases
-    UserRole.MEMBER.value: "Approver",
-    "member": "Approver",
+    TenantRole.USER.value: "User",
+    # Legacy aliases (pre-privilege-matrix expansion)
+    UserRole.MEMBER.value: "Functional manager",
+    "member": "Functional manager",
+    "approver": "Functional manager",
+    "viewer": "User",
 }
 
 _LEGACY_ALIASES: dict[str, TenantRole] = {
-    UserRole.MEMBER.value: TenantRole.APPROVER,
-    "member": TenantRole.APPROVER,
+    UserRole.MEMBER.value: TenantRole.FUNCTIONAL_MANAGER,
+    "member": TenantRole.FUNCTIONAL_MANAGER,
+    "approver": TenantRole.FUNCTIONAL_MANAGER,
+    "viewer": TenantRole.USER,
 }
 
 
@@ -60,7 +79,7 @@ def matrix_row_for_role(raw: str) -> str:
     slug = raw.strip().lower()
     if slug in _MATRIX_ROW_BY_SLUG:
         return _MATRIX_ROW_BY_SLUG[slug]
-    return "Viewer"
+    return "User"
 
 
 def format_tenant_role_label(raw: str) -> str:

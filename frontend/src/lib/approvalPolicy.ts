@@ -1,4 +1,12 @@
-export const APPROVAL_ROLES = ["Admin", "Approver", "Bookkeeper", "Viewer", "Auditor"] as const;
+export const APPROVAL_ROLES = [
+  "Admin",
+  "Functional manager",
+  "Functional supervisor",
+  "Finance head",
+  "Bookkeeper",
+  "Auditor",
+  "User",
+] as const;
 export const APPROVAL_ACTIONS = [
   "View",
   "Comment",
@@ -27,6 +35,46 @@ export const DEFAULT_APPROVAL_RULES: PolicyRule[] = [
   { id: "ap4", condition: "New vendor (first invoice)", approver: "Bookkeeper review" },
 ];
 
+const LEADERSHIP: Record<ApprovalAction, boolean> = {
+  View: true,
+  Comment: true,
+  Approve: true,
+  Reject: true,
+  Post: true,
+  "Edit Policy": false,
+  "Manage Users": false,
+};
+
+const SUPERVISOR: Record<ApprovalAction, boolean> = {
+  View: true,
+  Comment: true,
+  Approve: true,
+  Reject: true,
+  Post: false,
+  "Edit Policy": false,
+  "Manage Users": false,
+};
+
+const READ_COMMENT: Record<ApprovalAction, boolean> = {
+  View: true,
+  Comment: true,
+  Approve: false,
+  Reject: false,
+  Post: false,
+  "Edit Policy": false,
+  "Manage Users": false,
+};
+
+const VIEW_ONLY: Record<ApprovalAction, boolean> = {
+  View: true,
+  Comment: false,
+  Approve: false,
+  Reject: false,
+  Post: false,
+  "Edit Policy": false,
+  "Manage Users": false,
+};
+
 export const DEFAULT_APPROVAL_MATRIX: Record<
   ApprovalRole,
   Record<ApprovalAction, boolean>
@@ -35,40 +83,10 @@ export const DEFAULT_APPROVAL_MATRIX: Record<
     ApprovalAction,
     boolean
   >,
-  Approver: {
-    View: true,
-    Comment: true,
-    Approve: true,
-    Reject: true,
-    Post: true,
-    "Edit Policy": false,
-    "Manage Users": false,
-  },
-  Bookkeeper: {
-    View: true,
-    Comment: true,
-    Approve: false,
-    Reject: false,
-    Post: false,
-    "Edit Policy": false,
-    "Manage Users": false,
-  },
-  Viewer: {
-    View: true,
-    Comment: false,
-    Approve: false,
-    Reject: false,
-    Post: false,
-    "Edit Policy": false,
-    "Manage Users": false,
-  },
-  Auditor: {
-    View: true,
-    Comment: true,
-    Approve: false,
-    Reject: false,
-    Post: false,
-    "Edit Policy": false,
-    "Manage Users": false,
-  },
+  "Functional manager": { ...LEADERSHIP },
+  "Functional supervisor": { ...SUPERVISOR },
+  "Finance head": { ...LEADERSHIP },
+  Bookkeeper: { ...READ_COMMENT },
+  Auditor: { ...READ_COMMENT },
+  User: { ...VIEW_ONLY },
 };

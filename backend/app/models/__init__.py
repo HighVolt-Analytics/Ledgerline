@@ -31,6 +31,7 @@ from app.models.platform_billing_webhook import PlatformBillingWebhookEvent
 from app.models.platform_credit_settings import PlatformCreditSettings
 from app.models.platform_prompt import PlatformPromptActive, PlatformPromptVersion
 from app.models.tenant_billing import TenantBilling
+from app.models.currency import Currency
 from app.models.tenant import Tenant
 from app.models.tenant_module import TenantModule
 from app.models.tenant_rule_book_config import TenantRuleBookConfig
@@ -129,6 +130,7 @@ __all__ = [
     "PlatformPromptActive",
     "PlatformPromptVersion",
     "TenantBilling",
+    "Currency",
     "Tenant",
     "TenantMemberInvite",
     "TenantModule",

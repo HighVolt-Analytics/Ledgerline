@@ -540,7 +540,7 @@ async def test_member_cannot_publish_without_privilege(
             headers={"Authorization": f"Bearer {admin_token}"},
         )
     ).json()["data"]
-    policy["matrix"]["Approver"]["Post"] = False
+    policy["matrix"]["Functional manager"]["Post"] = False
     await client.put(
         "/api/approval-policy",
         json=policy,
@@ -558,7 +558,10 @@ async def test_member_cannot_publish_without_privilege(
     db_session.add(user)
     await db_session.flush()
     await ensure_membership(
-        db_session, user_id=user.id, tenant_id=TESTING_TENANT_UUID, role="approver"
+        db_session,
+        user_id=user.id,
+        tenant_id=TESTING_TENANT_UUID,
+        role="functional_manager",
     )
     inv = Invoice(
         tenant_id=TESTING_TENANT_UUID,
@@ -574,7 +577,7 @@ async def test_member_cannot_publish_without_privilege(
         tenant_id=TESTING_TENANT_UUID,
         tenant_slug="testing",
         email=user.email,
-        role="approver",
+        role="functional_manager",
     )
     res = await client.post(
         f"/api/invoices/{inv.id}/publish",

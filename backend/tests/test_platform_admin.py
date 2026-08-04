@@ -40,6 +40,34 @@ async def test_list_client_tenants_excludes_platform_tenant(db_session: AsyncSes
 
 
 @pytest.mark.asyncio
+async def test_create_client_tenant_currency_independent_of_country(
+    db_session: AsyncSession,
+) -> None:
+    from decimal import Decimal
+
+    from app.jurisdiction.packs import tenant_jurisdiction
+    from app.tenant_settings import tenant_currency
+
+    detail, _invite = await create_client_tenant(
+        db_session,
+        CreatePlatformTenantRequest(
+            name="India USD Books",
+            slug="india-usd",
+            country="IN",
+            currency="USD",
+            first_admin_email="admin@india-usd.example.com",
+            first_admin_name="India Admin",
+        ),
+    )
+    row = await db_session.get(Tenant, detail.id)
+    assert row is not None
+    assert tenant_currency(row) == "USD"
+    pack = tenant_jurisdiction(row)
+    assert pack.tax_label == "GST"
+    assert pack.statutory_tax_rate == Decimal("18")
+
+
+@pytest.mark.asyncio
 async def test_create_client_tenant_seeds_modules(db_session: AsyncSession) -> None:
     tenant, _invite = await create_client_tenant(
         db_session,

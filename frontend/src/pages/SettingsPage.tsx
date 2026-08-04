@@ -16,11 +16,8 @@ import { useInstitutionSettings } from "@/hooks/useInstitutionSettings";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import { notifyOnboardingStatusRefresh } from "@/components/onboarding/OnboardingChecklist";
 import { cn } from "@/lib/cn";
-import {
-  COUNTRIES,
-  INDUSTRIES,
-  countryByCode,
-} from "@/lib/settingsData";
+import { INDUSTRIES } from "@/lib/settingsData";
+import { useSetupCatalogs } from "@/hooks/useSetupCatalogs";
 
 const TABS = [
   { id: "profile", label: "Profile", testid: "tab-profile" },
@@ -44,6 +41,10 @@ export function SettingsPage() {
   const [businessName, setBusinessName] = useState("");
   const [industry, setIndustry] = useState<string>(INDUSTRIES[1]);
   const [country, setCountry] = useState("SG");
+  const [currency, setCurrency] = useState("SGD");
+  const [currencyTouched, setCurrencyTouched] = useState(false);
+  const [initialCurrency, setInitialCurrency] = useState("SGD");
+  const { countries, currencies } = useSetupCatalogs();
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [timezone, setTimezone] = useState("");
@@ -59,6 +60,9 @@ export function SettingsPage() {
     setBusinessName("");
     setIndustry(INDUSTRIES[1]);
     setCountry("SG");
+    setCurrency("SGD");
+    setCurrencyTouched(false);
+    setInitialCurrency("SGD");
     setPhone("");
     setTimezone("");
     setSaved(false);
@@ -85,15 +89,24 @@ export function SettingsPage() {
     if (institution) {
       setBusinessName(institution.name);
       setCountry(institution.country);
+      setCurrency(institution.currency || defaultFromCountry(institution.country));
+      setInitialCurrency(institution.currency || defaultFromCountry(institution.country));
+      setCurrencyTouched(false);
       setTimezone(institution.timezone);
       setProfileLoading(false);
       return;
     }
     setBusinessName(user.tenant_name);
     setCountry("SG");
+    setCurrency("SGD");
+    setInitialCurrency("SGD");
     setTimezone(user.tenant_timezone);
     setProfileLoading(false);
-  }, [user, institution, institutionBlocked, institutionLoading, tenantScope]);
+  }, [user, institution, institutionBlocked, institutionLoading, tenantScope, countries]);
+
+  function defaultFromCountry(code: string): string {
+    return countries.find((c) => c.code === code)?.defaultCurrency || "SGD";
+  }
 
   useEffect(() => {
     if (!saved) return;
@@ -113,7 +126,21 @@ export function SettingsPage() {
     return () => clearTimeout(t);
   }, [coaSaved]);
 
-  const countryMeta = countryByCode(country);
+  const countryMeta =
+    countries.find((c) => c.code === country) ??
+    countries[0] ?? {
+      code: country,
+      name: country,
+      defaultCurrency: currency,
+      taxLabel: "Tax",
+      taxRate: null as number | null,
+      dialCode: "",
+      timeZone: timezone,
+      locale: "en",
+    };
+  const currencyMeta =
+    currencies.find((c) => c.code === currency) ??
+    currencies[0] ?? { code: currency, symbol: "", name: currency, decimalPlaces: 2 };
   const canEditAdmin = user?.role === "admin";
 
   const saveProfile = async () => {
@@ -122,15 +149,30 @@ export function SettingsPage() {
       toast({ title: "Business name is required", variant: "destructive" });
       return;
     }
+    const currencyChanged =
+      currency.trim().toUpperCase() !== (initialCurrency || "").trim().toUpperCase();
+    if (
+      currencyChanged &&
+      institution?.has_ledger_activity &&
+      !window.confirm(
+        "Changing books currency after documents exist is a functional currency change. Historical amounts are not revalued. Continue?"
+      )
+    ) {
+      return;
+    }
     setProfileSaving(true);
     try {
       const inst = await api.updateInstitutionSettings({
         name: trimmedName,
         country,
+        currency,
       });
       await api.updateOnboarding({ industry });
       setBusinessName(inst.name);
       setCountry(inst.country);
+      setCurrency(inst.currency);
+      setInitialCurrency(inst.currency);
+      setCurrencyTouched(false);
       setTimezone(inst.timezone);
       await refreshUser();
       setSaved(true);
@@ -224,15 +266,42 @@ export function SettingsPage() {
                 value={country}
                 onValueChange={(code) => {
                   setCountry(code);
-                  setTimezone(countryByCode(code).timeZone);
+                  const match = countries.find((c) => c.code === code);
+                  if (match?.timeZone) setTimezone(match.timeZone);
+                  if (!currencyTouched) {
+                    setCurrency(match?.defaultCurrency || currency);
+                  }
                 }}
                 size="md"
-                options={COUNTRIES.map((c) => ({ value: c.code, label: c.name }))}
+                searchable
+                options={countries.map((c) => ({ value: c.code, label: c.name }))}
+                className="w-full"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label htmlFor="select-settings-currency" className="text-sm font-medium">
+                Currency
+              </label>
+              <Select
+                id="select-settings-currency"
+                data-testid="select-settings-currency"
+                value={currency}
+                onValueChange={(code) => {
+                  setCurrencyTouched(true);
+                  setCurrency(code);
+                }}
+                size="md"
+                searchable
+                options={currencies.map((c) => ({
+                  value: c.code,
+                  label: `${c.code}${c.symbol ? ` (${c.symbol})` : ""} — ${c.name}`,
+                }))}
                 className="w-full"
               />
               <p className="text-xs text-muted-foreground tnum">
-                {countryMeta.currency} {countryMeta.symbol} · {countryMeta.taxLabel}{" "}
-                {countryMeta.taxRate}%
+                {currencyMeta.code}
+                {currencyMeta.symbol ? ` ${currencyMeta.symbol}` : ""} · {countryMeta.taxLabel}
+                {countryMeta.taxRate != null ? ` ${countryMeta.taxRate}%` : ""}
                 {timezone ? ` · ${timezone}` : null}
               </p>
             </div>
@@ -258,7 +327,7 @@ export function SettingsPage() {
                 className="tnum"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
-                placeholder={`${countryMeta.dialCode} …`}
+                placeholder={countryMeta.dialCode ? `${countryMeta.dialCode} …` : "Enter phone number"}
               />
             </div>
           </div>

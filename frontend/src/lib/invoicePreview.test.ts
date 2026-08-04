@@ -949,6 +949,7 @@ describe("invoiceTaxMeta / resolveDocumentTaxRatePercent", () => {
     expect(
       invoiceTaxMeta({
         currency: "INR",
+        country: "IN",
         gst_rate: "12",
         subtotal: "100",
         gst: "18",
@@ -968,11 +969,18 @@ describe("invoiceTaxMeta / resolveDocumentTaxRatePercent", () => {
   });
 
   it("does not invent a rate from jurisdiction when amounts are missing", () => {
-    expect(invoiceTaxMeta({ currency: "INR" })).toEqual({ label: "GST", rate: null });
-    expect(taxMetaForCurrency("INR")).toEqual({ label: "GST", rate: null });
+    expect(invoiceTaxMeta({ currency: "INR", country: "IN" })).toEqual({ label: "GST", rate: null });
+    expect(taxMetaForCurrency("INR")).toEqual({ label: "Tax", rate: null });
     expect(taxMetaForJurisdiction({ country: "IN", statutory_tax_rate: 18 })).toEqual({
       label: "GST",
       rate: null,
+    });
+  });
+
+  it("keeps tax label from country even when books currency differs", () => {
+    expect(invoiceTaxMeta({ currency: "USD", country: "IN", gst_rate: "18" })).toEqual({
+      label: "GST",
+      rate: 18,
     });
   });
 

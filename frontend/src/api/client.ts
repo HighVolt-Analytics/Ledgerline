@@ -60,6 +60,9 @@ import type {
   DashboardStats,
   ReportsAnalytics,
   ReportDocumentRow,
+  EmployeeAdvanceSettlementRow,
+  EmployeeBudgetUtilizationRow,
+  EmployeeExpenseSummaryRow,
   SubledgerBalancesResponse,
   Invoice,
   InvoiceDetails,
@@ -627,6 +630,7 @@ export const api = {
   updateInstitutionSettings: (body: {
     name?: string;
     country?: string;
+    currency?: string;
     timezone?: string;
     locale?: string;
     custom_bundle_field_key?: string;
@@ -1722,6 +1726,39 @@ export const api = {
   },
   getReportDocuments: (filter?: ReportDateFilter) =>
     request<ReportDocumentRow[]>(`/api/reports/documents${reportDateQuery(filter)}`),
+  getTeamExpenseAdvanceSettlement: () =>
+    request<EmployeeAdvanceSettlementRow[]>(
+      "/api/reports/team-expenses/advance-settlement"
+    ),
+  getTeamExpenseBudgetUtilization: () =>
+    request<EmployeeBudgetUtilizationRow[]>(
+      "/api/reports/team-expenses/budget-utilization"
+    ),
+  getTeamExpenseExpenseSummary: (filter?: ReportDateFilter) =>
+    request<EmployeeExpenseSummaryRow[]>(
+      `/api/reports/team-expenses/expense-summary${reportDateQuery(filter)}`
+    ),
+  downloadTeamExpenseReport: async (
+    report: "advance-settlement" | "budget-utilization" | "expense-summary",
+    filter?: ReportDateFilter
+  ) => {
+    const { blob, filename, headers } = await requestBlob(
+      `/api/reports/team-expenses/${report}/export${reportDateQuery(filter)}`,
+      undefined,
+      `employee_${report.replace(/-/g, "_")}.xlsx`
+    );
+    const parsedRows = Number(headers.get("X-Data-Rows") ?? "");
+    const dataRows = Number.isFinite(parsedRows) && parsedRows >= 0 ? parsedRows : 0;
+    saveBlobAsFile(
+      new Blob([blob], {
+        type:
+          blob.type ||
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      }),
+      filename
+    );
+    return { dataRows };
+  },
   generateReport: (filter?: ReportDateFilter) =>
     request<{ path: string; filename: string }>(
       `/api/reports/generate${reportDateQuery(filter)}`,

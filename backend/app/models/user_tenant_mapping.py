@@ -18,7 +18,7 @@ class UserTenantMapping(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True
     )
-    role: Mapped[str] = mapped_column(String(32), default="approver")
+    role: Mapped[str] = mapped_column(String(32), default="functional_manager")
     status: Mapped[str] = mapped_column(String(16), default="active")
     default_tenant: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

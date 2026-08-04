@@ -16,6 +16,26 @@ import {
   type LocalApprovalPolicy,
 } from "@/lib/approvalPolicy";
 
+const LEGACY_MATRIX_ROWS: Record<string, ApprovalRole> = {
+  Approver: "Functional manager",
+  Viewer: "User",
+};
+
+function normalizeLocalPolicy(raw: LocalApprovalPolicy): LocalApprovalPolicy {
+  const remapped: Record<string, Record<ApprovalAction, boolean>> = {};
+  for (const [role, perms] of Object.entries(raw.matrix ?? {})) {
+    const label = LEGACY_MATRIX_ROWS[role] ?? role;
+    remapped[label] = { ...(perms as Record<ApprovalAction, boolean>) };
+  }
+  const matrix = {} as Record<ApprovalRole, Record<ApprovalAction, boolean>>;
+  for (const role of APPROVAL_ROLES) {
+    matrix[role] = {
+      ...DEFAULT_APPROVAL_MATRIX[role],
+      ...(remapped[role] ?? {}),
+    };
+  }
+  return { ...raw, matrix };
+}
 function UnlockPolicyDialog({
   open,
   onClose,
@@ -103,7 +123,10 @@ export function ApprovalPolicyPrivileges() {
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
-    void api.getApprovalPolicy().then((p) => setPolicy(p as LocalApprovalPolicy)).catch(() => {});
+    void api
+      .getApprovalPolicy()
+      .then((p) => setPolicy(normalizeLocalPolicy(p as LocalApprovalPolicy)))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -115,7 +138,7 @@ export function ApprovalPolicyPrivileges() {
   const persistPolicy = async (next: LocalApprovalPolicy) => {
     try {
       const saved = await api.putApprovalPolicy(next);
-      setPolicy(saved as LocalApprovalPolicy);
+      setPolicy(normalizeLocalPolicy(saved as LocalApprovalPolicy));
     } catch (e) {
       setToast(e instanceof Error ? e.message : "Failed to save policy");
     }
@@ -150,7 +173,7 @@ export function ApprovalPolicyPrivileges() {
   const confirmUnlock = async (code: string) => {
     try {
       const updated = await api.unlockApprovalPolicy(code);
-      setPolicy(updated as LocalApprovalPolicy);
+      setPolicy(normalizeLocalPolicy(updated as LocalApprovalPolicy));
       setUnlockOpen(false);
       setToast("Policy unlocked — privilege matrix is now editable.");
     } catch (e) {
@@ -249,7 +272,7 @@ export function ApprovalPolicyPrivileges() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-xs text-muted-foreground border-b border-border">
-                <th className="px-3 py-2.5 text-left font-medium w-[120px]">Role</th>
+                <th className="px-3 py-2.5 text-left font-medium w-[160px]">Role</th>
                 {APPROVAL_ACTIONS.map((action) => (
                   <th
                     key={action}

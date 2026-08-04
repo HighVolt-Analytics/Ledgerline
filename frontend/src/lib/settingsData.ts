@@ -1,16 +1,53 @@
-/** Settings page constants — aligned with Ledgerline v3 prototype. */
+/** Settings page constants — re-export org setup catalogs (single source of truth). */
 
-export type CountryOption = {
-  code: string;
-  name: string;
+import {
+  COUNTRIES,
+  CURRENCIES,
+  INDUSTRIES,
+  countryByCode as baseCountryByCode,
+  currencyByCode,
+  defaultCurrencyForCountry,
+  type CountryOption,
+  type CurrencyOption,
+  type Industry,
+} from "@/data/orgSetup.tsx";
+
+export {
+  COUNTRIES,
+  CURRENCIES,
+  INDUSTRIES,
+  currencyByCode,
+  defaultCurrencyForCountry,
+};
+export type { CountryOption, CurrencyOption, Industry };
+
+const TIMEZONE_BY_COUNTRY: Record<string, string> = {
+  AU: "Australia/Sydney",
+  US: "America/New_York",
+  GB: "Europe/London",
+  IN: "Asia/Kolkata",
+  SG: "Asia/Singapore",
+  NZ: "Pacific/Auckland",
+  AE: "Asia/Dubai",
+  DE: "Europe/Berlin",
+};
+
+export type SettingsCountryOption = CountryOption & {
+  timeZone: string;
   currency: string;
   symbol: string;
-  locale: string;
-  timeZone: string;
-  taxRate: number;
-  taxLabel: string;
-  dialCode: string;
 };
+
+export function countryByCode(code: string): SettingsCountryOption {
+  const base = baseCountryByCode(code);
+  const currency = currencyByCode(base.defaultCurrency);
+  return {
+    ...base,
+    currency: currency.code,
+    symbol: currency.symbol,
+    timeZone: TIMEZONE_BY_COUNTRY[base.code] ?? "Asia/Singapore",
+  };
+}
 
 export type TeamMemberRow = {
   id: string;
@@ -18,110 +55,3 @@ export type TeamMemberRow = {
   email: string;
   role: string;
 };
-
-export const INDUSTRIES = [
-  "Hospitality",
-  "Technology",
-  "Retail",
-  "Manufacturing",
-  "Healthcare",
-  "Professional Services",
-  "Construction",
-  "Other",
-] as const;
-
-export const COUNTRIES: CountryOption[] = [
-  {
-    code: "AU",
-    name: "Australia",
-    currency: "AUD",
-    symbol: "A$",
-    locale: "en-AU",
-    timeZone: "Australia/Sydney",
-    taxRate: 10,
-    taxLabel: "GST",
-    dialCode: "+61",
-  },
-  {
-    code: "US",
-    name: "United States",
-    currency: "USD",
-    symbol: "$",
-    locale: "en-US",
-    timeZone: "America/New_York",
-    taxRate: 8.5,
-    taxLabel: "Sales Tax",
-    dialCode: "+1",
-  },
-  {
-    code: "GB",
-    name: "United Kingdom",
-    currency: "GBP",
-    symbol: "£",
-    locale: "en-GB",
-    timeZone: "Europe/London",
-    taxRate: 20,
-    taxLabel: "VAT",
-    dialCode: "+44",
-  },
-  {
-    code: "IN",
-    name: "India",
-    currency: "INR",
-    symbol: "₹",
-    locale: "en-IN",
-    timeZone: "Asia/Kolkata",
-    taxRate: 18,
-    taxLabel: "GST",
-    dialCode: "+91",
-  },
-  {
-    code: "SG",
-    name: "Singapore",
-    currency: "SGD",
-    symbol: "S$",
-    locale: "en-SG",
-    timeZone: "Asia/Singapore",
-    taxRate: 9,
-    taxLabel: "GST",
-    dialCode: "+65",
-  },
-  {
-    code: "NZ",
-    name: "New Zealand",
-    currency: "NZD",
-    symbol: "NZ$",
-    locale: "en-NZ",
-    timeZone: "Pacific/Auckland",
-    taxRate: 15,
-    taxLabel: "GST",
-    dialCode: "+64",
-  },
-  {
-    code: "AE",
-    name: "United Arab Emirates",
-    currency: "AED",
-    symbol: "د.إ",
-    locale: "ar-AE",
-    timeZone: "Asia/Dubai",
-    taxRate: 5,
-    taxLabel: "VAT",
-    dialCode: "+971",
-  },
-  {
-    code: "DE",
-    name: "Germany",
-    currency: "EUR",
-    symbol: "€",
-    locale: "de-DE",
-    timeZone: "Europe/Berlin",
-    taxRate: 19,
-    taxLabel: "VAT",
-    dialCode: "+49",
-  },
-];
-
-export function countryByCode(code: string): CountryOption {
-  return COUNTRIES.find((c) => c.code === code) ?? COUNTRIES.find((c) => c.code === "SG") ?? COUNTRIES[0];
-}
-

@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, JSON, String, Uuid, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, JSON, String, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -23,6 +23,14 @@ class Tenant(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_platform: Mapped[bool] = mapped_column(Boolean, default=False)
     lifecycle_status: Mapped[str] = mapped_column(String(20), default="active")
+    # Books / reporting base currency (independent of country tax jurisdiction).
+    currency: Mapped[str] = mapped_column(
+        String(3),
+        ForeignKey("currencies.code"),
+        nullable=False,
+        default="SGD",
+        server_default="SGD",
+    )
     settings_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

@@ -101,7 +101,12 @@ async def test_authorized_approver_creates_instruction(
         db_session,
         TESTING_TENANT_UUID,
         payment.id,
-        actor={"user_id": 1, "name": "Ops", "email": "ops@example.com", "role": "approver"},
+        actor={
+            "user_id": 1,
+            "name": "Ops",
+            "email": "ops@example.com",
+            "role": "functional_manager",
+        },
     )
 
     assert created is True
@@ -122,7 +127,7 @@ async def test_unauthorized_role_blocked(
             db_session,
             TESTING_TENANT_UUID,
             payment.id,
-            actor={"user_id": 2, "name": "Viewer", "email": "v@example.com", "role": "viewer"},
+            actor={"user_id": 2, "name": "User", "email": "v@example.com", "role": "user"},
         )
 
 

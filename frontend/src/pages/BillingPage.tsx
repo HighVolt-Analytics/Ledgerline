@@ -11,7 +11,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useBilling, useBillingMutations, useBillingUsage } from "@/hooks/useBilling";
 import { usePricingRegion } from "@/hooks/usePricingRegion";
 import { api } from "@/api/client";
-import { countryByCode } from "@/data/orgSetup";
+import { countryByCode, currencyByCode } from "@/data/orgSetup";
 import { cn } from "@/lib/cn";
 import type { PlanId } from "@/lib/pricingPlans";
 
@@ -136,7 +136,8 @@ export function BillingPage() {
 
   const planInfo = billing.plan_info;
   const country = countryByCode(planInfo.region);
-  const symbol = country.symbol;
+  const billingCurrency = currencyByCode(country.defaultCurrency);
+  const symbol = billingCurrency.symbol;
   const platformBilling = billing.platform_billing_enabled === true;
   const topUpCredits =
     topUpAmount != null ? Math.floor(topUpAmount * planInfo.topup_factor) : 0;
@@ -487,7 +488,7 @@ export function BillingPage() {
               </button>
             </div>
             <p className="text-sm text-muted-foreground">
-              Enter amount in {country.currency}.
+              Enter amount in {billingCurrency.code}.
               {platformBilling
                 ? " You will be redirected to Stripe Checkout to complete payment."
                 : " Credits are added instantly (demo payment)."}

@@ -1,4 +1,5 @@
 import type { PlanId } from "@/lib/pricingPlans";
+import { CURRENCIES, COUNTRIES } from "@/data/orgSetup.tsx";
 
 export type SignupFormFields = {
   businessName: string;
@@ -8,14 +9,22 @@ export type SignupFormFields = {
   confirmPassword: string;
 };
 
+export type CatalogWhitelist = {
+  countryCodes?: string[];
+  currencyCodes?: string[];
+};
+
 export type SignupValidationInput = {
   fields: SignupFormFields;
   industry: string;
   countryCode: string;
+  currencyCode: string;
   selectedPlan: PlanId;
   platformBillingEnabled: boolean | null;
   billingPlansLoading: boolean;
   busy: boolean;
+  countryCodes?: string[];
+  currencyCodes?: string[];
 };
 
 export const EMPTY_SIGNUP_FIELDS: SignupFormFields = {
@@ -27,6 +36,8 @@ export const EMPTY_SIGNUP_FIELDS: SignupFormFields = {
 };
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const FALLBACK_CURRENCY_CODES = new Set(CURRENCIES.map((c) => c.code));
+const FALLBACK_COUNTRY_CODES = new Set(COUNTRIES.map((c) => c.code));
 
 export function isValidEmail(value: string): boolean {
   return EMAIL_RE.test(value.trim());
@@ -49,12 +60,29 @@ export function getOrganizationDisabledReason(
   fields: Pick<SignupFormFields, "businessName" | "phone">,
   industry: string,
   countryCode: string,
-  busy: boolean
+  currencyCode: string,
+  busy: boolean,
+  catalogs?: CatalogWhitelist
 ): string | null {
   if (busy) return null;
   if (!fields.businessName.trim()) return "Business name is required.";
   if (!industry.trim()) return "Select an industry.";
   if (!countryCode.trim()) return "Select a country.";
+  if (!currencyCode.trim()) return "Select a currency.";
+  const countryAllow =
+    catalogs?.countryCodes && catalogs.countryCodes.length > 0
+      ? new Set(catalogs.countryCodes.map((c) => c.toUpperCase()))
+      : FALLBACK_COUNTRY_CODES;
+  const currencyAllow =
+    catalogs?.currencyCodes && catalogs.currencyCodes.length > 0
+      ? new Set(catalogs.currencyCodes.map((c) => c.toUpperCase()))
+      : FALLBACK_CURRENCY_CODES;
+  if (!countryAllow.has(countryCode.trim().toUpperCase())) {
+    return "Select a supported country.";
+  }
+  if (!currencyAllow.has(currencyCode.trim().toUpperCase())) {
+    return "Select a supported currency.";
+  }
   if (!fields.phone.trim()) return "Phone number is required.";
   return null;
 }
@@ -64,11 +92,20 @@ export function getAccountDetailsDisabledReason(
   fields: SignupFormFields,
   industry: string,
   countryCode: string,
-  busy: boolean
+  currencyCode: string,
+  busy: boolean,
+  catalogs?: CatalogWhitelist
 ): string | null {
   const identity = getIdentityDisabledReason(fields, busy);
   if (identity) return identity;
-  return getOrganizationDisabledReason(fields, industry, countryCode, busy);
+  return getOrganizationDisabledReason(
+    fields,
+    industry,
+    countryCode,
+    currencyCode,
+    busy,
+    catalogs
+  );
 }
 
 export function getPlanActionDisabledReason(
@@ -79,7 +116,12 @@ export function getPlanActionDisabledReason(
     input.fields,
     input.industry,
     input.countryCode,
-    input.busy
+    input.currencyCode,
+    input.busy,
+    {
+      countryCodes: input.countryCodes,
+      currencyCodes: input.currencyCodes,
+    }
   );
   if (orgReason) return orgReason;
 
@@ -98,6 +140,7 @@ export function validateSignupForm(fields: SignupFormFields): string | null {
     fields,
     industry: "Technology",
     countryCode: "AU",
+    currencyCode: "AUD",
     selectedPlan: "free",
     platformBillingEnabled: true,
     billingPlansLoading: false,

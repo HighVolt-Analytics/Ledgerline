@@ -63,7 +63,13 @@ from app.services.signup.signup_session_service import (
 )
 from app.services.auth.auth_account_service import resolve_login_account
 from app.services.shared.public_app_url import build_oauth_frontend_path
-from app.tenant_settings import COUNTRY_DEFAULTS, DEFAULT_COUNTRY
+from app.tenant_settings import (
+    DEFAULT_COUNTRY,
+    UnsupportedCountryError,
+    UnsupportedCurrencyError,
+    resolve_books_currency,
+    validate_country_code,
+)
 from app.utils.logger import get_logger
 
 router = APIRouter(prefix="/signup", tags=["signup"])
@@ -114,6 +120,7 @@ def _session_info(signup: SignupSession) -> SignupSessionInfo:
         status=signup.status,
         organization_name=signup.organization_name,
         country=signup.country,
+        currency=signup.currency,
         industry=signup.industry,
         phone=signup.phone,
         plan=signup.plan,
@@ -219,12 +226,15 @@ async def signup_organization(
     session_id = _require_signup_session_token(creds)
     signup = await _load_session_or_404(session_id)
     org_name = body.organization_name.strip()
-    country = body.country.strip().upper()
-    if country not in COUNTRY_DEFAULTS:
-        raise HTTPException(400, "Unsupported country")
+    try:
+        country = validate_country_code(body.country)
+        books_currency = resolve_books_currency(country, body.currency)
+    except (UnsupportedCountryError, UnsupportedCurrencyError) as exc:
+        raise HTTPException(400, str(exc)) from exc
     signup.organization_name = org_name
     signup.organization_slug = slugify_organization_name(org_name)
     signup.country = country
+    signup.currency = books_currency
     if body.industry:
         signup.industry = body.industry.strip()
     if body.phone:

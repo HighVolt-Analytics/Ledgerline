@@ -21,7 +21,10 @@ export type ReportDownloadKind =
   | "documents-bundle"
   | "gl"
   | "vendors"
-  | "audit";
+  | "audit"
+  | "te-advance-settlement"
+  | "te-budget-utilization"
+  | "te-expense-summary";
 
 const TYPE_OPTIONS: SelectOption[] = [
   { value: "workbook", label: "Excel workbook" },
@@ -30,6 +33,9 @@ const TYPE_OPTIONS: SelectOption[] = [
   { value: "gl", label: "GL account summary (CSV)" },
   { value: "vendors", label: "Top vendors (CSV)" },
   { value: "audit", label: "Audit trail (CSV)" },
+  { value: "te-advance-settlement", label: "Employee advance settlement (Excel)" },
+  { value: "te-budget-utilization", label: "Employee budget utilization (Excel)" },
+  { value: "te-expense-summary", label: "Employee expense summary (Excel)" },
 ];
 
 const PERIOD_OPTIONS: SelectOption[] = [
@@ -37,6 +43,12 @@ const PERIOD_OPTIONS: SelectOption[] = [
   { value: "range", label: "Date range" },
   { value: "all", label: "All dates" },
 ];
+
+/** Snapshot reports ignore period (current balances / counters). */
+const SNAPSHOT_KINDS = new Set<ReportDownloadKind>([
+  "te-advance-settlement",
+  "te-budget-utilization",
+]);
 
 const MONTH_ONLY_KINDS = new Set<ReportDownloadKind>(["gl", "vendors"]);
 
@@ -61,15 +73,19 @@ export function ReportDownloadMenu({
   const [dateFrom, setDateFrom] = useState(initialRange.dateFrom);
   const [dateTo, setDateTo] = useState(initialRange.dateTo);
 
-  const flexiblePeriod = !MONTH_ONLY_KINDS.has(kind);
-  const effectivePeriod: ReportDownloadPeriod = flexiblePeriod ? period : "month";
+  const flexiblePeriod = !MONTH_ONLY_KINDS.has(kind) && !SNAPSHOT_KINDS.has(kind);
+  const effectivePeriod: ReportDownloadPeriod = flexiblePeriod
+    ? period
+    : SNAPSHOT_KINDS.has(kind)
+      ? "all"
+      : "month";
   const rangeInvalid = effectivePeriod === "range" && dateFrom > dateTo;
 
   function handleKindChange(value: string) {
     const next = value as ReportDownloadKind;
     setKind(next);
-    if (MONTH_ONLY_KINDS.has(next)) {
-      setPeriod("month");
+    if (MONTH_ONLY_KINDS.has(next) || SNAPSHOT_KINDS.has(next)) {
+      setPeriod(SNAPSHOT_KINDS.has(next) ? "all" : "month");
     }
   }
 
@@ -138,6 +154,36 @@ export function ReportDownloadMenu({
         case "audit": {
           await api.downloadAuditLogCsv(filter);
           onToast("Audit trail downloaded.");
+          break;
+        }
+        case "te-advance-settlement": {
+          const { dataRows } = await api.downloadTeamExpenseReport("advance-settlement");
+          if (dataRows === 0) {
+            onToast("No employees to export.");
+            return;
+          }
+          onToast("Employee advance settlement workbook downloaded.");
+          break;
+        }
+        case "te-budget-utilization": {
+          const { dataRows } = await api.downloadTeamExpenseReport("budget-utilization");
+          if (dataRows === 0) {
+            onToast("No employees to export.");
+            return;
+          }
+          onToast("Employee budget utilization workbook downloaded.");
+          break;
+        }
+        case "te-expense-summary": {
+          const { dataRows } = await api.downloadTeamExpenseReport(
+            "expense-summary",
+            filter
+          );
+          if (dataRows === 0) {
+            onToast("No team expense documents in this period to export.");
+            return;
+          }
+          onToast("Employee expense summary workbook downloaded.");
           break;
         }
         default:

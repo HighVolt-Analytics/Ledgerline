@@ -27,6 +27,7 @@ from app.api import (
     invoices,
     mailboxes,
     oauth_auth,
+    meta,
     signup,
     tenants,
     tenant_members,
@@ -147,6 +148,7 @@ if _settings.root_path:
 
 app.include_router(auth.router, prefix="/api")
 app.include_router(geo.router, prefix="/api")
+app.include_router(meta.router, prefix="/api")
 app.include_router(oauth_auth.router, prefix="/api")
 app.include_router(signup.router, prefix="/api")
 # Stripe webhooks — no JWT.

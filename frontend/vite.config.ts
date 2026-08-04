@@ -35,17 +35,25 @@ export default defineConfig({
     port: 5173,
     allowedHosts: [".ngrok-free.dev", ".ngrok.io"],
     proxy: {
+      // Timeouts prevent a hung API from saturating Vite and stalling lazy page chunks
+      // (e.g. DashboardPage.tsx stuck pending in the browser Network tab).
       "/api": {
         target: process.env.VITE_API_PROXY_TARGET ?? "http://127.0.0.1:8001",
         changeOrigin: true,
+        timeout: 30_000,
+        proxyTimeout: 30_000,
       },
       "/health": {
         target: process.env.VITE_API_PROXY_TARGET ?? "http://127.0.0.1:8001",
         changeOrigin: true,
+        timeout: 10_000,
+        proxyTimeout: 10_000,
       },
       "/connect-mailbox": {
         target: process.env.VITE_API_PROXY_TARGET ?? "http://127.0.0.1:8001",
         changeOrigin: true,
+        timeout: 30_000,
+        proxyTimeout: 30_000,
       },
     },
   },

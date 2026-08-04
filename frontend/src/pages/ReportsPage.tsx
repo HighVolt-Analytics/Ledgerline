@@ -16,6 +16,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { ChartTooltip } from "@/components/ChartTooltip";
 import { SubledgerBalanceTable } from "@/components/reports/SubledgerBalanceTable";
 import { ReportDownloadMenu } from "@/components/reports/ReportDownloadMenu";
+import { TeamExpenseReportsSection } from "@/components/reports/TeamExpenseReportsSection";
 import { KpiCard } from "@/components/KpiCard";
 import { PageHeader } from "@/components/PageHeader";
 import { PageLoader } from "@/components/PageLoader";
@@ -31,6 +32,9 @@ import {
   mapVendorSpendRow,
 } from "@/lib/reportsData";
 import { tenantTodayIso } from "@/lib/tenantTime";
+
+const REPORTS_SUBTITLE =
+  "Spend analytics, party balances, and team expense settlement.";
 
 const CHART_MARGIN = { top: 4, right: 12, left: 8, bottom: 0 };
 const PIE_HOVER_OFFSET = 6;
@@ -134,10 +138,7 @@ export function ReportsPage() {
   if (isLoading) {
     return (
       <div>
-        <PageHeader
-          title="Reports"
-          subtitle="Spend analytics, GL distribution and tax summary."
-        />
+        <PageHeader title="Reports" subtitle={REPORTS_SUBTITLE} />
         <PageLoader variant="reports" />
       </div>
     );
@@ -146,10 +147,7 @@ export function ReportsPage() {
   if (error) {
     return (
       <div>
-        <PageHeader
-          title="Reports"
-          subtitle="Spend analytics, GL distribution and tax summary."
-        />
+        <PageHeader title="Reports" subtitle={REPORTS_SUBTITLE} />
         <EmptyState
           title="Could not load reports"
           hint={error instanceof Error ? error.message : "Try again later."}
@@ -163,13 +161,17 @@ export function ReportsPage() {
       <div>
         <PageHeader
           title="Reports"
-          subtitle="Spend analytics, GL distribution and tax summary."
+          subtitle={REPORTS_SUBTITLE}
           actions={headerActions}
         />
+        {toast && (
+          <Card className="p-3 mb-4 text-sm border-primary/30 bg-primary/5">{toast}</Card>
+        )}
         <EmptyState
           title="No processed invoices this month"
-          hint="Reports include processed invoices only. Process documents in Upload or Approvals, then return here."
+          hint="Spend charts include processed invoices only. Team expense balances below still update from employee advances and claims."
         />
+        <TeamExpenseReportsSection month={month} currency={currency} locale={locale} />
       </div>
     );
   }
@@ -178,7 +180,7 @@ export function ReportsPage() {
     <div>
       <PageHeader
         title="Reports"
-        subtitle="Spend analytics, GL distribution and tax summary."
+        subtitle={REPORTS_SUBTITLE}
         actions={headerActions}
       />
 
@@ -423,6 +425,8 @@ export function ReportsPage() {
           />
         </div>
       </Card>
+
+      <TeamExpenseReportsSection month={month} currency={currency} locale={locale} />
     </div>
   );
 }

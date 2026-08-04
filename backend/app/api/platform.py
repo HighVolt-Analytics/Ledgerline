@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import AuthContext, cross_tenant_db_lookup, get_db, require_super_admin
 from app.models.tenant import Tenant
 from app.schemas.common import ApiEnvelope
+from app.tenant_settings import UnsupportedCurrencyError
 from app.schemas.billing import (
     BillingUsageHistoryResponse,
     CreditLedgerEntryResponse,
@@ -91,7 +92,10 @@ async def create_tenant(
         raise HTTPException(409, f"Tenant slug '{slug}' is already taken")
 
     async with cross_tenant_db_lookup(db, restore_tenant_id=ctx.tenant_id):
-        tenant, invite = await create_client_tenant(db, body, invited_by_user_id=ctx.user_id)
+        try:
+            tenant, invite = await create_client_tenant(db, body, invited_by_user_id=ctx.user_id)
+        except UnsupportedCurrencyError as exc:
+            raise HTTPException(400, str(exc)) from exc
     tenant_row = await db.get(Tenant, tenant.id)
     if tenant_row:
         await send_tenant_invite_email(

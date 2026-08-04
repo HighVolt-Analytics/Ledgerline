@@ -29,7 +29,7 @@ def test_client_tenant_always_switchable() -> None:
 
 
 def test_platform_tenant_only_for_super_admin() -> None:
-    platform_viewer = _membership(is_platform=True, role="viewer")
+    platform_viewer = _membership(is_platform=True, role="user")
     platform_super = _membership(is_platform=True, role=SUPER_ADMIN_ROLE)
 
     assert membership_is_switchable(platform_viewer) is False
@@ -54,8 +54,8 @@ def test_platform_shadow_membership_not_switchable() -> None:
 def test_filter_drops_stray_platform_memberships() -> None:
     rows = [
         _membership(is_platform=False, role="admin"),
-        _membership(is_platform=True, role="viewer"),
-        _membership(is_platform=False, role="approver"),
+        _membership(is_platform=True, role="user"),
+        _membership(is_platform=False, role="functional_manager"),
     ]
     filtered = filter_switchable_memberships(rows)
     assert len(filtered) == 2

@@ -102,6 +102,8 @@ export interface InstitutionSettings {
   field_labels: Record<string, string>;
   /** Last-resort vision soft-bundle extracted_fields key; empty skips that step. */
   custom_bundle_field_key?: string;
+  /** True when the tenant has invoices (currency change is an accounting event). */
+  has_ledger_activity?: boolean;
 }
 
 export interface OrgAiBrief {
@@ -167,6 +169,7 @@ export interface CreatePlatformTenantBody {
   name: string;
   slug: string;
   country?: string;
+  currency?: string;
   industry?: string;
   first_admin_email: string;
   first_admin_name: string;
@@ -993,6 +996,96 @@ export interface ReportsAnalytics {
   top_vendors: VendorSpendRow[];
   kpi_trends: ReportsKpiTrends;
   period_has_data: boolean;
+}
+
+export interface EmployeeAdvanceSettlementRow {
+  employee_id: string;
+  name: string;
+  role: string;
+  email: string;
+  whatsapp_number: string;
+  whatsapp_number_2: string;
+  viber_number: string | null;
+  date_of_joining: string;
+  department: string;
+  location: string;
+  division: string;
+  supervisor_1: string;
+  supervisor_2: string;
+  bank_name: string;
+  bank_account_name: string;
+  bank_account_number: string;
+  bank_bsb: string;
+  bank_swift: string;
+  bank_iban: string;
+  advance_parent_ledger: string;
+  advance_sub_ledger: string;
+  status: string;
+  claim_count: number;
+  last_claim: string;
+  claim_ytd_spent: number;
+  advance_ledger_balance: number | string;
+  pending_against_advance: number | string;
+  available_advance: number | string;
+}
+
+export interface EmployeeBudgetUtilizationRow {
+  employee_id: string;
+  name: string;
+  role: string;
+  email: string;
+  whatsapp_number: string;
+  whatsapp_number_2: string;
+  viber_number: string | null;
+  date_of_joining: string;
+  department: string;
+  location: string;
+  division: string;
+  supervisor_1: string;
+  supervisor_2: string;
+  bank_name: string;
+  bank_account_name: string;
+  bank_account_number: string;
+  bank_bsb: string;
+  bank_swift: string;
+  bank_iban: string;
+  status: string;
+  budget_monthly: number;
+  budget_quarterly: number;
+  budget_annual: number;
+  category_caps: string;
+  mtd_spent: number;
+  qtd_spent: number;
+  ytd_spent: number;
+  claim_count: number;
+  last_claim: string;
+  monthly_remaining: number | null;
+  quarterly_remaining: number | null;
+  annual_remaining: number | null;
+  monthly_utilization_pct: number | null;
+  quarterly_utilization_pct: number | null;
+  annual_utilization_pct: number | null;
+}
+
+export interface EmployeeExpenseSummaryRow {
+  employee_name: string;
+  employee_email: string;
+  mobile: string;
+  division: string;
+  location: string;
+  document_no: string;
+  invoice_date: string | null;
+  team_expense_kind: string;
+  document_type_code: string;
+  line_description: string;
+  line_qty: number | string | null;
+  line_amount: number | string | null;
+  ledger_code: string;
+  ledger_name: string;
+  status: string;
+  evaluation_status: string;
+  invoice_id: number;
+  currency: string;
 }
 
 export interface SubledgerBalanceRow {
