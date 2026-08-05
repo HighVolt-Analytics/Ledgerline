@@ -135,8 +135,8 @@ export function DepartmentBudgetsPanel({
           </FieldLabel>
           <FieldLabel label="Allocated">
             <NumericInput
-              value={allocated}
-              onValueChange={setAllocated}
+              value={allocated ?? undefined}
+              onValueChange={(v) => setAllocated(v ?? null)}
               className="h-8 text-xs"
             />
           </FieldLabel>

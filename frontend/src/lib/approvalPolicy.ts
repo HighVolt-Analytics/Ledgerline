@@ -137,7 +137,8 @@ export function normalizeApprovalMatrixConfig(
   raw: Partial<ApprovalMatrixConfig> | null | undefined
 ): ApprovalMatrixConfig {
   const by_module = { ...DEFAULT_APPROVAL_MATRIX_BY_MODULE };
-  const source = raw?.by_module ?? {};
+  const source: Partial<Record<ApprovalMatrixModule, ApprovalQuorumMode>> =
+    raw?.by_module ?? {};
   for (const key of APPROVAL_MATRIX_MODULES) {
     const val = source[key];
     if (val === "one_way" || val === "two_way" || val === "three_way") {

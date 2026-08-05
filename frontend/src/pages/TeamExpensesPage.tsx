@@ -442,7 +442,9 @@ export function TeamExpensesPage() {
 
           <DepartmentBudgetsPanel
             currency={institutionCurrency}
-            departments={employees.map((e) => e.department).filter(Boolean)}
+            departments={employees
+              .map((e) => e.department)
+              .filter((d): d is string => Boolean(d))}
           />
         </div>
       </PageTabPanel>

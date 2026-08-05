@@ -1863,6 +1863,18 @@ export interface RuleBookConfig {
     bundle_mandatory: string[];
     bundle_conditional: string[];
     purchase_bundle_role?: string;
+    sales_bundle_role?: string;
+    team_expense_kind?: string;
+    budget_control?: boolean;
+    advance_control?: boolean;
+    matrix_template_code?: string;
+    sample_analysis?: {
+      analyzed_at?: string;
+      filenames?: string[];
+      file_count?: number;
+      applied_at?: string;
+      recognition_signals?: string[];
+    };
     post_to?: {
       ledger: string;
       sub_ledger: string;
