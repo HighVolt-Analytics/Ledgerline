@@ -1,4 +1,5 @@
 import type { Invoice } from "@/api/types";
+import { approvalChainToApproverSteps } from "@/lib/approvalQuorum";
 import { documentDisplayRef } from "@/lib/format";
 import { invoiceFailedValidations } from "@/lib/invoice";
 import { sortInvoicesNewestFirst } from "@/lib/invoices";
@@ -283,7 +284,7 @@ export function invoiceToTeamClaim(
     projectTag: inv.cost_centre ?? "—",
     merchant: inv.vendor ?? "—",
     budgetGroup: inv.account_name ?? "Team",
-    approvers: [],
+    approvers: approvalChainToApproverSteps(inv.approval_chain),
     kind: normalizeTeamExpenseKind(inv.team_expense_kind),
   };
 }

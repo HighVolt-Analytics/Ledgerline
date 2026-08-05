@@ -52,6 +52,11 @@ async def resolve_default_team_expense_kind(
     if pinned is not None:
         return pinned
 
+    defn = definition if definition is not None else _definition_for_invoice(invoice, config)
+    # Advance control off → never auto-pick against-advance from float balance.
+    if defn is not None and not bool(getattr(defn, "advance_control", False)):
+        return TEAM_EXPENSE_KIND_CLAIM
+
     balance = await _employee_advance_balance_for_invoice(session, invoice, config)
     if balance > Decimal("0"):
         return TEAM_EXPENSE_KIND_AGAINST_ADVANCE

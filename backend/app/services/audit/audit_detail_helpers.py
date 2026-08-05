@@ -79,6 +79,11 @@ VR_TE_CHECK_NAMES: dict[str, str] = {
     "VR-TE04": "Bank account",
     "VR-TE05": "Employee status",
     "VR-TE06": "Category cap",
+    "VR-TE07": "Advance balance",
+    "VR-TE08": "Department budget",
+    "VR-TE09": "Duplicate claim",
+    "VR-TE10": "Future-dated receipt",
+    "VR-TE11": "Currency match",
 }
 
 VR_CHECK_NAMES: dict[str, str] = {

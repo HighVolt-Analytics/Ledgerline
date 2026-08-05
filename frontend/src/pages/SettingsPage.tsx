@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { api } from "@/api/client";
 import { ApprovalPolicyPrivileges } from "@/components/settings/ApprovalPolicyPrivileges";
@@ -16,6 +17,7 @@ import { useInstitutionSettings } from "@/hooks/useInstitutionSettings";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import { notifyOnboardingStatusRefresh } from "@/components/onboarding/OnboardingChecklist";
 import { cn } from "@/lib/cn";
+import { queryKeys } from "@/lib/queryClient";
 import { INDUSTRIES } from "@/lib/settingsData";
 import { useSetupCatalogs } from "@/hooks/useSetupCatalogs";
 
@@ -31,6 +33,7 @@ export function SettingsPage() {
   const { user, refreshUser } = useAuth();
   const tenantScope = user?.tenant_id ?? null;
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const tabParam = searchParams.get("tab");
   const initialTab = TABS.find((t) => t.id === tabParam)?.id ?? "profile";
@@ -39,7 +42,7 @@ export function SettingsPage() {
   const [aiBriefSaved, setAiBriefSaved] = useState(false);
   const [coaSaved, setCoaSaved] = useState(false);
   const [businessName, setBusinessName] = useState("");
-  const [industry, setIndustry] = useState<string>(INDUSTRIES[1]);
+  const [industry, setIndustry] = useState<string>("");
   const [country, setCountry] = useState("SG");
   const [currency, setCurrency] = useState("SGD");
   const [currencyTouched, setCurrencyTouched] = useState(false);
@@ -48,6 +51,7 @@ export function SettingsPage() {
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [timezone, setTimezone] = useState("");
+  const [locale, setLocale] = useState("");
   const [profileLoading, setProfileLoading] = useState(true);
   const [profileSaving, setProfileSaving] = useState(false);
   const {
@@ -58,13 +62,14 @@ export function SettingsPage() {
 
   useResetOnTenantChange(() => {
     setBusinessName("");
-    setIndustry(INDUSTRIES[1]);
+    setIndustry("");
     setCountry("SG");
     setCurrency("SGD");
     setCurrencyTouched(false);
     setInitialCurrency("SGD");
     setPhone("");
     setTimezone("");
+    setLocale("");
     setSaved(false);
   });
 
@@ -86,26 +91,47 @@ export function SettingsPage() {
       if (!user) setProfileLoading(false);
       return;
     }
-    if (institution) {
-      setBusinessName(institution.name);
-      setCountry(institution.country);
-      setCurrency(institution.currency || defaultFromCountry(institution.country));
-      setInitialCurrency(institution.currency || defaultFromCountry(institution.country));
-      setCurrencyTouched(false);
-      setTimezone(institution.timezone);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const onboarding = await api.getOnboardingStatus();
+        if (!cancelled && onboarding.industry) {
+          setIndustry(onboarding.industry);
+        }
+      } catch {
+        /* keep current industry selection */
+      }
+      if (cancelled) return;
+      if (institution) {
+        setBusinessName(institution.name);
+        setCountry(institution.country);
+        setCurrency(institution.currency || defaultFromCountry(institution.country));
+        setInitialCurrency(institution.currency || defaultFromCountry(institution.country));
+        setCurrencyTouched(false);
+        setTimezone(institution.timezone);
+        setLocale(institution.locale || "");
+        setProfileLoading(false);
+        return;
+      }
+      setBusinessName(user.tenant_name);
+      setCountry("SG");
+      setCurrency("SGD");
+      setInitialCurrency("SGD");
+      setTimezone(user.tenant_timezone);
+      setLocale("");
       setProfileLoading(false);
-      return;
-    }
-    setBusinessName(user.tenant_name);
-    setCountry("SG");
-    setCurrency("SGD");
-    setInitialCurrency("SGD");
-    setTimezone(user.tenant_timezone);
-    setProfileLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [user, institution, institutionBlocked, institutionLoading, tenantScope, countries]);
 
   function defaultFromCountry(code: string): string {
     return countries.find((c) => c.code === code)?.defaultCurrency || "SGD";
+  }
+
+  function catalogForCountry(code: string) {
+    return countries.find((c) => c.code === code);
   }
 
   useEffect(() => {
@@ -141,6 +167,7 @@ export function SettingsPage() {
   const currencyMeta =
     currencies.find((c) => c.code === currency) ??
     currencies[0] ?? { code: currency, symbol: "", name: currency, decimalPlaces: 2 };
+  const displayTimezone = countryMeta.timeZone || timezone;
   const canEditAdmin = user?.role === "admin";
 
   const saveProfile = async () => {
@@ -160,20 +187,28 @@ export function SettingsPage() {
     ) {
       return;
     }
+    const countryMatch = catalogForCountry(country);
+    const nextTimezone = countryMatch?.timeZone || timezone || undefined;
+    const nextLocale = countryMatch?.locale || locale || undefined;
     setProfileSaving(true);
     try {
       const inst = await api.updateInstitutionSettings({
         name: trimmedName,
         country,
         currency,
+        ...(nextTimezone ? { timezone: nextTimezone } : {}),
+        ...(nextLocale ? { locale: nextLocale } : {}),
       });
-      await api.updateOnboarding({ industry });
+      const onboarding = await api.updateOnboarding({ industry: industry || undefined });
       setBusinessName(inst.name);
       setCountry(inst.country);
       setCurrency(inst.currency);
       setInitialCurrency(inst.currency);
       setCurrencyTouched(false);
       setTimezone(inst.timezone);
+      setLocale(inst.locale || "");
+      if (onboarding.industry) setIndustry(onboarding.industry);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.institutionSettings() });
       await refreshUser();
       setSaved(true);
       notifyOnboardingStatusRefresh();
@@ -249,7 +284,7 @@ export function SettingsPage() {
               <Select
                 id="select-settings-industry"
                 data-testid="select-settings-industry"
-                value={industry}
+                value={industry || INDUSTRIES[0]}
                 onValueChange={setIndustry}
                 size="md"
                 options={INDUSTRIES.map((i) => ({ value: i, label: i }))}
@@ -268,6 +303,7 @@ export function SettingsPage() {
                   setCountry(code);
                   const match = countries.find((c) => c.code === code);
                   if (match?.timeZone) setTimezone(match.timeZone);
+                  if (match?.locale) setLocale(match.locale);
                   if (!currencyTouched) {
                     setCurrency(match?.defaultCurrency || currency);
                   }
@@ -302,7 +338,7 @@ export function SettingsPage() {
                 {currencyMeta.code}
                 {currencyMeta.symbol ? ` ${currencyMeta.symbol}` : ""} · {countryMeta.taxLabel}
                 {countryMeta.taxRate != null ? ` ${countryMeta.taxRate}%` : ""}
-                {timezone ? ` · ${timezone}` : null}
+                {displayTimezone ? ` · ${displayTimezone}` : null}
               </p>
             </div>
             <div className="space-y-1.5">

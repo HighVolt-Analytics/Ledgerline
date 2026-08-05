@@ -20,12 +20,44 @@ export const APPROVAL_ACTIONS = [
 export type ApprovalRole = (typeof APPROVAL_ROLES)[number];
 export type ApprovalAction = (typeof APPROVAL_ACTIONS)[number];
 
+export type ApprovalQuorumMode = "one_way" | "two_way" | "three_way";
+
+export const APPROVAL_MATRIX_MODULES = [
+  "team_expenses",
+  "expenses",
+  "purchase",
+  "sales",
+] as const;
+
+export type ApprovalMatrixModule = (typeof APPROVAL_MATRIX_MODULES)[number];
+
+export const APPROVAL_MATRIX_MODULE_LABELS: Record<ApprovalMatrixModule, string> = {
+  team_expenses: "Team Expenses",
+  expenses: "Expenses Management",
+  purchase: "Purchase Management",
+  sales: "Sales Management",
+};
+
+export const APPROVAL_QUORUM_MODE_OPTIONS: {
+  value: ApprovalQuorumMode;
+  label: string;
+}[] = [
+  { value: "one_way", label: "1-way (any 1 of 4)" },
+  { value: "two_way", label: "2-way (any 2 of 4)" },
+  { value: "three_way", label: "3-way (any 3 of 4)" },
+];
+
 export type PolicyRule = { id: string; condition: string; approver: string };
+
+export type ApprovalMatrixConfig = {
+  by_module: Record<ApprovalMatrixModule, ApprovalQuorumMode>;
+};
 
 export type LocalApprovalPolicy = {
   locked: boolean;
   rules: PolicyRule[];
   matrix: Record<ApprovalRole, Record<ApprovalAction, boolean>>;
+  approval_matrix: ApprovalMatrixConfig;
 };
 
 export const DEFAULT_APPROVAL_RULES: PolicyRule[] = [
@@ -34,6 +66,16 @@ export const DEFAULT_APPROVAL_RULES: PolicyRule[] = [
   { id: "ap3", condition: "Suspense-routed invoices", approver: "Finance Controller" },
   { id: "ap4", condition: "New vendor (first invoice)", approver: "Bookkeeper review" },
 ];
+
+export const DEFAULT_APPROVAL_MATRIX_BY_MODULE: Record<
+  ApprovalMatrixModule,
+  ApprovalQuorumMode
+> = {
+  team_expenses: "one_way",
+  expenses: "one_way",
+  purchase: "two_way",
+  sales: "one_way",
+};
 
 const LEADERSHIP: Record<ApprovalAction, boolean> = {
   View: true,
@@ -90,3 +132,17 @@ export const DEFAULT_APPROVAL_MATRIX: Record<
   Auditor: { ...READ_COMMENT },
   User: { ...VIEW_ONLY },
 };
+
+export function normalizeApprovalMatrixConfig(
+  raw: Partial<ApprovalMatrixConfig> | null | undefined
+): ApprovalMatrixConfig {
+  const by_module = { ...DEFAULT_APPROVAL_MATRIX_BY_MODULE };
+  const source = raw?.by_module ?? {};
+  for (const key of APPROVAL_MATRIX_MODULES) {
+    const val = source[key];
+    if (val === "one_way" || val === "two_way" || val === "three_way") {
+      by_module[key] = val;
+    }
+  }
+  return { by_module };
+}

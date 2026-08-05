@@ -323,7 +323,7 @@ export function vendorToApi(vendor: VendorMaster): Record<string, unknown> {
 
 export function mapEmployee(raw: Record<string, unknown>): EmployeeMaster {
   const bank = (raw.bank ?? {}) as Record<string, string | undefined>;
-  const budget = (raw.budget ?? {}) as {
+  const budgetRaw = (raw.spending_limits ?? raw.budget ?? {}) as {
     monthly?: number;
     quarterly?: number;
     annual?: number;
@@ -352,10 +352,10 @@ export function mapEmployee(raw: Record<string, unknown>): EmployeeMaster {
       iban: bank.iban,
     },
     budget: {
-      monthly: Number(budget.monthly ?? 0),
-      quarterly: Number(budget.quarterly ?? 0),
-      annual: Number(budget.annual ?? 0),
-      categories: budget.categories ?? [],
+      monthly: Number(budgetRaw.monthly ?? 0),
+      quarterly: Number(budgetRaw.quarterly ?? 0),
+      annual: Number(budgetRaw.annual ?? 0),
+      categories: budgetRaw.categories ?? [],
     },
     advanceParentLedger: String(raw.advance_parent_ledger ?? ""),
     advanceSubLedger: String(raw.advance_sub_ledger ?? ""),
@@ -434,6 +434,17 @@ function mapTeamExpenseKind(raw: Record<string, unknown>): DocumentTypeTeamExpen
   return (TEAM_EXPENSE_KINDS as readonly string[]).includes(token)
     ? (token as DocumentTypeTeamExpenseKind)
     : "";
+}
+
+function mapBoolFlag(
+  raw: Record<string, unknown>,
+  snake: string,
+  camel: string,
+  defaultValue: boolean
+): boolean {
+  const value = raw[snake] ?? raw[camel];
+  if (value === undefined || value === null) return defaultValue;
+  return Boolean(value);
 }
 
 function inferPlaybookProfileFromRaw(raw: Record<string, unknown>): PlaybookProfile {
@@ -612,6 +623,8 @@ function mapDocumentType(raw: Record<string, unknown>): DocumentTypeDefinition {
       sampleAnalysis: mapSampleAnalysis(raw),
       matrixTemplateCode: String(raw.matrix_template_code ?? raw.matrixTemplateCode ?? ""),
       teamExpenseKind: mapTeamExpenseKind(raw),
+      budgetControl: mapBoolFlag(raw, "budget_control", "budgetControl", false),
+      advanceControl: mapBoolFlag(raw, "advance_control", "advanceControl", false),
       postTo: mapDocumentTypePostTo(
         (raw.post_to ?? raw.postTo) as Record<string, unknown> | undefined
       ),
@@ -685,6 +698,8 @@ function documentTypeToApi(
       : {}),
     ...(reconciled.salesBundleRole ? { sales_bundle_role: reconciled.salesBundleRole } : {}),
     ...(reconciled.teamExpenseKind ? { team_expense_kind: reconciled.teamExpenseKind } : {}),
+    budget_control: reconciled.budgetControl === true,
+    advance_control: reconciled.advanceControl === true,
     ...(reconciled.matrixTemplateCode
       ? { matrix_template_code: reconciled.matrixTemplateCode }
       : {}),

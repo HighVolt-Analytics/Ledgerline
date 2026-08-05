@@ -9,7 +9,47 @@ import { InlineTableSkeleton } from "@/components/skeleton/PageSkeletons";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { usePermissions } from "@/hooks/usePermissions";
+import { cn } from "@/lib/cn";
 import { formatTenantRole, TENANT_ROLE_OPTIONS } from "@/lib/tenantRoles";
+
+function MemberStatusBadge({
+  isActive,
+  interactive,
+  disabled,
+  onToggle,
+}: {
+  isActive: boolean;
+  interactive?: boolean;
+  disabled?: boolean;
+  onToggle?: () => void;
+}) {
+  const label = isActive ? "Active" : "Inactive";
+  const className = cn(
+    "whitespace-nowrap inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors",
+    isActive
+      ? "border [border-color:var(--badge-outline)] shadow-xs"
+      : "border-transparent bg-secondary text-secondary-foreground",
+    interactive && "cursor-pointer hover-elevate",
+    disabled && "opacity-50 pointer-events-none"
+  );
+
+  if (interactive) {
+    return (
+      <button
+        type="button"
+        className={className}
+        disabled={disabled}
+        onClick={onToggle}
+        title={isActive ? "Click to deactivate" : "Click to activate"}
+        data-testid="member-status-toggle"
+      >
+        {label}
+      </button>
+    );
+  }
+
+  return <Badge variant={isActive ? "outline" : "secondary"}>{label}</Badge>;
+}
 
 function InviteMemberDialog({
   open,
@@ -189,16 +229,33 @@ export function TenantMembersSection() {
     }
   };
 
-  const onDeactivate = async (userId: number) => {
-    if (!window.confirm("Deactivate this member? They will lose access to this organisation.")) {
+  const onToggleStatus = async (member: TenantMember) => {
+    if (member.is_active) {
+      if (!window.confirm("Deactivate this member? They will lose access to this organisation.")) {
+        return;
+      }
+    } else if (
+      !window.confirm("Activate this member? They will regain access to this organisation.")
+    ) {
       return;
     }
-    setBusyUserId(userId);
+
+    setBusyUserId(member.user_id);
     try {
-      await api.deactivateTenantMember(userId);
+      if (member.is_active) {
+        await api.deactivateTenantMember(member.user_id);
+      } else {
+        await api.activateTenantMember(member.user_id);
+      }
       await load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Could not deactivate member");
+      alert(
+        err instanceof Error
+          ? err.message
+          : member.is_active
+            ? "Could not deactivate member"
+            : "Could not activate member"
+      );
     } finally {
       setBusyUserId(null);
     }
@@ -257,23 +314,12 @@ export function TenantMembersSection() {
                   )}
                 </td>
                 <td className="px-4 py-2.5 text-right">
-                  {member.is_active ? (
-                    canManage ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-destructive"
-                        disabled={busyUserId === member.user_id}
-                        onClick={() => void onDeactivate(member.user_id)}
-                      >
-                        Deactivate
-                      </Button>
-                    ) : (
-                      <Badge variant="outline">Active</Badge>
-                    )
-                  ) : (
-                    <Badge variant="secondary">Inactive</Badge>
-                  )}
+                  <MemberStatusBadge
+                    isActive={member.is_active}
+                    interactive={canManage}
+                    disabled={busyUserId === member.user_id}
+                    onToggle={() => void onToggleStatus(member)}
+                  />
                 </td>
               </tr>
             ))}

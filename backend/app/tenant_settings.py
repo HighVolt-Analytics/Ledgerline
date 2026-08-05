@@ -133,11 +133,7 @@ def tenant_timezone(tenant: Tenant | None) -> str:
     tz = settings.get("timezone")
     if isinstance(tz, str) and tz.strip():
         return _validate_timezone(tz.strip())
-    country = tenant_country(tenant)
-    defaults = COUNTRY_DEFAULTS.get(country) or COUNTRY_DEFAULTS.get(DEFAULT_COUNTRY)
-    if defaults:
-        return defaults["timezone"]
-    return DEFAULT_TIMEZONE
+    return country_timezone_suggestion(tenant_country(tenant))
 
 
 def tenant_locale(tenant: Tenant | None) -> str:
@@ -145,11 +141,7 @@ def tenant_locale(tenant: Tenant | None) -> str:
     locale = settings.get("locale")
     if isinstance(locale, str) and locale.strip():
         return locale.strip()
-    country = tenant_country(tenant)
-    defaults = COUNTRY_DEFAULTS.get(country) or COUNTRY_DEFAULTS.get(DEFAULT_COUNTRY)
-    if defaults:
-        return defaults["locale"]
-    return DEFAULT_LOCALE
+    return country_locale_suggestion(tenant_country(tenant))
 
 
 def tenant_today(tenant: Tenant | None) -> date:
@@ -236,6 +228,38 @@ def build_tenant_settings(
     return settings
 
 
+def country_timezone_suggestion(country_code: str) -> str:
+    """Timezone for a country: jurisdiction pack → CLDR primary → platform default.
+
+    Platform default (Asia/Singapore) is only used when the country is unknown /
+    has no CLDR territory zones — never as a substitute for a known country.
+    """
+    code = (country_code or "").strip().upper()
+    defaults = COUNTRY_DEFAULTS.get(code)
+    if defaults and defaults.get("timezone"):
+        return defaults["timezone"]
+    from app.services.shared.iso_geo_catalog import default_timezone_for_country
+
+    resolved = default_timezone_for_country(code)
+    if resolved:
+        return resolved
+    return DEFAULT_TIMEZONE
+
+
+def country_locale_suggestion(country_code: str) -> str:
+    """Locale for a country: jurisdiction pack → Babel → platform default."""
+    code = (country_code or "").strip().upper()
+    defaults = COUNTRY_DEFAULTS.get(code)
+    if defaults and defaults.get("locale"):
+        return defaults["locale"]
+    from app.services.shared.iso_geo_catalog import default_locale_for_country
+
+    resolved = default_locale_for_country(code)
+    if resolved:
+        return resolved
+    return DEFAULT_LOCALE
+
+
 def merge_institution_settings(
     current: dict[str, Any] | None,
     *,
@@ -258,13 +282,11 @@ def merge_institution_settings(
     if country is not None:
         code = country.strip().upper()
         out["country"] = code
-        defaults = COUNTRY_DEFAULTS.get(code)
-        if defaults:
-            # Country change resets derived locale unless caller overrides both.
-            if timezone is None:
-                out["timezone"] = defaults["timezone"]
-            if locale is None:
-                out["locale"] = defaults["locale"]
+        # Country change always resets derived timezone/locale unless caller overrides.
+        if timezone is None:
+            out["timezone"] = country_timezone_suggestion(code)
+        if locale is None:
+            out["locale"] = country_locale_suggestion(code)
 
     if timezone is not None:
         out["timezone"] = _validate_timezone(timezone.strip())

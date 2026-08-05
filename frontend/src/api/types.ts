@@ -323,6 +323,20 @@ export interface ProcessingOverrides {
   skip_steps: string[];
 }
 
+export interface ApprovalChainEntry {
+  user_id: number;
+  role: string;
+  name: string;
+  at: string;
+}
+
+export interface ApprovalChain {
+  module?: string;
+  mode?: "one_way" | "two_way" | "three_way";
+  required?: number;
+  approvals?: ApprovalChainEntry[];
+}
+
 export interface Invoice {
   id: number;
   document_ref?: string | null;
@@ -398,6 +412,7 @@ export interface Invoice {
   approval_board_column?: "review" | "processing" | "approved" | "rejected";
   processing_overrides?: ProcessingOverrides | null;
   gl_posting_applicable?: boolean;
+  approval_chain?: ApprovalChain | null;
 }
 
 export interface LineItem {
@@ -639,6 +654,7 @@ export interface SalesOrderApi {
   invoice_unit_price: number;
   gst_rate: number;
   variance_approved: boolean;
+  variance_approval_chain?: ApprovalChain | null;
   status: string;
   three_way_match_status?: "full_match" | "partial" | "mismatch" | null;
   match: ThreeWayMatchApi;
@@ -723,6 +739,7 @@ export interface PurchaseOrderApi {
   invoice_unit_price: number;
   gst_rate: number;
   variance_approved: boolean;
+  variance_approval_chain?: ApprovalChain | null;
   status: string;
   three_way_match_status?: "full_match" | "partial" | "mismatch" | null;
   match: ThreeWayMatchApi;
@@ -1065,6 +1082,48 @@ export interface EmployeeBudgetUtilizationRow {
   monthly_utilization_pct: number | null;
   quarterly_utilization_pct: number | null;
   annual_utilization_pct: number | null;
+  /** Outstanding Staff Advance ledger balance (cash float). */
+  advance_float?: number;
+  monthly_cash_committed?: number;
+  quarterly_cash_committed?: number;
+  annual_cash_committed?: number;
+  monthly_cash_remaining?: number | null;
+  quarterly_cash_remaining?: number | null;
+  annual_cash_remaining?: number | null;
+  monthly_cash_utilization_pct?: number | null;
+  quarterly_cash_utilization_pct?: number | null;
+  annual_cash_utilization_pct?: number | null;
+}
+
+export interface DepartmentBudgetRow {
+  id: number;
+  department: string;
+  gl_ledger: string;
+  period_kind: "monthly" | "quarterly" | "annual";
+  period_key: string;
+  allocated: number | string;
+  notes: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface DepartmentBudgetUtilizationRow {
+  department: string;
+  gl_ledger: string;
+  period_kind: "monthly" | "quarterly" | "annual";
+  period_key: string;
+  allocated: number;
+  consumed: number;
+  remaining: number | null;
+  utilization_pct: number | null;
+  notes: string | null;
+  budget_id: number;
+  /** Outstanding Staff Advance balances for employees in this department. */
+  advance_float?: number;
+  /** Expense consumed (+ advance float on dept-wide / empty-GL envelopes). */
+  cash_committed?: number;
+  cash_remaining?: number | null;
+  cash_utilization_pct?: number | null;
 }
 
 export interface EmployeeExpenseSummaryRow {
@@ -1991,6 +2050,9 @@ export interface ApprovalPolicy {
   locked: boolean;
   rules: PolicyRule[];
   matrix: Record<string, Record<string, boolean>>;
+  approval_matrix?: {
+    by_module: Record<string, "one_way" | "two_way" | "three_way">;
+  };
 }
 
 export type MatrixCellState = "done" | "pending" | "fail" | "skipped";

@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type {
   EmployeeAdvanceSettlementRow,
   EmployeeBudgetUtilizationRow,
+  DepartmentBudgetUtilizationRow,
   EmployeeExpenseSummaryRow,
 } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
@@ -10,6 +11,7 @@ import { Card } from "@/components/ui/card";
 import {
   useTeamExpenseAdvanceSettlement,
   useTeamExpenseBudgetUtilization,
+  useTeamExpenseDepartmentBudgetUtilization,
   useTeamExpenseExpenseSummary,
 } from "@/hooks/useTeamExpenseReports";
 import { money, toNumber } from "@/lib/format";
@@ -47,6 +49,8 @@ export function TeamExpenseReportsSection({
   const range = useMemo(() => monthToDateRange(month), [month]);
   const { data: advanceRows, isLoading: advanceLoading } = useTeamExpenseAdvanceSettlement();
   const { data: budgetRows, isLoading: budgetLoading } = useTeamExpenseBudgetUtilization();
+  const { data: deptBudgetRows, isLoading: deptBudgetLoading } =
+    useTeamExpenseDepartmentBudgetUtilization();
   const { data: summaryRows, isLoading: summaryLoading } = useTeamExpenseExpenseSummary(
     range.dateFrom,
     range.dateTo
@@ -57,6 +61,7 @@ export function TeamExpenseReportsSection({
 
   const advance = advanceRows ?? [];
   const budgets = budgetRows ?? [];
+  const deptBudgets = deptBudgetRows ?? [];
   const summary = summaryRows ?? [];
 
   const totals = useMemo(() => {
@@ -73,27 +78,43 @@ export function TeamExpenseReportsSection({
       const monthlyCap = row.budget_monthly ?? 0;
       return monthlyCap > 0 && row.mtd_spent > monthlyCap;
     }).length;
+    const cashTight = budgets.filter((row) => {
+      const monthlyCap = row.budget_monthly ?? 0;
+      const cashPct = row.monthly_cash_utilization_pct;
+      return monthlyCap > 0 && cashPct != null && cashPct >= 100;
+    }).length;
+    const overDept = deptBudgets.filter((row) => {
+      return row.allocated > 0 && row.consumed > row.allocated;
+    }).length;
+    const cashOverDept = deptBudgets.filter((row) => {
+      const cashPct = row.cash_utilization_pct;
+      return row.allocated > 0 && cashPct != null && cashPct >= 100;
+    }).length;
     return {
       advanceOutstanding,
       available,
       pending,
       overBudget,
+      cashTight,
+      overDept,
+      cashOverDept,
       employeeCount: advance.length || budgets.length,
       summaryCount: summary.length,
     };
-  }, [advance, budgets, summary.length]);
+  }, [advance, budgets, deptBudgets, summary.length]);
 
-  const loading = advanceLoading || budgetLoading || summaryLoading;
+  const loading = advanceLoading || budgetLoading || deptBudgetLoading || summaryLoading;
 
   return (
     <Card className="p-4 mt-6">
       <h2 className="text-base font-semibold mb-1">Team expense reports</h2>
       <p className="text-xs text-muted-foreground mb-4">
-        Advance settlement and budget utilization are live snapshots. Expense summary shows Team
-        Expenses documents for {month}. Download full CSV from the menu above.
+        Accrual spend excludes advances (balance-sheet float). Cash columns reserve outstanding
+        advances against the same limits so managers see cash still free. Expense summary shows
+        Team Expenses documents for {month}. Download full workbooks from the menu above.
       </p>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5 mb-4">
         <KpiCard
           label="Advance outstanding"
           value={loading ? "…" : fmt(totals.advanceOutstanding)}
@@ -110,22 +131,43 @@ export function TeamExpenseReportsSection({
           testid="kpi-te-available"
         />
         <KpiCard
-          label="Over monthly budget"
+          label="Over monthly limit"
           value={loading ? "…" : totals.overBudget}
-          delta={{ dir: "flat", text: "employees" }}
+          delta={{ dir: "flat", text: "accrual · employees" }}
           testid="kpi-te-over-budget"
         />
         <KpiCard
-          label="Expense lines (month)"
-          value={loading ? "…" : totals.summaryCount}
-          delta={{ dir: "flat", text: month }}
-          testid="kpi-te-summary-count"
+          label="Cash overcommitted"
+          value={loading ? "…" : totals.cashTight}
+          delta={{ dir: "flat", text: "spend + float ≥ limit" }}
+          testid="kpi-te-cash-tight"
+        />
+        <KpiCard
+          label="Over dept budget"
+          value={loading ? "…" : totals.overDept}
+          delta={{
+            dir: "flat",
+            text:
+              totals.cashOverDept > 0
+                ? `${totals.cashOverDept} cash-tight envelopes`
+                : "envelopes",
+          }}
+          testid="kpi-te-over-dept"
         />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2 mb-4">
         <AdvanceSettlementTable rows={advance} currency={currency} locale={locale} loading={advanceLoading} />
         <BudgetUtilizationTable rows={budgets} currency={currency} locale={locale} loading={budgetLoading} />
+      </div>
+
+      <div className="mb-4">
+        <DepartmentBudgetUtilizationTable
+          rows={deptBudgets}
+          currency={currency}
+          locale={locale}
+          loading={deptBudgetLoading}
+        />
       </div>
 
       <ExpenseSummaryTable
@@ -213,13 +255,16 @@ function BudgetUtilizationTable({
 
   return (
     <div>
-      <h3 className="text-sm font-semibold mb-3">Employee budget utilization</h3>
+      <h3 className="text-sm font-semibold mb-1">Employee spending limit utilization</h3>
+      <p className="text-xs text-muted-foreground mb-3">
+        Accrual remaining ignores advances. Cash remaining = limit − claim spend − advance float.
+      </p>
       {loading ? (
         <p className="text-sm text-muted-foreground py-6 text-center">Loading…</p>
       ) : rows.length === 0 ? (
         <EmptyState
           title="No employees"
-          hint="Budget caps and claim spend appear from the employee master."
+          hint="Spending limits and claim spend appear from the employee master."
         />
       ) : (
         <div className="overflow-x-auto">
@@ -228,14 +273,16 @@ function BudgetUtilizationTable({
               <tr className="text-left text-xs text-muted-foreground border-b border-border">
                 <th className="py-1.5 font-medium">Employee</th>
                 <th className="py-1.5 font-medium text-right">MTD / Cap</th>
-                <th className="py-1.5 font-medium text-right">Remaining</th>
-                <th className="py-1.5 font-medium text-right">Used</th>
+                <th className="py-1.5 font-medium text-right">Float</th>
+                <th className="py-1.5 font-medium text-right">Cash left</th>
+                <th className="py-1.5 font-medium text-right">Cash used</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((row) => {
-                const over =
-                  (row.budget_monthly ?? 0) > 0 && row.mtd_spent > row.budget_monthly;
+                const cashPct = row.monthly_cash_utilization_pct;
+                const cashOver =
+                  (row.budget_monthly ?? 0) > 0 && cashPct != null && cashPct >= 100;
                 return (
                   <tr key={row.employee_id} className="row-band border-b border-border/60">
                     <td className="py-1.5">
@@ -252,16 +299,105 @@ function BudgetUtilizationTable({
                       </span>
                     </td>
                     <td className="py-1.5 text-right tnum text-muted-foreground">
-                      {row.monthly_remaining == null ? "—" : fmt(row.monthly_remaining)}
+                      {toNumber(row.advance_float) > 0 ? fmt(row.advance_float) : "—"}
+                    </td>
+                    <td className="py-1.5 text-right tnum text-muted-foreground">
+                      {row.monthly_cash_remaining == null
+                        ? "—"
+                        : fmt(row.monthly_cash_remaining)}
                     </td>
                     <td
                       className={`py-1.5 text-right tnum font-medium ${
-                        over ? "text-destructive" : ""
+                        cashOver ? "text-destructive" : ""
                       }`}
                     >
-                      {row.monthly_utilization_pct == null
-                        ? "—"
-                        : `${row.monthly_utilization_pct}%`}
+                      {cashPct == null ? "—" : `${cashPct}%`}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DepartmentBudgetUtilizationTable({
+  rows,
+  currency,
+  locale,
+  loading,
+}: {
+  rows: DepartmentBudgetUtilizationRow[];
+  currency: string;
+  locale?: string;
+  loading: boolean;
+}) {
+  const fmt = (value: number | string | null | undefined) =>
+    money(toNumber(value), currency, locale);
+
+  return (
+    <div>
+      <h3 className="text-sm font-semibold mb-1">Department budget utilization</h3>
+      <p className="text-xs text-muted-foreground mb-3">
+        Cash remaining reserves advance float on dept-wide (All GLs) envelopes only.
+      </p>
+      {loading ? (
+        <p className="text-sm text-muted-foreground py-6 text-center">Loading…</p>
+      ) : rows.length === 0 ? (
+        <EmptyState
+          title="No department budgets for current period"
+          hint="Configure envelopes on Team Expenses → Budgets & limits."
+        />
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-muted-foreground border-b border-border">
+                <th className="py-1.5 font-medium">Department</th>
+                <th className="py-1.5 font-medium">Period</th>
+                <th className="py-1.5 font-medium text-right">Allocated</th>
+                <th className="py-1.5 font-medium text-right">Consumed</th>
+                <th className="py-1.5 font-medium text-right">Float</th>
+                <th className="py-1.5 font-medium text-right">Cash left</th>
+                <th className="py-1.5 font-medium text-right">Cash used</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => {
+                const cashPct = row.cash_utilization_pct;
+                const cashOver =
+                  row.allocated > 0 && cashPct != null && cashPct >= 100;
+                return (
+                  <tr
+                    key={row.budget_id}
+                    className="row-band border-b border-border/60"
+                  >
+                    <td className="py-1.5">
+                      <div className="font-medium">{row.department}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {row.gl_ledger || "All GLs"}
+                      </div>
+                    </td>
+                    <td className="py-1.5 text-muted-foreground">
+                      {row.period_kind} · {row.period_key}
+                    </td>
+                    <td className="py-1.5 text-right tnum">{fmt(row.allocated)}</td>
+                    <td className="py-1.5 text-right tnum">{fmt(row.consumed)}</td>
+                    <td className="py-1.5 text-right tnum text-muted-foreground">
+                      {toNumber(row.advance_float) > 0 ? fmt(row.advance_float) : "—"}
+                    </td>
+                    <td className="py-1.5 text-right tnum text-muted-foreground">
+                      {row.cash_remaining == null ? "—" : fmt(row.cash_remaining)}
+                    </td>
+                    <td
+                      className={`py-1.5 text-right tnum font-medium ${
+                        cashOver ? "text-destructive" : ""
+                      }`}
+                    >
+                      {cashPct == null ? "—" : `${cashPct}%`}
                     </td>
                   </tr>
                 );

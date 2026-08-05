@@ -50,6 +50,9 @@ def _document_type(code: str, *, team_expense_kind: str = "") -> DocumentTypeDef
         route_target=ROUTE_TEAM,
         playbook_profile="employee_claim",
         team_expense_kind=team_expense_kind,
+        # Kind-defaulting tests need advance balance auto-pick enabled.
+        budget_control=True,
+        advance_control=True,
         post_to={"ledger": "Operating Expenses"},
     )
 

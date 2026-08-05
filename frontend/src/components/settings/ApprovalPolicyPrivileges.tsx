@@ -5,13 +5,22 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { usePermissions } from "@/hooks/usePermissions";
 import {
   APPROVAL_ACTIONS,
+  APPROVAL_MATRIX_MODULE_LABELS,
+  APPROVAL_MATRIX_MODULES,
+  APPROVAL_QUORUM_MODE_OPTIONS,
   APPROVAL_ROLES,
   DEFAULT_APPROVAL_MATRIX,
+  DEFAULT_APPROVAL_MATRIX_BY_MODULE,
   DEFAULT_APPROVAL_RULES,
+  normalizeApprovalMatrixConfig,
   type ApprovalAction,
+  type ApprovalMatrixModule,
+  type ApprovalQuorumMode,
   type ApprovalRole,
   type LocalApprovalPolicy,
 } from "@/lib/approvalPolicy";
@@ -34,8 +43,13 @@ function normalizeLocalPolicy(raw: LocalApprovalPolicy): LocalApprovalPolicy {
       ...(remapped[role] ?? {}),
     };
   }
-  return { ...raw, matrix };
+  return {
+    ...raw,
+    matrix,
+    approval_matrix: normalizeApprovalMatrixConfig(raw.approval_matrix),
+  };
 }
+
 function UnlockPolicyDialog({
   open,
   onClose,
@@ -114,10 +128,12 @@ function UnlockPolicyDialog({
 }
 
 export function ApprovalPolicyPrivileges() {
+  const { permissions } = usePermissions();
   const [policy, setPolicy] = useState<LocalApprovalPolicy>({
     locked: false,
     rules: DEFAULT_APPROVAL_RULES,
     matrix: DEFAULT_APPROVAL_MATRIX,
+    approval_matrix: { by_module: { ...DEFAULT_APPROVAL_MATRIX_BY_MODULE } },
   });
   const [unlockOpen, setUnlockOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -157,6 +173,21 @@ export function ApprovalPolicyPrivileges() {
     void persistPolicy(next);
   };
 
+  const setModuleMode = (module: ApprovalMatrixModule, mode: ApprovalQuorumMode) => {
+    if (policy.locked) return;
+    const next: LocalApprovalPolicy = {
+      ...policy,
+      approval_matrix: {
+        by_module: {
+          ...policy.approval_matrix.by_module,
+          [module]: mode,
+        },
+      },
+    };
+    setPolicy(next);
+    void persistPolicy(next);
+  };
+
   const addRule = () => {
     if (policy.locked) return;
     const next: LocalApprovalPolicy = {
@@ -180,6 +211,12 @@ export function ApprovalPolicyPrivileges() {
       setToast(e instanceof Error ? e.message : "Invalid unlock code");
     }
   };
+
+  const enabledModules = permissions?.enabled_modules;
+  const visibleModules = APPROVAL_MATRIX_MODULES.filter((key) => {
+    if (!enabledModules) return true;
+    return enabledModules[key] !== false;
+  });
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -225,6 +262,47 @@ export function ApprovalPolicyPrivileges() {
               </Badge>
             </div>
           ))}
+        </div>
+      </Card>
+
+      <Card className="p-4">
+        <div className="mb-3">
+          <h3 className="text-sm font-semibold">Approval matrix</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            How many distinct approvals are required per module. Approvals must come from
+            Admin, Functional manager, Functional supervisor, or Finance head.
+          </p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-xs text-muted-foreground border-b border-border">
+                <th className="px-3 py-2.5 text-left font-medium">Module</th>
+                <th className="px-3 py-2.5 text-left font-medium">Mode</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleModules.map((module) => (
+                <tr key={module} className="border-b border-border/60 last:border-0">
+                  <td className="px-3 py-2.5 font-medium">
+                    {APPROVAL_MATRIX_MODULE_LABELS[module]}
+                  </td>
+                  <td className="px-3 py-2.5">
+                    <Select
+                      value={policy.approval_matrix.by_module[module]}
+                      onValueChange={(v) =>
+                        setModuleMode(module, v as ApprovalQuorumMode)
+                      }
+                      options={APPROVAL_QUORUM_MODE_OPTIONS}
+                      disabled={policy.locked}
+                      className="w-full max-w-xs"
+                      data-testid={`approval-mode-${module}`}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </Card>
 

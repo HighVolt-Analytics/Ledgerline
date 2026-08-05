@@ -1,0 +1,393 @@
+"""Per-module approval quorum (1/2/3-way)."""
+
+from __future__ import annotations
+
+from decimal import Decimal
+
+import pytest
+from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps import AuthContext
+from app.config import get_settings
+from app.models.invoice import Invoice, InvoiceStatus
+from app.models.purchase_order import PurchaseOrder, PurchaseOrderStatus
+from app.models.user import User, UserRole
+from app.services.approval.approval_policy_io import (
+    default_policy_dict,
+    load_policy_for_tenant,
+    save_policy_for_tenant,
+    validate_policy_payload,
+)
+from app.services.approval.approval_quorum_service import (
+    ApprovalQuorumForbiddenError,
+    actor_in_pool,
+    module_for_route_target,
+    quorum_met,
+    record_approval,
+    require_actor_in_pool,
+)
+from app.services.auth.auth_service import create_access_token, hash_password
+from app.services.auth.membership_service import ensure_membership
+from app.tenant_ids import TESTING_TENANT_UUID
+from tests.auth_test_helpers import tenant_auth_headers
+
+
+def test_policy_normalizes_missing_approval_matrix() -> None:
+    raw = default_policy_dict()
+    del raw["approval_matrix"]
+    policy = validate_policy_payload(raw)
+    assert policy.approval_matrix.by_module["team_expenses"] == "one_way"
+    assert policy.approval_matrix.by_module["purchase"] == "two_way"
+
+
+def test_module_for_route_target() -> None:
+    assert module_for_route_target("Team Expenses") == "team_expenses"
+    assert module_for_route_target("Purchase Management") == "purchase"
+    assert module_for_route_target("Unknown") == "expenses"
+
+
+def test_record_approval_idempotent_same_user() -> None:
+    chain = record_approval(
+        None,
+        tenant_id=TESTING_TENANT_UUID,
+        module_key="team_expenses",
+        user_id=1,
+        role="functional_manager",
+        name="Mgr One",
+    )
+    chain = record_approval(
+        chain,
+        tenant_id=TESTING_TENANT_UUID,
+        module_key="team_expenses",
+        user_id=1,
+        role="functional_manager",
+        name="Mgr One",
+    )
+    assert len(chain["approvals"]) == 1
+    assert not quorum_met(
+        {**chain, "required": 2, "mode": "two_way"}
+    )
+
+
+def test_two_way_needs_two_distinct_users() -> None:
+    chain = record_approval(
+        None,
+        tenant_id=TESTING_TENANT_UUID,
+        module_key="purchase",
+        user_id=1,
+        role="functional_manager",
+        name="A",
+    )
+    # Force two_way regardless of stored policy file
+    chain["mode"] = "two_way"
+    chain["required"] = 2
+    assert not quorum_met(chain)
+    chain = record_approval(
+        chain,
+        tenant_id=TESTING_TENANT_UUID,
+        module_key="purchase",
+        user_id=2,
+        role="finance_head",
+        name="B",
+    )
+    chain["mode"] = "two_way"
+    chain["required"] = 2
+    assert quorum_met(chain)
+
+
+def test_three_way_needs_three_distinct_users() -> None:
+    chain: dict | None = None
+    for uid in (10, 11, 12):
+        chain = record_approval(
+            chain,
+            tenant_id=TESTING_TENANT_UUID,
+            module_key="purchase",
+            user_id=uid,
+            role="admin",
+            name=f"U{uid}",
+        )
+        chain["mode"] = "three_way"
+        chain["required"] = 3
+    assert quorum_met(chain)
+
+
+def test_bookkeeper_not_in_pool() -> None:
+    ctx = AuthContext(
+        user_id=9,
+        tenant_id=TESTING_TENANT_UUID,
+        tenant_slug="testing",
+        email="bk@test.com",
+        role="bookkeeper",
+    )
+    assert actor_in_pool(ctx) is False
+    with pytest.raises(ApprovalQuorumForbiddenError):
+        require_actor_in_pool(ctx)
+
+
+def test_functional_manager_in_pool() -> None:
+    ctx = AuthContext(
+        user_id=9,
+        tenant_id=TESTING_TENANT_UUID,
+        tenant_slug="testing",
+        email="fm@test.com",
+        role="functional_manager",
+    )
+    assert actor_in_pool(ctx) is True
+
+
+async def _seed_member(
+    db: AsyncSession,
+    *,
+    email: str,
+    role: str,
+    full_name: str,
+) -> User:
+    user = User(
+        tenant_id=TESTING_TENANT_UUID,
+        email=email,
+        password_hash=hash_password("password123"),
+        full_name=full_name,
+        role=UserRole.ADMIN if role == "admin" else UserRole.MEMBER,
+        is_active=True,
+    )
+    db.add(user)
+    await db.flush()
+    await ensure_membership(db, user_id=user.id, tenant_id=TESTING_TENANT_UUID, role=role)
+    await db.commit()
+    return user
+
+
+def _token(user: User, role: str) -> str:
+    return create_access_token(
+        user_id=user.id,
+        tenant_id=TESTING_TENANT_UUID,
+        tenant_slug="testing",
+        email=user.email,
+        role=role,
+    )
+
+
+@pytest.mark.asyncio
+async def test_approve_api_two_way_requires_second_approver(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AUTH_REQUIRED", "true")
+    get_settings.cache_clear()
+
+    policy = load_policy_for_tenant(TESTING_TENANT_UUID)
+    policy.approval_matrix.by_module["team_expenses"] = "two_way"
+    save_policy_for_tenant(TESTING_TENANT_UUID, policy)
+
+    mgr = await _seed_member(
+        db_session,
+        email="quorum-mgr@test.com",
+        role="functional_manager",
+        full_name="Quorum Mgr",
+    )
+    head = await _seed_member(
+        db_session,
+        email="quorum-fh@test.com",
+        role="finance_head",
+        full_name="Quorum Finance",
+    )
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Team Claim",
+        status=InvoiceStatus.EXCEPTION,
+        total=Decimal("100.00"),
+        route_target="Team Expenses",
+        evaluation_status="pending_approval",
+        raw_file_path="invoice/test.pdf",
+    )
+    db_session.add(inv)
+    await db_session.commit()
+
+    # Bypass stored-file check for approval
+    async def _noop_ensure(*_a, **_k):
+        return None
+
+    async def _noop_approve(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(
+        "app.services.approval.approval_api_service.ensure_stored_file_for_approval",
+        _noop_ensure,
+    )
+    monkeypatch.setattr(
+        "app.services.approval.approval_api_service._is_vision_header_review_hold",
+        lambda *_a, **_k: False,
+    )
+    monkeypatch.setattr(
+        "app.services.approval.approval_api_service._is_team_expense_approval_hold",
+        lambda *_a, **_k: True,
+    )
+    monkeypatch.setattr(
+        "app.services.approval.approval_api_service._approve_team_expense_for_posting",
+        _noop_approve,
+    )
+
+    headers_mgr = tenant_auth_headers(_token(mgr, "functional_manager"), TESTING_TENANT_UUID)
+    first = await client.post(f"/api/approvals/{inv.id}/approve", headers=headers_mgr)
+    assert first.status_code == 200, first.text
+    body = first.json()
+    assert body["meta"]["quorum_met"] is False
+    assert body["meta"]["quorum_recorded"] == 1
+    assert body["meta"]["quorum_required"] == 2
+    assert body["data"]["status"] == "exception"
+
+    await db_session.refresh(inv)
+    assert inv.approval_chain is not None
+    assert len(inv.approval_chain["approvals"]) == 1
+
+    # Same user again does not satisfy two_way
+    again = await client.post(f"/api/approvals/{inv.id}/approve", headers=headers_mgr)
+    assert again.status_code == 200
+    assert again.json()["meta"]["quorum_recorded"] == 1
+    assert again.json()["meta"]["quorum_met"] is False
+
+    headers_fh = tenant_auth_headers(_token(head, "finance_head"), TESTING_TENANT_UUID)
+    second = await client.post(f"/api/approvals/{inv.id}/approve", headers=headers_fh)
+    assert second.status_code == 200, second.text
+    assert second.json()["meta"]["quorum_met"] is True
+
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_reject_clears_approval_chain(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AUTH_REQUIRED", "true")
+    get_settings.cache_clear()
+
+    mgr = await _seed_member(
+        db_session,
+        email="reject-chain@test.com",
+        role="functional_manager",
+        full_name="Reject Chain",
+    )
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Clear Me",
+        status=InvoiceStatus.EXCEPTION,
+        total=Decimal("50.00"),
+        route_target="Team Expenses",
+        approval_chain={
+            "module": "team_expenses",
+            "mode": "two_way",
+            "required": 2,
+            "approvals": [
+                {
+                    "user_id": mgr.id,
+                    "role": "functional_manager",
+                    "name": "Reject Chain",
+                    "at": "2026-01-01T00:00:00+00:00",
+                }
+            ],
+        },
+    )
+    db_session.add(inv)
+    await db_session.commit()
+
+    headers = tenant_auth_headers(_token(mgr, "functional_manager"), TESTING_TENANT_UUID)
+    res = await client.post(f"/api/approvals/{inv.id}/reject", headers=headers)
+    assert res.status_code == 200, res.text
+    await db_session.refresh(inv)
+    assert inv.approval_chain is None
+
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_bookkeeper_forbidden_from_quorum_pool(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AUTH_REQUIRED", "true")
+    get_settings.cache_clear()
+
+    # Give bookkeeper Approve in matrix so privilege check passes; pool must still block.
+    policy = load_policy_for_tenant(TESTING_TENANT_UUID)
+    policy.matrix["Bookkeeper"]["Approve"] = True
+    save_policy_for_tenant(TESTING_TENANT_UUID, policy)
+
+    bk = await _seed_member(
+        db_session,
+        email="bk-quorum@test.com",
+        role="bookkeeper",
+        full_name="Bookkeeper Q",
+    )
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Pool Block",
+        status=InvoiceStatus.EXCEPTION,
+        total=Decimal("10.00"),
+        route_target="Expenses Management",
+    )
+    db_session.add(inv)
+    await db_session.commit()
+
+    headers = tenant_auth_headers(_token(bk, "bookkeeper"), TESTING_TENANT_UUID)
+    res = await client.post(f"/api/approvals/{inv.id}/approve", headers=headers)
+    assert res.status_code == 403
+
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_purchase_variance_two_way(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AUTH_REQUIRED", "true")
+    get_settings.cache_clear()
+
+    policy = load_policy_for_tenant(TESTING_TENANT_UUID)
+    policy.approval_matrix.by_module["purchase"] = "two_way"
+    save_policy_for_tenant(TESTING_TENANT_UUID, policy)
+
+    mgr = await _seed_member(
+        db_session,
+        email="var-mgr@test.com",
+        role="functional_manager",
+        full_name="Var Mgr",
+    )
+    head = await _seed_member(
+        db_session,
+        email="var-fh@test.com",
+        role="finance_head",
+        full_name="Var FH",
+    )
+    po = PurchaseOrder(
+        tenant_id=TESTING_TENANT_UUID,
+        po_number="PO-QUORUM-1",
+        vendor="Acme",
+        status=PurchaseOrderStatus.VARIANCE_PENDING,
+        variance_approved=False,
+    )
+    db_session.add(po)
+    await db_session.commit()
+
+    h1 = tenant_auth_headers(_token(mgr, "functional_manager"), TESTING_TENANT_UUID)
+    r1 = await client.post(f"/api/purchases/{po.id}/approve-variance", headers=h1)
+    assert r1.status_code == 200, r1.text
+    assert r1.json()["data"]["variance_approved"] is False
+
+    await db_session.refresh(po)
+    assert po.variance_approval_chain is not None
+    assert po.variance_approved is False
+
+    h2 = tenant_auth_headers(_token(head, "finance_head"), TESTING_TENANT_UUID)
+    r2 = await client.post(f"/api/purchases/{po.id}/approve-variance", headers=h2)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["data"]["variance_approved"] is True
+
+    get_settings.cache_clear()

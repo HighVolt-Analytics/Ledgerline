@@ -81,6 +81,21 @@ class EmployeeBudgetUtilizationRow(BaseModel):
     monthly_utilization_pct: float | None = None
     quarterly_utilization_pct: float | None = None
     annual_utilization_pct: float | None = None
+    # Cash view: outstanding advance float still holds company cash even though it
+    # is not P&L spend. cash_committed = period claim spend + advance_float.
+    advance_float: float = Field(
+        0,
+        description="Outstanding Staff Advance ledger balance (asset / cash float).",
+    )
+    monthly_cash_committed: float = 0
+    quarterly_cash_committed: float = 0
+    annual_cash_committed: float = 0
+    monthly_cash_remaining: float | None = None
+    quarterly_cash_remaining: float | None = None
+    annual_cash_remaining: float | None = None
+    monthly_cash_utilization_pct: float | None = None
+    quarterly_cash_utilization_pct: float | None = None
+    annual_cash_utilization_pct: float | None = None
 
 
 class EmployeeExpenseSummaryRow(BaseModel):

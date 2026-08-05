@@ -86,6 +86,7 @@ class PurchaseOrderResponse(BaseModel):
     invoice_unit_price: float = 0
     gst_rate: float | None = None
     variance_approved: bool = False
+    variance_approval_chain: dict | None = None
     status: str
     three_way_match_status: str | None = None
     match: ThreeWayMatchResult

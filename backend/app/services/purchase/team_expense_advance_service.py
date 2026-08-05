@@ -146,9 +146,15 @@ async def pending_against_advance_total(
     exclude_invoice_id: int | None = None,
 ) -> Decimal:
     """Sum of open against-advance TE claims for this employee (excludes terminal statuses)."""
+    from app.services.purchase.team_expense_spend_service import normalize_employee_email
     from app.services.purchase.team_expense_validator import find_employee_by_sender
 
-    stmt = select(Invoice.id, Invoice.total, Invoice.email_sender).where(
+    stmt = select(
+        Invoice.id,
+        Invoice.total,
+        Invoice.email_sender,
+        Invoice.employee_email,
+    ).where(
         Invoice.tenant_id == tenant_id,
         Invoice.route_target == ROUTE_TEAM,
         Invoice.team_expense_kind == TEAM_EXPENSE_KIND_AGAINST_ADVANCE,
@@ -158,8 +164,9 @@ async def pending_against_advance_total(
         stmt = stmt.where(Invoice.id != exclude_invoice_id)
 
     total = Decimal("0")
-    for _inv_id, amount, sender in (await session.execute(stmt)).all():
-        if find_employee_by_sender([employee], sender) is None:
+    for _inv_id, amount, sender, emp_email in (await session.execute(stmt)).all():
+        identity = normalize_employee_email(emp_email) or sender
+        if find_employee_by_sender([employee], identity) is None:
             continue
         if amount is None:
             continue

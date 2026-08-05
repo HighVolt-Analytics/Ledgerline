@@ -19,6 +19,7 @@ from app.schemas.reports_api import (
 )
 from app.schemas.subledger import SubledgerBalancesResponse
 from app.schemas.subledger_api import SubledgerBalancesRequest
+from app.schemas.department_budget import DepartmentBudgetUtilizationRow
 from app.schemas.team_expense_reports import (
     EmployeeAdvanceSettlementRow,
     EmployeeBudgetUtilizationRow,
@@ -33,6 +34,9 @@ from app.services.reports.reports_workbook_service import (
     resolve_workbook_date_filter,
     upload_workbook_blob,
     workbook_path,
+)
+from app.services.master_data.department_budget_service import (
+    build_department_budget_utilization_rows,
 )
 from app.services.reports.team_expense_reports_service import (
     build_advance_settlement_rows,
@@ -170,12 +174,30 @@ async def reports_team_expense_advance_settlement(
     "/team-expenses/budget-utilization",
     response_model=ApiEnvelope[list[EmployeeBudgetUtilizationRow]],
 )
+@router.get(
+    "/team-expenses/spending-limit-utilization",
+    response_model=ApiEnvelope[list[EmployeeBudgetUtilizationRow]],
+    include_in_schema=False,
+)
 async def reports_team_expense_budget_utilization(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[list[EmployeeBudgetUtilizationRow]]:
-    """Employee budget caps vs MTD/QTD/YTD claim spend counters."""
+    """Employee spending limits vs MTD/QTD/YTD claim spend (computed from invoices)."""
     rows = await build_budget_utilization_rows(db, ctx.tenant_id)
+    return ApiEnvelope(data=rows)
+
+
+@router.get(
+    "/team-expenses/department-budget-utilization",
+    response_model=ApiEnvelope[list[DepartmentBudgetUtilizationRow]],
+)
+async def reports_team_expense_department_budget_utilization(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[list[DepartmentBudgetUtilizationRow]]:
+    """Department budget envelopes vs consumed Team Expense spend for the current period."""
+    rows = await build_department_budget_utilization_rows(db, ctx.tenant_id)
     return ApiEnvelope(data=rows)
 
 
@@ -210,7 +232,13 @@ async def reports_team_expense_expense_summary(
 @router.get("/team-expenses/{report}/export")
 async def export_team_expense_report(
     report: Annotated[
-        Literal["advance-settlement", "budget-utilization", "expense-summary"],
+        Literal[
+            "advance-settlement",
+            "budget-utilization",
+            "spending-limit-utilization",
+            "department-budget-utilization",
+            "expense-summary",
+        ],
         Path(description="Which team expense report workbook to build"),
     ],
     date_from: Annotated[

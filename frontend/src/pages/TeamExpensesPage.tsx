@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { PageTabPanel, PageTabs } from "@/components/PageTabs";
 import { BudgetUtilBar } from "@/components/team-expenses/BudgetUtilBar";
 import { ClaimDetailPanel } from "@/components/team-expenses/ClaimDetailPanel";
+import { DepartmentBudgetsPanel } from "@/components/team-expenses/DepartmentBudgetsPanel";
 import { ChannelBadge, ExpenseStateBadge } from "@/components/team-expenses/ExpenseBadges";
 import { TeamExpenseChannelsStrip } from "@/components/team-expenses/TeamExpenseChannelsStrip";
 import { RoutedInvoicesPanel } from "@/components/rule-book/RoutedInvoicesPanel";
@@ -157,7 +158,7 @@ export function TeamExpensesPage() {
 
       <PageHeader
         title="Team Expenses"
-        subtitle="Employee claims captured from messaging channels, approved against per-category budgets, posted to the ledger."
+        subtitle="Employee claims captured from messaging channels, approved against spending limits and department budgets, posted to the ledger."
       />
 
       <div
@@ -232,7 +233,7 @@ export function TeamExpensesPage() {
         onChange={setTab}
         tabs={[
           { value: "claims", label: "Claims", testid: "tab-claims" },
-          { value: "budgets", label: "Budgets", testid: "tab-budgets" },
+          { value: "budgets", label: "Budgets & limits", testid: "tab-budgets" },
           { value: "categories", label: "Categories", testid: "tab-categories" },
         ]}
       />
@@ -374,67 +375,76 @@ export function TeamExpensesPage() {
       </PageTabPanel>
 
       <PageTabPanel value="budgets" active={tab} className="mt-4">
-        {budgets.length === 0 ? (
-          <EmptyState
-            title="No employee budgets configured"
-            hint="Add employees with budget caps on the Creations → Employees tab."
-          />
-        ) : (
-          <Card className="overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-xs text-muted-foreground border-b border-border text-left">
-                    <th className="px-4 py-2.5 font-medium">Category</th>
-                    <th className="px-3 py-2.5 font-medium">Employee</th>
-                    <th className="px-3 py-2.5 font-medium">Period</th>
-                    <th className="px-3 py-2.5 font-medium text-right">Budget</th>
-                    <th className="px-3 py-2.5 font-medium text-right">Used</th>
-                    <th className="px-3 py-2.5 font-medium text-right">Remaining</th>
-                    <th className="px-4 py-2.5 font-medium w-44">Utilisation</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {budgets.map((row, idx) => {
-                    const remaining = row.monthlyBudget - row.used;
-                    const pct =
-                      row.monthlyBudget > 0
-                        ? Math.round((row.used / row.monthlyBudget) * 100)
-                        : 0;
-                    return (
-                      <tr key={idx} className="row-band border-b border-border/60">
-                        <td className="px-4 py-2.5 font-medium">{row.category}</td>
-                        <td className="px-3 py-2.5 text-muted-foreground">{row.owner}</td>
-                        <td className="px-3 py-2.5 text-muted-foreground">{row.period}</td>
-                        <td className="px-3 py-2.5 text-right tnum">
-                          {money(row.monthlyBudget, institutionCurrency)}
-                        </td>
-                        <td className="px-3 py-2.5 text-right tnum">
-                          {money(row.used, institutionCurrency)}
-                        </td>
-                        <td className="px-3 py-2.5 text-right tnum">
-                          {money(remaining, institutionCurrency)}
-                        </td>
-                        <td className="px-4 py-2.5">
-                          <div className="flex items-center gap-2">
-                            <BudgetUtilBar used={row.used} total={row.monthlyBudget} />
-                            <span className="tnum text-xs text-muted-foreground w-9 text-right">
-                              {pct}%
-                            </span>
-                          </div>
-                        </td>
+        <div className="space-y-6">
+          <div>
+            <h3 className="text-sm font-semibold mb-1">Employee spending limits</h3>
+            <p className="text-xs text-muted-foreground mb-3">
+              Personal entitlements from Employee Master. Enforced as VR-TE02 / VR-TE06.
+            </p>
+            {budgets.length === 0 ? (
+              <EmptyState
+                title="No employee spending limits configured"
+                hint="Add employees with spending limits on the Creations → Employees tab."
+              />
+            ) : (
+              <Card className="overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-xs text-muted-foreground border-b border-border text-left">
+                        <th className="px-4 py-2.5 font-medium">Category</th>
+                        <th className="px-3 py-2.5 font-medium">Employee</th>
+                        <th className="px-3 py-2.5 font-medium">Period</th>
+                        <th className="px-3 py-2.5 font-medium text-right">Limit</th>
+                        <th className="px-3 py-2.5 font-medium text-right">Used</th>
+                        <th className="px-3 py-2.5 font-medium text-right">Remaining</th>
+                        <th className="px-4 py-2.5 font-medium w-44">Utilisation</th>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        )}
-        <p className="text-xs text-muted-foreground mt-2">
-          Budgets come from Employee Master. Claims are checked against category caps at validation
-          (VR-TE02 / VR-TE06).
-        </p>
+                    </thead>
+                    <tbody>
+                      {budgets.map((row, idx) => {
+                        const remaining = row.monthlyBudget - row.used;
+                        const pct =
+                          row.monthlyBudget > 0
+                            ? Math.round((row.used / row.monthlyBudget) * 100)
+                            : 0;
+                        return (
+                          <tr key={idx} className="row-band border-b border-border/60">
+                            <td className="px-4 py-2.5 font-medium">{row.category}</td>
+                            <td className="px-3 py-2.5 text-muted-foreground">{row.owner}</td>
+                            <td className="px-3 py-2.5 text-muted-foreground">{row.period}</td>
+                            <td className="px-3 py-2.5 text-right tnum">
+                              {money(row.monthlyBudget, institutionCurrency)}
+                            </td>
+                            <td className="px-3 py-2.5 text-right tnum">
+                              {money(row.used, institutionCurrency)}
+                            </td>
+                            <td className="px-3 py-2.5 text-right tnum">
+                              {money(remaining, institutionCurrency)}
+                            </td>
+                            <td className="px-4 py-2.5">
+                              <div className="flex items-center gap-2">
+                                <BudgetUtilBar used={row.used} total={row.monthlyBudget} />
+                                <span className="tnum text-xs text-muted-foreground w-9 text-right">
+                                  {pct}%
+                                </span>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            )}
+          </div>
+
+          <DepartmentBudgetsPanel
+            currency={institutionCurrency}
+            departments={employees.map((e) => e.department).filter(Boolean)}
+          />
+        </div>
       </PageTabPanel>
 
       <PageTabPanel value="categories" active={tab} className="mt-4">

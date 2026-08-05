@@ -215,9 +215,15 @@ export function ClaimDetailPanel({
           {claim.approvers.length > 0 ? (
             claim.approvers.map((a) => <ApproverChip key={a.id} {...a} />)
           ) : (
-            <span className="text-xs text-muted-foreground">Awaiting approver assignment</span>
+            <span className="text-xs text-muted-foreground">Awaiting first approval</span>
           )}
         </div>
+        {claim.approvers.some((a) => a.state === "pending") && (
+          <p className="text-xs text-muted-foreground mt-1">
+            {claim.approvers.filter((a) => a.state === "approved").length} of{" "}
+            {claim.approvers.length} approved
+          </p>
+        )}
         <div className="mt-1.5">
           <ApprovalPolicyNote />
         </div>

@@ -65,6 +65,23 @@ def test_catalog_sizes() -> None:
     assert len(list_iso4217_currency_meta()) > 100
 
 
+def test_default_timezone_for_country_cldr_and_business_primary() -> None:
+    from app.services.shared.iso_geo_catalog import (
+        default_timezone_for_country,
+        territory_timezones,
+    )
+
+    assert default_timezone_for_country("MM") == "Asia/Yangon"
+    assert default_timezone_for_country("SG") == "Asia/Singapore"
+    assert default_timezone_for_country("IN") == "Asia/Kolkata"
+    # Multi-zone: commercial HQ, not Babel's arbitrary first entry.
+    assert default_timezone_for_country("US") == "America/New_York"
+    assert default_timezone_for_country("AU") == "Australia/Sydney"
+    assert default_timezone_for_country("ID") == "Asia/Jakarta"
+    assert "Asia/Yangon" in territory_timezones("MM")
+    assert "America/New_York" in territory_timezones("US")
+
+
 @pytest.mark.asyncio
 async def test_meta_endpoints_return_full_catalogs() -> None:
     from app.main import app
@@ -83,6 +100,10 @@ async def test_meta_endpoints_return_full_catalogs() -> None:
     assert packed["IN"]["has_jurisdiction_pack"] is True
     assert packed["IN"]["tax_label"] == "GST"
     assert packed["FR"]["has_jurisdiction_pack"] is False
+    assert packed["MM"]["timezone"] == "Asia/Yangon"
+    assert "Asia/Yangon" in packed["MM"]["timezones"]
+    assert packed["US"]["timezone"] == "America/New_York"
+    assert "America/Los_Angeles" in packed["US"]["timezones"]
     assert any(row["code"] == "CHF" for row in currency_rows)
 
 

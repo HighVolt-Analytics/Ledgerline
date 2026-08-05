@@ -57,6 +57,12 @@ from app.services.invoice.vision_posting_continue import (
 )
 from app.services.purchase.team_expense_approval import assert_team_expense_approvable
 from app.services.tenant.tenant_org_context import org_context_from_config
+from app.services.approval.approval_quorum_service import (
+    module_for_route_target,
+    progress_from_chain,
+    record_approval,
+    require_actor_in_pool,
+)
 
 _VAULT_TERMINAL_MESSAGE = (
     "Supporting document — stored in vault only; posting is not applicable "
@@ -91,6 +97,8 @@ class ApprovalListResult:
 class ApproveInvoiceResult:
     response: InvoiceResponse
     enqueue_pipeline: bool = True
+    quorum_met: bool = True
+    quorum: dict | None = None
 
 
 async def list_approvals_board(
@@ -377,6 +385,35 @@ async def approve_invoice_action(
     await ensure_stored_file_for_approval(db, inv)
     actor_name, actor_email = await actor_from_context(db, ctx)
 
+    require_actor_in_pool(ctx)
+    module_key = module_for_route_target(inv.route_target)
+    inv.approval_chain = record_approval(
+        inv.approval_chain,
+        tenant_id=ctx.tenant_id,
+        module_key=module_key,
+        user_id=int(ctx.user_id),
+        role=ctx.role or "",
+        name=actor_name or actor_email or f"User {ctx.user_id}",
+    )
+    progress = progress_from_chain(inv.approval_chain)
+    if progress is None or not progress.quorum_met:
+        await log_event(
+            db,
+            "invoice_approval_recorded",
+            invoice_id=inv.id,
+            tenant_id=ctx.tenant_id,
+            actor_name=actor_name,
+            actor_email=actor_email,
+            detail=progress.as_dict() if progress else None,
+        )
+        response = await response_for_invoice(db, inv, tenant_id=ctx.tenant_id)
+        return ApproveInvoiceResult(
+            response=response,
+            enqueue_pipeline=False,
+            quorum_met=False,
+            quorum=progress.as_dict() if progress else None,
+        )
+
     if _is_vision_header_review_hold(inv):
         await _approve_vision_header_review_for_posting(
             db,
@@ -385,7 +422,12 @@ async def approve_invoice_action(
             actor_email=actor_email,
         )
         response = await response_for_invoice(db, inv, tenant_id=ctx.tenant_id)
-        return ApproveInvoiceResult(response=response, enqueue_pipeline=False)
+        return ApproveInvoiceResult(
+            response=response,
+            enqueue_pipeline=False,
+            quorum_met=True,
+            quorum=progress.as_dict(),
+        )
 
     if _is_team_expense_approval_hold(inv):
         await _approve_team_expense_for_posting(
@@ -395,13 +437,23 @@ async def approve_invoice_action(
             actor_email=actor_email,
         )
         response = await response_for_invoice(db, inv, tenant_id=ctx.tenant_id)
-        return ApproveInvoiceResult(response=response, enqueue_pipeline=False)
+        return ApproveInvoiceResult(
+            response=response,
+            enqueue_pipeline=False,
+            quorum_met=True,
+            quorum=progress.as_dict(),
+        )
 
     await approve_invoice_for_reprocess(
         db, inv, actor_name=actor_name, actor_email=actor_email
     )
     response = await response_for_invoice(db, inv, tenant_id=ctx.tenant_id)
-    return ApproveInvoiceResult(response=response, enqueue_pipeline=True)
+    return ApproveInvoiceResult(
+        response=response,
+        enqueue_pipeline=True,
+        quorum_met=True,
+        quorum=progress.as_dict(),
+    )
 
 
 async def reject_invoice_action(
@@ -411,6 +463,7 @@ async def reject_invoice_action(
     invoice_id: int,
 ) -> InvoiceResponse:
     inv = await get_invoice_for_tenant(db, invoice_id, ctx.tenant_id)
+    inv.approval_chain = None
     actor_name, actor_email = await actor_from_context(db, ctx)
     await reject_invoice(db, inv, actor_name=actor_name, actor_email=actor_email)
     return await response_for_invoice(db, inv, tenant_id=ctx.tenant_id)

@@ -9,7 +9,13 @@ import uuid
 from typing import Any
 
 from app.config import get_settings
-from app.schemas.approval_policy import ApprovalPolicyPayload, PolicyRule
+from app.schemas.approval_policy import (
+    APPROVAL_MATRIX_MODULES,
+    ApprovalMatrixConfig,
+    ApprovalPolicyPayload,
+    ApprovalQuorumMode,
+    PolicyRule,
+)
 from app.services.tenant.tenant_storage_paths import tenant_local_dir
 from app.tenant_roles import APPROVAL_ACTIONS, APPROVAL_ROLES
 
@@ -70,6 +76,15 @@ _DEFAULT_MATRIX: dict[str, dict[str, bool]] = {
     "User": dict(_VIEW_ONLY_PERMS),
 }
 
+_DEFAULT_APPROVAL_MATRIX_BY_MODULE: dict[str, ApprovalQuorumMode] = {
+    "team_expenses": "one_way",
+    "expenses": "one_way",
+    "purchase": "two_way",
+    "sales": "one_way",
+}
+
+_VALID_MODES: frozenset[str] = frozenset({"one_way", "two_way", "three_way"})
+
 # Legacy matrix row labels → current labels
 _LEGACY_MATRIX_ROWS: dict[str, str] = {
     "Approver": "Functional manager",
@@ -113,11 +128,32 @@ def _normalize_policy_matrix(matrix: dict[str, Any]) -> dict[str, dict[str, bool
     return out
 
 
+def _normalize_approval_matrix(raw: Any) -> ApprovalMatrixConfig:
+    by_module: dict[str, ApprovalQuorumMode] = dict(_DEFAULT_APPROVAL_MATRIX_BY_MODULE)
+    source: dict[str, Any] = {}
+    if isinstance(raw, ApprovalMatrixConfig):
+        source = dict(raw.by_module or {})
+    elif isinstance(raw, dict):
+        nested = raw.get("by_module")
+        if isinstance(nested, dict):
+            source = nested
+        else:
+            source = {k: v for k, v in raw.items() if k in APPROVAL_MATRIX_MODULES}
+    for key in APPROVAL_MATRIX_MODULES:
+        val = source.get(key)
+        if isinstance(val, str) and val.strip().lower() in _VALID_MODES:
+            by_module[key] = val.strip().lower()  # type: ignore[assignment]
+    return ApprovalMatrixConfig(by_module=by_module)
+
+
 def default_policy_dict() -> dict[str, Any]:
     return {
         "locked": False,
         "rules": deepcopy(_DEFAULT_RULES),
         "matrix": deepcopy(_DEFAULT_MATRIX),
+        "approval_matrix": {
+            "by_module": deepcopy(_DEFAULT_APPROVAL_MATRIX_BY_MODULE),
+        },
     }
 
 
@@ -155,15 +191,21 @@ def _migrate_from_legacy(tenant_id: uuid.UUID | int) -> dict[str, Any]:
     return raw
 
 
+def _normalize_raw_policy(raw: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(raw.get("matrix"), dict):
+        raw["matrix"] = _normalize_policy_matrix(raw["matrix"])
+    else:
+        raw["matrix"] = deepcopy(_DEFAULT_MATRIX)
+    raw["approval_matrix"] = _normalize_approval_matrix(raw.get("approval_matrix")).model_dump()
+    return raw
+
+
 def load_policy_for_tenant(tenant_id: uuid.UUID | int) -> ApprovalPolicyPayload:
     path = _policy_path(tenant_id)
     raw = _read_tenant_policy(path)
     if raw is None:
         raw = _migrate_from_legacy(tenant_id)
-    if isinstance(raw.get("matrix"), dict):
-        raw["matrix"] = _normalize_policy_matrix(raw["matrix"])
-    else:
-        raw["matrix"] = deepcopy(_DEFAULT_MATRIX)
+    raw = _normalize_raw_policy(raw)
     return ApprovalPolicyPayload.model_validate(raw)
 
 
@@ -172,6 +214,7 @@ def save_policy_for_tenant(
 ) -> ApprovalPolicyPayload:
     data = payload.model_dump()
     data["matrix"] = _normalize_policy_matrix(data.get("matrix") or {})
+    data["approval_matrix"] = _normalize_approval_matrix(data.get("approval_matrix")).model_dump()
     _save_tenant_policy(tenant_id, data)
     return ApprovalPolicyPayload.model_validate(data)
 
@@ -207,8 +250,10 @@ def remove_policy_for_tenant(tenant_id: uuid.UUID | int) -> None:
 def validate_policy_payload(raw: dict[str, Any]) -> ApprovalPolicyPayload:
     rules = [PolicyRule.model_validate(r) for r in raw.get("rules") or []]
     matrix = _normalize_policy_matrix(raw.get("matrix") or _DEFAULT_MATRIX)
+    approval_matrix = _normalize_approval_matrix(raw.get("approval_matrix"))
     return ApprovalPolicyPayload(
         locked=bool(raw.get("locked", False)),
         rules=rules,
         matrix=matrix,
+        approval_matrix=approval_matrix,
     )

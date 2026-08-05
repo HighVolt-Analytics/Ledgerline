@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.api.deps import AuthContext
 from app.models.delivery_note import DeliveryNote
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.sales_order import SalesOrder, SalesOrderStatus
@@ -603,6 +604,7 @@ def sales_order_to_response(
         invoice_unit_price=float(inv_unit),
         gst_rate=gst_rate,
         variance_approved=so.variance_approved,
+        variance_approval_chain=getattr(so, "variance_approval_chain", None),
         status=so.status.value,
         three_way_match_status=so.three_way_match_status,
         match=match,
@@ -859,7 +861,16 @@ async def approve_sales_variance(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     sales_order_id: int,
+    *,
+    ctx: AuthContext | None = None,
 ) -> SalesOrderResponse:
+    from app.api.deps import actor_from_context
+    from app.services.approval.approval_quorum_service import (
+        progress_from_chain,
+        record_approval,
+        require_actor_in_pool,
+    )
+
     so = (
         await db.execute(
             select(SalesOrder)
@@ -876,7 +887,35 @@ async def approve_sales_variance(
     if so is None:
         raise LookupError("Sales order not found")
 
-    so.variance_approved = True
+    if ctx is not None:
+        require_actor_in_pool(ctx)
+        actor_name, actor_email = await actor_from_context(db, ctx)
+        so.variance_approval_chain = record_approval(
+            so.variance_approval_chain,
+            tenant_id=tenant_id,
+            module_key="sales",
+            user_id=int(ctx.user_id),
+            role=ctx.role or "",
+            name=actor_name or actor_email or f"User {ctx.user_id}",
+        )
+        progress = progress_from_chain(so.variance_approval_chain)
+        if progress is None or not progress.quorum_met:
+            await db.flush()
+            config = await load_classification_config(db, tenant_id)
+            inv = None
+            if so.invoice_id:
+                inv = (
+                    await db.execute(
+                        select(Invoice)
+                        .where(Invoice.id == so.invoice_id)
+                        .options(selectinload(Invoice.line_items))
+                    )
+                ).scalar_one_or_none()
+            return sales_order_to_response(so, inv, config=config)
+        so.variance_approved = True
+    else:
+        so.variance_approved = True
+
     inv: Invoice | None = None
     if so.invoice_id:
         inv = (

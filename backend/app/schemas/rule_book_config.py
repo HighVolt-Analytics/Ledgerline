@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.document_type import DocumentTypeDefinition
 from app.schemas.uom_conversion import PurchaseMatchConfig
@@ -185,19 +185,26 @@ class VendorDetectionConfig(BaseModel):
     )
 
 
-class BudgetCategoryCap(BaseModel):
+class CategoryLimit(BaseModel):
     ledger: str = Field(..., min_length=1)
     cap: float = Field(..., ge=0)
 
 
-class EmployeeBudget(BaseModel):
+class EmployeeSpendingLimit(BaseModel):
     monthly: float = Field(default=0, ge=0)
     quarterly: float = Field(default=0, ge=0)
     annual: float = Field(default=0, ge=0)
-    categories: list[BudgetCategoryCap] = Field(default_factory=list)
+    categories: list[CategoryLimit] = Field(default_factory=list)
+
+
+# Legacy aliases (reviewer-facing rename; old imports still work)
+BudgetCategoryCap = CategoryLimit
+EmployeeBudget = EmployeeSpendingLimit
 
 
 class EmployeeMaster(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     id: str = Field(..., min_length=1, max_length=100)
     name: str = Field(..., min_length=1, max_length=255)
     role: str = ""
@@ -212,7 +219,11 @@ class EmployeeMaster(BaseModel):
     supervisor_1: str = ""
     supervisor_2: str = ""
     bank: BankDetails = Field(default_factory=BankDetails)
-    budget: EmployeeBudget = Field(default_factory=EmployeeBudget)
+    spending_limits: EmployeeSpendingLimit = Field(
+        default_factory=EmployeeSpendingLimit,
+        validation_alias=AliasChoices("spending_limits", "budget"),
+        serialization_alias="spending_limits",
+    )
     advance_parent_ledger: str = ""
     advance_sub_ledger: str = ""
     ytd_spent: float = Field(default=0, ge=0)
@@ -221,6 +232,11 @@ class EmployeeMaster(BaseModel):
     claim_count: int = Field(default=0, ge=0)
     last_claim: str = ""
     status: str = ""
+
+    @property
+    def budget(self) -> EmployeeSpendingLimit:
+        """Deprecated alias for spending_limits."""
+        return self.spending_limits
 
 
 ChartOfAccountType = Literal["Expense", "Asset", "Liability", "Revenue", "Equity"]

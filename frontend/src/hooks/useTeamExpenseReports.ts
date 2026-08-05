@@ -16,6 +16,13 @@ export function useTeamExpenseBudgetUtilization() {
   });
 }
 
+export function useTeamExpenseDepartmentBudgetUtilization() {
+  return useTenantQuery({
+    queryKey: queryKeys.teDepartmentBudgetUtilization(),
+    queryFn: () => api.getTeamExpenseDepartmentBudgetUtilization(),
+  });
+}
+
 export function useTeamExpenseExpenseSummary(dateFrom?: string, dateTo?: string) {
   return useTenantQuery({
     queryKey: queryKeys.teExpenseSummary(dateFrom, dateTo),

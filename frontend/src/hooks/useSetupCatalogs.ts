@@ -18,6 +18,7 @@ export type SetupCountryOption = {
   taxLabel: string;
   dialCode: string;
   timeZone?: string;
+  timeZones?: string[];
 };
 
 export function useSetupCatalogs() {

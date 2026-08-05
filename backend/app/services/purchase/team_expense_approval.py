@@ -50,6 +50,12 @@ def team_rule_for_invoice(
 
 
 async def has_manager_approval(session: AsyncSession, invoice_id: int) -> bool:
+    from app.services.approval.approval_quorum_service import quorum_met
+
+    invoice = await session.get(Invoice, invoice_id)
+    if invoice is not None and isinstance(getattr(invoice, "approval_chain", None), dict):
+        return quorum_met(invoice.approval_chain)
+
     row = (
         await session.execute(
             select(AuditLog.id)
@@ -246,9 +252,16 @@ async def assert_team_expense_approvable(
     )
     from app.services.purchase.team_expense_advance_service import employee_available_advance
     from app.services.purchase.team_expense_validator import (
+        document_type_spend_controls,
         resolve_employee_for_sender,
         vr_te07_advance_balance,
     )
+
+    _, advance_control = document_type_spend_controls(
+        config, invoice.document_type_code
+    )
+    if not advance_control:
+        return
 
     if normalize_team_expense_kind(invoice.team_expense_kind) != TEAM_EXPENSE_KIND_AGAINST_ADVANCE:
         return

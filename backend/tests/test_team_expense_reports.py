@@ -78,6 +78,7 @@ async def _setup_employee(
             whatsapp_number="+6591110001",
             division="Ops",
             location="Singapore",
+            department="Ops",
             advance_parent_ledger="Staff Advance",
             budget=EmployeeBudget(
                 monthly=1000,
@@ -180,16 +181,98 @@ async def test_advance_settlement_ledger_pending_and_available(
 
 @pytest.mark.asyncio
 async def test_budget_utilization_math(db_session: AsyncSession) -> None:
-    await _setup_employee(db_session, mtd=250, qtd=800, ytd=4000, claim_count=5)
+    await _setup_employee(db_session, mtd=0, qtd=0, ytd=0, claim_count=5)
+    today = date.today()
+    db_session.add(
+        Invoice(
+            tenant_id=TESTING_TENANT_UUID,
+            status=InvoiceStatus.PROCESSED,
+            currency="SGD",
+            invoice_date=today,
+            total=Decimal("250"),
+            route_target=ROUTE_TEAM,
+            team_expense_kind=TEAM_EXPENSE_KIND_CLAIM,
+            employee_email=EMPLOYEE_EMAIL,
+            email_sender=EMPLOYEE_EMAIL,
+            file_hash="rpt-budget-mtd",
+        )
+    )
+    await db_session.flush()
     rows = await build_budget_utilization_rows(db_session, TESTING_TENANT_UUID)
     row = next(r for r in rows if r.employee_id == EMPLOYEE_ID)
     assert row.budget_monthly == 1000
     assert row.mtd_spent == 250
     assert row.monthly_remaining == 750
     assert row.monthly_utilization_pct == 25.0
-    assert row.quarterly_remaining == 2200
-    assert row.annual_remaining == 8000
+    assert row.quarterly_remaining == 2750
+    assert row.annual_remaining == 11750
     assert "Travel:400" in row.category_caps
+    assert row.advance_float == 0
+    assert row.monthly_cash_committed == 250
+    assert row.monthly_cash_remaining == 750
+
+
+@pytest.mark.asyncio
+async def test_budget_utilization_cash_reserves_advance_float(
+    db_session: AsyncSession,
+) -> None:
+    """Accrual remaining ignores advances; cash remaining reserves outstanding float."""
+    await _setup_employee(db_session, mtd=0, qtd=0, ytd=0, claim_count=1)
+    raw = await load_rule_book_config_dict(db_session, TESTING_TENANT_UUID)
+    validate_rule_book_config_payload(raw)
+    code = party_sub_ledger_code(EMPLOYEE_ID)
+    today = date.today()
+
+    claim = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PROCESSED,
+        currency="SGD",
+        invoice_date=today,
+        total=Decimal("200"),
+        route_target=ROUTE_TEAM,
+        team_expense_kind=TEAM_EXPENSE_KIND_CLAIM,
+        employee_email=EMPLOYEE_EMAIL,
+        email_sender=EMPLOYEE_EMAIL,
+        file_hash="rpt-cash-claim",
+    )
+    advance = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PROCESSED,
+        currency="SGD",
+        invoice_date=today,
+        total=Decimal("300"),
+        route_target=ROUTE_TEAM,
+        team_expense_kind=TEAM_EXPENSE_KIND_ADVANCE,
+        employee_email=EMPLOYEE_EMAIL,
+        email_sender=EMPLOYEE_EMAIL,
+        file_hash="rpt-cash-adv",
+    )
+    db_session.add_all([claim, advance])
+    await db_session.flush()
+    db_session.add(
+        JournalEntry(
+            tenant_id=TESTING_TENANT_UUID,
+            invoice_id=advance.id,
+            date=today,
+            account_code=code,
+            account_name="Marcus Webb",
+            debit=Decimal("300"),
+            credit=Decimal("0"),
+            entry_type=EntryType.DEBIT,
+        )
+    )
+    await db_session.flush()
+
+    rows = await build_budget_utilization_rows(db_session, TESTING_TENANT_UUID)
+    row = next(r for r in rows if r.employee_id == EMPLOYEE_ID)
+    assert row.mtd_spent == 200
+    assert row.monthly_remaining == 800
+    assert row.advance_float == 300
+    assert row.monthly_cash_committed == 500
+    assert row.monthly_cash_remaining == 500
+    assert row.monthly_cash_utilization_pct == 50.0
+    # Advances still do not inflate accrual spend.
+    assert row.mtd_spent == 200
 
 
 @pytest.mark.asyncio
@@ -267,6 +350,83 @@ async def test_expense_summary_lines_employee_and_date_filter(
 
 
 @pytest.mark.asyncio
+async def test_department_budget_cash_reserves_advance_float(
+    db_session: AsyncSession,
+) -> None:
+    from app.models.department_budget import DepartmentBudget
+    from app.services.master_data.department_budget_service import (
+        build_department_budget_utilization_rows,
+    )
+    from app.services.purchase.team_expense_spend_service import current_period_keys
+
+    await _setup_employee(db_session, mtd=0, qtd=0, ytd=0)
+    raw = await load_rule_book_config_dict(db_session, TESTING_TENANT_UUID)
+    validate_rule_book_config_payload(raw)
+    code = party_sub_ledger_code(EMPLOYEE_ID)
+    today = date.today()
+    keys = current_period_keys(today)
+
+    db_session.add(
+        DepartmentBudget(
+            tenant_id=TESTING_TENANT_UUID,
+            department="Ops",
+            gl_ledger="",
+            period_kind="monthly",
+            period_key=keys["monthly"],
+            allocated=Decimal("1000"),
+        )
+    )
+    claim = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PROCESSED,
+        currency="SGD",
+        invoice_date=today,
+        total=Decimal("100"),
+        route_target=ROUTE_TEAM,
+        team_expense_kind=TEAM_EXPENSE_KIND_CLAIM,
+        employee_email=EMPLOYEE_EMAIL,
+        email_sender=EMPLOYEE_EMAIL,
+        file_hash="rpt-dept-claim",
+    )
+    advance = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PROCESSED,
+        currency="SGD",
+        invoice_date=today,
+        total=Decimal("400"),
+        route_target=ROUTE_TEAM,
+        team_expense_kind=TEAM_EXPENSE_KIND_ADVANCE,
+        employee_email=EMPLOYEE_EMAIL,
+        email_sender=EMPLOYEE_EMAIL,
+        file_hash="rpt-dept-adv",
+    )
+    db_session.add_all([claim, advance])
+    await db_session.flush()
+    db_session.add(
+        JournalEntry(
+            tenant_id=TESTING_TENANT_UUID,
+            invoice_id=advance.id,
+            date=today,
+            account_code=code,
+            account_name="Marcus Webb",
+            debit=Decimal("400"),
+            credit=Decimal("0"),
+            entry_type=EntryType.DEBIT,
+        )
+    )
+    await db_session.flush()
+
+    rows = await build_department_budget_utilization_rows(db_session, TESTING_TENANT_UUID)
+    row = next(r for r in rows if r.department == "Ops" and not r.gl_ledger)
+    assert row.consumed == 100
+    assert row.remaining == 900
+    assert row.advance_float == 400
+    assert row.cash_committed == 500
+    assert row.cash_remaining == 500
+    assert row.cash_utilization_pct == 50.0
+
+
+@pytest.mark.asyncio
 async def test_team_expense_report_apis(client: AsyncClient, db_session: AsyncSession) -> None:
     await _setup_employee(db_session)
     await db_session.flush()
@@ -281,7 +441,15 @@ async def test_team_expense_report_apis(client: AsyncClient, db_session: AsyncSe
     bud_rows = bud.json()["data"]
     marcus = next(r for r in bud_rows if r["employee_id"] == EMPLOYEE_ID)
     assert marcus["budget_monthly"] == 1000
-    assert marcus["mtd_spent"] == 100
+    assert marcus["mtd_spent"] == 0
+    assert "Travel:400" in marcus["category_caps"]
+    assert marcus["advance_float"] == 0
+    assert marcus["monthly_cash_committed"] == 0
+    assert marcus["monthly_cash_remaining"] == 1000
+
+    dept = await client.get("/api/reports/team-expenses/department-budget-utilization")
+    assert dept.status_code == 200
+    assert isinstance(dept.json()["data"], list)
 
     summary = await client.get(
         "/api/reports/team-expenses/expense-summary?date_from=2026-01-01&date_to=2026-12-31"

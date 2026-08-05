@@ -16,10 +16,14 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.schemas.department_budget import DepartmentBudgetUtilizationRow
 from app.schemas.team_expense_reports import (
     EmployeeAdvanceSettlementRow,
     EmployeeBudgetUtilizationRow,
     EmployeeExpenseSummaryRow,
+)
+from app.services.master_data.department_budget_service import (
+    build_department_budget_utilization_rows,
 )
 from app.services.reports.team_expense_reports_service import (
     build_advance_settlement_rows,
@@ -36,7 +40,8 @@ BODY_FONT = Font(size=10)
 ZEBRA_FILL = PatternFill("solid", fgColor="F3F7F8")
 
 SHEET_ADVANCE = "Employee Advance Settlement"
-SHEET_BUDGET = "Employee Budget Utilization"
+SHEET_BUDGET = "Employee Spending Limit Utilization"
+SHEET_DEPT = "Department Budget Utilization"
 SHEET_SUMMARY = "Employee Expense Summary"
 
 ADVANCE_HEADERS = [
@@ -91,21 +96,47 @@ BUDGET_HEADERS = [
     "SWIFT",
     "IBAN",
     "Employee Status",
-    "Monthly Budget",
+    "Monthly Spending Limit",
     "Monthly Spent",
     "Monthly Remaining",
     "Monthly Utilization %",
-    "Quarterly Budget",
+    "Quarterly Spending Limit",
     "Quarterly Spent",
     "Quarterly Remaining",
     "Quarterly Utilization %",
-    "Annual Budget",
+    "Annual Spending Limit",
     "Annual Spent",
     "Annual Remaining",
     "Annual Utilization %",
+    "Advance Float",
+    "Monthly Cash Committed",
+    "Monthly Cash Remaining",
+    "Monthly Cash Utilization %",
+    "Quarterly Cash Committed",
+    "Quarterly Cash Remaining",
+    "Quarterly Cash Utilization %",
+    "Annual Cash Committed",
+    "Annual Cash Remaining",
+    "Annual Cash Utilization %",
     "Category Caps",
     "Claim Count",
     "Last Claim Date",
+]
+
+DEPT_BUDGET_HEADERS = [
+    "Department",
+    "GL Ledger",
+    "Period Kind",
+    "Period Key",
+    "Allocated",
+    "Consumed (expense)",
+    "Remaining (expense)",
+    "Utilization % (expense)",
+    "Advance float",
+    "Cash committed",
+    "Cash remaining",
+    "Cash utilization %",
+    "Notes",
 ]
 
 SUMMARY_HEADERS = [
@@ -271,9 +302,43 @@ def _budget_values(row: EmployeeBudgetUtilizationRow) -> list[Any]:
         row.ytd_spent,
         row.annual_remaining if row.annual_remaining is not None else "",
         row.annual_utilization_pct if row.annual_utilization_pct is not None else "",
+        row.advance_float,
+        row.monthly_cash_committed,
+        row.monthly_cash_remaining if row.monthly_cash_remaining is not None else "",
+        row.monthly_cash_utilization_pct
+        if row.monthly_cash_utilization_pct is not None
+        else "",
+        row.quarterly_cash_committed,
+        row.quarterly_cash_remaining if row.quarterly_cash_remaining is not None else "",
+        row.quarterly_cash_utilization_pct
+        if row.quarterly_cash_utilization_pct is not None
+        else "",
+        row.annual_cash_committed,
+        row.annual_cash_remaining if row.annual_cash_remaining is not None else "",
+        row.annual_cash_utilization_pct
+        if row.annual_cash_utilization_pct is not None
+        else "",
         row.category_caps,
         row.claim_count,
         row.last_claim,
+    ]
+
+
+def _dept_budget_values(row: DepartmentBudgetUtilizationRow) -> list[Any]:
+    return [
+        row.department,
+        row.gl_ledger or "(all GL)",
+        row.period_kind,
+        row.period_key,
+        row.allocated,
+        row.consumed,
+        row.remaining if row.remaining is not None else "",
+        row.utilization_pct if row.utilization_pct is not None else "",
+        row.advance_float,
+        row.cash_committed,
+        row.cash_remaining if row.cash_remaining is not None else "",
+        row.cash_utilization_pct if row.cash_utilization_pct is not None else "",
+        row.notes or "",
     ]
 
 
@@ -353,7 +418,8 @@ async def build_team_expense_excel_export(
     """
     Build a single-sheet styled workbook for one TE report kind.
 
-    report: advance-settlement | budget-utilization | expense-summary
+    report: advance-settlement | budget-utilization | spending-limit-utilization |
+            department-budget-utilization | expense-summary
     """
     wb = Workbook()
     # remove default sheet; we'll create named sheets
@@ -375,20 +441,38 @@ async def build_team_expense_excel_export(
             data_rows=[_advance_values(r) for r in rows],
         )
         filename = _slug_filename("employee_advance_settlement", tenant_slug)
-    elif report == "budget-utilization":
+    elif report in ("budget-utilization", "spending-limit-utilization"):
         rows = await build_budget_utilization_rows(session, tenant_id)
         ws = wb.create_sheet(SHEET_BUDGET)
         count = _write_sheet(
             ws,
-            title="Employee Budget Utilization",
+            title="Employee Spending Limit Utilization",
             subtitle=(
-                "Employee master budget caps vs MTD / QTD / YTD claim spend counters. "
-                "Advances do not count toward spend. Utilization blank when cap is zero."
+                "Employee spending limits vs MTD / QTD / YTD claim spend (accrual) from "
+                "processed Team Expense invoices. Advances do not count toward spend. "
+                "Cash columns reserve outstanding Staff Advance float against the same "
+                "limits (cash committed = claim spend + advance float)."
             ),
             headers=BUDGET_HEADERS,
             data_rows=[_budget_values(r) for r in rows],
         )
-        filename = _slug_filename("employee_budget_utilization", tenant_slug)
+        filename = _slug_filename("employee_spending_limit_utilization", tenant_slug)
+    elif report == "department-budget-utilization":
+        rows = await build_department_budget_utilization_rows(session, tenant_id)
+        ws = wb.create_sheet(SHEET_DEPT)
+        count = _write_sheet(
+            ws,
+            title="Department Budget Utilization",
+            subtitle=(
+                "Department budget envelopes for the current period vs consumed Team Expense "
+                "spend (claims and against-advance). Empty GL means all expense ledgers. "
+                "Cash columns reserve outstanding department advance float against "
+                "dept-wide (empty GL) envelopes only."
+            ),
+            headers=DEPT_BUDGET_HEADERS,
+            data_rows=[_dept_budget_values(r) for r in rows],
+        )
+        filename = _slug_filename("department_budget_utilization", tenant_slug)
     elif report == "expense-summary":
         rows = await build_employee_expense_summary_rows(
             session, tenant_id, date_from=date_from, date_to=date_to

@@ -146,6 +146,19 @@ async def _get_active_mapping(
     ).scalar_one_or_none()
 
 
+async def _get_mapping(
+    session: AsyncSession, *, user_id: int, tenant_id: uuid.UUID
+) -> UserTenantMapping | None:
+    return (
+        await session.execute(
+            select(UserTenantMapping).where(
+                UserTenantMapping.user_id == user_id,
+                UserTenantMapping.tenant_id == tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+
+
 async def _guard_last_admin(
     session: AsyncSession,
     *,
@@ -264,6 +277,35 @@ async def deactivate_member(
     mapping.status = "inactive"
     user.is_active = False
     await session.flush()
+
+
+async def activate_member(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    user_id: int,
+) -> TenantMemberRow:
+    user = await session.get(User, user_id)
+    if not user or user.tenant_id != tenant_id:
+        raise HTTPException(404, "Member not found")
+
+    mapping = await _get_mapping(session, user_id=user_id, tenant_id=tenant_id)
+    if not mapping:
+        raise HTTPException(404, "Member not found")
+
+    mapping.is_active = True
+    mapping.status = "active"
+    user.is_active = True
+    await session.flush()
+
+    return TenantMemberRow(
+        user_id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        role=mapping.role,
+        status=mapping.status,
+        is_active=mapping.is_active and user.is_active,
+    )
 
 
 async def create_invite(

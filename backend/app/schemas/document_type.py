@@ -164,6 +164,16 @@ class DocumentTypeDefinition(BaseModel):
         alias="teamExpenseKind",
         description="Claim kind stamped on Team Expenses documents; empty infers from advance balance.",
     )
+    budget_control: bool = Field(
+        default=False,
+        alias="budgetControl",
+        description="When true, enforce employee-level budget availability for this document type.",
+    )
+    advance_control: bool = Field(
+        default=False,
+        alias="advanceControl",
+        description="When true, enforce employee-level advance availability for this document type.",
+    )
     sample_analysis: DocumentTypeSampleAnalysis | None = Field(
         default=None,
         alias="sampleAnalysis",

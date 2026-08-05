@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from app.schemas.rule_book_config import (
     BankDetails,
     BillingAddress,
     EmployeeBudget,
     EmployeeMaster,
+    EmployeeSpendingLimit,
     VendorMaster,
 )
 
@@ -55,6 +56,8 @@ class VendorMasterResponse(VendorMaster):
 
 
 class EmployeeMasterCreate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     master_id: str | None = Field(None, min_length=1, max_length=100)
     name: str = Field(..., min_length=1, max_length=255)
     role: str = ""
@@ -69,7 +72,10 @@ class EmployeeMasterCreate(BaseModel):
     supervisor_1: str = ""
     supervisor_2: str = ""
     bank: BankDetails = Field(default_factory=BankDetails)
-    budget: EmployeeBudget = Field(default_factory=EmployeeBudget)
+    spending_limits: EmployeeSpendingLimit = Field(
+        default_factory=EmployeeSpendingLimit,
+        validation_alias=AliasChoices("spending_limits", "budget"),
+    )
     advance_parent_ledger: str = ""
     ytd_spent: float = Field(default=0, ge=0)
     mtd_spent: float = Field(default=0, ge=0)
@@ -78,8 +84,14 @@ class EmployeeMasterCreate(BaseModel):
     last_claim: str = ""
     status: str = "Pending verification"
 
+    @property
+    def budget(self) -> EmployeeSpendingLimit:
+        return self.spending_limits
+
 
 class EmployeeMasterUpdate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     name: str | None = Field(None, min_length=1, max_length=255)
     role: str | None = None
     email: str | None = None
@@ -93,7 +105,10 @@ class EmployeeMasterUpdate(BaseModel):
     supervisor_1: str | None = None
     supervisor_2: str | None = None
     bank: BankDetails | None = None
-    budget: EmployeeBudget | None = None
+    spending_limits: EmployeeSpendingLimit | None = Field(
+        default=None,
+        validation_alias=AliasChoices("spending_limits", "budget"),
+    )
     advance_parent_ledger: str | None = None
     ytd_spent: float | None = Field(None, ge=0)
     mtd_spent: float | None = Field(None, ge=0)
@@ -101,6 +116,10 @@ class EmployeeMasterUpdate(BaseModel):
     claim_count: int | None = Field(None, ge=0)
     last_claim: str | None = None
     status: str | None = None
+
+    @property
+    def budget(self) -> EmployeeSpendingLimit | None:
+        return self.spending_limits
 
 
 class EmployeeMasterResponse(EmployeeMaster):

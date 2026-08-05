@@ -182,7 +182,8 @@ export function EmployeesTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-sm text-muted-foreground max-w-2xl">
-          Define employees who can submit claims via WhatsApp or email, with budgets and bank accounts
+          Define employees who can submit claims via WhatsApp or email, with spending limits and bank
+          accounts
           for reimbursement. Edit fields locally, then click Save employee.
         </p>
         <div className="flex flex-wrap gap-2">

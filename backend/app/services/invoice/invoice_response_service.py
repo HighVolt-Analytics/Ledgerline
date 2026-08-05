@@ -329,6 +329,7 @@ def invoice_to_response(
             if not for_list
             else None
         ),
+        approval_chain=getattr(inv, "approval_chain", None) or None,
         document_type_extraction_fields=(
             document_type_extraction_fields if not for_list else None
         ),

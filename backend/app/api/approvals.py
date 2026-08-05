@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import AuthContext, get_auth_context, get_db
 from app.api.http_errors import http_bad_request, http_not_found
 from app.schemas.approvals import ApprovalListRequest
-from app.schemas.common import ApiEnvelope
+from app.schemas.common import ApiEnvelope, ResponseMeta
 from app.schemas.invoice import InvoiceResponse
 from app.services.approval.approval_api_service import (
     approve_invoice_action,
@@ -18,6 +18,7 @@ from app.services.approval.approval_api_service import (
     reject_invoice_action,
     request_approval_action,
 )
+from app.services.approval.approval_quorum_service import ApprovalQuorumForbiddenError
 from app.services.auth.privilege_service import require_privilege
 from app.workers.tasks import enqueue_invoice_pipelines
 
@@ -61,11 +62,14 @@ async def approve_invoice(
     Approve an exception/rejected invoice for reprocessing.
 
     Restores rejected blobs to invoice/ layout when needed, resets to pending,
-    then queues the invoice pipeline for this row.
+    then queues the invoice pipeline for this row. Multi-way quorum may leave
+    the document pending until enough distinct pool approvers have signed off.
     """
     require_privilege(ctx, "Approve")
     try:
         result = await approve_invoice_action(db, ctx, invoice_id=invoice_id)
+    except ApprovalQuorumForbiddenError as exc:
+        raise HTTPException(403, str(exc)) from exc
     except LookupError as exc:
         raise http_not_found(exc) from exc
     except ValueError as exc:
@@ -77,7 +81,18 @@ async def approve_invoice(
             tenant_id=ctx.tenant_id,
             background_tasks=background_tasks,
         )
-    return ApiEnvelope(data=result.response)
+    meta = None
+    if result.quorum:
+        q = result.quorum
+        meta = ResponseMeta(
+            quorum_module=q.get("module"),
+            quorum_mode=q.get("mode"),
+            quorum_required=q.get("required"),
+            quorum_recorded=q.get("recorded"),
+            quorum_remaining=q.get("remaining"),
+            quorum_met=q.get("quorum_met"),
+        )
+    return ApiEnvelope(data=result.response, meta=meta or ResponseMeta())
 
 
 @router.post("/{invoice_id}/reject", response_model=ApiEnvelope[InvoiceResponse])

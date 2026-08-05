@@ -29,6 +29,8 @@ export type MetaCountry = {
   tax_label: string;
   statutory_tax_rate: number | null;
   timezone: string;
+  /** All IANA zones for the country (multi-zone countries expose a picker list). */
+  timezones?: string[];
   locale: string;
   has_jurisdiction_pack: boolean;
 };
@@ -96,15 +98,25 @@ export function metaCountriesToOptions(rows: MetaCountry[]): Array<{
   taxLabel: string;
   dialCode: string;
   timeZone: string;
+  timeZones: string[];
 }> {
-  return rows.map((r) => ({
-    code: r.code,
-    name: r.name,
-    defaultCurrency: r.default_currency,
-    locale: r.locale,
-    taxRate: r.statutory_tax_rate,
-    taxLabel: r.tax_label,
-    dialCode: PACK_DIAL_CODES[r.code] ?? "",
-    timeZone: r.timezone,
-  }));
+  return rows.map((r) => {
+    const timeZones =
+      Array.isArray(r.timezones) && r.timezones.length > 0
+        ? r.timezones
+        : r.timezone
+          ? [r.timezone]
+          : [];
+    return {
+      code: r.code,
+      name: r.name,
+      defaultCurrency: r.default_currency,
+      locale: r.locale,
+      taxRate: r.statutory_tax_rate,
+      taxLabel: r.tax_label,
+      dialCode: PACK_DIAL_CODES[r.code] ?? "",
+      timeZone: r.timezone || timeZones[0] || "",
+      timeZones,
+    };
+  });
 }

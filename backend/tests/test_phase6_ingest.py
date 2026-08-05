@@ -221,8 +221,8 @@ async def test_team_expense_budget_validation_fails(
             master_id="em-test",
             name="Site Supervisor",
             email="supervisor@acme-hospitality.com.au",
-            budget={"monthly": 500.0, "quarterly": 1200.0, "annual": 4500.0, "categories": []},
-            mtd_spent=480.0,
+            spending_limits={"monthly": 40.0, "quarterly": 1200.0, "annual": 4500.0, "categories": []},
+            mtd_spent=0.0,
             status="Active",
             bank={"account_number": "12345678"},
         )
@@ -251,7 +251,7 @@ async def test_team_expense_budget_validation_fails(
     by_rule = {row.rule: row for row in results}
     assert by_rule["VR-TE01"].passed
     assert not by_rule["VR-TE02"].passed
-    assert "budget exceeded" in by_rule["VR-TE02"].message.lower()
+    assert "spending limit exceeded" in by_rule["VR-TE02"].message.lower()
 
 
 @pytest.mark.asyncio
@@ -279,7 +279,7 @@ async def test_run_all_validations_includes_team_rules(
             master_id="em-test-2",
             name="Ops Lead",
             email="ops@acme-hospitality.com.au",
-            budget={"monthly": 5000.0, "quarterly": 12000.0, "annual": 45000.0, "categories": []},
+            spending_limits={"monthly": 5000.0, "quarterly": 12000.0, "annual": 45000.0, "categories": []},
             mtd_spent=100.0,
             status="Active",
             bank={"account_number": "12345678"},
@@ -303,6 +303,10 @@ async def test_run_all_validations_includes_team_rules(
         "VR-TE05",
         "VR-TE06",
         "VR-TE07",
+        "VR-TE08",
+        "VR-TE09",
+        "VR-TE10",
+        "VR-TE11",
     ]
 
 

@@ -6,12 +6,15 @@ import enum
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Numeric, String, func, Uuid
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Numeric, String, func, Uuid, JSON
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+
+_JsonColumn = JSON().with_variant(JSONB, "postgresql")
 
 if TYPE_CHECKING:
     from app.models.goods_receipt import GoodsReceipt
@@ -47,6 +50,7 @@ class PurchaseOrder(Base):
         index=True,
     )
     variance_approved: Mapped[bool] = mapped_column(Boolean, default=False)
+    variance_approval_chain: Mapped[dict[str, Any] | None] = mapped_column(_JsonColumn, nullable=True)
     ledger: Mapped[str | None] = mapped_column(String(255))
     sub_ledger: Mapped[str | None] = mapped_column(String(255))
     tax_account: Mapped[str | None] = mapped_column(String(100))

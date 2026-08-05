@@ -49,7 +49,7 @@ export function EmployeeDetailPanel({
       ok: Boolean(emp.email) && emp.status !== "Pending verification",
     },
     {
-      label: "MTD spend + claim ≤ monthly budget",
+      label: "MTD spend + claim ≤ monthly spending limit",
       ok: emp.mtdSpent <= emp.budget.monthly,
     },
     {
@@ -257,7 +257,7 @@ export function EmployeeDetailPanel({
 
       <div>
         <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-          Budget
+          Spending limits
         </h4>
         <div className="grid sm:grid-cols-3 gap-2.5 mb-3">
           <FieldLabel label="Monthly ($)">

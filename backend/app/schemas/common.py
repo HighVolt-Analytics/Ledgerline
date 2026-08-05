@@ -16,6 +16,13 @@ class ResponseMeta(BaseModel):
     pages: int = 0
     segment_count: int | None = None
     segment_invoice_ids: list[int] | None = None
+    # Approval quorum progress (approve endpoint)
+    quorum_module: str | None = None
+    quorum_mode: str | None = None
+    quorum_required: int | None = None
+    quorum_recorded: int | None = None
+    quorum_remaining: int | None = None
+    quorum_met: bool | None = None
 
 
 class ApiEnvelope(BaseModel, Generic[T]):

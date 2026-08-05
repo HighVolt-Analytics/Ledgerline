@@ -95,7 +95,7 @@ def employee_record_to_schema(row: EmployeeMasterRecord) -> EmployeeMasterRespon
         supervisor_1=row.supervisor_1 or "",
         supervisor_2=row.supervisor_2 or "",
         bank=row.bank or {},
-        budget=row.budget or {},
+        spending_limits=row.spending_limits or {},
         advance_parent_ledger=row.advance_parent_ledger or "",
         advance_sub_ledger=row.advance_sub_ledger or "",
         ytd_spent=row.ytd_spent or 0,
@@ -114,9 +114,12 @@ def vendor_master_to_dict(vendor: VendorMaster) -> dict[str, Any]:
 
 
 def employee_master_to_dict(employee: EmployeeMaster) -> dict[str, Any]:
-    data = employee.model_dump()
+    data = employee.model_dump(by_alias=True)
     data.pop("db_id", None)
     data.pop("advance_balance", None)
+    # Keep legacy key for rule-book file consumers.
+    if "spending_limits" in data and "budget" not in data:
+        data["budget"] = data["spending_limits"]
     return data
 
 
@@ -214,7 +217,7 @@ async def import_masters_from_config_file(db: AsyncSession, tenant_id: uuid.UUID
                 supervisor_1=str(item.get("supervisor_1") or ""),
                 supervisor_2=str(item.get("supervisor_2") or ""),
                 bank=item.get("bank") or {},
-                budget=item.get("budget") or {},
+                spending_limits=item.get("spending_limits") or item.get("budget") or {},
                 advance_parent_ledger=str(item.get("advance_parent_ledger") or ""),
                 advance_sub_ledger=str(item.get("advance_sub_ledger") or ""),
                 ytd_spent=float(item.get("ytd_spent") or 0),
@@ -463,7 +466,7 @@ async def create_employee_master(
         supervisor_1=body.supervisor_1,
         supervisor_2=body.supervisor_2,
         bank=body.bank.model_dump(exclude_none=True),
-        budget=body.budget.model_dump(),
+        spending_limits=body.spending_limits.model_dump(),
         advance_parent_ledger=(body.advance_parent_ledger or "").strip(),
         ytd_spent=body.ytd_spent,
         mtd_spent=body.mtd_spent,
@@ -513,8 +516,12 @@ async def update_employee_master(
         raise LookupError("Employee master not found")
 
     patch = body.model_dump(exclude_unset=True)
+    if "budget" in patch and "spending_limits" not in patch:
+        patch["spending_limits"] = patch.pop("budget")
+    else:
+        patch.pop("budget", None)
     for key, value in patch.items():
-        if key in {"bank", "budget"} and value is not None:
+        if key in {"bank", "spending_limits"} and value is not None:
             if hasattr(value, "model_dump"):
                 value = value.model_dump(exclude_none=True) if key == "bank" else value.model_dump()
         if key == "advance_parent_ledger" and value is not None:

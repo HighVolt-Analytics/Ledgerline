@@ -307,7 +307,7 @@ async def test_employee_sender_bypasses_capture_rule_gate(
             email="codevishnu321@gmail.com",
             status="Active",
             bank={},
-            budget={},
+            spending_limits={},
         )
     )
     await db_session.flush()

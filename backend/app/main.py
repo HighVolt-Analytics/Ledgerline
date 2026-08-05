@@ -15,6 +15,7 @@ from app.api import (
     collections,
     customer_masters,
     customers,
+    department_budgets,
     ledger_link,
     matrix,
     audit,
@@ -190,6 +191,7 @@ app.include_router(vendor_masters.router, prefix="/api", dependencies=_api_deps)
 app.include_router(customer_masters.router, prefix="/api", dependencies=_api_deps)
 app.include_router(customers.router, prefix="/api", dependencies=_module_deps("sales"))
 app.include_router(employee_masters.router, prefix="/api", dependencies=_module_deps("team_expenses"))
+app.include_router(department_budgets.router, prefix="/api", dependencies=_module_deps("team_expenses"))
 app.include_router(pending_vendors.router, prefix="/api", dependencies=_api_deps)
 app.include_router(pending_customers.router, prefix="/api", dependencies=_api_deps)
 app.include_router(reports.router, prefix="/api", dependencies=_module_deps("reports"))

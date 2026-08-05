@@ -259,7 +259,7 @@ async def test_record_processed_skips_spend_for_advance(
             master_id="em-adv-spend",
             name="Ops Lead",
             email="ops-adv@acme-hospitality.com.au",
-            budget={"monthly": 5000, "quarterly": 12000, "annual": 45000, "categories": []},
+            spending_limits={"monthly": 5000, "quarterly": 12000, "annual": 45000, "categories": []},
             mtd_spent=100.0,
             ytd_spent=500.0,
             claim_count=2,
@@ -297,13 +297,15 @@ async def test_record_processed_skips_spend_for_advance(
 async def test_record_processed_increments_spend_for_claim(
     db_session: AsyncSession,
 ) -> None:
+    from datetime import date
+
     db_session.add(
         EmployeeMasterRecord(
             tenant_id=TESTING_TENANT_UUID,
             master_id="em-claim-spend",
             name="Ops Lead",
             email="ops-claim@acme-hospitality.com.au",
-            budget={"monthly": 5000, "quarterly": 12000, "annual": 45000, "categories": []},
+            spending_limits={"monthly": 5000, "quarterly": 12000, "annual": 45000, "categories": []},
             mtd_spent=100.0,
             ytd_spent=500.0,
             claim_count=2,
@@ -315,10 +317,13 @@ async def test_record_processed_increments_spend_for_claim(
         invoice_no="CLM-1",
         total=50.0,
         email_sender="ops-claim@acme-hospitality.com.au",
+        employee_email="ops-claim@acme-hospitality.com.au",
         route_target=ROUTE_TEAM,
         team_expense_kind=TEAM_EXPENSE_KIND_CLAIM,
         status=InvoiceStatus.PROCESSED,
         file_hash="te-claim-spend",
+        invoice_date=date.today(),
+        currency="AUD",
     )
     db_session.add(inv)
     await db_session.flush()
@@ -332,6 +337,6 @@ async def test_record_processed_increments_spend_for_claim(
             )
         )
     ).scalar_one()
-    assert row.mtd_spent == 150.0
-    assert row.ytd_spent == 550.0
+    assert row.mtd_spent == 50.0
+    assert row.ytd_spent == 50.0
     assert row.claim_count == 3

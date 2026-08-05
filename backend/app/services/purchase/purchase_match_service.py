@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -10,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.api.deps import AuthContext
 from app.models.goods_receipt import GoodsReceipt
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.purchase_order import PurchaseOrder, PurchaseOrderStatus
@@ -648,6 +650,7 @@ def purchase_order_to_response(
         invoice_unit_price=float(inv_unit),
         gst_rate=gst_rate,
         variance_approved=po.variance_approved,
+        variance_approval_chain=getattr(po, "variance_approval_chain", None),
         status=po.status.value,
         three_way_match_status=po.three_way_match_status,
         match=match,
@@ -1093,9 +1096,17 @@ async def record_goods_receipt(
 
 async def approve_purchase_variance(
     db: AsyncSession,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     purchase_order_id: int,
+    *,
+    ctx: AuthContext | None = None,
 ) -> PurchaseOrderResponse:
+    from app.services.approval.approval_quorum_service import (
+        progress_from_chain,
+        record_approval,
+        require_actor_in_pool,
+    )
+
     po = (
         await db.execute(
             select(PurchaseOrder)
@@ -1112,7 +1123,37 @@ async def approve_purchase_variance(
     if po is None:
         raise LookupError("Purchase order not found")
 
-    po.variance_approved = True
+    if ctx is not None:
+        require_actor_in_pool(ctx)
+        from app.api.deps import actor_from_context
+
+        actor_name, actor_email = await actor_from_context(db, ctx)
+        po.variance_approval_chain = record_approval(
+            po.variance_approval_chain,
+            tenant_id=tenant_id,
+            module_key="purchase",
+            user_id=int(ctx.user_id),
+            role=ctx.role or "",
+            name=actor_name or actor_email or f"User {ctx.user_id}",
+        )
+        progress = progress_from_chain(po.variance_approval_chain)
+        if progress is None or not progress.quorum_met:
+            await db.flush()
+            config = await load_classification_config(db, tenant_id)
+            inv = None
+            if po.invoice_id:
+                inv = (
+                    await db.execute(
+                        select(Invoice)
+                        .where(Invoice.id == po.invoice_id)
+                        .options(selectinload(Invoice.line_items))
+                    )
+                ).scalar_one_or_none()
+            return purchase_order_to_response(po, inv, config=config)
+        po.variance_approved = True
+    else:
+        po.variance_approved = True
+
     inv: Invoice | None = None
     if po.invoice_id:
         inv = (

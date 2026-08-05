@@ -100,6 +100,7 @@ class Invoice(Base):
     )
     raw_file_path: Mapped[str | None] = mapped_column(Text)
     email_sender: Mapped[str | None] = mapped_column(String(255))
+    employee_email: Mapped[str | None] = mapped_column(String(255), index=True)
     email_subject: Mapped[str | None] = mapped_column(String(500))
     email_attachment_name: Mapped[str | None] = mapped_column(String(255))
     email_message_id: Mapped[str | None] = mapped_column(String(255), index=True)
@@ -126,6 +127,7 @@ class Invoice(Base):
     document_heading: Mapped[str | None] = mapped_column(String(500), nullable=True)
     extracted_fields: Mapped[dict[str, Any] | None] = mapped_column(_JsonColumn, nullable=True)
     processing_overrides: Mapped[dict[str, Any] | None] = mapped_column(_JsonColumn, nullable=True)
+    approval_chain: Mapped[dict[str, Any] | None] = mapped_column(_JsonColumn, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

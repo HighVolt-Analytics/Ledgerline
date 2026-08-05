@@ -62,6 +62,8 @@ import type {
   ReportDocumentRow,
   EmployeeAdvanceSettlementRow,
   EmployeeBudgetUtilizationRow,
+  DepartmentBudgetRow,
+  DepartmentBudgetUtilizationRow,
   EmployeeExpenseSummaryRow,
   SubledgerBalancesResponse,
   Invoice,
@@ -679,6 +681,10 @@ export const api = {
   deactivateTenantMember: (userId: number) =>
     request<{ message: string }>("/api/tenants/current/members/" + userId, {
       method: "DELETE",
+    }),
+  activateTenantMember: (userId: number) =>
+    request<TenantMember>("/api/tenants/current/members/" + userId + "/activate", {
+      method: "POST",
     }),
   revokeTenantInvite: (inviteId: number) =>
     request<{ message: string }>("/api/tenants/current/members/invites/" + inviteId, {
@@ -1490,6 +1496,43 @@ export const api = {
     }),
   deleteEmployeeMaster: (masterId: string) =>
     request<void>(`/api/employee-masters/${encodeURIComponent(masterId)}`, { method: "DELETE" }),
+  listDepartmentBudgets: (department?: string) => {
+    const q = department?.trim()
+      ? `?department=${encodeURIComponent(department.trim())}`
+      : "";
+    return request<DepartmentBudgetRow[]>(`/api/department-budgets${q}`);
+  },
+  createDepartmentBudget: (body: {
+    department: string;
+    gl_ledger?: string;
+    period_kind: "monthly" | "quarterly" | "annual";
+    period_key: string;
+    allocated: number;
+    notes?: string | null;
+  }) =>
+    request<DepartmentBudgetRow>("/api/department-budgets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  updateDepartmentBudget: (
+    budgetId: number,
+    body: Partial<{
+      department: string;
+      gl_ledger: string;
+      period_kind: "monthly" | "quarterly" | "annual";
+      period_key: string;
+      allocated: number;
+      notes: string | null;
+    }>
+  ) =>
+    request<DepartmentBudgetRow>(`/api/department-budgets/${budgetId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  deleteDepartmentBudget: (budgetId: number) =>
+    request<void>(`/api/department-budgets/${budgetId}`, { method: "DELETE" }),
   downloadEmployeeImportTemplate: async (mode: EmployeeImportMode) => {
     const { blob, filename } = await requestBlob(
       `/api/employee-masters/import/templates/${mode}`,
@@ -1734,12 +1777,20 @@ export const api = {
     request<EmployeeBudgetUtilizationRow[]>(
       "/api/reports/team-expenses/budget-utilization"
     ),
+  getTeamExpenseDepartmentBudgetUtilization: () =>
+    request<DepartmentBudgetUtilizationRow[]>(
+      "/api/reports/team-expenses/department-budget-utilization"
+    ),
   getTeamExpenseExpenseSummary: (filter?: ReportDateFilter) =>
     request<EmployeeExpenseSummaryRow[]>(
       `/api/reports/team-expenses/expense-summary${reportDateQuery(filter)}`
     ),
   downloadTeamExpenseReport: async (
-    report: "advance-settlement" | "budget-utilization" | "expense-summary",
+    report:
+      | "advance-settlement"
+      | "budget-utilization"
+      | "department-budget-utilization"
+      | "expense-summary",
     filter?: ReportDateFilter
   ) => {
     const { blob, filename, headers } = await requestBlob(

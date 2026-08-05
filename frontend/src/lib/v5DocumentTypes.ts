@@ -104,6 +104,10 @@ export type V5DocumentType = {
   /** Shipped matrix template this org type was created from (e.g. DT-07). Org code is separate. */
   matrixTemplateCode?: string;
   teamExpenseKind: DocumentTypeTeamExpenseKind;
+  /** When true, enforce employee-level budget availability for this DT. */
+  budgetControl: boolean;
+  /** When true, enforce employee-level advance availability for this DT. */
+  advanceControl: boolean;
   postTo: DocumentTypePostTo;
 };
 
@@ -175,6 +179,8 @@ export function createBlankDocumentType(existing: DocumentTypeDefinition[]): Doc
     purchaseBundleRole: "",
     salesBundleRole: "",
     teamExpenseKind: "",
+    budgetControl: false,
+    advanceControl: false,
     postTo: emptyDocumentTypePostTo(),
   };
 }

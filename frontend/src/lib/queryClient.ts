@@ -36,8 +36,14 @@ const baseKeys = {
     ["reports", "documents", dateFrom ?? "all", dateTo ?? "all"] as const,
   teAdvanceSettlement: ["reports", "team-expenses", "advance-settlement"] as const,
   teBudgetUtilization: ["reports", "team-expenses", "budget-utilization"] as const,
+  teDepartmentBudgetUtilization: [
+    "reports",
+    "team-expenses",
+    "department-budget-utilization",
+  ] as const,
   teExpenseSummary: (dateFrom?: string, dateTo?: string) =>
     ["reports", "team-expenses", "expense-summary", dateFrom ?? "all", dateTo ?? "all"] as const,
+  departmentBudgets: ["department-budgets"] as const,
   reconciliationOverview: ["reconciliation", "overview"] as const,
   reconciliationDaily: ["reconciliation", "daily"] as const,
   reconciliationDayDetail: (date: string) => ["reconciliation", "daily", date, "detail"] as const,
@@ -100,8 +106,11 @@ export const queryKeys = {
     tenantQueryKey(baseKeys.reportDocuments(dateFrom, dateTo)),
   teAdvanceSettlement: () => tenantQueryKey(baseKeys.teAdvanceSettlement),
   teBudgetUtilization: () => tenantQueryKey(baseKeys.teBudgetUtilization),
+  teDepartmentBudgetUtilization: () =>
+    tenantQueryKey(baseKeys.teDepartmentBudgetUtilization),
   teExpenseSummary: (dateFrom?: string, dateTo?: string) =>
     tenantQueryKey(baseKeys.teExpenseSummary(dateFrom, dateTo)),
+  departmentBudgets: () => tenantQueryKey(baseKeys.departmentBudgets),
   reconciliationOverview: () => tenantQueryKey(baseKeys.reconciliationOverview),
   reconciliationDaily: () => tenantQueryKey(baseKeys.reconciliationDaily),
   reconciliationDayDetail: (date: string) =>

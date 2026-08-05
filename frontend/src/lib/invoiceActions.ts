@@ -7,6 +7,10 @@ import type {
   PaymentApi,
 } from "@/api/types";
 import {
+  approvalChainProgressLabel,
+  invoiceHasPendingQuorum,
+} from "@/lib/approvalQuorum";
+import {
   compulsoryFieldsForDocumentType,
   validateCompulsoryFieldsForApproval,
 } from "@/lib/documentCompulsoryFields";
@@ -332,6 +336,9 @@ export type ApproveAndProcessResult = {
   invoice: InvoiceDetails;
   payment?: PaymentApi;
   collection?: CollectionApi;
+  /** True when more distinct pool approvers are still required. */
+  awaitingQuorum?: boolean;
+  quorumLabel?: string | null;
 };
 
 export async function approveAndProcess(
@@ -342,7 +349,17 @@ export async function approveAndProcess(
   if (pendingEdits) {
     await api.updateInvoice(invoiceId, pendingEdits);
   }
-  await api.approve(invoiceId);
+  const approved = await api.approve(invoiceId);
+  await refresh();
+
+  if (invoiceHasPendingQuorum(approved)) {
+    return {
+      invoice: approved as InvoiceDetails,
+      awaitingQuorum: true,
+      quorumLabel: approvalChainProgressLabel(approved.approval_chain),
+    };
+  }
+
   await watchInvoiceUntilSettled(invoiceId, refresh, PROCESSING_TIMEOUT_MS, {
     requirePipelineObserved: true,
   });

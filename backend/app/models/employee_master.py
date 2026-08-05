@@ -35,7 +35,7 @@ class EmployeeMasterRecord(Base):
     supervisor_1: Mapped[str] = mapped_column(String(255), default="")
     supervisor_2: Mapped[str] = mapped_column(String(255), default="")
     bank: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    budget: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    spending_limits: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     advance_parent_ledger: Mapped[str] = mapped_column(String(255), default="")
     advance_sub_ledger: Mapped[str] = mapped_column(String(255), default="")
     ytd_spent: Mapped[float] = mapped_column(Float, default=0)

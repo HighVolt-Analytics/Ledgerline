@@ -167,6 +167,7 @@ async def test_stamp_team_expense_employee_identity_fills_empty_vendor(
     name = await stamp_team_expense_employee_identity(db_session, inv)
     assert name == "vishnu"
     assert inv.vendor == "vishnu"
+    assert inv.employee_email == "codevishnu321@gmail.com"
     assert (inv.extracted_fields or {}).get("vendor") == "vishnu"
 
 
@@ -298,18 +299,38 @@ async def test_quarterly_budget_validation(
     db_session: AsyncSession,
     capture_config: RuleBookConfigPayload,
 ) -> None:
+    from datetime import date
+
+    from app.models.invoice import InvoiceStatus
+    from app.schemas.rule_book_config import TEAM_EXPENSE_KIND_CLAIM
+
     db_session.add(
         EmployeeMasterRecord(
             tenant_id=TESTING_TENANT_UUID,
             master_id="em-qtr",
             name="Ops Lead",
             email="ops@acme-hospitality.com.au",
-            budget={"monthly": 5000.0, "quarterly": 100.0, "annual": 45000.0, "categories": []},
+            spending_limits={"monthly": 5000.0, "quarterly": 100.0, "annual": 45000.0, "categories": []},
             mtd_spent=10.0,
             qtd_spent=90.0,
             ytd_spent=100.0,
             status="Active",
             bank={"account_number": "12345678"},
+        )
+    )
+    # Period spend is computed from processed TE invoices (not cache alone).
+    db_session.add(
+        Invoice(
+            tenant_id=TESTING_TENANT_UUID,
+            status=InvoiceStatus.PROCESSED,
+            currency="AUD",
+            invoice_date=date.today(),
+            total=Decimal("90.00"),
+            route_target=ROUTE_TEAM,
+            team_expense_kind=TEAM_EXPENSE_KIND_CLAIM,
+            employee_email="ops@acme-hospitality.com.au",
+            email_sender="ops@acme-hospitality.com.au",
+            file_hash="qtr-prior-spend",
         )
     )
     await db_session.flush()

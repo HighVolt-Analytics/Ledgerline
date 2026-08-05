@@ -8,6 +8,7 @@ from app.schemas.common import ApiEnvelope
 from app.schemas.sales import DeliveryNoteCreate, SalesOrderResponse, TwoWaySalesMatchResponse
 from app.services.audit.audit_service import log_event
 from app.services.auth.privilege_service import require_privilege
+from app.services.approval.approval_quorum_service import ApprovalQuorumForbiddenError
 from app.services.sales.sales_match_service import (
     approve_sales_variance,
     filter_two_way_sales_rows,
@@ -90,11 +91,13 @@ async def post_approve_sales_variance(
 ) -> ApiEnvelope[SalesOrderResponse]:
     require_privilege(ctx, "Approve")
     try:
-        row = await approve_sales_variance(db, ctx.tenant_id, sales_order_id)
+        row = await approve_sales_variance(db, ctx.tenant_id, sales_order_id, ctx=ctx)
+    except ApprovalQuorumForbiddenError as exc:
+        raise HTTPException(403, str(exc)) from exc
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
 
-    if row.invoice_id is not None:
+    if row.invoice_id is not None and row.variance_approved:
         actor_name, actor_email = await actor_from_context(db, ctx)
         await log_event(
             db,

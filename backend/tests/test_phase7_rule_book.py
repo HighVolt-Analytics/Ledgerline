@@ -1,5 +1,7 @@
 """Phase 7 — rule book completion (document-type GL, mailbox filter, MTD spend)."""
 
+from datetime import date
+
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -148,13 +150,15 @@ def test_ingest_capture_matches_legacy_placeholder_mailbox(
 
 @pytest.mark.asyncio
 async def test_record_team_expense_processed_updates_mtd(db_session: AsyncSession) -> None:
+    from app.schemas.rule_book_config import TEAM_EXPENSE_KIND_CLAIM
+
     db_session.add(
         EmployeeMasterRecord(
             tenant_id=TESTING_TENANT_UUID,
             master_id="em-ops",
             name="Ops Lead",
             email="ops@acme-hospitality.com.au",
-            budget={"monthly": 5000, "quarterly": 12000, "annual": 45000, "categories": []},
+            spending_limits={"monthly": 5000, "quarterly": 12000, "annual": 45000, "categories": []},
             mtd_spent=100.0,
             ytd_spent=500.0,
             claim_count=2,
@@ -166,8 +170,13 @@ async def test_record_team_expense_processed_updates_mtd(db_session: AsyncSessio
         invoice_no="MEAL-99",
         total=50.0,
         email_sender="ops@acme-hospitality.com.au",
+        employee_email="ops@acme-hospitality.com.au",
         route_target="Team Expenses",
         status=InvoiceStatus.PROCESSED,
+        team_expense_kind=TEAM_EXPENSE_KIND_CLAIM,
+        invoice_date=date.today(),
+        currency="AUD",
+        file_hash="phase7-te-mtd",
     )
     db_session.add(inv)
     await db_session.flush()
@@ -179,6 +188,7 @@ async def test_record_team_expense_processed_updates_mtd(db_session: AsyncSessio
             select(EmployeeMasterRecord).where(EmployeeMasterRecord.master_id == "em-ops")
         )
     ).scalar_one()
-    assert row.mtd_spent == 150.0
-    assert row.ytd_spent == 550.0
+    # Cache is rebuilt from processed TE invoices (not forever-incremented).
+    assert row.mtd_spent == 50.0
+    assert row.ytd_spent == 50.0
     assert row.claim_count == 3

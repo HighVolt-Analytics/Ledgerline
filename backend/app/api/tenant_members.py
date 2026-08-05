@@ -18,6 +18,7 @@ from app.services.audit.audit_service import log_event
 from app.services.auth.auth_email_service import send_tenant_invite_email
 from app.services.auth.privilege_service import require_privilege
 from app.services.tenant.tenant_members_service import (
+    activate_member,
     create_invite,
     deactivate_member,
     list_tenant_members,
@@ -99,6 +100,34 @@ async def patch_member_role(
         client_ip=client_ip,
     )
     return ApiEnvelope(data=_member_response(updated))
+
+
+@router.post("/{user_id}/activate", response_model=ApiEnvelope[TenantMemberResponse])
+async def reactivate_member(
+    user_id: int,
+    request: Request,
+    ctx: AuthContext = Depends(get_auth_context),
+    db: AsyncSession = Depends(get_db),
+) -> ApiEnvelope[TenantMemberResponse]:
+    require_privilege(ctx, "Manage Users")
+    activated = await activate_member(db, tenant_id=ctx.tenant_id, user_id=user_id)
+
+    actor_name, actor_email = await actor_from_context(db, ctx)
+    client_ip = request.client.host if request.client else None
+    await log_event(
+        db,
+        "tenant_member_activated",
+        tenant_id=ctx.tenant_id,
+        detail={
+            "user_id": user_id,
+            "email": activated.email,
+            "role": activated.role,
+        },
+        actor_name=actor_name,
+        actor_email=actor_email,
+        client_ip=client_ip,
+    )
+    return ApiEnvelope(data=_member_response(activated))
 
 
 @router.delete("/{user_id}", response_model=ApiEnvelope[dict[str, str]])

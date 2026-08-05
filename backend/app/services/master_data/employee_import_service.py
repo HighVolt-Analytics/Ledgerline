@@ -679,7 +679,7 @@ async def import_employee_masters(
                             supervisor_1=parsed.get("supervisor_1") or "",
                             supervisor_2=parsed.get("supervisor_2") or "",
                             bank={},
-                            budget=EmployeeBudget().model_dump(),
+                            spending_limits=EmployeeBudget().model_dump(),
                             status=parsed.get("status") or "Pending verification",
                         )
                     )
@@ -717,11 +717,11 @@ async def import_employee_masters(
 
             budget_patch = parsed.get("budget")
             if budget_patch:
-                merged_budget = dict(existing.budget or EmployeeBudget().model_dump())
+                merged_budget = dict(existing.spending_limits or EmployeeBudget().model_dump())
                 for period, value in budget_patch.items():
                     if value is not None:
                         merged_budget[period] = value
-                existing.budget = merged_budget
+                existing.spending_limits = merged_budget
 
             status = parsed.get("status")
             if status:

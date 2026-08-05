@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { documentDisplayRef } from "@/lib/format";
+import { approvalChainProgressLabel } from "@/lib/approvalQuorum";
 import { fetchApprovalsBoard } from "@/lib/invoices";
 import {
   approveAndProcess,
@@ -280,7 +281,13 @@ export function ApprovalsPage() {
       const result = await approveAndProcess(id, () => load({ silent: true, fresh: true }));
       await load({ fresh: true });
       await invalidateAfterApproval();
-      if (result.payment) {
+      if (result.awaitingQuorum) {
+        setToast(
+          result.quorumLabel
+            ? `Approval recorded — ${result.quorumLabel}`
+            : "Approval recorded — waiting for additional approvers"
+        );
+      } else if (result.payment) {
         setToast(`Invoice approved — payment ${result.payment.id} queued for disbursement`);
       } else if (result.collection) {
         setToast(`Invoice approved — collection ${result.collection.id} queued for receipt`);
@@ -616,6 +623,14 @@ export function ApprovalsPage() {
                           data-testid={`card-duplicate-review-${inv.id}`}
                         >
                           Possible duplicate — review suggested
+                        </p>
+                      ) : null}
+                      {approvalChainProgressLabel(inv.approval_chain) ? (
+                        <p
+                          className="text-[10px] text-muted-foreground leading-tight mt-1"
+                          data-testid={`card-quorum-${inv.id}`}
+                        >
+                          {approvalChainProgressLabel(inv.approval_chain)}
                         </p>
                       ) : null}
                       <div className="approvals-kanban-card__subline-row">

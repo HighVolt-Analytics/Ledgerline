@@ -29,6 +29,10 @@ from app.services.master_data.master_data_service import list_employee_masters
 from app.services.purchase.team_expense_advance_service import (
     employee_advance_balances_by_ids,
 )
+from app.services.purchase.team_expense_spend_service import (
+    employee_period_spend,
+    normalize_employee_email,
+)
 from app.services.purchase.team_expense_validator import find_employee_by_sender
 
 _PENDING_EXCLUDED_STATUSES = (
@@ -57,9 +61,10 @@ def _bank_fields(employee: EmployeeMasterResponse) -> dict[str, str]:
 
 
 def _budget(employee: EmployeeMasterResponse) -> EmployeeBudget:
-    if isinstance(employee.budget, EmployeeBudget):
-        return employee.budget
-    return EmployeeBudget.model_validate(employee.budget or {})
+    limits = getattr(employee, "spending_limits", None) or getattr(employee, "budget", None)
+    if isinstance(limits, EmployeeBudget):
+        return limits
+    return EmployeeBudget.model_validate(limits or {})
 
 
 def _category_caps_text(budget: EmployeeBudget) -> str:
@@ -183,18 +188,40 @@ async def build_budget_utilization_rows(
     session: AsyncSession,
     tenant_id: uuid.UUID,
 ) -> list[EmployeeBudgetUtilizationRow]:
+    """Employee spending-limit utilization from computed period spend (invoice truth).
+
+    Accrual columns (mtd/qtd/ytd + remaining) exclude advances. Cash columns reserve
+    outstanding Staff Advance float against the same period limits so managers see
+    how much of the envelope is still free after cash already paid out as advances.
+    """
+    config = await load_config_for_tenant(session, tenant_id)
     employees = await list_employee_masters(
         session, tenant_id, include_advance_balances=False
+    )
+    balances = await employee_advance_balances_by_ids(
+        session, tenant_id, config, employees
     )
     rows: list[EmployeeBudgetUtilizationRow] = []
     for emp in employees:
         budget = _budget(emp)
-        mtd = float(emp.mtd_spent or 0)
-        qtd = float(emp.qtd_spent or 0)
-        ytd = float(emp.ytd_spent or 0)
+        email = normalize_employee_email(emp.email)
+        if email:
+            spend = await employee_period_spend(session, tenant_id, email)
+            mtd, qtd, ytd = spend.mtd, spend.qtd, spend.ytd
+        else:
+            mtd = float(emp.mtd_spent or 0)
+            qtd = float(emp.qtd_spent or 0)
+            ytd = float(emp.ytd_spent or 0)
+        emp_id = (emp.id or "").strip()
+        advance_float = float(balances.get(emp_id, Decimal("0")) or 0)
+        if advance_float < 0:
+            advance_float = 0.0
+        m_cash = mtd + advance_float
+        q_cash = qtd + advance_float
+        y_cash = ytd + advance_float
         rows.append(
             EmployeeBudgetUtilizationRow(
-                employee_id=(emp.id or "").strip(),
+                employee_id=emp_id,
                 name=emp.name or "",
                 role=emp.role or "",
                 email=emp.email or "",
@@ -224,6 +251,16 @@ async def build_budget_utilization_rows(
                 monthly_utilization_pct=_utilization_pct(budget.monthly, mtd),
                 quarterly_utilization_pct=_utilization_pct(budget.quarterly, qtd),
                 annual_utilization_pct=_utilization_pct(budget.annual, ytd),
+                advance_float=advance_float,
+                monthly_cash_committed=m_cash,
+                quarterly_cash_committed=q_cash,
+                annual_cash_committed=y_cash,
+                monthly_cash_remaining=_remaining(budget.monthly, m_cash),
+                quarterly_cash_remaining=_remaining(budget.quarterly, q_cash),
+                annual_cash_remaining=_remaining(budget.annual, y_cash),
+                monthly_cash_utilization_pct=_utilization_pct(budget.monthly, m_cash),
+                quarterly_cash_utilization_pct=_utilization_pct(budget.quarterly, q_cash),
+                annual_cash_utilization_pct=_utilization_pct(budget.annual, y_cash),
             )
         )
     return rows

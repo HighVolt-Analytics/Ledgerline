@@ -68,6 +68,10 @@ import {
   DocumentTypePostToDetail,
   DocumentTypePostToEditor,
 } from "@/components/rule-book/DocumentTypePostToSection";
+import {
+  DocumentTypeSpendControlsDetail,
+  DocumentTypeSpendControlsEditor,
+} from "@/components/rule-book/DocumentTypeSpendControlsSection";
 import { useChartOfAccounts } from "@/hooks/useChartOfAccounts";
 import { postToMissingOnCard } from "@/lib/documentTypePostToValidation";
 const CLASS_BADGE_CLASSES: Record<DocumentTypeClass, string> = {
@@ -695,6 +699,12 @@ function DocumentTypeDetailDialog({
             <DetailCard title="Post to" hint="GL account from chart of accounts">
               <DocumentTypePostToDetail docType={docType} accounts={coaAccounts} />
             </DetailCard>
+            <DetailCard
+              title="Employee spend controls"
+              hint="Budget and advance availability checks"
+            >
+              <DocumentTypeSpendControlsDetail docType={docType} />
+            </DetailCard>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -1041,6 +1051,16 @@ function DocumentTypeEditDialog({
                       : draft.postTo,
                 })
               }
+            />
+          </DetailCard>
+
+          <DetailCard
+            title="Employee spend controls"
+            hint="Toggle employee-level budget and advance availability checks"
+          >
+            <DocumentTypeSpendControlsEditor
+              draft={draft}
+              onChange={(patch) => onChange({ ...draft, ...patch })}
             />
           </DetailCard>
 

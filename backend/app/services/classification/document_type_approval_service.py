@@ -42,9 +42,15 @@ _CLEAN_MATCH_STATUSES = frozenset(
 
 
 async def has_document_approval(session: AsyncSession, invoice_id: int) -> bool:
+    from app.models.invoice import Invoice
+    from app.services.approval.approval_quorum_service import quorum_met
     from app.services.invoice.processing_cycle_service import (
         has_audit_event_after_cycle_reset,
     )
+
+    invoice = await session.get(Invoice, invoice_id)
+    if invoice is not None and isinstance(getattr(invoice, "approval_chain", None), dict):
+        return quorum_met(invoice.approval_chain)
 
     return await has_audit_event_after_cycle_reset(
         session,

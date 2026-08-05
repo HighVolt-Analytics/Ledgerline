@@ -43,8 +43,16 @@ export function useExpenseClaimActions(routeTarget: string) {
       setBusyId(inv.id);
       try {
         setToast("Claim queued for processing…");
-        await approveAndProcess(inv.id, refresh);
-        setToast("Claim approved — processing complete");
+        const result = await approveAndProcess(inv.id, refresh);
+        if (result.awaitingQuorum) {
+          setToast(
+            result.quorumLabel
+              ? `Approval recorded — ${result.quorumLabel}`
+              : "Approval recorded — waiting for additional approvers"
+          );
+        } else {
+          setToast("Claim approved — processing complete");
+        }
         return true;
       } catch (e) {
         setToast(e instanceof Error ? e.message : "Approve failed");

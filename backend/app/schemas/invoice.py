@@ -120,6 +120,7 @@ class InvoiceResponse(BaseModel):
     resolution_hint: str | None = None
     approval_board_column: ApprovalBoardColumn | None = None
     processing_overrides: ProcessingOverridesPayload | None = None
+    approval_chain: dict[str, Any] | None = None
 
 
 class InvoiceWithDetails(InvoiceResponse):

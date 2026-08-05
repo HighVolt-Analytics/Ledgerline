@@ -6,17 +6,20 @@ import asyncio
 from functools import lru_cache
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.jurisdiction.loader import get_pack_registry
 from app.jurisdiction.packs import jurisdiction_api_view
 from app.schemas.common import ApiEnvelope
 from app.services.shared.iso_geo_catalog import (
     default_currency_for_country,
+    default_locale_for_country,
+    default_timezone_for_country,
     iso3166_countries,
     list_iso4217_currency_meta,
+    territory_timezones,
 )
-from app.tenant_settings import DEFAULT_LOCALE, DEFAULT_TIMEZONE
+from app.tenant_settings import DEFAULT_LOCALE, DEFAULT_TIMEZONE, country_timezone_suggestion
 
 router = APIRouter(prefix="/meta", tags=["meta"])
 
@@ -35,6 +38,7 @@ class CountryMeta(BaseModel):
     tax_label: str
     statutory_tax_rate: float | None = None
     timezone: str
+    timezones: list[str] = Field(default_factory=list)
     locale: str
     has_jurisdiction_pack: bool = False
 
@@ -52,6 +56,13 @@ def _currency_payload() -> tuple[CurrencyMeta, ...]:
     )
 
 
+def _zones_for_country(code: str, primary: str) -> list[str]:
+    zones = list(territory_timezones(code))
+    if primary and primary not in zones:
+        zones = [primary, *zones]
+    return zones or ([primary] if primary else [])
+
+
 @lru_cache(maxsize=1)
 def _country_payload() -> tuple[CountryMeta, ...]:
     registry = get_pack_registry()
@@ -62,6 +73,7 @@ def _country_payload() -> tuple[CountryMeta, ...]:
         pack = registry.packs.get(code)
         if pack is not None:
             rate = pack.statutory_tax_rate
+            primary = pack.timezone or country_timezone_suggestion(code)
             rows.append(
                 CountryMeta(
                     code=code,
@@ -69,12 +81,14 @@ def _country_payload() -> tuple[CountryMeta, ...]:
                     default_currency=default_currency_for_country(code),
                     tax_label=pack.tax_label,
                     statutory_tax_rate=float(rate) if rate is not None else None,
-                    timezone=pack.timezone,
+                    timezone=primary,
+                    timezones=_zones_for_country(code, primary),
                     locale=pack.locale,
                     has_jurisdiction_pack=True,
                 )
             )
         else:
+            primary = default_timezone_for_country(code) or DEFAULT_TIMEZONE
             rows.append(
                 CountryMeta(
                     code=code,
@@ -82,8 +96,9 @@ def _country_payload() -> tuple[CountryMeta, ...]:
                     default_currency=default_currency_for_country(code),
                     tax_label=str(generic.get("tax_label") or "Tax"),
                     statutory_tax_rate=None,
-                    timezone=DEFAULT_TIMEZONE,
-                    locale=DEFAULT_LOCALE,
+                    timezone=primary,
+                    timezones=_zones_for_country(code, primary),
+                    locale=default_locale_for_country(code) or DEFAULT_LOCALE,
                     has_jurisdiction_pack=False,
                 )
             )
