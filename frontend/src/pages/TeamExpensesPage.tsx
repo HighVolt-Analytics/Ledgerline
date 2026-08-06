@@ -178,6 +178,8 @@ export function TeamExpensesPage() {
   const budget = glBudgetRow
     ? {
         category: glBudgetRow.gl_ledger,
+        owner: glBudgetRow.gl_ledger,
+        period: "MTD",
         monthlyBudget: glBudgetRow.allocated,
         used: glBudgetRow.consumed,
       }

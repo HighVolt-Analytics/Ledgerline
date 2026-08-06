@@ -183,7 +183,8 @@ function AdvanceSettlementTable({
   locale?: string;
   loading: boolean;
 }) {
-  const fmt = (value: number | string) => money(toNumber(value), currency, locale);
+  const fmt = (value: number | string | null | undefined) =>
+    money(toNumber(value), currency, locale);
 
   return (
     <div>
