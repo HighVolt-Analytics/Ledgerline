@@ -78,11 +78,11 @@ def link_signal_justifies_dt_flip(
 
     Never demote an already-mapped Team Expenses DT to a non-TE type. Classifier
     rematch uses the full catalogue (no TE claim-evidence pool), so employee
-    advance / against-advance forms otherwise flip to generic Expense Claim and
-    lose Team Expenses routing before force-TE can run.
+    advance forms otherwise flip to generic Expense Claim and lose Team Expenses
+    routing before force-TE can run.
 
-    Also never rewrite a DT that pins advance_requisition / expense_against_advance
-    to a different claim kind (e.g. DT-10 → DT-08 expense_claim) — both may be TE.
+    Also never rewrite a DT that pins advance_requisition to a different claim
+    kind (e.g. DT-10 → DT-08 expense_claim) — both may be TE.
     """
     current = (current_code or "").strip().upper()
     rematch = (rematch_code or "").strip().upper()
@@ -95,26 +95,19 @@ def link_signal_justifies_dt_flip(
     ):
         return False
 
-    from app.schemas.rule_book_config import (
-        TEAM_EXPENSE_KIND_ADVANCE,
-        TEAM_EXPENSE_KIND_AGAINST_ADVANCE,
-    )
+    from app.schemas.rule_book_config import TEAM_EXPENSE_KIND_ADVANCE
     from app.services.purchase.team_expense_kind_service import (
         document_type_team_expense_kind,
     )
 
     current_kind = document_type_team_expense_kind(current_defn)
     rematch_kind = document_type_team_expense_kind(rematch_defn)
-    if (
-        current_kind
-        in {TEAM_EXPENSE_KIND_ADVANCE, TEAM_EXPENSE_KIND_AGAINST_ADVANCE}
-        and rematch_kind != current_kind
-    ):
+    if current_kind == TEAM_EXPENSE_KIND_ADVANCE and rematch_kind != current_kind:
         return False
 
     # TE siblings often differ only by playbook (e.g. DT-10 standard_transactional vs
     # DT-08 employee_claim). Classifier rematch has no TE claim-evidence pool, so a
-    # playbook-only TE→TE flip would clobber LLM against-advance / advance picks.
+    # playbook-only TE→TE flip would clobber LLM advance picks.
     both_team = is_team_expenses_document_type(
         current_defn
     ) and is_team_expenses_document_type(rematch_defn)

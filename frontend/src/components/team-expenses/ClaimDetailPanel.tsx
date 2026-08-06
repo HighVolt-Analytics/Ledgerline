@@ -90,7 +90,7 @@ export function ClaimDetailPanel({
   onOpenInvoice?: () => void;
 }) {
   // Must reset when switching claims — useState alone keeps the prior claim's amount
-  // (e.g. advance 1000 stuck on against-advance 250 after kind toggle).
+  // after kind toggle.
   const [amount, setAmount] = useState(claim.amount);
   useEffect(() => {
     setAmount(claim.amount);
@@ -102,9 +102,6 @@ export function ClaimDetailPanel({
     invoiceStatus !== "rejected";
   const netAdvance = advanceBalance ?? claim.advanceBalance ?? 0;
   const claimAmount = Number.isFinite(amount) ? amount : claim.amount;
-  const remainingAfterClaim = netAdvance - claimAmount;
-  const againstAdvanceOver =
-    claim.kind === "expense_against_advance" && claimAmount > netAdvance;
   const fmt = (n: number) => money(n, currency);
 
   return (
@@ -156,26 +153,6 @@ export function ClaimDetailPanel({
           <DetailField label="Business purpose" value={claim.purpose} />
           <DetailField label="Project tag" value={claim.projectTag} mono />
           <DetailField label="Advance left" value={fmt(netAdvance)} mono />
-          {claim.kind === "expense_against_advance" ? (
-            <>
-              <DetailField label="This claim" value={fmt(claimAmount)} mono />
-              <div>
-                <div className="text-[11px] text-muted-foreground uppercase tracking-wide">
-                  Remaining after claim
-                </div>
-                <div
-                  className={cn(
-                    "text-sm tnum",
-                    againstAdvanceOver && "ds-warning-text font-medium"
-                  )}
-                  data-testid="claim-remaining-after-advance"
-                >
-                  {fmt(remainingAfterClaim)}
-                  {againstAdvanceOver ? " — exceeds available advance" : ""}
-                </div>
-              </div>
-            </>
-          ) : null}
         </div>
       </div>
 
@@ -185,6 +162,8 @@ export function ClaimDetailPanel({
           expenseLedger={claim.category}
           advanceLedger={advanceLedger}
           settlementLedger={settlementLedger}
+          claimAmount={claimAmount}
+          advanceAvailable={netAdvance}
           disabled={busy || !editable}
           onChange={(kind) => void onChangeKind(kind)}
         />

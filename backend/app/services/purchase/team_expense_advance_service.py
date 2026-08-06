@@ -6,14 +6,15 @@ import uuid
 from decimal import Decimal
 from typing import Any, Sequence
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import JournalEntry
 from app.schemas.rule_book_config import (
-    TEAM_EXPENSE_KIND_AGAINST_ADVANCE,
+    TEAM_EXPENSE_KIND_CLAIM,
     RuleBookConfigPayload,
+    normalize_team_expense_kind,
 )
 from app.services.invoice.invoice_evaluation_service import ROUTE_TEAM
 from app.services.master_data.party_coa_subledger_service import (
@@ -28,6 +29,9 @@ _PENDING_EXCLUDED_STATUSES = (
     InvoiceStatus.REJECTED,
     InvoiceStatus.DUPLICATE_SKIPPED,
 )
+
+# Open expense claims reserve float until posted (partial netting at settlement).
+_LEGACY_AGAINST_ADVANCE = "expense_against_advance"
 
 
 def employee_advance_account_code(
@@ -61,7 +65,7 @@ async def employee_advance_balance(
     employee_id: str,
     employee_parent_ledger: str | None = None,
 ) -> Decimal:
-    """Outstanding advance held by the employee (debits less credits, never negative)."""
+    """Net debit balance on the employee Staff Advance child (float outstanding)."""
     code = employee_advance_account_code(
         config,
         employee_id=employee_id,
@@ -69,58 +73,56 @@ async def employee_advance_balance(
     )
     if not code:
         return Decimal("0")
-
-    total = (
+    net = (
         await session.execute(
             select(
-                func.coalesce(func.sum(JournalEntry.debit), 0)
-                - func.coalesce(func.sum(JournalEntry.credit), 0)
+                func.coalesce(func.sum(JournalEntry.debit - JournalEntry.credit), 0)
             ).where(
                 JournalEntry.tenant_id == tenant_id,
                 JournalEntry.account_code == code,
             )
         )
     ).scalar_one()
-    balance = Decimal(str(total or 0))
+    balance = Decimal(str(net or 0))
     return balance if balance > 0 else Decimal("0")
 
 
-async def employee_advance_balances_by_ids(
+async def employee_advance_activity_by_ids(
     session: AsyncSession,
     tenant_id: uuid.UUID,
     config: RuleBookConfigPayload,
     employees: Sequence[Any],
-) -> dict[str, Decimal]:
-    """Batch outstanding advance per employee id (0 when no child / no journals)."""
+) -> dict[str, tuple[Decimal, Decimal, Decimal]]:
+    """Batch (taken, used, outstanding) per employee from Staff Advance journals.
+
+    Taken = sum of debits (advance requisitions paid out).
+    Used = sum of credits (claims that netted the advance).
+    Outstanding = max(taken − used, 0).
+    """
+    activity: dict[str, tuple[Decimal, Decimal, Decimal]] = {}
     code_by_employee: dict[str, str] = {}
-    for employee in employees:
-        emp_id = str(getattr(employee, "id", "") or "").strip()
+    for emp in employees:
+        emp_id = str(getattr(emp, "id", "") or "").strip()
         if not emp_id:
             continue
-        parent = getattr(employee, "advance_parent_ledger", "") or ""
         code = employee_advance_account_code(
             config,
             employee_id=emp_id,
-            employee_parent_ledger=parent,
+            employee_parent_ledger=getattr(emp, "advance_parent_ledger", "") or "",
         )
         if code:
             code_by_employee[emp_id] = code
-
-    balances: dict[str, Decimal] = {
-        str(getattr(employee, "id", "") or "").strip(): Decimal("0")
-        for employee in employees
-        if str(getattr(employee, "id", "") or "").strip()
-    }
+        activity[emp_id] = (Decimal("0"), Decimal("0"), Decimal("0"))
     if not code_by_employee:
-        return balances
+        return activity
 
     codes = list(set(code_by_employee.values()))
     rows = (
         await session.execute(
             select(
                 JournalEntry.account_code,
-                func.coalesce(func.sum(JournalEntry.debit), 0)
-                - func.coalesce(func.sum(JournalEntry.credit), 0),
+                func.coalesce(func.sum(JournalEntry.debit), 0),
+                func.coalesce(func.sum(JournalEntry.credit), 0),
             )
             .where(
                 JournalEntry.tenant_id == tenant_id,
@@ -129,23 +131,53 @@ async def employee_advance_balances_by_ids(
             .group_by(JournalEntry.account_code)
         )
     ).all()
-    net_by_code = {
-        str(code): (Decimal(str(net or 0)) if Decimal(str(net or 0)) > 0 else Decimal("0"))
-        for code, net in rows
-    }
+    by_code: dict[str, tuple[Decimal, Decimal]] = {}
+    for code, debits, credits in rows:
+        taken = Decimal(str(debits or 0))
+        used = Decimal(str(credits or 0))
+        if taken < 0:
+            taken = Decimal("0")
+        if used < 0:
+            used = Decimal("0")
+        by_code[str(code)] = (taken, used)
+
     for emp_id, code in code_by_employee.items():
-        balances[emp_id] = net_by_code.get(code, Decimal("0"))
-    return balances
+        taken, used = by_code.get(code, (Decimal("0"), Decimal("0")))
+        outstanding = taken - used
+        if outstanding < 0:
+            outstanding = Decimal("0")
+        activity[emp_id] = (taken, used, outstanding)
+    return activity
 
 
-async def pending_against_advance_total(
+async def employee_advance_balances_by_ids(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    config: RuleBookConfigPayload,
+    employees: Sequence[Any],
+) -> dict[str, Decimal]:
+    """Batch Staff Advance balances keyed by employee master id."""
+    activity = await employee_advance_activity_by_ids(
+        session, tenant_id, config, employees
+    )
+    return {emp_id: outstanding for emp_id, (_t, _u, outstanding) in activity.items()}
+
+
+def _is_claim_kind(raw_kind: str | None) -> bool:
+    cleaned = (raw_kind or "").strip().lower()
+    if cleaned == _LEGACY_AGAINST_ADVANCE:
+        return True
+    return normalize_team_expense_kind(cleaned) == TEAM_EXPENSE_KIND_CLAIM
+
+
+async def pending_claim_advance_reservation(
     session: AsyncSession,
     tenant_id: uuid.UUID,
     employee: Any,
     *,
     exclude_invoice_id: int | None = None,
 ) -> Decimal:
-    """Sum of open against-advance TE claims for this employee (excludes terminal statuses)."""
+    """Sum of open expense-claim totals for this employee (reserves float until posted)."""
     from app.services.purchase.team_expense_spend_service import normalize_employee_email
     from app.services.purchase.team_expense_validator import find_employee_by_sender
 
@@ -154,17 +186,25 @@ async def pending_against_advance_total(
         Invoice.total,
         Invoice.email_sender,
         Invoice.employee_email,
+        Invoice.team_expense_kind,
     ).where(
         Invoice.tenant_id == tenant_id,
         Invoice.route_target == ROUTE_TEAM,
-        Invoice.team_expense_kind == TEAM_EXPENSE_KIND_AGAINST_ADVANCE,
         Invoice.status.notin_(_PENDING_EXCLUDED_STATUSES),
+        or_(
+            Invoice.team_expense_kind == TEAM_EXPENSE_KIND_CLAIM,
+            Invoice.team_expense_kind == _LEGACY_AGAINST_ADVANCE,
+            Invoice.team_expense_kind.is_(None),
+            Invoice.team_expense_kind == "",
+        ),
     )
     if exclude_invoice_id is not None:
         stmt = stmt.where(Invoice.id != exclude_invoice_id)
 
     total = Decimal("0")
-    for _inv_id, amount, sender, emp_email in (await session.execute(stmt)).all():
+    for _inv_id, amount, sender, emp_email, kind in (await session.execute(stmt)).all():
+        if not _is_claim_kind(kind):
+            continue
         identity = normalize_employee_email(emp_email) or sender
         if find_employee_by_sender([employee], identity) is None:
             continue
@@ -172,6 +212,10 @@ async def pending_against_advance_total(
             continue
         total += Decimal(str(amount))
     return total if total > 0 else Decimal("0")
+
+
+# Back-compat alias used by reports/tests.
+pending_against_advance_total = pending_claim_advance_reservation
 
 
 async def employee_available_advance(
@@ -182,7 +226,10 @@ async def employee_available_advance(
     *,
     exclude_invoice_id: int | None = None,
 ) -> tuple[Decimal, Decimal, Decimal]:
-    """Return (available, ledger_balance, pending_others) for against-advance gating."""
+    """Return (available, ledger_balance, pending_others) for claim netting.
+
+    Available = ledger − open expense claims (conservative reservation).
+    """
     emp_id = str(getattr(employee, "id", "") or "").strip()
     ledger = await employee_advance_balance(
         session,
@@ -191,7 +238,7 @@ async def employee_available_advance(
         employee_id=emp_id,
         employee_parent_ledger=getattr(employee, "advance_parent_ledger", "") or "",
     )
-    pending = await pending_against_advance_total(
+    pending = await pending_claim_advance_reservation(
         session,
         tenant_id,
         employee,
@@ -201,3 +248,37 @@ async def employee_available_advance(
     if available < 0:
         available = Decimal("0")
     return available, ledger, pending
+
+
+async def resolve_claim_advance_available(
+    session: AsyncSession,
+    invoice: Invoice,
+    config: RuleBookConfigPayload,
+) -> Decimal | None:
+    """Available Staff Advance float for expense-claim partial netting (None for advances)."""
+    from app.schemas.rule_book_config import (
+        TEAM_EXPENSE_KIND_ADVANCE,
+        normalize_team_expense_kind,
+    )
+    from app.services.purchase.team_expense_validator import resolve_employee_for_sender
+
+    if normalize_team_expense_kind(invoice.team_expense_kind) == TEAM_EXPENSE_KIND_ADVANCE:
+        return None
+    if (invoice.route_target or "").strip() != ROUTE_TEAM:
+        return None
+
+    employee = await resolve_employee_for_sender(
+        session,
+        invoice.tenant_id,
+        getattr(invoice, "employee_email", None) or invoice.email_sender,
+    )
+    if employee is None:
+        return Decimal("0")
+    available, _ledger, _pending = await employee_available_advance(
+        session,
+        invoice.tenant_id,
+        config,
+        employee,
+        exclude_invoice_id=invoice.id,
+    )
+    return available

@@ -45,8 +45,8 @@ def _catalogue() -> list[DocumentTypeDefinition]:
         ),
         DocumentTypeDefinition(
             code="DT-10",
-            title="Expense against advance",
-            shortTitle="Against advance",
+            title="Advance requisition",
+            shortTitle="Advance",
             klass="Transactional",
             posting="Yes",
             recognitionMode="prompt",
@@ -55,7 +55,7 @@ def _catalogue() -> list[DocumentTypeDefinition]:
             routeTarget="Team Expenses",
             enabled=True,
             playbookProfile="employee_claim",
-            teamExpenseKind="expense_against_advance",
+            teamExpenseKind="advance_requisition",
             classifier={"enabled": True, "priority": 30, "confidence": 0.9},
         ),
         DocumentTypeDefinition(
@@ -101,8 +101,8 @@ def test_link_signal_never_te_to_te_on_playbook_alone() -> None:
     types = [
         DocumentTypeDefinition(
             code="DT-10",
-            title="Expense against advance",
-            shortTitle="Against",
+            title="Staff funding request",
+            shortTitle="Funding",
             klass="Transactional",
             posting="Yes",
             recognitionMode="prompt",
@@ -135,10 +135,9 @@ def test_link_signal_never_te_to_te_on_playbook_alone() -> None:
     )
 
 
-def test_link_signal_preserves_pinned_against_advance_kind() -> None:
-    """Both DTs can be TE; rematch must not rewrite against-advance → expense_claim."""
+def test_link_signal_preserves_pinned_advance_requisition_kind() -> None:
+    """Both DTs can be TE; rematch must not rewrite advance_requisition → expense_claim."""
     types = _catalogue()
-    # Mirror tenant: DT-08 is also Team Expenses / expense_claim.
     for i, dt in enumerate(types):
         if dt.code == "DT-08":
             types[i] = dt.model_copy(

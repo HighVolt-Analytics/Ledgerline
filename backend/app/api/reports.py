@@ -165,7 +165,7 @@ async def reports_team_expense_advance_settlement(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[list[EmployeeAdvanceSettlementRow]]:
-    """Employee advance ledger, pending against-advance, and available float."""
+    """Employee advance ledger and available float."""
     rows = await build_advance_settlement_rows(db, ctx.tenant_id)
     return ApiEnvelope(data=rows)
 

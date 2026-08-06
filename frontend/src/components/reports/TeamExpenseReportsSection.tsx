@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { Fragment, useMemo } from "react";
 import type {
   EmployeeAdvanceSettlementRow,
   EmployeeBudgetUtilizationRow,
@@ -27,9 +27,8 @@ function kindLabel(kind: string): string {
   switch (kind) {
     case "advance_requisition":
       return "Advance";
-    case "expense_against_advance":
-      return "Against advance";
     case "expense_claim":
+    case "expense_against_advance":
       return "Claim";
     default:
       return kind || "—";
@@ -70,10 +69,6 @@ export function TeamExpenseReportsSection({
       0
     );
     const available = advance.reduce((sum, row) => sum + toNumber(row.available_advance), 0);
-    const pending = advance.reduce(
-      (sum, row) => sum + toNumber(row.pending_against_advance),
-      0
-    );
     const overBudget = budgets.filter((row) => {
       const monthlyCap = row.budget_monthly ?? 0;
       return monthlyCap > 0 && row.mtd_spent > monthlyCap;
@@ -86,14 +81,10 @@ export function TeamExpenseReportsSection({
     const overDept = deptBudgets.filter((row) => {
       return row.allocated > 0 && row.consumed > row.allocated;
     }).length;
-    const cashOverDept = deptBudgets.filter((row) => {
-      const cashPct = row.cash_utilization_pct;
-      return row.allocated > 0 && cashPct != null && cashPct >= 100;
-    }).length;
+    const cashOverDept = overDept;
     return {
       advanceOutstanding,
       available,
-      pending,
       overBudget,
       cashTight,
       overDept,
@@ -126,7 +117,7 @@ export function TeamExpenseReportsSection({
           value={loading ? "…" : fmt(totals.available)}
           delta={{
             dir: "flat",
-            text: `${fmt(totals.pending)} pending`,
+            text: "Staff Advance float",
           }}
           testid="kpi-te-available"
         />
@@ -210,7 +201,9 @@ function AdvanceSettlementTable({
             <thead>
               <tr className="text-left text-xs text-muted-foreground border-b border-border">
                 <th className="py-1.5 font-medium">Employee</th>
-                <th className="py-1.5 font-medium text-right">Ledger</th>
+                <th className="py-1.5 font-medium text-right">Took</th>
+                <th className="py-1.5 font-medium text-right">Used</th>
+                <th className="py-1.5 font-medium text-right">Outstanding</th>
                 <th className="py-1.5 font-medium text-right">Pending</th>
                 <th className="py-1.5 font-medium text-right">Available</th>
               </tr>
@@ -224,11 +217,15 @@ function AdvanceSettlementTable({
                       {row.email || row.division || row.location || "—"}
                     </div>
                   </td>
-                  <td className="py-1.5 text-right tnum">{fmt(row.advance_ledger_balance)}</td>
+                  <td className="py-1.5 text-right tnum">{fmt(row.advance_taken)}</td>
+                  <td className="py-1.5 text-right tnum">{fmt(row.advance_used)}</td>
+                  <td className="py-1.5 text-right tnum font-medium">
+                    {fmt(row.advance_ledger_balance)}
+                  </td>
                   <td className="py-1.5 text-right tnum text-muted-foreground">
                     {fmt(row.pending_against_advance)}
                   </td>
-                  <td className="py-1.5 text-right tnum font-medium">{fmt(row.available_advance)}</td>
+                  <td className="py-1.5 text-right tnum">{fmt(row.available_advance)}</td>
                 </tr>
               ))}
             </tbody>
@@ -340,66 +337,75 @@ function DepartmentBudgetUtilizationTable({
 
   return (
     <div>
-      <h3 className="text-sm font-semibold mb-1">Department budget utilization</h3>
+      <h3 className="text-sm font-semibold mb-1">Parent GL budget utilization</h3>
       <p className="text-xs text-muted-foreground mb-3">
-        Cash remaining reserves advance float on dept-wide (All GLs) envelopes only.
+        Budget vs spent vs left on parent wallets. Child Sub-GL spend rolls up into the parent.
       </p>
       {loading ? (
         <p className="text-sm text-muted-foreground py-6 text-center">Loading…</p>
       ) : rows.length === 0 ? (
         <EmptyState
-          title="No department budgets for current period"
-          hint="Configure envelopes on Team Expenses → Budgets & limits."
+          title="No parent GL budgets for current period"
+          hint="Configure budgets on Team Expenses → GL budgets."
         />
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-xs text-muted-foreground border-b border-border">
-                <th className="py-1.5 font-medium">Department</th>
+                <th className="py-1.5 font-medium">Parent GL</th>
                 <th className="py-1.5 font-medium">Period</th>
-                <th className="py-1.5 font-medium text-right">Allocated</th>
-                <th className="py-1.5 font-medium text-right">Consumed</th>
-                <th className="py-1.5 font-medium text-right">Float</th>
-                <th className="py-1.5 font-medium text-right">Cash left</th>
-                <th className="py-1.5 font-medium text-right">Cash used</th>
+                <th className="py-1.5 font-medium text-right">Budget</th>
+                <th className="py-1.5 font-medium text-right">Spent so far</th>
+                <th className="py-1.5 font-medium text-right">Left</th>
+                <th className="py-1.5 font-medium text-right">Used %</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((row) => {
-                const cashPct = row.cash_utilization_pct;
-                const cashOver =
-                  row.allocated > 0 && cashPct != null && cashPct >= 100;
+                const left = row.remaining;
+                const over = left != null && left < 0;
+                const pct = row.utilization_pct;
+                const breakdown = row.sub_breakdown ?? [];
                 return (
-                  <tr
-                    key={row.budget_id}
-                    className="row-band border-b border-border/60"
-                  >
-                    <td className="py-1.5">
-                      <div className="font-medium">{row.department}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {row.gl_ledger || "All GLs"}
-                      </div>
-                    </td>
-                    <td className="py-1.5 text-muted-foreground">
-                      {row.period_kind} · {row.period_key}
-                    </td>
-                    <td className="py-1.5 text-right tnum">{fmt(row.allocated)}</td>
-                    <td className="py-1.5 text-right tnum">{fmt(row.consumed)}</td>
-                    <td className="py-1.5 text-right tnum text-muted-foreground">
-                      {toNumber(row.advance_float) > 0 ? fmt(row.advance_float) : "—"}
-                    </td>
-                    <td className="py-1.5 text-right tnum text-muted-foreground">
-                      {row.cash_remaining == null ? "—" : fmt(row.cash_remaining)}
-                    </td>
-                    <td
-                      className={`py-1.5 text-right tnum font-medium ${
-                        cashOver ? "text-destructive" : ""
-                      }`}
-                    >
-                      {cashPct == null ? "—" : `${cashPct}%`}
-                    </td>
-                  </tr>
+                  <Fragment key={row.budget_id}>
+                    <tr className="row-band border-b border-border/60">
+                      <td className="py-1.5 font-medium">{row.gl_ledger}</td>
+                      <td className="py-1.5 text-muted-foreground">
+                        {row.period_kind} · {row.period_key}
+                      </td>
+                      <td className="py-1.5 text-right tnum">{fmt(row.allocated)}</td>
+                      <td className="py-1.5 text-right tnum">{fmt(row.consumed)}</td>
+                      <td
+                        className={`py-1.5 text-right tnum font-medium ${
+                          over ? "text-destructive" : ""
+                        }`}
+                      >
+                        {left == null ? "—" : fmt(left)}
+                        {over ? " ❌" : ""}
+                      </td>
+                      <td
+                        className={`py-1.5 text-right tnum font-medium ${
+                          over ? "text-destructive" : ""
+                        }`}
+                      >
+                        {pct == null ? "—" : `${pct}%`}
+                      </td>
+                    </tr>
+                    {breakdown.map((sub) => (
+                      <tr
+                        key={`${row.budget_id}-${sub.gl_ledger}`}
+                        className="border-b border-border/40 text-muted-foreground"
+                      >
+                        <td className="py-1 pl-4 text-xs">↳ {sub.gl_ledger}</td>
+                        <td className="py-1" />
+                        <td className="py-1" />
+                        <td className="py-1 text-right tnum text-xs">{fmt(sub.consumed)}</td>
+                        <td className="py-1" />
+                        <td className="py-1 text-right tnum text-xs">{sub.pct_of_budget}%</td>
+                      </tr>
+                    ))}
+                  </Fragment>
                 );
               })}
             </tbody>
@@ -437,7 +443,7 @@ function ExpenseSummaryTable({
       ) : rows.length === 0 ? (
         <EmptyState
           title="No team expenses this month"
-          hint="Claims, advances, and against-advance documents appear here after capture."
+          hint="Claims and advance requisitions appear here after capture."
         />
       ) : (
         <div className="overflow-x-auto">

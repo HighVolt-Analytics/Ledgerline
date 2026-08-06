@@ -14,7 +14,6 @@ from sqlalchemy.orm import selectinload
 from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.master_data import EmployeeMasterResponse
 from app.schemas.rule_book_config import (
-    TEAM_EXPENSE_KIND_AGAINST_ADVANCE,
     BankDetails,
     EmployeeBudget,
 )
@@ -27,19 +26,15 @@ from app.services.dossier.document_ref_service import display_document_ref
 from app.services.invoice.invoice_evaluation_service import ROUTE_TEAM, load_config_for_tenant
 from app.services.master_data.master_data_service import list_employee_masters
 from app.services.purchase.team_expense_advance_service import (
+    employee_advance_activity_by_ids,
     employee_advance_balances_by_ids,
+    pending_claim_advance_reservation,
 )
 from app.services.purchase.team_expense_spend_service import (
     employee_period_spend,
     normalize_employee_email,
 )
 from app.services.purchase.team_expense_validator import find_employee_by_sender
-
-_PENDING_EXCLUDED_STATUSES = (
-    InvoiceStatus.PROCESSED,
-    InvoiceStatus.REJECTED,
-    InvoiceStatus.DUPLICATE_SKIPPED,
-)
 
 _SUSPENSE_ACCOUNT = "Suspense Account"
 
@@ -95,42 +90,6 @@ def _money(value: Any) -> Decimal:
     return Decimal(str(value))
 
 
-async def _pending_against_advance_by_employee(
-    session: AsyncSession,
-    tenant_id: uuid.UUID,
-    employees: list[EmployeeMasterResponse],
-) -> dict[str, Decimal]:
-    """Batch open against-advance totals keyed by employee master id."""
-    pending: dict[str, Decimal] = {
-        emp.id: Decimal("0") for emp in employees if (emp.id or "").strip()
-    }
-    if not employees:
-        return pending
-
-    rows = (
-        await session.execute(
-            select(Invoice.total, Invoice.email_sender).where(
-                Invoice.tenant_id == tenant_id,
-                Invoice.route_target == ROUTE_TEAM,
-                Invoice.team_expense_kind == TEAM_EXPENSE_KIND_AGAINST_ADVANCE,
-                Invoice.status.notin_(_PENDING_EXCLUDED_STATUSES),
-            )
-        )
-    ).all()
-    for amount, sender in rows:
-        matched = find_employee_by_sender(employees, sender)
-        if matched is None or amount is None:
-            continue
-        emp_id = (matched.id or "").strip()
-        if not emp_id:
-            continue
-        pending[emp_id] = pending.get(emp_id, Decimal("0")) + _money(amount)
-    for emp_id, total in list(pending.items()):
-        if total < 0:
-            pending[emp_id] = Decimal("0")
-    return pending
-
-
 async def build_advance_settlement_rows(
     session: AsyncSession,
     tenant_id: uuid.UUID,
@@ -139,18 +98,17 @@ async def build_advance_settlement_rows(
     employees = await list_employee_masters(
         session, tenant_id, include_advance_balances=False
     )
-    balances = await employee_advance_balances_by_ids(
+    activity = await employee_advance_activity_by_ids(
         session, tenant_id, config, employees
-    )
-    pending_map = await _pending_against_advance_by_employee(
-        session, tenant_id, employees
     )
 
     rows: list[EmployeeAdvanceSettlementRow] = []
     for emp in employees:
         emp_id = (emp.id or "").strip()
-        ledger = balances.get(emp_id, Decimal("0"))
-        pending = pending_map.get(emp_id, Decimal("0"))
+        taken, used, ledger = activity.get(
+            emp_id, (Decimal("0"), Decimal("0"), Decimal("0"))
+        )
+        pending = await pending_claim_advance_reservation(session, tenant_id, emp)
         available = ledger - pending
         if available < 0:
             available = Decimal("0")
@@ -177,6 +135,8 @@ async def build_advance_settlement_rows(
                 last_claim=emp.last_claim or "",
                 claim_ytd_spent=float(emp.ytd_spent or 0),
                 advance_ledger_balance=ledger,
+                advance_taken=taken,
+                advance_used=used,
                 pending_against_advance=pending,
                 available_advance=available,
             )

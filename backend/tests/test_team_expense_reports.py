@@ -15,7 +15,6 @@ from app.models.line_item import LineItem
 from app.schemas.master_data import EmployeeMasterCreate
 from app.schemas.rule_book_config import (
     TEAM_EXPENSE_KIND_ADVANCE,
-    TEAM_EXPENSE_KIND_AGAINST_ADVANCE,
     TEAM_EXPENSE_KIND_CLAIM,
     BudgetCategoryCap,
     ChartOfAccountEntry,
@@ -130,23 +129,24 @@ async def test_advance_settlement_ledger_pending_and_available(
         )
     )
 
-    against_cleared = Invoice(
+    # Settlement credit on the employee child (historical clear / repayment).
+    cleared = Invoice(
         tenant_id=TESTING_TENANT_UUID,
         status=InvoiceStatus.PROCESSED,
         currency="SGD",
         invoice_date=date(2026, 5, 2),
         total=Decimal("400"),
         route_target=ROUTE_TEAM,
-        team_expense_kind=TEAM_EXPENSE_KIND_AGAINST_ADVANCE,
+        team_expense_kind=TEAM_EXPENSE_KIND_CLAIM,
         email_sender=EMPLOYEE_EMAIL,
         file_hash="rpt-adv-2",
     )
-    db_session.add(against_cleared)
+    db_session.add(cleared)
     await db_session.flush()
     db_session.add(
         JournalEntry(
             tenant_id=TESTING_TENANT_UUID,
-            invoice_id=against_cleared.id,
+            invoice_id=cleared.id,
             date=date(2026, 5, 2),
             account_code=code,
             account_name="Marcus Webb",
@@ -156,23 +156,26 @@ async def test_advance_settlement_ledger_pending_and_available(
         )
     )
 
-    open_pending = Invoice(
+    # Open expense claims reserve Staff Advance float until posted.
+    open_claim = Invoice(
         tenant_id=TESTING_TENANT_UUID,
         status=InvoiceStatus.EXCEPTION,
         currency="SGD",
         invoice_date=date(2026, 5, 3),
         total=Decimal("150"),
         route_target=ROUTE_TEAM,
-        team_expense_kind=TEAM_EXPENSE_KIND_AGAINST_ADVANCE,
+        team_expense_kind=TEAM_EXPENSE_KIND_CLAIM,
         email_sender=EMPLOYEE_EMAIL,
         file_hash="rpt-adv-3",
     )
-    db_session.add(open_pending)
+    db_session.add(open_claim)
     await db_session.flush()
 
     rows = await build_advance_settlement_rows(db_session, TESTING_TENANT_UUID)
     row = next(r for r in rows if r.employee_id == EMPLOYEE_ID)
     assert row.advance_ledger_balance == Decimal("600")
+    assert row.advance_taken == Decimal("1000")
+    assert row.advance_used == Decimal("400")
     assert row.pending_against_advance == Decimal("150")
     assert row.available_advance == Decimal("450")
     assert row.claim_ytd_spent == 500.0
@@ -350,7 +353,7 @@ async def test_expense_summary_lines_employee_and_date_filter(
 
 
 @pytest.mark.asyncio
-async def test_department_budget_cash_reserves_advance_float(
+async def test_gl_account_budget_utilization(
     db_session: AsyncSession,
 ) -> None:
     from app.models.department_budget import DepartmentBudget
@@ -360,17 +363,14 @@ async def test_department_budget_cash_reserves_advance_float(
     from app.services.purchase.team_expense_spend_service import current_period_keys
 
     await _setup_employee(db_session, mtd=0, qtd=0, ytd=0)
-    raw = await load_rule_book_config_dict(db_session, TESTING_TENANT_UUID)
-    validate_rule_book_config_payload(raw)
-    code = party_sub_ledger_code(EMPLOYEE_ID)
     today = date.today()
     keys = current_period_keys(today)
 
     db_session.add(
         DepartmentBudget(
             tenant_id=TESTING_TENANT_UUID,
-            department="Ops",
-            gl_ledger="",
+            department="",
+            gl_ledger="Travel",
             period_kind="monthly",
             period_key=keys["monthly"],
             allocated=Decimal("1000"),
@@ -386,8 +386,10 @@ async def test_department_budget_cash_reserves_advance_float(
         team_expense_kind=TEAM_EXPENSE_KIND_CLAIM,
         employee_email=EMPLOYEE_EMAIL,
         email_sender=EMPLOYEE_EMAIL,
-        file_hash="rpt-dept-claim",
+        file_hash="rpt-gl-claim",
+        account_name="Travel",
     )
+    # Advances must not count toward GL spend.
     advance = Invoice(
         tenant_id=TESTING_TENANT_UUID,
         status=InvoiceStatus.PROCESSED,
@@ -398,32 +400,18 @@ async def test_department_budget_cash_reserves_advance_float(
         team_expense_kind=TEAM_EXPENSE_KIND_ADVANCE,
         employee_email=EMPLOYEE_EMAIL,
         email_sender=EMPLOYEE_EMAIL,
-        file_hash="rpt-dept-adv",
+        file_hash="rpt-gl-adv",
+        account_name="Travel",
     )
     db_session.add_all([claim, advance])
     await db_session.flush()
-    db_session.add(
-        JournalEntry(
-            tenant_id=TESTING_TENANT_UUID,
-            invoice_id=advance.id,
-            date=today,
-            account_code=code,
-            account_name="Marcus Webb",
-            debit=Decimal("400"),
-            credit=Decimal("0"),
-            entry_type=EntryType.DEBIT,
-        )
-    )
-    await db_session.flush()
 
     rows = await build_department_budget_utilization_rows(db_session, TESTING_TENANT_UUID)
-    row = next(r for r in rows if r.department == "Ops" and not r.gl_ledger)
+    row = next(r for r in rows if r.gl_ledger == "Travel")
+    assert row.allocated == 1000
     assert row.consumed == 100
     assert row.remaining == 900
-    assert row.advance_float == 400
-    assert row.cash_committed == 500
-    assert row.cash_remaining == 500
-    assert row.cash_utilization_pct == 50.0
+    assert row.utilization_pct == 10.0
 
 
 @pytest.mark.asyncio

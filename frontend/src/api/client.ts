@@ -1503,11 +1503,11 @@ export const api = {
     return request<DepartmentBudgetRow[]>(`/api/department-budgets${q}`);
   },
   createDepartmentBudget: (body: {
-    department: string;
-    gl_ledger?: string;
+    gl_ledger: string;
     period_kind: "monthly" | "quarterly" | "annual";
     period_key: string;
     allocated: number;
+    department?: string;
     notes?: string | null;
   }) =>
     request<DepartmentBudgetRow>("/api/department-budgets", {
@@ -1515,6 +1515,32 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+  upsertParentGlBudgetTree: (body: {
+    parent_gl: string;
+    period_kind: "monthly" | "quarterly" | "annual";
+    period_key: string;
+    allocated: number;
+    sub_allocations: { gl_ledger: string; allocated: number }[];
+    enforcement?: "soft" | "hard";
+    notes?: string | null;
+  }) =>
+    request<DepartmentBudgetRow[]>("/api/department-budgets/tree", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  deleteParentGlBudgetTree: (params: {
+    parent_gl: string;
+    period_kind: "monthly" | "quarterly" | "annual";
+    period_key: string;
+  }) => {
+    const q = new URLSearchParams({
+      parent_gl: params.parent_gl,
+      period_kind: params.period_kind,
+      period_key: params.period_key,
+    });
+    return request<void>(`/api/department-budgets/tree?${q}`, { method: "DELETE" });
+  },
   updateDepartmentBudget: (
     budgetId: number,
     body: Partial<{

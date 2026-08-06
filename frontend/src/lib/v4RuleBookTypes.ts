@@ -116,6 +116,7 @@ export type TeamExpenseRule = {
     channelEquals?: string;
     amountMin?: number;
     amountMax?: number;
+    departmentEquals?: string;
   };
   postTo: { ledger: string; subLedger: string };
   policy: {
@@ -270,7 +271,6 @@ export type TeamExpensePostingDefaults = {
 export const TEAM_EXPENSE_KINDS = [
   "expense_claim",
   "advance_requisition",
-  "expense_against_advance",
 ] as const;
 
 export type TeamExpenseKind = (typeof TEAM_EXPENSE_KINDS)[number];
@@ -278,7 +278,6 @@ export type TeamExpenseKind = (typeof TEAM_EXPENSE_KINDS)[number];
 export const TEAM_EXPENSE_KIND_LABELS: Record<TeamExpenseKind, string> = {
   expense_claim: "Expense claim",
   advance_requisition: "Advance requisition",
-  expense_against_advance: "Expense against advance",
 };
 
 export type { DocumentTypeDefinition } from "./v5DocumentTypes";

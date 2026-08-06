@@ -229,6 +229,14 @@ async def test_approve_api_two_way_requires_second_approver(
         "app.services.approval.approval_api_service._approve_team_expense_for_posting",
         _noop_approve,
     )
+    monkeypatch.setattr(
+        "app.api.approvals.enqueue_invoice_posting_resumes",
+        lambda *_a, **_k: "idle",
+    )
+    monkeypatch.setattr(
+        "app.api.approvals.enqueue_invoice_pipelines",
+        lambda *_a, **_k: "idle",
+    )
 
     headers_mgr = tenant_auth_headers(_token(mgr, "functional_manager"), TESTING_TENANT_UUID)
     first = await client.post(f"/api/approvals/{inv.id}/approve", headers=headers_mgr)

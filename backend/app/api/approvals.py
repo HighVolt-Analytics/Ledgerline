@@ -20,7 +20,7 @@ from app.services.approval.approval_api_service import (
 )
 from app.services.approval.approval_quorum_service import ApprovalQuorumForbiddenError
 from app.services.auth.privilege_service import require_privilege
-from app.workers.tasks import enqueue_invoice_pipelines
+from app.workers.tasks import enqueue_invoice_pipelines, enqueue_invoice_posting_resumes
 
 router = APIRouter(prefix="/approvals", tags=["approvals"])
 
@@ -75,7 +75,13 @@ async def approve_invoice(
     except ValueError as exc:
         raise http_bad_request(exc) from exc
     await db.commit()
-    if result.enqueue_pipeline:
+    if result.enqueue_posting_resume:
+        enqueue_invoice_posting_resumes(
+            [invoice_id],
+            tenant_id=ctx.tenant_id,
+            background_tasks=background_tasks,
+        )
+    elif result.enqueue_pipeline:
         enqueue_invoice_pipelines(
             [invoice_id],
             tenant_id=ctx.tenant_id,

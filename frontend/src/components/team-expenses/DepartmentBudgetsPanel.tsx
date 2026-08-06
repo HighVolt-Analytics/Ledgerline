@@ -1,18 +1,27 @@
-import { useMemo, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
 import { EmptyState } from "@/components/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { NumericInput } from "@/components/ui/numeric-input";
 import { Select, toSelectOptions } from "@/components/ui/select";
+import { BudgetUtilBar } from "@/components/team-expenses/BudgetUtilBar";
 import {
-  useCreateDepartmentBudget,
-  useDeleteDepartmentBudget,
+  useDeleteParentGlBudgetTree,
   useDepartmentBudgets,
+  useUpsertParentGlBudgetTree,
 } from "@/hooks/useDepartmentBudgets";
+import { useCoaAccountOptions } from "@/hooks/useCoaAccountOptions";
+import { useTeamExpenseDepartmentBudgetUtilization } from "@/hooks/useTeamExpenseReports";
+import {
+  mergeCoaOptionsWithSavedValue,
+  subLedgersForLedger,
+} from "@/lib/coaAccountOptions";
 import { money } from "@/lib/format";
 import { FieldLabel } from "@/components/rule-book/FieldLabel";
+import { cn } from "@/lib/cn";
+import type { DepartmentBudgetRow } from "@/api/types";
 
 const PERIOD_KINDS = ["monthly", "quarterly", "annual"] as const;
 
@@ -25,29 +34,191 @@ function currentPeriodKey(kind: (typeof PERIOD_KINDS)[number]): string {
   return `${y}`;
 }
 
-export function DepartmentBudgetsPanel({
-  currency,
-  departments,
-}: {
-  currency: string;
-  departments: string[];
-}) {
-  const { data: rows = [], isLoading } = useDepartmentBudgets();
-  const createMut = useCreateDepartmentBudget();
-  const deleteMut = useDeleteDepartmentBudget();
+function roundMoney(n: number): number {
+  return Math.round((n + Number.EPSILON) * 100) / 100;
+}
 
-  const [department, setDepartment] = useState("");
-  const [glLedger, setGlLedger] = useState("");
+type BudgetTreeGroup = {
+  parentGl: string;
+  periodKind: string;
+  periodKey: string;
+  parentRow: DepartmentBudgetRow | null;
+  subRows: DepartmentBudgetRow[];
+};
+
+export function DepartmentBudgetsPanel({ currency }: { currency: string }) {
+  const { data: rows = [], isLoading } = useDepartmentBudgets();
+  const { data: utilization = [] } = useTeamExpenseDepartmentBudgetUtilization();
+  const upsertMut = useUpsertParentGlBudgetTree();
+  const deleteTreeMut = useDeleteParentGlBudgetTree();
+  const {
+    options: coaOptions,
+    allAccounts,
+    isLoading: coaLoading,
+  } = useCoaAccountOptions({
+    routeTarget: "Team Expenses",
+    types: ["Expense"],
+    includeEmpty: true,
+    emptyLabel: "— Select parent GL —",
+  });
+
+  const [parentGl, setParentGl] = useState("");
   const [periodKind, setPeriodKind] = useState<(typeof PERIOD_KINDS)[number]>("monthly");
   const [periodKey, setPeriodKey] = useState(currentPeriodKey("monthly"));
-  const [allocated, setAllocated] = useState<number | null>(0);
+  const [parentBudget, setParentBudget] = useState<number | null>(0);
+  const [subBudgets, setSubBudgets] = useState<Record<string, number | null>>({});
   const [notes, setNotes] = useState("");
+  const [enforcement, setEnforcement] = useState<"soft" | "hard">("soft");
   const [error, setError] = useState<string | null>(null);
+  /** Keys of parent rows whose Sub-GLs are expanded in the table. */
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => new Set());
 
-  const deptOptions = useMemo(() => {
-    const set = new Set(departments.filter(Boolean).map((d) => d.trim()).filter(Boolean));
-    return toSelectOptions(Array.from(set).sort());
-  }, [departments]);
+  const parentOptions = useMemo(
+    () => mergeCoaOptionsWithSavedValue(coaOptions, parentGl),
+    [coaOptions, parentGl]
+  );
+
+  const catalogSubs = useMemo(
+    () => subLedgersForLedger(parentGl, allAccounts),
+    [parentGl, allAccounts]
+  );
+
+  const catalogSubNames = useMemo(
+    () => catalogSubs.map((s) => s.name).join("\0"),
+    [catalogSubs]
+  );
+
+  useEffect(() => {
+    if (!parentGl.trim()) {
+      setSubBudgets({});
+      return;
+    }
+    const names = catalogSubNames ? catalogSubNames.split("\0") : [];
+    setSubBudgets((prev) => {
+      const next: Record<string, number | null> = {};
+      for (const name of names) {
+        next[name] = prev[name] ?? 0;
+      }
+      return next;
+    });
+  }, [parentGl, catalogSubNames]);
+
+  const subSum = useMemo(() => {
+    return roundMoney(
+      catalogSubs.reduce((acc, sub) => acc + (subBudgets[sub.name] ?? 0), 0)
+    );
+  }, [catalogSubs, subBudgets]);
+
+  const parentAmt = parentBudget ?? 0;
+  const remaining = roundMoney(parentAmt - subSum);
+  const sumMatches =
+    catalogSubs.length === 0 || Math.abs(remaining) < 0.005;
+
+  const utilById = useMemo(() => {
+    const map = new Map<number, (typeof utilization)[number]>();
+    for (const row of utilization) map.set(row.budget_id, row);
+    return map;
+  }, [utilization]);
+
+  const parentOfSub = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const account of allAccounts) {
+      for (const sub of account.subLedgers ?? []) {
+        if (sub.name.trim()) map.set(sub.name.trim().toLowerCase(), account.name);
+      }
+    }
+    return map;
+  }, [allAccounts]);
+
+  const treeGroups = useMemo(() => {
+    const groups = new Map<string, BudgetTreeGroup>();
+    const orphanSubs: DepartmentBudgetRow[] = [];
+
+    for (const row of rows) {
+      const gl = row.gl_ledger.trim();
+      const parentName = parentOfSub.get(gl.toLowerCase());
+      const isTopLevel = allAccounts.some(
+        (a) => a.name.trim().toLowerCase() === gl.toLowerCase()
+      );
+
+      if (isTopLevel) {
+        const key = `${gl}::${row.period_kind}::${row.period_key}`;
+        const existing = groups.get(key);
+        if (existing) existing.parentRow = row;
+        else {
+          groups.set(key, {
+            parentGl: gl,
+            periodKind: row.period_kind,
+            periodKey: row.period_key,
+            parentRow: row,
+            subRows: [],
+          });
+        }
+        continue;
+      }
+
+      if (parentName) {
+        const key = `${parentName}::${row.period_kind}::${row.period_key}`;
+        const existing = groups.get(key);
+        if (existing) existing.subRows.push(row);
+        else {
+          groups.set(key, {
+            parentGl: parentName,
+            periodKind: row.period_kind,
+            periodKey: row.period_key,
+            parentRow: null,
+            subRows: [row],
+          });
+        }
+        continue;
+      }
+
+      orphanSubs.push(row);
+    }
+
+    for (const orphan of orphanSubs) {
+      const key = `${orphan.gl_ledger}::${orphan.period_kind}::${orphan.period_key}`;
+      if (!groups.has(key)) {
+        groups.set(key, {
+          parentGl: orphan.gl_ledger,
+          periodKind: orphan.period_kind,
+          periodKey: orphan.period_key,
+          parentRow: orphan,
+          subRows: [],
+        });
+      }
+    }
+
+    return [...groups.values()].sort((a, b) =>
+      `${a.parentGl}${a.periodKey}`.localeCompare(`${b.parentGl}${b.periodKey}`)
+    );
+  }, [rows, allAccounts, parentOfSub]);
+
+  // Default-expand parent rows that have Sub-GL budgets (once per key).
+  useEffect(() => {
+    setExpandedKeys((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const group of treeGroups) {
+        if (group.subRows.length === 0) continue;
+        const key = `${group.parentGl}::${group.periodKind}::${group.periodKey}`;
+        if (!next.has(key)) {
+          next.add(key);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [treeGroups]);
+
+  const toggleExpanded = (key: string) => {
+    setExpandedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   const onPeriodKindChange = (kind: string) => {
     const k = (PERIOD_KINDS.includes(kind as (typeof PERIOD_KINDS)[number])
@@ -57,64 +228,86 @@ export function DepartmentBudgetsPanel({
     setPeriodKey(currentPeriodKey(k));
   };
 
-  const onAdd = async () => {
+  const loadTreeIntoForm = (group: BudgetTreeGroup) => {
+    setParentGl(group.parentGl);
+    setPeriodKind(
+      (PERIOD_KINDS.includes(group.periodKind as (typeof PERIOD_KINDS)[number])
+        ? group.periodKind
+        : "monthly") as (typeof PERIOD_KINDS)[number]
+    );
+    setPeriodKey(group.periodKey);
+    setParentBudget(group.parentRow ? Number(group.parentRow.allocated) : 0);
+    const next: Record<string, number | null> = {};
+    const catalog = subLedgersForLedger(group.parentGl, allAccounts);
+    for (const sub of catalog) {
+      const saved = group.subRows.find(
+        (r) => r.gl_ledger.trim().toLowerCase() === sub.name.toLowerCase()
+      );
+      next[sub.name] = saved ? Number(saved.allocated) : 0;
+    }
+    setSubBudgets(next);
+    setNotes(group.parentRow?.notes ?? "");
+    setEnforcement(group.parentRow?.enforcement === "hard" ? "hard" : "soft");
     setError(null);
-    const dept = department.trim();
-    if (!dept) {
-      setError("Department is required");
+  };
+
+  const onSave = async () => {
+    setError(null);
+    const parent = parentGl.trim();
+    if (!parent) {
+      setError("Parent GL is required");
+      return;
+    }
+    if (catalogSubs.length > 0 && !sumMatches) {
+      setError(
+        `Sub-GL budgets must sum to parent budget (${money(parentAmt, currency)}). ` +
+          `Current sum ${money(subSum, currency)}; remaining ${money(remaining, currency)}.`
+      );
       return;
     }
     try {
-      await createMut.mutateAsync({
-        department: dept,
-        gl_ledger: glLedger.trim(),
+      await upsertMut.mutateAsync({
+        parent_gl: parent,
         period_kind: periodKind,
         period_key: periodKey.trim(),
-        allocated: allocated ?? 0,
+        allocated: parentAmt,
+        sub_allocations: catalogSubs.map((sub) => ({
+          gl_ledger: sub.name,
+          allocated: subBudgets[sub.name] ?? 0,
+        })),
+        enforcement,
         notes: notes.trim() || null,
       });
       setNotes("");
-      setAllocated(0);
-      setGlLedger("");
+      setEnforcement("soft");
+      setParentBudget(0);
+      setSubBudgets({});
+      setParentGl("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create department budget");
+      setError(err instanceof Error ? err.message : "Failed to save GL budget tree");
     }
   };
 
   return (
     <div className="space-y-3">
       <div>
-        <h3 className="text-sm font-semibold">Department budgets</h3>
+        <h3 className="text-sm font-semibold">GL budgets</h3>
         <p className="text-xs text-muted-foreground mt-0.5">
-          Optional envelopes by department (and optional GL). Enforced as VR-TE08 on claims and
-          against-advance. Leave blank to skip department budget checks.
+          Choose a Parent GL to load all of its Sub-GLs. Set each Sub-GL budget so their sum
+          equals the parent budget, then save once.
         </p>
       </div>
 
       <Card className="p-3 space-y-3">
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          <FieldLabel label="Department">
-            <Input
-              value={department}
-              onChange={(e) => setDepartment(e.target.value)}
-              list="te-dept-budget-departments"
-              placeholder="e.g. Sales"
+          <FieldLabel label="Parent GL">
+            <Select
+              value={parentGl}
+              onValueChange={setParentGl}
+              options={parentOptions}
+              placeholder={coaLoading ? "Loading accounts…" : "— Select parent GL —"}
               className="h-8 text-xs"
-            />
-            {deptOptions.length > 0 ? (
-              <datalist id="te-dept-budget-departments">
-                {deptOptions.map((opt) => (
-                  <option key={opt.value} value={opt.value} />
-                ))}
-              </datalist>
-            ) : null}
-          </FieldLabel>
-          <FieldLabel label="GL ledger (optional)">
-            <Input
-              value={glLedger}
-              onChange={(e) => setGlLedger(e.target.value)}
-              placeholder="All GLs if empty"
-              className="h-8 text-xs"
+              data-testid="te-gl-budget-account"
             />
           </FieldLabel>
           <FieldLabel label="Period kind">
@@ -133,11 +326,24 @@ export function DepartmentBudgetsPanel({
               className="h-8 text-xs"
             />
           </FieldLabel>
-          <FieldLabel label="Allocated">
+          <FieldLabel label="Parent budget (total)">
             <NumericInput
-              value={allocated ?? undefined}
-              onValueChange={(v) => setAllocated(v ?? null)}
+              value={parentBudget ?? undefined}
+              onValueChange={(v) => setParentBudget(v ?? null)}
               className="h-8 text-xs"
+              data-testid="te-gl-budget-parent-amount"
+            />
+          </FieldLabel>
+          <FieldLabel label="Over budget">
+            <Select
+              value={enforcement}
+              onValueChange={(v) => setEnforcement(v === "hard" ? "hard" : "soft")}
+              options={[
+                { value: "soft", label: "Soft — manager can approve" },
+                { value: "hard", label: "Hard — raise budget first" },
+              ]}
+              className="h-8 text-xs"
+              data-testid="te-gl-budget-enforcement"
             />
           </FieldLabel>
           <FieldLabel label="Notes">
@@ -148,24 +354,76 @@ export function DepartmentBudgetsPanel({
             />
           </FieldLabel>
         </div>
+
+        {parentGl.trim() && catalogSubs.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            This parent has no Sub-GLs in the chart of accounts — only the parent wallet will be
+            saved.
+          </p>
+        ) : null}
+
+        {catalogSubs.length > 0 ? (
+          <div className="rounded-md border border-border/70 overflow-hidden">
+            <div className="px-3 py-2 bg-muted/30 flex items-center justify-between gap-2">
+              <p className="text-xs font-medium">Sub-GL allocations</p>
+              <p
+                className={cn(
+                  "text-xs tnum",
+                  sumMatches ? "text-muted-foreground" : "text-destructive font-medium"
+                )}
+              >
+                Sum {money(subSum, currency)} / Parent {money(parentAmt, currency)}
+                {!sumMatches ? ` · left ${money(remaining, currency)}` : " · balanced"}
+              </p>
+            </div>
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-muted-foreground text-left border-b border-border/60">
+                  <th className="px-3 py-2 font-medium">Sub-GL</th>
+                  <th className="px-3 py-2 font-medium text-right w-40">Budget</th>
+                </tr>
+              </thead>
+              <tbody>
+                {catalogSubs.map((sub) => (
+                  <tr key={sub.name} className="border-b border-border/40 last:border-0">
+                    <td className="px-3 py-2">
+                      {sub.code ? `${sub.code} — ${sub.name}` : sub.name}
+                    </td>
+                    <td className="px-3 py-2">
+                      <NumericInput
+                        value={subBudgets[sub.name] ?? undefined}
+                        onValueChange={(v) =>
+                          setSubBudgets((prev) => ({ ...prev, [sub.name]: v ?? null }))
+                        }
+                        className="h-8 text-xs"
+                        data-testid={`te-gl-budget-sub-${sub.name}`}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+
         {error ? <p className="text-xs text-destructive">{error}</p> : null}
         <Button
           type="button"
           size="sm"
-          onClick={() => void onAdd()}
-          disabled={createMut.isPending}
+          onClick={() => void onSave()}
+          disabled={upsertMut.isPending || (catalogSubs.length > 0 && !sumMatches)}
         >
           <Plus className="h-3.5 w-3.5 mr-1" />
-          Add department budget
+          Save parent + Sub-GL budgets
         </Button>
       </Card>
 
       {isLoading ? (
         <p className="text-sm text-muted-foreground py-4 text-center">Loading…</p>
-      ) : rows.length === 0 ? (
+      ) : treeGroups.length === 0 ? (
         <EmptyState
-          title="No department budgets"
-          hint="Add an envelope above to enforce department spend limits (VR-TE08)."
+          title="No GL budgets"
+          hint="Select a parent GL, allocate every Sub-GL so the sum equals the parent total, then save."
         />
       ) : (
         <Card className="overflow-hidden">
@@ -173,45 +431,170 @@ export function DepartmentBudgetsPanel({
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-xs text-muted-foreground border-b border-border text-left">
-                  <th className="px-4 py-2.5 font-medium">Department</th>
-                  <th className="px-3 py-2.5 font-medium">GL</th>
+                  <th className="px-4 py-2.5 font-medium">GL account</th>
                   <th className="px-3 py-2.5 font-medium">Period</th>
-                  <th className="px-3 py-2.5 font-medium text-right">Allocated</th>
-                  <th className="px-3 py-2.5 font-medium">Notes</th>
-                  <th className="px-4 py-2.5 font-medium w-12" />
+                  <th className="px-3 py-2.5 font-medium text-right">Budget</th>
+                  <th className="px-3 py-2.5 font-medium text-right">Spent so far</th>
+                  <th className="px-3 py-2.5 font-medium text-right">Left</th>
+                  <th className="px-3 py-2.5 font-medium w-36">Utilisation</th>
+                  <th className="px-4 py-2.5 font-medium w-20" />
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => (
-                  <tr key={row.id} className="row-band border-b border-border/60">
-                    <td className="px-4 py-2.5 font-medium">{row.department}</td>
-                    <td className="px-3 py-2.5 text-muted-foreground">
-                      {row.gl_ledger || "(all)"}
-                    </td>
-                    <td className="px-3 py-2.5 text-muted-foreground">
-                      {row.period_kind} · {row.period_key}
-                    </td>
-                    <td className="px-3 py-2.5 text-right tnum">
-                      {money(Number(row.allocated), currency)}
-                    </td>
-                    <td className="px-3 py-2.5 text-muted-foreground truncate max-w-[160px]">
-                      {row.notes || "—"}
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
-                        disabled={deleteMut.isPending}
-                        onClick={() => void deleteMut.mutateAsync(row.id)}
-                        aria-label="Delete department budget"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
+                {treeGroups.map((group) => {
+                  const key = `${group.parentGl}::${group.periodKind}::${group.periodKey}`;
+                  const parent = group.parentRow;
+                  const budgetAmt = parent ? Number(parent.allocated) : group.subRows.reduce(
+                    (a, r) => a + Number(r.allocated),
+                    0
+                  );
+                  const util = parent ? utilById.get(parent.id) : undefined;
+                  const spent = util?.consumed ?? 0;
+                  const left = util?.remaining != null ? util.remaining : budgetAmt - spent;
+                  const over = left < 0;
+                  const pct =
+                    budgetAmt > 0 ? Math.min(999, Math.round((spent / budgetAmt) * 100)) : 0;
+                  const hasSubs = group.subRows.length > 0;
+                  const showSubs = hasSubs && expandedKeys.has(key);
+
+                  return (
+                    <Fragment key={key}>
+                      <tr className="row-band border-b border-border/60">
+                        <td className="px-4 py-2.5 font-medium">
+                          {hasSubs ? (
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1 text-left hover:text-foreground"
+                              onClick={() => toggleExpanded(key)}
+                              aria-expanded={showSubs}
+                              aria-label={
+                                showSubs
+                                  ? `Collapse ${group.parentGl} Sub-GLs`
+                                  : `Expand ${group.parentGl} Sub-GLs`
+                              }
+                            >
+                              {showSubs ? (
+                                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                              ) : (
+                                <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                              )}
+                              {group.parentGl}
+                            </button>
+                          ) : (
+                            <span className="inline-flex items-center gap-1">
+                              <span className="w-3.5" />
+                              {group.parentGl}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2.5 text-muted-foreground">
+                          {group.periodKind} · {group.periodKey}
+                        </td>
+                        <td className="px-3 py-2.5 text-right tnum">
+                          {money(budgetAmt, currency)}
+                        </td>
+                        <td className="px-3 py-2.5 text-right tnum">{money(spent, currency)}</td>
+                        <td
+                          className={cn(
+                            "px-3 py-2.5 text-right tnum font-medium",
+                            over && "text-destructive"
+                          )}
+                        >
+                          {money(left, currency)}
+                          {over ? " ❌" : ""}
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <div className="flex items-center gap-2">
+                            <BudgetUtilBar used={spent} total={budgetAmt} />
+                            <span className="tnum text-xs text-muted-foreground w-9 text-right">
+                              {pct}%
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <div className="flex items-center gap-1 justify-end">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 text-xs"
+                              onClick={() => loadTreeIntoForm(group)}
+                            >
+                              Edit
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                              disabled={deleteTreeMut.isPending}
+                              onClick={() =>
+                                void deleteTreeMut.mutateAsync({
+                                  parent_gl: group.parentGl,
+                                  period_kind: group.periodKind as (typeof PERIOD_KINDS)[number],
+                                  period_key: group.periodKey,
+                                })
+                              }
+                              aria-label="Delete parent and Sub-GL budgets"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                      {showSubs
+                        ? group.subRows.map((sub) => {
+                            const subUtil = utilById.get(sub.id);
+                            const subBudget = Number(sub.allocated);
+                            const subSpent = subUtil?.consumed ?? 0;
+                            const subLeft =
+                              subUtil?.remaining != null
+                                ? subUtil.remaining
+                                : subBudget - subSpent;
+                            const subOver = subLeft < 0;
+                            return (
+                              <tr
+                                key={sub.id}
+                                className="bg-muted/20 border-b border-border/60 text-xs"
+                              >
+                                <td className="px-4 py-2 pl-10 text-muted-foreground">
+                                  ↳ {sub.gl_ledger}
+                                </td>
+                                <td className="px-3 py-2 text-muted-foreground">
+                                  {sub.period_kind} · {sub.period_key}
+                                </td>
+                                <td className="px-3 py-2 text-right tnum">
+                                  {money(subBudget, currency)}
+                                </td>
+                                <td className="px-3 py-2 text-right tnum">
+                                  {money(subSpent, currency)}
+                                </td>
+                                <td
+                                  className={cn(
+                                    "px-3 py-2 text-right tnum font-medium",
+                                    subOver && "text-destructive"
+                                  )}
+                                >
+                                  {money(subLeft, currency)}
+                                </td>
+                                <td className="px-3 py-2">
+                                  <div className="flex items-center gap-2">
+                                    <BudgetUtilBar used={subSpent} total={subBudget} />
+                                    <span className="tnum text-[10px] text-muted-foreground w-9 text-right">
+                                      {subBudget > 0
+                                        ? `${Math.min(999, Math.round((subSpent / subBudget) * 100))}%`
+                                        : "0%"}
+                                    </span>
+                                  </div>
+                                </td>
+                                <td />
+                              </tr>
+                            );
+                          })
+                        : null}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>

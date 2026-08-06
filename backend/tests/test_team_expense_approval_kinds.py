@@ -14,7 +14,6 @@ from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.master_data import EmployeeBudget, EmployeeMasterResponse
 from app.schemas.rule_book_config import (
     TEAM_EXPENSE_KIND_ADVANCE,
-    TEAM_EXPENSE_KIND_AGAINST_ADVANCE,
     TEAM_EXPENSE_KIND_CLAIM,
     TeamExpensePolicy,
 )
@@ -72,7 +71,7 @@ def test_advance_requisition_always_requires_approval_even_under_threshold() -> 
     _ = team_rule_policy
 
 
-def test_expense_claim_and_against_advance_respect_auto_approve_threshold(
+def test_expense_claim_respects_auto_approve_threshold(
     capture_config,
 ) -> None:
     from app.schemas.rule_book_config import TeamExpenseRule
@@ -82,7 +81,7 @@ def test_expense_claim_and_against_advance_respect_auto_approve_threshold(
     )
     assert isinstance(team_rule, TeamExpenseRule)
 
-    for kind in (TEAM_EXPENSE_KIND_CLAIM, TEAM_EXPENSE_KIND_AGAINST_ADVANCE, None):
+    for kind in (TEAM_EXPENSE_KIND_CLAIM, None):
         small = Invoice(
             tenant_id=TESTING_TENANT_UUID,
             route_target=ROUTE_TEAM,
@@ -101,7 +100,6 @@ def test_expense_claim_and_against_advance_respect_auto_approve_threshold(
 
 def test_vr_te02_skipped_for_advance_requisition() -> None:
     emp = _employee(monthly=100.0, mtd=90.0)
-    # Would fail for a claim (90+50 > 100) but advance float skips budget.
     result = vr_te02_budget(
         emp, 50.0, team_expense_kind=TEAM_EXPENSE_KIND_ADVANCE
     )
@@ -109,29 +107,31 @@ def test_vr_te02_skipped_for_advance_requisition() -> None:
     assert result.skipped
 
 
-def test_vr_te02_fails_for_claim_over_budget() -> None:
+def test_vr_te02_retired_for_claims() -> None:
     emp = _employee(monthly=100.0, mtd=90.0)
     result = vr_te02_budget(emp, 50.0, team_expense_kind=TEAM_EXPENSE_KIND_CLAIM)
-    assert not result.passed
-    assert not result.skipped
+    assert result.passed
+    assert result.skipped
+    assert "gl account" in result.message.lower()
 
 
-def test_vr_te02_applies_to_against_advance() -> None:
+def test_legacy_against_advance_normalizes_to_claim_for_vr_te02() -> None:
     emp = _employee(monthly=100.0, mtd=90.0)
     result = vr_te02_budget(
-        emp, 50.0, team_expense_kind=TEAM_EXPENSE_KIND_AGAINST_ADVANCE
+        emp, 50.0, team_expense_kind="expense_against_advance"
     )
-    assert not result.passed
+    assert result.passed
+    assert result.skipped
+    assert "gl account" in result.message.lower()
 
 
-def test_vr_te03_and_te06_skipped_for_advance() -> None:
+def test_vr_te03_skipped_for_advance_required_for_claim() -> None:
     from app.schemas.rule_book_config import (
-        BudgetCategoryCap,
         PostToAccounts,
         TeamExpensePolicy,
         TeamExpenseRule,
     )
-    from app.services.purchase.team_expense_validator import vr_te03_receipt, vr_te06_category_cap
+    from app.services.purchase.team_expense_validator import vr_te03_receipt
 
     rule = TeamExpenseRule(
         id="te-1",
@@ -141,37 +141,16 @@ def test_vr_te03_and_te06_skipped_for_advance() -> None:
         post_to=PostToAccounts(ledger="Meals"),
         policy=TeamExpensePolicy(auto_approve_below=30, require_receipt=True, receipt_threshold=0),
     )
-    emp = EmployeeMasterResponse(
-        id="em-te-kind",
-        name="Pat",
-        email="pat@example.com",
-        budget=EmployeeBudget(
-            monthly=500,
-            quarterly=0,
-            annual=0,
-            categories=[BudgetCategoryCap(ledger="Meals", cap=10)],
-        ),
-        mtd_spent=0,
-        status="Active",
-        db_id=1,
-    )
     r3 = vr_te03_receipt(
         rule, 100.0, has_receipt_file=False, team_expense_kind=TEAM_EXPENSE_KIND_ADVANCE
     )
     assert r3.passed and r3.skipped
-    r6 = vr_te06_category_cap(
-        emp, 100.0, rule, team_expense_kind=TEAM_EXPENSE_KIND_ADVANCE
-    )
-    assert r6.passed and r6.skipped
     assert not vr_te03_receipt(
         rule, 100.0, has_receipt_file=False, team_expense_kind=TEAM_EXPENSE_KIND_CLAIM
     ).passed
-    assert not vr_te06_category_cap(
-        emp, 100.0, rule, team_expense_kind=TEAM_EXPENSE_KIND_CLAIM
-    ).passed
 
 
-def test_vr_te04_bank_skipped_for_against_advance_required_for_payout() -> None:
+def test_vr_te04_bank_required_for_claim_and_advance() -> None:
     from app.schemas.master_data import BankDetails
     from app.services.purchase.team_expense_validator import vr_te04_bank
 
@@ -184,8 +163,10 @@ def test_vr_te04_bank_skipped_for_against_advance_required_for_payout() -> None:
         status="Active",
         db_id=1,
     )
-    against = vr_te04_bank(emp, team_expense_kind=TEAM_EXPENSE_KIND_AGAINST_ADVANCE)
-    assert against.passed and against.skipped
+    # Legacy against-advance normalizes to claim — bank still required for reimbursement.
+    legacy = vr_te04_bank(emp, team_expense_kind="expense_against_advance")
+    assert not legacy.passed
+    assert "reimbursement" in legacy.message
     claim = vr_te04_bank(emp, team_expense_kind=TEAM_EXPENSE_KIND_CLAIM)
     assert not claim.passed
     assert "reimbursement" in claim.message
@@ -340,3 +321,34 @@ async def test_record_processed_increments_spend_for_claim(
     assert row.mtd_spent == 50.0
     assert row.ytd_spent == 50.0
     assert row.claim_count == 3
+
+
+def test_soft_budget_overrun_forces_approval_even_below_threshold() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        route_target=ROUTE_TEAM,
+        team_expense_kind=TEAM_EXPENSE_KIND_CLAIM,
+        total=Decimal("25"),
+        status=InvoiceStatus.MAPPING,
+        currency="AUD",
+    )
+    assert (
+        requires_manual_approval(
+            inv,
+            None,
+            manager_approved=False,
+            playbook_auto_approve_below=100.0,
+            soft_budget_overrun=False,
+        )
+        is False
+    )
+    assert (
+        requires_manual_approval(
+            inv,
+            None,
+            manager_approved=False,
+            playbook_auto_approve_below=100.0,
+            soft_budget_overrun=True,
+        )
+        is True
+    )

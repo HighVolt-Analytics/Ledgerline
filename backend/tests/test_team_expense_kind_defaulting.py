@@ -14,7 +14,6 @@ from app.schemas.document_type import DocumentTypeDefinition
 from app.schemas.master_data import EmployeeMasterCreate
 from app.schemas.rule_book_config import (
     TEAM_EXPENSE_KIND_ADVANCE,
-    TEAM_EXPENSE_KIND_AGAINST_ADVANCE,
     TEAM_EXPENSE_KIND_CLAIM,
     ChartOfAccountEntry,
     PostingDefaults,
@@ -164,16 +163,17 @@ async def test_pinned_document_type_wins_over_advance_balance(
 
 
 @pytest.mark.asyncio
-async def test_auto_picks_against_advance_when_employee_holds_advance(
+async def test_auto_picks_expense_claim_even_when_employee_holds_advance(
     db_session: AsyncSession,
 ) -> None:
+    """Outstanding float no longer switches kind — auto-pick is always claim."""
     config = await _setup(db_session, _document_type("DT-12"))
     await _post_advance(db_session, "1000")
     invoice = await _claim(db_session, document_type_code="DT-12")
 
     kind = await resolve_default_team_expense_kind(db_session, invoice, config)
 
-    assert kind == TEAM_EXPENSE_KIND_AGAINST_ADVANCE
+    assert kind == TEAM_EXPENSE_KIND_CLAIM
 
 
 @pytest.mark.asyncio

@@ -1041,6 +1041,8 @@ export interface EmployeeAdvanceSettlementRow {
   claim_count: number;
   last_claim: string;
   claim_ytd_spent: number;
+  advance_taken?: number | string;
+  advance_used?: number | string;
   advance_ledger_balance: number | string;
   pending_against_advance: number | string;
   available_advance: number | string;
@@ -1102,13 +1104,14 @@ export interface DepartmentBudgetRow {
   period_kind: "monthly" | "quarterly" | "annual";
   period_key: string;
   allocated: number | string;
+  enforcement?: "soft" | "hard";
   notes: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
 
 export interface DepartmentBudgetUtilizationRow {
-  department: string;
+  department?: string;
   gl_ledger: string;
   period_kind: "monthly" | "quarterly" | "annual";
   period_key: string;
@@ -1118,9 +1121,13 @@ export interface DepartmentBudgetUtilizationRow {
   utilization_pct: number | null;
   notes: string | null;
   budget_id: number;
-  /** Outstanding Staff Advance balances for employees in this department. */
+  sub_breakdown?: Array<{
+    gl_ledger: string;
+    consumed: number;
+    pct_of_budget: number;
+  }>;
+  /** @deprecated Advance float is not part of GL budget tracking. */
   advance_float?: number;
-  /** Expense consumed (+ advance float on dept-wide / empty-GL envelopes). */
   cash_committed?: number;
   cash_remaining?: number | null;
   cash_utilization_pct?: number | null;

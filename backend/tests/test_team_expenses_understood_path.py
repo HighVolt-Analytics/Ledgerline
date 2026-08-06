@@ -80,10 +80,15 @@ def test_purchase_dt_not_team_even_with_employee_like_title() -> None:
     assert not is_team_expenses_document_type(tax)
 
 
-def test_ensure_upgrades_generic_claim_to_against_advance_from_heading() -> None:
+def test_ensure_keeps_claim_dt_for_against_advance_heading() -> None:
+    """Legacy 'against advance' headings resolve as expense_claim; stay on claim DT."""
     from app.models.invoice import Invoice, InvoiceStatus
+    from app.services.purchase.team_expense_kind_service import (
+        document_type_team_expense_kind,
+    )
     from app.services.purchase.team_expense_route_policy import (
         ensure_team_expenses_document_type,
+        infer_preferred_team_expense_kind,
     )
     from app.tenant_ids import TESTING_TENANT_UUID
 
@@ -93,7 +98,7 @@ def test_ensure_upgrades_generic_claim_to_against_advance_from_heading() -> None
             title="Employee expense claim",
             route=ROUTE_TEAM,
             playbook="employee_claim",
-        ),
+        ).model_copy(update={"team_expense_kind": "expense_claim"}),
         DocumentTypeDefinition(
             code="DT-10",
             title="Expense against advance",
@@ -106,11 +111,11 @@ def test_ensure_upgrades_generic_claim_to_against_advance_from_heading() -> None
             routeTarget=ROUTE_TEAM,
             enabled=True,
             playbookProfile="employee_claim",
+            # Legacy pin is rejected / cleared on the DT schema.
             teamExpenseKind="expense_against_advance",
         ),
     ]
-    # Repair DT-08 pin as expense_claim for realism
-    types[0] = types[0].model_copy(update={"team_expense_kind": "expense_claim"})
+    assert types[1].team_expense_kind == ""
 
     inv = Invoice(
         tenant_id=TESTING_TENANT_UUID,
@@ -121,11 +126,12 @@ def test_ensure_upgrades_generic_claim_to_against_advance_from_heading() -> None
         capture_source="email",
         email_sender="codevishnu321@gmail.com",
     )
+    assert infer_preferred_team_expense_kind(inv, types) == "expense_claim"
     chosen = ensure_team_expenses_document_type(inv, types)
     assert chosen is not None
-    assert chosen.code == "DT-10"
-    assert inv.document_type_code == "DT-10"
-    assert getattr(chosen, "team_expense_kind", None) == "expense_against_advance"
+    assert chosen.code == "DT-08"
+    assert inv.document_type_code == "DT-08"
+    assert document_type_team_expense_kind(chosen) == "expense_claim"
 
 
 def test_force_dt_route_blocks_email_and_team_category_override() -> None:

@@ -484,7 +484,7 @@ async def set_team_expense_kind(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[InvoiceResponse]:
-    """Choose the claim kind (advance, against advance, claim) before the journal posts."""
+    """Choose the claim kind (advance requisition or expense claim) before the journal posts."""
     from app.services.integration.publish_service import is_published_to_ledger
     from app.services.rule_book.rule_book_mapper import ROUTE_TEAM
 

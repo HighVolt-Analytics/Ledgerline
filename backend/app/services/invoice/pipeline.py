@@ -1918,9 +1918,13 @@ async def resume_invoice_posting_pipeline(
         customer_registry_id=customer_reg_id,
     )
     from app.tenant_settings import tenant_currency
+    from app.services.purchase.team_expense_advance_service import (
+        resolve_claim_advance_available,
+    )
 
     tenant = await session.get(Tenant, invoice.tenant_id)
     base_currency = tenant_currency(tenant)
+    advance_available = await resolve_claim_advance_available(session, invoice, cfg)
     journal_lines = generate_entries(
         invoice,
         mapping,
@@ -1930,6 +1934,7 @@ async def resume_invoice_posting_pipeline(
         customer_registry_id=customer_reg_id,
         control_mapping=control_mapping,
         base_currency=base_currency,
+        advance_available=advance_available,
     )
     if not is_balanced(journal_lines):
         invoice.status = InvoiceStatus.EXCEPTION
@@ -4238,9 +4243,13 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         customer_registry_id=customer_reg_id,
     )
     from app.tenant_settings import tenant_currency
+    from app.services.purchase.team_expense_advance_service import (
+        resolve_claim_advance_available,
+    )
 
     tenant = await session.get(Tenant, invoice.tenant_id)
     base_currency = tenant_currency(tenant)
+    advance_available = await resolve_claim_advance_available(session, invoice, config)
     journal_lines = generate_entries(
         invoice,
         mapping,
@@ -4250,6 +4259,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         customer_registry_id=customer_reg_id,
         control_mapping=control_mapping,
         base_currency=base_currency,
+        advance_available=advance_available,
     )
     if not is_balanced(journal_lines):
         invoice.status = InvoiceStatus.EXCEPTION

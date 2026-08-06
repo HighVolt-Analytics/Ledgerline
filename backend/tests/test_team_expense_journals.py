@@ -1,4 +1,4 @@
-"""Team Expenses journal templates for the three claim kinds."""
+"""Team Expenses journal templates for advance requisition and expense claim."""
 
 from datetime import date
 from decimal import Decimal
@@ -101,29 +101,14 @@ def test_advance_requisition_debits_employee_child_and_credits_settlement() -> N
     assert credit.credit == Decimal("1100")
 
 
-def test_expense_against_advance_credits_employee_child() -> None:
-    config = _config()
-    lines = generate_entries(
-        _invoice("expense_against_advance"),
-        AccountMapping("6100", "Travel Expense"),
-        config=config,
-        control_mapping=_employee_mapping(config),
-    )
-
-    assert is_balanced(lines)
-    assert [ln.account_name for ln in lines] == ["Travel Expense", "Tax Paid", "Marcus Webb"]
-    assert lines[0].debit == Decimal("1000")
-    assert lines[1].debit == Decimal("100")
-    assert lines[2].credit == Decimal("1100")
-
-
-def test_expense_claim_credits_settlement_not_payable() -> None:
+def test_expense_claim_credits_settlement_when_no_advance() -> None:
     config = _config()
     lines = generate_entries(
         _invoice("expense_claim"),
         AccountMapping("6100", "Travel Expense"),
         config=config,
         control_mapping=_employee_mapping(config),
+        advance_available=Decimal("0"),
     )
 
     assert is_balanced(lines)
@@ -133,6 +118,61 @@ def test_expense_claim_credits_settlement_not_payable() -> None:
     assert all(ln.account_name != "Accounts Payable" for ln in lines)
 
 
+def test_expense_claim_partially_nets_available_advance() -> None:
+    """Claim $1100 with $500 advance → Cr advance 500 + Cr bank 600."""
+    config = _config()
+    lines = generate_entries(
+        _invoice("expense_claim"),
+        AccountMapping("6100", "Travel Expense"),
+        config=config,
+        control_mapping=_employee_mapping(config),
+        advance_available=Decimal("500"),
+    )
+
+    assert is_balanced(lines)
+    credits = {ln.account_name: ln.credit for ln in lines if ln.credit > 0}
+    assert credits["Marcus Webb"] == Decimal("500")
+    assert credits["Bank Account"] == Decimal("600")
+
+
+def test_expense_claim_fully_nets_when_advance_covers_total() -> None:
+    config = _config()
+    lines = generate_entries(
+        _invoice("expense_claim"),
+        AccountMapping("6100", "Travel Expense"),
+        config=config,
+        control_mapping=_employee_mapping(config),
+        advance_available=Decimal("2000"),
+    )
+    assert is_balanced(lines)
+    credits = [ln for ln in lines if ln.credit > 0]
+    assert len(credits) == 1
+    assert credits[0].account_name == "Marcus Webb"
+    assert credits[0].credit == Decimal("1100")
+
+
+def test_legacy_against_advance_journals_as_expense_claim() -> None:
+    """Stored expense_against_advance normalizes to claim (same netting rules)."""
+    config = _config()
+    lines = generate_entries(
+        _invoice("expense_against_advance"),
+        AccountMapping("6100", "Travel Expense"),
+        config=config,
+        control_mapping=_employee_mapping(config),
+        advance_available=Decimal("0"),
+    )
+    claim_lines = generate_entries(
+        _invoice("expense_claim"),
+        AccountMapping("6100", "Travel Expense"),
+        config=config,
+        control_mapping=_employee_mapping(config),
+        advance_available=Decimal("0"),
+    )
+    assert [(ln.account_name, ln.debit, ln.credit) for ln in lines] == [
+        (ln.account_name, ln.debit, ln.credit) for ln in claim_lines
+    ]
+
+
 def test_missing_kind_defaults_to_expense_claim() -> None:
     config = _config()
     lines = generate_entries(
@@ -140,12 +180,14 @@ def test_missing_kind_defaults_to_expense_claim() -> None:
         AccountMapping("6100", "Travel Expense"),
         config=config,
         control_mapping=_employee_mapping(config),
+        advance_available=Decimal("0"),
     )
     claim_lines = generate_entries(
         _invoice("expense_claim"),
         AccountMapping("6100", "Travel Expense"),
         config=config,
         control_mapping=_employee_mapping(config),
+        advance_available=Decimal("0"),
     )
 
     assert [(ln.account_name, ln.debit, ln.credit) for ln in lines] == [
@@ -160,7 +202,7 @@ def test_missing_kind_defaults_to_expense_claim() -> None:
         ("", "expense_claim"),
         ("nonsense", "expense_claim"),
         ("Advance_Requisition", "advance_requisition"),
-        ("expense_against_advance", "expense_against_advance"),
+        ("expense_against_advance", "expense_claim"),
     ],
 )
 def test_normalize_team_expense_kind(value: str | None, expected: str) -> None:

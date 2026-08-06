@@ -42,7 +42,7 @@ export function DocumentTypeSpendControlsEditor({
         <div className="min-w-0">
           <p className="text-sm font-medium">Advance control</p>
           <p className="text-xs text-muted-foreground">
-            Employee-level advance float available (against-advance balance).
+            Employee-level advance float from advance requisitions.
           </p>
         </div>
         <Switch

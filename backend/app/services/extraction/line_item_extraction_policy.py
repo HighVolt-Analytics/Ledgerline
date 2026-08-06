@@ -88,14 +88,13 @@ def team_expense_hard_requires_line_items(
     *,
     team_expense_kind: str | None = None,
 ) -> bool:
-    """Advance / against-advance claims post from header total — not line grids.
+    """Advance requisitions post from header total — not line grids.
 
     Generic expense claims may still list line_items on the DT for enrichment,
-    but missing rows must not block understood-path posting for advance kinds.
+    but missing rows must not block understood-path posting for advances.
     """
     from app.schemas.rule_book_config import (
         TEAM_EXPENSE_KIND_ADVANCE,
-        TEAM_EXPENSE_KIND_AGAINST_ADVANCE,
         normalize_team_expense_kind,
     )
     from app.services.classification.document_type_catalog import (
@@ -110,7 +109,7 @@ def team_expense_hard_requires_line_items(
 
     pinned = document_type_team_expense_kind(dt_definition)  # type: ignore[arg-type]
     kind = normalize_team_expense_kind(team_expense_kind or pinned)
-    if kind in {TEAM_EXPENSE_KIND_ADVANCE, TEAM_EXPENSE_KIND_AGAINST_ADVANCE}:
+    if kind == TEAM_EXPENSE_KIND_ADVANCE:
         return False
     return document_requires_line_items(dt_definition)
 

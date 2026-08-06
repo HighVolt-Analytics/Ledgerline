@@ -15,7 +15,6 @@ from app.models.tenant import Tenant
 from app.schemas.master_data import EmployeeMasterResponse
 from app.schemas.rule_book_config import (
     TEAM_EXPENSE_KIND_ADVANCE,
-    TEAM_EXPENSE_KIND_AGAINST_ADVANCE,
     RuleBookConfigPayload,
     TeamExpenseRule,
     normalize_team_expense_kind,
@@ -27,9 +26,7 @@ from app.services.master_data.master_data_service import list_employee_masters
 from app.services.purchase.po_reference import effective_po_reference
 from app.services.purchase.team_expense_spend_service import (
     current_period_keys,
-    department_period_consumed,
-    employee_category_spend,
-    employee_period_spend,
+    gl_period_consumed,
     normalize_employee_email,
 )
 from app.services.rule_book.rule_engine import EvalDocument, match_team_expense_rule
@@ -161,37 +158,14 @@ def vr_te02_budget(
     qtd_spent: float | None = None,
     ytd_spent: float | None = None,
 ) -> ValidationResult:
-    """Period spending limits — not applied to advance float."""
-    if normalize_team_expense_kind(team_expense_kind) == TEAM_EXPENSE_KIND_ADVANCE:
-        return ValidationResult(
-            "VR-TE02",
-            True,
-            "Spending limit check skipped — advance requisition is float, not period spend",
-            skipped=True,
-        )
-    if employee is None or amount is None:
-        return ValidationResult("VR-TE02", True, "Spending limit check skipped")
-
-    limits = _limits(employee)
-    checks: list[tuple[str, float, float]] = [
-        ("Monthly", float(limits.monthly or 0), float(mtd_spent if mtd_spent is not None else employee.mtd_spent or 0)),
-        ("Quarterly", float(limits.quarterly or 0), float(qtd_spent if qtd_spent is not None else employee.qtd_spent or 0)),
-        ("Annual", float(limits.annual or 0), float(ytd_spent if ytd_spent is not None else employee.ytd_spent or 0)),
-    ]
-    for label, cap, spent in checks:
-        if cap <= 0:
-            continue
-        projected = spent + amount
-        if projected > cap:
-            return ValidationResult(
-                "VR-TE02",
-                False,
-                (
-                    f"{label} spending limit exceeded: spent {spent:.2f} + "
-                    f"claim {amount:.2f} > cap {cap:.2f}"
-                ),
-            )
-    return ValidationResult("VR-TE02", True, "Within employee spending limits")
+    """Retired — budgets are enforced per GL account (VR-TE08)."""
+    _ = (employee, amount, team_expense_kind, mtd_spent, qtd_spent, ytd_spent)
+    return ValidationResult(
+        "VR-TE02",
+        True,
+        "Employee spending limits retired — budgets are enforced per GL account (VR-TE08)",
+        skipped=True,
+    )
 
 
 _RECEIPT_EXTENSIONS = (".pdf", ".jpg", ".jpeg", ".png", ".webp", ".heic")
@@ -250,13 +224,6 @@ def vr_te04_bank(
     team_expense_kind: str | None = None,
 ) -> ValidationResult:
     """Bank required when cash is paid out (claim reimbursement or advance)."""
-    if normalize_team_expense_kind(team_expense_kind) == TEAM_EXPENSE_KIND_AGAINST_ADVANCE:
-        return ValidationResult(
-            "VR-TE04",
-            True,
-            "Bank check skipped — expense against advance does not disburse cash",
-            skipped=True,
-        )
     if employee is None:
         return ValidationResult("VR-TE04", True, "Bank check skipped")
     account = (employee.bank.account_number or "").strip()
@@ -304,40 +271,14 @@ def vr_te06_category_cap(
     team_expense_kind: str | None = None,
     category_spent: float | None = None,
 ) -> ValidationResult:
-    """Cumulative category spending limits — not applied to advance float."""
-    if normalize_team_expense_kind(team_expense_kind) == TEAM_EXPENSE_KIND_ADVANCE:
-        return ValidationResult(
-            "VR-TE06",
-            True,
-            "Category limit skipped — advance requisition is float, not period spend",
-            skipped=True,
-        )
-    if employee is None or amount is None or team_rule is None:
-        return ValidationResult("VR-TE06", True, "Category limit check skipped")
-    ledger = (team_rule.post_to.ledger or "").strip()
-    limits = _limits(employee)
-    if not ledger or not limits.categories:
-        return ValidationResult("VR-TE06", True, "No category limit configured")
-
-    spent = float(category_spent or 0)
-    for cap in limits.categories:
-        if cap.ledger.strip().lower() != ledger.lower():
-            continue
-        if cap.cap > 0 and (spent + amount) > cap.cap:
-            return ValidationResult(
-                "VR-TE06",
-                False,
-                (
-                    f"Category limit exceeded for {ledger}: spent {spent:.2f} + "
-                    f"claim {amount:.2f} > cap {cap.cap:.2f}"
-                ),
-            )
-        return ValidationResult(
-            "VR-TE06",
-            True,
-            f"Within {ledger} category limit (spent {spent:.2f})",
-        )
-    return ValidationResult("VR-TE06", True, "No matching category limit")
+    """Retired — category caps moved to GL account budgets (VR-TE08)."""
+    _ = (employee, amount, team_rule, team_expense_kind, category_spent)
+    return ValidationResult(
+        "VR-TE06",
+        True,
+        "Employee category caps retired — budgets are enforced per GL account (VR-TE08)",
+        skipped=True,
+    )
 
 
 def vr_te07_advance_balance(
@@ -349,30 +290,21 @@ def vr_te07_advance_balance(
     ledger_balance: float | None = None,
     pending_reserved: float = 0,
 ) -> ValidationResult:
-    """Expense against advance must not clear more than available (ledger − pending)."""
-    if normalize_team_expense_kind(team_expense_kind) != TEAM_EXPENSE_KIND_AGAINST_ADVANCE:
-        return ValidationResult("VR-TE07", True, "Advance balance check not applicable")
-    if employee is None or amount is None:
-        return ValidationResult("VR-TE07", True, "Advance balance check skipped")
-    available = float(advance_balance) if advance_balance is not None else 0.0
-    outstanding = float(ledger_balance) if ledger_balance is not None else available
-    pending = max(float(pending_reserved or 0), 0.0)
-    if amount > available:
-        detail = f"outstanding advance {outstanding:.2f}"
-        if pending > 0:
-            detail += f", pending other claims {pending:.2f}"
-        return ValidationResult(
-            "VR-TE07",
-            False,
-            (
-                f"Claim {amount:.2f} exceeds available advance {available:.2f} "
-                f"({detail}) for {employee.name} — reduce the claim or post it as an expense claim"
-            ),
-        )
-    msg = f"Within available advance ({available:.2f})"
-    if pending > 0:
-        msg += f" after reserving pending {pending:.2f}"
-    return ValidationResult("VR-TE07", True, msg)
+    """Retired — against-advance claim kind removed; float is advance-requisition only."""
+    _ = (
+        employee,
+        amount,
+        team_expense_kind,
+        advance_balance,
+        ledger_balance,
+        pending_reserved,
+    )
+    return ValidationResult(
+        "VR-TE07",
+        True,
+        "Against-advance balance check retired — only advance requisition and expense claim remain",
+        skipped=True,
+    )
 
 
 def vr_te08_department_budget(
@@ -384,40 +316,64 @@ def vr_te08_department_budget(
     consumed: float | None = None,
     department: str | None = None,
     period_key: str | None = None,
+    gl_ledger: str | None = None,
+    enforcement: str | None = "soft",
 ) -> ValidationResult:
-    """Department envelope — skipped when no budget row or for advances."""
+    """GL account budget envelope — skipped when no budget row or for advances.
+
+    Soft enforcement: overrun is a warn (pipeline continues; manager must approve).
+    Hard enforcement: overrun blocks validation until the budget is raised.
+    Budget is always checked against the full claim amount (not cash after netting).
+    """
+    _ = (employee, department)
     if normalize_team_expense_kind(team_expense_kind) == TEAM_EXPENSE_KIND_ADVANCE:
         return ValidationResult(
             "VR-TE08",
             True,
-            "Department budget skipped — advance requisition is float, not department spend",
+            "GL budget skipped — advance requisition is float, not GL spend",
             skipped=True,
         )
-    if employee is None or amount is None:
-        return ValidationResult("VR-TE08", True, "Department budget check skipped")
+    if amount is None:
+        return ValidationResult("VR-TE08", True, "GL budget check skipped")
     if allocated is None:
-        return ValidationResult("VR-TE08", True, "No department budget configured")
+        return ValidationResult("VR-TE08", True, "No GL account budget configured")
     used = float(consumed or 0)
     cap = float(allocated)
     if cap <= 0:
-        return ValidationResult("VR-TE08", True, "Department budget not enforced")
+        return ValidationResult("VR-TE08", True, "GL account budget not enforced")
     projected = used + amount
     if projected > cap:
-        dept = (department or employee.department or "").strip() or "department"
+        gl = (gl_ledger or "").strip() or "GL account"
         period = (period_key or "").strip() or "period"
+        left = cap - used
+        mode = (enforcement or "soft").strip().lower()
+        if mode not in {"soft", "hard"}:
+            mode = "soft"
+        message = (
+            f"GL budget exceeded for {gl} ({period}): "
+            f"budget {cap:.2f}, spent {used:.2f}, left {left:.2f}, "
+            f"claim {amount:.2f}"
+        )
+        if mode == "hard":
+            return ValidationResult("VR-TE08", False, message, severity="block")
         return ValidationResult(
             "VR-TE08",
             False,
-            (
-                f"Department budget exceeded for {dept} ({period}): "
-                f"consumed {used:.2f} + claim {amount:.2f} > allocated {cap:.2f}"
-            ),
+            f"{message} — routed for manager approval (soft budget)",
+            severity="warn",
         )
     return ValidationResult(
         "VR-TE08",
         True,
-        f"Within department budget (consumed {used:.2f} / {cap:.2f})",
+        (
+            f"Within GL budget for {(gl_ledger or '').strip() or 'account'} "
+            f"(spent {used:.2f} / {cap:.2f})"
+        ),
     )
+
+
+# Alias for clearer call sites.
+vr_te08_gl_budget = vr_te08_department_budget
 
 
 def vr_te09_duplicate_claim(
@@ -566,19 +522,29 @@ async def _tenant_books_currency(
     return tenant_currency(tenant)
 
 
-async def _matching_department_budget(
+async def _matching_gl_budget(
     session: AsyncSession,
     tenant_id,
     *,
-    department: str,
     gl_ledger: str,
     as_of: date,
+    candidate_ledgers: list[str] | None = None,
 ) -> DepartmentBudget | None:
-    dept = (department or "").strip()
-    if not dept:
+    """Find a budget row for the claim GL or its parent wallet candidates."""
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for token in [*(candidate_ledgers or []), gl_ledger]:
+        cleaned = (token or "").strip()
+        if not cleaned:
+            continue
+        key = cleaned.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append(cleaned)
+    if not candidates:
         return None
     keys = current_period_keys(as_of)
-    ledger = (gl_ledger or "").strip()
     rows = (
         await session.execute(
             select(DepartmentBudget).where(
@@ -588,19 +554,32 @@ async def _matching_department_budget(
             )
         )
     ).scalars().all()
-    dept_key = dept.casefold()
     for kind in ("monthly", "quarterly", "annual"):
         period_key = keys[kind]
-        for prefer_gl in (ledger, ""):
+        for candidate in candidates:
+            cand_key = candidate.casefold()
             for row in rows:
-                if (row.department or "").strip().casefold() != dept_key:
-                    continue
                 if row.period_kind != kind or row.period_key != period_key:
                     continue
-                if (row.gl_ledger or "").strip() != prefer_gl:
+                if (row.gl_ledger or "").strip().casefold() != cand_key:
                     continue
                 return row
     return None
+
+
+# Back-compat name used by older tests/imports.
+async def _matching_department_budget(
+    session: AsyncSession,
+    tenant_id,
+    *,
+    department: str = "",
+    gl_ledger: str,
+    as_of: date,
+) -> DepartmentBudget | None:
+    _ = department
+    return await _matching_gl_budget(
+        session, tenant_id, gl_ledger=gl_ledger, as_of=as_of
+    )
 
 
 async def run_team_expense_validations(
@@ -644,10 +623,12 @@ async def run_team_expense_validations(
     amount = _invoice_amount(data)
 
     doc = invoice_to_eval_document_from_data(data, email_sender)
+    emp_dept = (employee.department if employee else None) or None
     team_rule = match_team_expense_rule(
         doc,
         config.team_expense_rules,
         amount=amount,
+        employee_department=emp_dept,
     )
 
     as_of = date.today()
@@ -664,89 +645,97 @@ async def run_team_expense_validations(
     emp_email_key = normalize_employee_email(
         (employee.email if employee else None) or stamped
     )
-    if (
-        budget_control
-        and employee is not None
-        and emp_email_key
-        and normalize_team_expense_kind(team_expense_kind) != TEAM_EXPENSE_KIND_ADVANCE
-    ):
-        spend = await employee_period_spend(
-            session,
-            tenant_id,
-            emp_email_key,
-            as_of=as_of,
-            exclude_invoice_id=exclude_invoice_id,
-        )
-        mtd, qtd, ytd = spend.mtd, spend.qtd, spend.ytd
-        ledger = (team_rule.post_to.ledger if team_rule else "") or ""
-        if ledger.strip():
-            category_spent = await employee_category_spend(
-                session,
-                tenant_id,
-                emp_email_key,
-                ledger,
-                as_of=as_of,
-                exclude_invoice_id=exclude_invoice_id,
-            )
 
     available: float | None = None
     ledger_balance: float | None = None
     pending_reserved = 0.0
-    if (
-        advance_control
-        and employee is not None
-        and normalize_team_expense_kind(team_expense_kind) == TEAM_EXPENSE_KIND_AGAINST_ADVANCE
-    ):
-        from app.services.purchase.team_expense_advance_service import (
-            employee_available_advance,
-        )
 
-        avail, ledger, pending = await employee_available_advance(
-            session,
-            tenant_id,
-            config,
-            employee,
-            exclude_invoice_id=exclude_invoice_id,
+    gl_allocated = None
+    gl_consumed = None
+    gl_period_key = None
+    gl_name = ""
+    gl_budget_checks: list[dict[str, float | str | None]] = []
+    # Prefer posted invoice account, then team-expense rule posting
+    # (sub-GL when set, else parent ledger).
+    if invoice is not None:
+        gl_name = (
+            (getattr(invoice, "account_name", None) or "").strip()
+            or (getattr(invoice, "account_code", None) or "").strip()
         )
-        available = float(avail)
-        ledger_balance = float(ledger)
-        pending_reserved = float(pending)
+    rule_parent = ""
+    rule_sub = ""
+    if team_rule is not None:
+        rule_parent = (team_rule.post_to.ledger or "").strip()
+        rule_sub = (team_rule.post_to.sub_ledger or "").strip()
+    if not gl_name:
+        gl_name = rule_sub or rule_parent
 
-    dept_allocated = None
-    dept_consumed = None
-    dept_period_key = None
-    dept_name = (employee.department if employee else "") or ""
     if (
         budget_control
-        and employee is not None
+        and gl_name
         and normalize_team_expense_kind(team_expense_kind) != TEAM_EXPENSE_KIND_ADVANCE
     ):
-        gl = (team_rule.post_to.ledger if team_rule else "") or ""
-        dept_row = await _matching_department_budget(
+        from app.services.master_data.chart_of_accounts_service import (
+            account_is_sub_ledger,
+            budget_parent_for_claim_gl,
+        )
+
+        coa = list(config.chart_of_accounts or [])
+        budget_parent = budget_parent_for_claim_gl(
+            gl_name,
+            coa,
+            fallback_parent=rule_parent or None,
+        )
+        # Specificity first: claim Sub-GL / exact GL, then parent wallet.
+        specific_row = await _matching_gl_budget(
             session,
             tenant_id,
-            department=dept_name,
-            gl_ledger=gl,
+            gl_ledger=gl_name,
             as_of=as_of,
+            candidate_ledgers=[gl_name, rule_sub],
         )
-        if dept_row is not None:
-            dept_allocated = float(dept_row.allocated or 0)
-            dept_period_key = dept_row.period_key
-            dept_emails = [
-                normalize_employee_email(e.email)
-                for e in employees
-                if (e.department or "").strip().casefold() == dept_name.strip().casefold()
-            ]
-            dept_consumed = await department_period_consumed(
+        parent_row = await _matching_gl_budget(
+            session,
+            tenant_id,
+            gl_ledger=budget_parent or gl_name,
+            as_of=as_of,
+            candidate_ledgers=[budget_parent, rule_parent],
+        )
+
+        seen_budget_ids: set[int] = set()
+        for row in (specific_row, parent_row):
+            if row is None or row.id in seen_budget_ids:
+                continue
+            seen_budget_ids.add(row.id)
+            wallet = (row.gl_ledger or "").strip() or gl_name
+            include_children = not account_is_sub_ledger(wallet, coa)
+            consumed = await gl_period_consumed(
                 session,
                 tenant_id,
-                department=dept_name,
-                period_kind=dept_row.period_kind,
-                period_key=dept_row.period_key,
-                gl_ledger=dept_row.gl_ledger or "",
-                employee_emails=dept_emails,
+                gl_ledger=wallet,
+                period_kind=row.period_kind,
+                period_key=row.period_key,
                 exclude_invoice_id=exclude_invoice_id,
+                chart_of_accounts=coa,
+                include_children=include_children,
             )
+            gl_budget_checks.append(
+                {
+                    "gl_ledger": wallet,
+                    "allocated": float(row.allocated or 0),
+                    "consumed": float(consumed),
+                    "period_key": row.period_key,
+                    "enforcement": (getattr(row, "enforcement", None) or "soft"),
+                }
+            )
+
+        if gl_budget_checks:
+            # Primary display values from the most specific wallet checked.
+            primary = gl_budget_checks[0]
+            gl_allocated = primary["allocated"]  # type: ignore[assignment]
+            gl_consumed = primary["consumed"]  # type: ignore[assignment]
+            gl_period_key = primary["period_key"]  # type: ignore[assignment]
+            gl_name = str(primary["gl_ledger"] or gl_name)
 
     def _budget_result(result: ValidationResult) -> ValidationResult:
         if budget_control:
@@ -754,7 +743,7 @@ async def run_team_expense_validations(
         return ValidationResult(
             result.rule,
             True,
-            "Budget control off for this document type — employee budget not checked",
+            "Budget control off for this document type — GL budget not checked",
             skipped=True,
         )
 
@@ -807,18 +796,39 @@ async def run_team_expense_validations(
                 pending_reserved=pending_reserved,
             )
         ),
-        _budget_result(
-            vr_te08_department_budget(
-                employee,
-                amount,
-                team_expense_kind=team_expense_kind,
-                allocated=dept_allocated,
-                consumed=dept_consumed,
-                department=dept_name,
-                period_key=dept_period_key,
-            )
-        ),
     ]
+
+    if gl_budget_checks:
+        for check in gl_budget_checks:
+            results.append(
+                _budget_result(
+                    vr_te08_gl_budget(
+                        employee,
+                        amount,
+                        team_expense_kind=team_expense_kind,
+                        allocated=float(check["allocated"] or 0),
+                        consumed=float(check["consumed"] or 0),
+                        period_key=str(check["period_key"] or "") or None,
+                        gl_ledger=str(check["gl_ledger"] or "") or None,
+                        enforcement=str(check.get("enforcement") or "soft"),
+                    )
+                )
+            )
+    else:
+        results.append(
+            _budget_result(
+                vr_te08_gl_budget(
+                    employee,
+                    amount,
+                    team_expense_kind=team_expense_kind,
+                    allocated=gl_allocated,
+                    consumed=gl_consumed,
+                    period_key=gl_period_key,
+                    gl_ledger=gl_name or None,
+                    enforcement="soft",
+                )
+            )
+        )
 
     emp_key = emp_email_key or normalize_employee_email(stamped) or ""
     duplicate = None

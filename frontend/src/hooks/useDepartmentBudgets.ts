@@ -16,13 +16,47 @@ export function useCreateDepartmentBudget() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (body: {
-      department: string;
-      gl_ledger?: string;
+      gl_ledger: string;
       period_kind: "monthly" | "quarterly" | "annual";
       period_key: string;
       allocated: number;
+      department?: string;
       notes?: string | null;
     }) => api.createDepartmentBudget(body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.departmentBudgets() });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.teDepartmentBudgetUtilization() });
+    },
+  });
+}
+
+export function useUpsertParentGlBudgetTree() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      parent_gl: string;
+      period_kind: "monthly" | "quarterly" | "annual";
+      period_key: string;
+      allocated: number;
+      sub_allocations: { gl_ledger: string; allocated: number }[];
+      enforcement?: "soft" | "hard";
+      notes?: string | null;
+    }) => api.upsertParentGlBudgetTree(body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.departmentBudgets() });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.teDepartmentBudgetUtilization() });
+    },
+  });
+}
+
+export function useDeleteParentGlBudgetTree() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (params: {
+      parent_gl: string;
+      period_kind: "monthly" | "quarterly" | "annual";
+      period_key: string;
+    }) => api.deleteParentGlBudgetTree(params),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.departmentBudgets() });
       void queryClient.invalidateQueries({ queryKey: queryKeys.teDepartmentBudgetUtilization() });

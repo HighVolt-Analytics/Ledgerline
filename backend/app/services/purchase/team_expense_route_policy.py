@@ -12,7 +12,7 @@ from typing import Any
 from app.schemas.document_type import DocumentTypeDefinition
 from app.schemas.rule_book_config import (
     TEAM_EXPENSE_KIND_ADVANCE,
-    TEAM_EXPENSE_KIND_AGAINST_ADVANCE,
+    TEAM_EXPENSE_KIND_CLAIM,
 )
 from app.services.classification.document_type_catalog import (
     ROUTE_TEAM,
@@ -22,9 +22,7 @@ from app.services.classification.document_type_catalog import (
 from app.services.purchase.team_expense_validator import find_employee_by_sender
 
 TEAM_EXPENSE_CAPTURE_CHANNELS = frozenset({"email", "whatsapp", "viber"})
-_PINNED_ADVANCE_KINDS = frozenset(
-    {TEAM_EXPENSE_KIND_ADVANCE, TEAM_EXPENSE_KIND_AGAINST_ADVANCE}
-)
+_PINNED_ADVANCE_KINDS = frozenset({TEAM_EXPENSE_KIND_ADVANCE})
 
 
 def normalize_capture_source(invoice: Any) -> str:
@@ -75,10 +73,10 @@ def infer_preferred_team_expense_kind(
     if isinstance(fields, dict):
         summary = str(fields.get("document_summary") or "").strip().lower()
     blob = f"{heading} {summary}"
-    if "against advance" in blob or "against_advance" in blob:
-        return TEAM_EXPENSE_KIND_AGAINST_ADVANCE
     if "advance requisition" in blob or "advance request" in blob:
         return TEAM_EXPENSE_KIND_ADVANCE
+    if "expense claim" in blob or "reimbursement" in blob:
+        return TEAM_EXPENSE_KIND_CLAIM
 
     llm_code = (getattr(invoice, "llm_suggested_dt", None) or "").strip().upper()
     if llm_code and document_types:
@@ -134,7 +132,7 @@ def ensure_team_expenses_document_type(
 
     Prefer (in order): current TE DT, LLM-suggested TE code, kind inferred from
     heading/kind pin, then catalogue primary. Never replace a TE DT that already
-    pins advance_requisition / expense_against_advance with a generic claim DT.
+    pins advance_requisition with a generic claim DT.
     """
     from app.services.purchase.team_expense_kind_service import (
         document_type_team_expense_kind,

@@ -97,6 +97,7 @@ class ApprovalListResult:
 class ApproveInvoiceResult:
     response: InvoiceResponse
     enqueue_pipeline: bool = True
+    enqueue_posting_resume: bool = False
     quorum_met: bool = True
     quorum: dict | None = None
 
@@ -218,9 +219,11 @@ async def _approve_team_expense_for_posting(
     actor_name: str | None,
     actor_email: str | None,
 ) -> None:
-    """Resume mapping→journal after manager approval — do not re-run vision/OCR."""
-    from app.services.invoice.pipeline import resume_invoice_posting_pipeline
+    """Mark TE claim approved and ready for posting resume (async after HTTP returns).
 
+    Mapping→journal can take longer than the Vite proxy timeout when Sub-GL LLM
+    runs, so resume is enqueued by the API route — do not run it inline.
+    """
     loaded = (
         await db.execute(
             select(Invoice)
@@ -248,13 +251,15 @@ async def _approve_team_expense_for_posting(
                 previous_status=previous_status,
             ),
             "team_expense_posting_resume": True,
+            "posting_resume_deferred": True,
         },
         actor_name=actor_name,
         actor_email=actor_email,
     )
     # Clears sticky pending_approval so the gate lets the claim through.
     await reset_invoice_for_approval(db, loaded)
-    await resume_invoice_posting_pipeline(db, loaded, config=config)
+    # Show as in-flight until background resume finishes.
+    loaded.status = InvoiceStatus.MAPPING
 
     inv.status = loaded.status
     inv.evaluation_status = loaded.evaluation_status
@@ -440,6 +445,7 @@ async def approve_invoice_action(
         return ApproveInvoiceResult(
             response=response,
             enqueue_pipeline=False,
+            enqueue_posting_resume=True,
             quorum_met=True,
             quorum=progress.as_dict(),
         )

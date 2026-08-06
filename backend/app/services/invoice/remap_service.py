@@ -87,6 +87,9 @@ async def _regenerate_journal_entries(
     )
     from app.models.tenant import Tenant
     from app.tenant_settings import tenant_currency
+    from app.services.purchase.team_expense_advance_service import (
+        resolve_claim_advance_available,
+    )
 
     tenant = await session.get(Tenant, invoice.tenant_id)
     base_currency = tenant_currency(tenant)
@@ -98,6 +101,9 @@ async def _regenerate_journal_entries(
         customer_registry_id=customer_reg_id,
         control_mapping=control_mapping,
         base_currency=base_currency,
+        advance_available=await resolve_claim_advance_available(
+            session, invoice, config
+        ),
     )
     # Remap skips keep PROCESSED status; audit log (context=remap_skip) is the trail —
     # Pipeline debug journal step only fails when status is EXCEPTION.

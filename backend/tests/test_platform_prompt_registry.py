@@ -194,6 +194,18 @@ async def test_resolve_falls_back_to_code_without_cache() -> None:
     assert "Repeating the same header on every page" in resolved.body
 
 
+def test_sub_ledger_assign_prompt_in_catalog() -> None:
+    from app.services.prompt_registry.catalog import get_prompt_definition
+
+    defn = get_prompt_definition("llm.sub_ledger.assign.system")
+    assert defn is not None
+    assert defn.group == "Coding"
+    body = resolve_system_prompt_text("llm.sub_ledger.assign.system")
+    assert "ROLE — Sub-ledger Assignment Agent" in body
+    assert "document_sub_ledger" in body
+    assert "Parent ledger is FIXED" in body
+
+
 @pytest.mark.asyncio
 async def test_build_classify_system_prompt_uses_override(db_session: AsyncSession) -> None:
     await ensure_seeded(db_session)

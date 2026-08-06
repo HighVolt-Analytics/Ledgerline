@@ -17,7 +17,7 @@ function baseInvoice(overrides: Partial<Invoice> = {}): Invoice {
     status: "exception",
     email_sender: "marcus@example.com",
     route_target: "Team Expenses",
-    team_expense_kind: "expense_against_advance",
+    team_expense_kind: "expense_claim",
     created_at: "2026-04-01T10:00:00Z",
     ...overrides,
   } as Invoice;

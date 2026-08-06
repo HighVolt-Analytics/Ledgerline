@@ -63,7 +63,7 @@ export function emptyDocumentTypePostTo(): DocumentTypePostTo {
 
 export type RecognitionMode = "signals" | "prompt";
 
-/** Empty means auto: the claim kind is inferred from the employee's outstanding advance. */
+/** Empty means auto: expense claim unless a catalogue DT pins advance requisition. */
 export type DocumentTypeTeamExpenseKind =
   | ""
   | import("@/lib/v4RuleBookTypes").TeamExpenseKind;

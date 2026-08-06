@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.services.prompt_registry.currency_detect_default import CURRENCY_DETECT_SYSTEM_DEFAULT
-
+from app.services.prompt_registry.sub_ledger_assign_default import (
+    SUB_LEDGER_ASSIGN_SYSTEM_DEFAULT,
+)
 
 @dataclass(frozen=True)
 class PromptDefinition:
@@ -1352,6 +1354,16 @@ PROMPT_CATALOG: tuple[PromptDefinition, ...] = (
             "prefer UNCERTAIN over guessing ambiguous symbols."
         ),
         default_body=CURRENCY_DETECT_SYSTEM_DEFAULT,
+    ),
+    PromptDefinition(
+        key="llm.sub_ledger.assign.system",
+        label="Sub-ledger assignment (under DT parent GL)",
+        group="Coding",
+        description=(
+            "Document Type Post to fixes the parent GL; this prompt picks the child "
+            "Sub-GL from document/line content. Editable in Developer Port (super admin)."
+        ),
+        default_body=SUB_LEDGER_ASSIGN_SYSTEM_DEFAULT,
     ),
     PromptDefinition(
         key="pdf.segment.system",

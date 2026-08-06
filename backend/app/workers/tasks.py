@@ -11,7 +11,7 @@ from app.services.audit.audit_service import log_event
 from app.services.dossier.document_ref_service import audit_document_detail, invoice_log_fields
 from app.services.ingest.graph_mail_folders import finalize_graph_messages, folder_moves_enabled
 from app.services.ingest.mailbox_poll import poll_all_and_ingest, poll_mailbox_and_ingest
-from app.services.invoice.pipeline import EmailIngestResult, process_invoice
+from app.services.invoice.pipeline import EmailIngestResult, process_invoice, resume_invoice_posting_pipeline
 from app.tenant_scoped import get_for_tenant
 from app.utils.logger import configure_logging, get_logger
 from app.workers.celery_app import celery_app
@@ -306,6 +306,98 @@ def enqueue_invoice_pipelines(
         asyncio.create_task(
             process_invoices_batch_background(unique_ids, tenant_id=tenant_id),
             name=f"invoice-pipeline-batch-{unique_ids[0]}",
+        )
+    return "running"
+
+
+async def resume_invoice_posting_by_id(
+    invoice_id: int,
+    *,
+    tenant_id: uuid.UUID | None = None,
+) -> bool:
+    """Resume mapping→journal for an already-extracted invoice (no OCR)."""
+    resolved_tid = await _resolve_invoice_tenant_id(invoice_id, tenant_id)
+    if resolved_tid is None:
+        return False
+
+    ok = False
+    async with db_session_with_rls(resolved_tid) as session:
+        inv = await get_for_tenant(session, Invoice, invoice_id, resolved_tid)
+        if inv is None:
+            return False
+        try:
+            await resume_invoice_posting_pipeline(session, inv)
+            ok = True
+        except Exception as exc:
+            await session.rollback()
+            error_message = _pipeline_error_message(exc)
+            logger.error(
+                "posting_resume_error",
+                error=error_message,
+                invoice_id=invoice_id,
+                exc_info=True,
+            )
+            async with db_session_with_rls(resolved_tid) as err_session:
+                inv = await get_for_tenant(err_session, Invoice, invoice_id, resolved_tid)
+                if inv is not None and inv.status not in _TERMINAL_STATUSES:
+                    inv.status = InvoiceStatus.EXCEPTION
+                    await log_event(
+                        err_session,
+                        "pipeline_error",
+                        invoice_id=invoice_id,
+                        tenant_id=resolved_tid,
+                        detail=audit_document_detail(inv, error=error_message),
+                    )
+    return ok
+
+
+async def resume_invoice_posting_background(
+    invoice_id: int,
+    *,
+    tenant_id: uuid.UUID | None = None,
+) -> None:
+    """FastAPI background task — TE / variance posting resume after approve."""
+    global _last_run
+
+    resolved_tid = await _resolve_invoice_tenant_id(invoice_id, tenant_id)
+    lock = await _invoice_pipeline_lock(invoice_id)
+    async with lock:
+        _mark_pipeline_enter(resolved_tid)
+        try:
+            logger.info(
+                "invoice_posting_resume_started",
+                invoice_id=invoice_id,
+                tenant_id=str(resolved_tid) if resolved_tid else None,
+            )
+            await resume_invoice_posting_by_id(invoice_id, tenant_id=tenant_id)
+        finally:
+            _mark_pipeline_exit(resolved_tid)
+            _last_run = datetime.now(timezone.utc).isoformat()
+
+
+def enqueue_invoice_posting_resumes(
+    invoice_ids: list[int],
+    *,
+    tenant_id: uuid.UUID,
+    background_tasks=None,
+) -> str:
+    """Enqueue posting-only resume (no OCR). Used after Team Expense approve."""
+    unique_ids = list(dict.fromkeys(invoice_ids))
+    if not unique_ids:
+        return "idle"
+    # Prefer in-process background over Celery full process_invoice.
+    if background_tasks is not None:
+        for invoice_id in unique_ids:
+            background_tasks.add_task(
+                resume_invoice_posting_background,
+                invoice_id,
+                tenant_id=tenant_id,
+            )
+        return "running"
+    for invoice_id in unique_ids:
+        asyncio.create_task(
+            resume_invoice_posting_background(invoice_id, tenant_id=tenant_id),
+            name=f"invoice-posting-resume-{invoice_id}",
         )
     return "running"
 

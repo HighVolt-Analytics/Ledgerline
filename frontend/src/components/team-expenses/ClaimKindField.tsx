@@ -17,6 +17,8 @@ export function ClaimKindField({
   expenseLedger,
   advanceLedger,
   settlementLedger,
+  claimAmount = 0,
+  advanceAvailable = 0,
   disabled,
   onChange,
 }: {
@@ -24,6 +26,8 @@ export function ClaimKindField({
   expenseLedger: string;
   advanceLedger: string;
   settlementLedger: string;
+  claimAmount?: number;
+  advanceAvailable?: number;
   disabled: boolean;
   onChange: (kind: TeamExpenseKind) => void;
 }) {
@@ -31,6 +35,8 @@ export function ClaimKindField({
     expenseLedger,
     advanceLedger,
     settlementLedger,
+    claimAmount,
+    advanceAvailable,
   });
 
   return (

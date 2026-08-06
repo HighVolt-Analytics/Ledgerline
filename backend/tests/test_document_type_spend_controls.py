@@ -11,7 +11,6 @@ from app.models.employee_master import EmployeeMasterRecord
 from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.document_type import DocumentTypeDefinition
 from app.schemas.rule_book_config import (
-    TEAM_EXPENSE_KIND_AGAINST_ADVANCE,
     TEAM_EXPENSE_KIND_CLAIM,
     ChartOfAccountEntry,
     PostingDefaults,
@@ -176,7 +175,7 @@ async def test_advance_control_off_skips_advance_balance_rule(
         currency="AUD",
         total=Decimal("9999"),
         route_target=ROUTE_TEAM,
-        team_expense_kind=TEAM_EXPENSE_KIND_AGAINST_ADVANCE,
+        team_expense_kind=TEAM_EXPENSE_KIND_CLAIM,
         employee_email=EMP_EMAIL,
         email_sender=EMP_EMAIL,
         document_type_code="DT-NOADV",
@@ -203,7 +202,7 @@ async def test_advance_control_off_skips_advance_balance_rule(
         route_target=ROUTE_TEAM,
         email_sender=EMP_EMAIL,
         employee_email=EMP_EMAIL,
-        team_expense_kind=TEAM_EXPENSE_KIND_AGAINST_ADVANCE,
+        team_expense_kind=TEAM_EXPENSE_KIND_CLAIM,
         has_receipt_file=True,
         invoice=inv,
     )
@@ -213,7 +212,7 @@ async def test_advance_control_off_skips_advance_balance_rule(
 
 
 @pytest.mark.asyncio
-async def test_advance_control_off_does_not_auto_pick_against_advance(
+async def test_advance_control_off_defaults_to_expense_claim(
     db_session: AsyncSession,
 ) -> None:
     config = _config(_dt("DT-CLAIM", advance_control=False))
@@ -228,6 +227,6 @@ async def test_advance_control_off_does_not_auto_pick_against_advance(
         email_sender=EMP_EMAIL,
         file_hash="dt-claim-auto",
     )
-    # No DT pin; advance_control off → claim even if float would exist.
+    # No DT pin; auto-pick is always claim (float no longer switches kinds).
     kind = await resolve_default_team_expense_kind(db_session, inv, config)
     assert kind == TEAM_EXPENSE_KIND_CLAIM

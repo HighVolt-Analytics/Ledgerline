@@ -155,6 +155,15 @@ def _catalog_upgrade_markers() -> dict[str, tuple[str, ...]]:
             "PHASE 1 — SIGNAL HARVEST",
             "Prefer \"UNCERTAIN\" over a wrong answer",
         ),
+        "llm.sub_ledger.assign.system": (
+            "ROLE — Sub-ledger Assignment Agent",
+            "Parent ledger is FIXED",
+            "document_sub_ledger",
+            "line_suggestions",
+            "sub_ledger_catalogue",
+            "Prefer \"\" over a weak guess",
+            "SELF-CHECK BEFORE RETURNING",
+        ),
         # Distinctive markers from the v2 hardened segment prompt (stale seeds lack these).
         "pdf.segment.system": (
             "ROLE — Document Splitting Agent (page-range mode) — v2 (hardened)",

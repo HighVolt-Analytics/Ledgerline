@@ -35,10 +35,21 @@ class EmployeeAdvanceSettlementRow(BaseModel):
     last_claim: str = ""
     claim_ytd_spent: float = Field(
         0,
-        description="YTD claim spend counter (expense claim / against-advance only; not advance).",
+        description="YTD claim spend counter (expense claims only; not advance requisitions).",
     )
     advance_ledger_balance: Decimal = Decimal("0")
-    pending_against_advance: Decimal = Decimal("0")
+    advance_taken: Decimal = Field(
+        Decimal("0"),
+        description="Lifetime of Staff Advance debits (advance requisitions paid out).",
+    )
+    advance_used: Decimal = Field(
+        Decimal("0"),
+        description="Lifetime of Staff Advance credits (claims that netted the advance).",
+    )
+    pending_against_advance: Decimal = Field(
+        Decimal("0"),
+        description="Open expense claims that reserve Staff Advance float until posted.",
+    )
     available_advance: Decimal = Decimal("0")
 
 

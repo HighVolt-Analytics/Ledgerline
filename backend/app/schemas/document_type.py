@@ -55,15 +55,14 @@ DocumentTypeRouteTarget = Literal[
 
 PurchaseBundleRole = Literal["", "po", "grn"]
 SalesBundleRole = Literal["", "so", "dn"]
-# Empty means auto: the claim kind is inferred from the employee's advance balance.
+# Empty means auto: expense claim (unless DT pins advance requisition).
 DocumentTypeTeamExpenseKind = Literal[
     "",
     "advance_requisition",
-    "expense_against_advance",
     "expense_claim",
 ]
 TEAM_EXPENSE_KIND_CHOICES = frozenset(
-    {"advance_requisition", "expense_against_advance", "expense_claim"}
+    {"advance_requisition", "expense_claim"}
 )
 RecognitionMode = Literal["signals", "prompt"]
 CounterpartySource = Literal["letterhead", "consignee", "applicant", "bill_to"]
@@ -162,7 +161,7 @@ class DocumentTypeDefinition(BaseModel):
     team_expense_kind: DocumentTypeTeamExpenseKind = Field(
         default="",
         alias="teamExpenseKind",
-        description="Claim kind stamped on Team Expenses documents; empty infers from advance balance.",
+        description="Claim kind stamped on Team Expenses documents; empty defaults to expense claim.",
     )
     budget_control: bool = Field(
         default=False,
@@ -172,7 +171,7 @@ class DocumentTypeDefinition(BaseModel):
     advance_control: bool = Field(
         default=False,
         alias="advanceControl",
-        description="When true, enforce employee-level advance availability for this document type.",
+        description="When true, surface employee Staff Advance float for this document type.",
     )
     sample_analysis: DocumentTypeSampleAnalysis | None = Field(
         default=None,

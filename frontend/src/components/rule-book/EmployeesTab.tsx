@@ -29,7 +29,6 @@ import { recentClaimValidationsFromInvoices } from "@/lib/routePageAdapters";
 import { fmtAud } from "@/lib/v4MockData";
 import type { EmployeeMaster } from "@/lib/v4RuleBookTypes";
 import { ChannelBadge } from "@/components/team-expenses/ExpenseBadges";
-import { BudgetProgressBar } from "./BudgetProgressBar";
 import { EmployeeDetailPanel } from "./EmployeeDetailPanel";
 import { EmployeeImportDialog } from "./EmployeeImportDialog";
 
@@ -231,7 +230,7 @@ export function EmployeesTab() {
                 <th className="px-3 py-2 font-medium">WhatsApp</th>
                 <th className="px-3 py-2 font-medium">Email</th>
                 <th className="px-3 py-2 font-medium">Status</th>
-                <th className="px-3 py-2 font-medium w-44">MTD / Monthly</th>
+                <th className="px-3 py-2 font-medium w-28">MTD spend</th>
                 <th className="px-3 py-2 font-medium w-28">Net advance</th>
                 <th className="px-3 py-2 font-medium">Last claim</th>
               </tr>
@@ -287,19 +286,8 @@ export function EmployeesTab() {
                       <td className="px-3 py-2">
                         <StatusDot status={dirty ? draft.status : emp.status} />
                       </td>
-                      <td className="px-3 py-2">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs whitespace-nowrap">
-                            {fmtAud(emp.mtdSpent)} /{" "}
-                            {fmtAud(dirty ? draft.budget.monthly : emp.budget.monthly)}
-                          </span>
-                        </div>
-                        <div className="mt-1">
-                          <BudgetProgressBar
-                            value={emp.mtdSpent}
-                            max={dirty ? draft.budget.monthly : emp.budget.monthly}
-                          />
-                        </div>
+                      <td className="px-3 py-2 text-xs tnum whitespace-nowrap">
+                        {fmtAud(emp.mtdSpent)}
                       </td>
                       <td className="px-3 py-2 text-xs tnum whitespace-nowrap">
                         {fmtAud(emp.advanceBalance ?? 0)}

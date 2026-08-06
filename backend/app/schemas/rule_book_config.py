@@ -116,6 +116,7 @@ class TeamExpenseMatchOn(BaseModel):
     channel_equals: str | None = None
     amount_min: float | None = None
     amount_max: float | None = None
+    department_equals: str | None = None
 
 
 class TeamExpensePolicy(BaseModel):
@@ -314,25 +315,30 @@ class PostingDefaults(BaseModel):
 
 
 TEAM_EXPENSE_KIND_ADVANCE = "advance_requisition"
-TEAM_EXPENSE_KIND_AGAINST_ADVANCE = "expense_against_advance"
 TEAM_EXPENSE_KIND_CLAIM = "expense_claim"
 
 TeamExpenseKind = Literal[
     "advance_requisition",
-    "expense_against_advance",
     "expense_claim",
 ]
 
 DEFAULT_TEAM_EXPENSE_KIND: TeamExpenseKind = TEAM_EXPENSE_KIND_CLAIM
 DEFAULT_STAFF_ADVANCE_ACCOUNT = "Staff Advance"
 
+# Legacy stored value — normalized to expense_claim.
+_LEGACY_AGAINST_ADVANCE = "expense_against_advance"
+
 
 def normalize_team_expense_kind(value: str | None) -> TeamExpenseKind:
-    """Coerce a stored/user kind to a supported value (legacy null → expense claim)."""
+    """Coerce a stored/user kind to a supported value (legacy null → expense claim).
+
+    Historical ``expense_against_advance`` invoices are treated as expense claims.
+    """
     cleaned = (value or "").strip().lower()
+    if cleaned == _LEGACY_AGAINST_ADVANCE:
+        return TEAM_EXPENSE_KIND_CLAIM
     if cleaned in {
         TEAM_EXPENSE_KIND_ADVANCE,
-        TEAM_EXPENSE_KIND_AGAINST_ADVANCE,
         TEAM_EXPENSE_KIND_CLAIM,
     }:
         return cleaned  # type: ignore[return-value]
@@ -1267,9 +1273,21 @@ def _normalize_ai_classification_provider(data: dict[str, Any]) -> dict[str, Any
 
 
 def _backfill_document_type_post_to(data: dict[str, Any]) -> dict[str, Any]:
-    """Suggest Post to ledger names from playbook profile + tenant COA."""
+    """Suggest / repair Post to ledgers from playbook profile + tenant COA.
+
+    When a transactional DT still points at a ledger removed from the chart
+    (e.g. starter ``Operating Expenses`` after a custom COA), remapping to a
+    valid playbook default so Rule Book saves are not blocked.
+    """
     from app.schemas.rule_book_config import ChartOfAccountEntry
-    from app.services.classification.document_type_gl_defaults import default_post_to_ledger
+    from app.services.classification.document_type_gl_defaults import (
+        default_post_to_ledger,
+        resolve_coa_account_name,
+    )
+    from app.services.classification.document_type_post_to_service import (
+        is_control_post_to_ledger,
+    )
+    from app.services.master_data.chart_of_accounts_service import sub_ledger_exists
 
     types = data.get("document_types")
     if not isinstance(types, list):
@@ -1277,7 +1295,11 @@ def _backfill_document_type_post_to(data: dict[str, Any]) -> dict[str, Any]:
     coa_raw = data.get("chart_of_accounts") or []
     entries: list[ChartOfAccountEntry] = []
     for row in coa_raw if isinstance(coa_raw, list) else []:
-        if isinstance(row, dict) and row.get("name"):
+        if not isinstance(row, dict) or not row.get("name"):
+            continue
+        try:
+            entries.append(ChartOfAccountEntry.model_validate(row))
+        except Exception:
             entries.append(
                 ChartOfAccountEntry(
                     code=str(row.get("code") or ""),
@@ -1285,6 +1307,19 @@ def _backfill_document_type_post_to(data: dict[str, Any]) -> dict[str, Any]:
                     type=row.get("type") or "Expense",
                 )
             )
+
+    posting_defaults_raw = data.get("posting_defaults") or data.get("postingDefaults")
+    from app.schemas.rule_book_config import PostingDefaults
+    from pydantic import ValidationError
+
+    try:
+        posting_defaults = (
+            PostingDefaults.model_validate(posting_defaults_raw)
+            if isinstance(posting_defaults_raw, dict)
+            else PostingDefaults()
+        )
+    except ValidationError:
+        posting_defaults = PostingDefaults()
 
     merged: list[Any] = []
     for row in types:
@@ -1299,25 +1334,53 @@ def _backfill_document_type_post_to(data: dict[str, Any]) -> dict[str, Any]:
         if post is None and isinstance(row.get("postTo"), dict):
             post = row.get("postTo")
         ledger = str((post or {}).get("ledger") or "").strip()
+        sub = str(
+            (post or {}).get("sub_ledger") or (post or {}).get("subLedger") or ""
+        ).strip()
+        profile = str(row.get("playbook_profile") or row.get("playbookProfile") or "")
+        route_target = str(row.get("route_target") or row.get("routeTarget") or "")
+
+        resolved_ledger = resolve_coa_account_name(ledger, entries) if ledger else ""
+        needs_remap = False
         if not ledger and entries:
-            profile = str(row.get("playbook_profile") or row.get("playbookProfile") or "")
-            route_target = str(row.get("route_target") or row.get("routeTarget") or "")
-            resolved = default_post_to_ledger(profile, entries, route_target=route_target)
-            if resolved:
-                sub = str(
-                    (post or {}).get("sub_ledger") or (post or {}).get("subLedger") or ""
-                )
-                post_payload = {
-                    **(post or {}),
-                    "ledger": resolved,
-                    "sub_ledger": sub,
-                    "subLedger": sub,
-                }
-                row = {
-                    **row,
-                    "post_to": post_payload,
-                    "postTo": post_payload,
-                }
+            needs_remap = True
+        elif ledger and not resolved_ledger:
+            # Orphaned name (removed from COA) — remapping unless it is clearly a
+            # control-account misconfig that validation should still reject.
+            if not is_control_post_to_ledger(ledger, posting_defaults=posting_defaults):
+                needs_remap = True
+        elif ledger and resolved_ledger and resolved_ledger != ledger:
+            # Canonicalize casing / fuzzy match to the COA name.
+            ledger = resolved_ledger
+
+        if needs_remap and entries:
+            remapped = default_post_to_ledger(
+                profile, entries, route_target=route_target
+            )
+            if remapped:
+                ledger = remapped
+                # Sub-ledger may not belong under the new parent.
+                if sub and not sub_ledger_exists(ledger, sub, entries):
+                    sub = ""
+            elif not resolved_ledger:
+                # Leave orphaned ledger for validation to surface a clear error
+                # when COA has no suitable fallback account.
+                pass
+
+        if ledger or sub or post:
+            if sub and ledger and not sub_ledger_exists(ledger, sub, entries):
+                sub = ""
+            post_payload = {
+                **(post or {}),
+                "ledger": ledger,
+                "sub_ledger": sub,
+                "subLedger": sub,
+            }
+            row = {
+                **row,
+                "post_to": post_payload,
+                "postTo": post_payload,
+            }
         merged.append(row)
     data["document_types"] = merged
     return data

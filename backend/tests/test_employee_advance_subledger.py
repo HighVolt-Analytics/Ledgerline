@@ -274,9 +274,10 @@ async def test_batch_balances_and_list_response_include_advance(
 
 
 @pytest.mark.asyncio
-async def test_pending_against_advance_reduces_available(
+async def test_pending_open_claims_reserve_advance_float(
     db_session: AsyncSession,
 ) -> None:
+    """Open expense claims reserve Staff Advance until posted (partial netting)."""
     await save_rule_book_config(db_session, _config(), TESTING_TENANT_UUID)
     employee = await create_employee_master(
         db_session,
@@ -301,7 +302,7 @@ async def test_pending_against_advance_reduces_available(
         email_sender="marcus@example.com",
         team_expense_kind="advance_requisition",
     )
-    pending_inv = Invoice(
+    open_claim = Invoice(
         tenant_id=TESTING_TENANT_UUID,
         status=InvoiceStatus.EXCEPTION,
         currency="AUD",
@@ -309,19 +310,9 @@ async def test_pending_against_advance_reduces_available(
         total=Decimal("400"),
         route_target=ROUTE_TEAM,
         email_sender="marcus@example.com",
-        team_expense_kind="expense_against_advance",
+        team_expense_kind="expense_claim",
     )
-    current_inv = Invoice(
-        tenant_id=TESTING_TENANT_UUID,
-        status=InvoiceStatus.EXCEPTION,
-        currency="AUD",
-        invoice_date=date(2026, 4, 3),
-        total=Decimal("700"),
-        route_target=ROUTE_TEAM,
-        email_sender="marcus@example.com",
-        team_expense_kind="expense_against_advance",
-    )
-    db_session.add_all([advance_inv, pending_inv, current_inv])
+    db_session.add_all([advance_inv, open_claim])
     await db_session.flush()
     db_session.add(
         JournalEntry(
@@ -341,7 +332,7 @@ async def test_pending_against_advance_reduces_available(
         db_session,
         TESTING_TENANT_UUID,
         employee,
-        exclude_invoice_id=current_inv.id,
+        exclude_invoice_id=None,
     )
     assert pending == Decimal("400")
 
@@ -350,29 +341,28 @@ async def test_pending_against_advance_reduces_available(
         TESTING_TENANT_UUID,
         config,
         employee,
-        exclude_invoice_id=current_inv.id,
+        exclude_invoice_id=open_claim.id,
     )
     assert ledger == Decimal("1000")
-    assert reserved == Decimal("400")
-    assert available == Decimal("600")
+    assert reserved == Decimal("0")
+    assert available == Decimal("1000")
 
-    result = vr_te07_advance_balance(
+    available_with_pending, _, reserved_with = await employee_available_advance(
+        db_session,
+        TESTING_TENANT_UUID,
+        config,
         employee,
-        700.0,
-        team_expense_kind="expense_against_advance",
-        advance_balance=float(available),
-        ledger_balance=float(ledger),
-        pending_reserved=float(reserved),
+        exclude_invoice_id=None,
     )
-    assert result.passed is False
-    assert "exceeds available advance" in result.message
-    assert "pending other claims" in result.message
+    assert reserved_with == Decimal("400")
+    assert available_with_pending == Decimal("600")
 
 
 @pytest.mark.asyncio
-async def test_approve_recheck_blocks_over_clear(
+async def test_approve_allows_claim_without_advance_balance_gate(
     db_session: AsyncSession,
 ) -> None:
+    """VR-TE07 retired — claim approval is not blocked by outstanding advance float."""
     await save_rule_book_config(db_session, _config(), TESTING_TENANT_UUID)
     await create_employee_master(
         db_session,
@@ -404,7 +394,7 @@ async def test_approve_recheck_blocks_over_clear(
         total=Decimal("900"),
         route_target=ROUTE_TEAM,
         email_sender="marcus@example.com",
-        team_expense_kind="expense_against_advance",
+        team_expense_kind="expense_claim",
         raw_file_path="/tmp/claim.pdf",
     )
     db_session.add_all([advance_inv, claim])
@@ -423,8 +413,7 @@ async def test_approve_recheck_blocks_over_clear(
     )
     await db_session.flush()
 
-    with pytest.raises(ValueError, match="exceeds available advance"):
-        await assert_team_expense_approvable(db_session, claim)
+    await assert_team_expense_approvable(db_session, claim)
 
 
 class _Employee:
@@ -432,40 +421,13 @@ class _Employee:
     name = "Marcus Webb"
 
 
-def test_against_advance_warns_when_claim_exceeds_balance() -> None:
-    result = vr_te07_advance_balance(
-        _Employee(),  # type: ignore[arg-type]
-        900.0,
-        team_expense_kind="expense_against_advance",
-        advance_balance=600.0,
-    )
-    assert result.passed is False
-    assert "exceeds available advance" in result.message
-
-
-def test_against_advance_treats_none_balance_as_zero() -> None:
-    result = vr_te07_advance_balance(
-        _Employee(),  # type: ignore[arg-type]
-        10.0,
-        team_expense_kind="expense_against_advance",
-        advance_balance=None,
-    )
-    assert result.passed is False
-    assert "available advance 0.00" in result.message
-
-
-def test_against_advance_passes_within_balance() -> None:
-    result = vr_te07_advance_balance(
-        _Employee(),  # type: ignore[arg-type]
-        500.0,
-        team_expense_kind="expense_against_advance",
-        advance_balance=600.0,
-    )
-    assert result.passed is True
-
-
-def test_balance_rule_skipped_for_other_kinds() -> None:
-    for kind in (None, "expense_claim", "advance_requisition"):
+def test_vr_te07_retired_for_all_kinds() -> None:
+    for kind in (
+        None,
+        "expense_claim",
+        "advance_requisition",
+        "expense_against_advance",
+    ):
         result = vr_te07_advance_balance(
             _Employee(),  # type: ignore[arg-type]
             9000.0,
@@ -473,3 +435,5 @@ def test_balance_rule_skipped_for_other_kinds() -> None:
             advance_balance=0.0,
         )
         assert result.passed is True
+        assert result.skipped is True
+        assert "retired" in result.message.lower()

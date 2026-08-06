@@ -55,8 +55,10 @@ const ADVANCE_HEADERS = [
   "Claim count",
   "Last claim",
   "Claim YTD spent",
+  "Advance taken",
+  "Advance used",
   "Advance ledger balance",
-  "Pending against advance",
+  "Pending claims",
   "Available advance",
 ];
 
@@ -89,6 +91,8 @@ export function buildAdvanceSettlementCsv(rows: EmployeeAdvanceSettlementRow[]):
       r.claim_count,
       r.last_claim,
       toNumber(r.claim_ytd_spent),
+      toNumber(r.advance_taken),
+      toNumber(r.advance_used),
       toNumber(r.advance_ledger_balance),
       toNumber(r.pending_against_advance),
       toNumber(r.available_advance),

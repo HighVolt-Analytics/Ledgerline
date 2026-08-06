@@ -23,8 +23,6 @@ from app.services.rule_book.rule_book_mapper import (
 )
 from app.schemas.rule_book_config import (
     TEAM_EXPENSE_KIND_ADVANCE,
-    TEAM_EXPENSE_KIND_AGAINST_ADVANCE,
-    TEAM_EXPENSE_KIND_CLAIM,
     normalize_team_expense_kind,
 )
 
@@ -99,6 +97,16 @@ def resolve_team_advance_parent_mapping(config: RuleBookConfigPayload) -> Accoun
     return resolve_category_for_config(label, config)
 
 
+def claim_advance_net_amount(
+    claim_total: Decimal,
+    advance_available: Decimal | None,
+) -> Decimal:
+    """How much Staff Advance float to clear on an expense claim (partial netting OK)."""
+    total = _quantize_money(max(Decimal("0"), claim_total))
+    available = _quantize_money(max(Decimal("0"), advance_available or Decimal("0")))
+    return min(total, available)
+
+
 def _team_expense_entries(
     invoice: Invoice,
     mapping: AccountMapping,
@@ -109,13 +117,13 @@ def _team_expense_entries(
     gst: Decimal,
     total: Decimal,
     control_mapping: AccountMapping | None,
+    advance_available: Decimal | None = None,
 ) -> list[JournalLine]:
     """
     Team Expenses journals keyed by claim kind.
 
-    Advance requisition   Dr employee advance / Cr settlement
-    Expense against adv.  Dr expense (+ tax) / Cr employee advance
-    Expense claim         Dr expense (+ tax) / Cr settlement
+    Advance requisition  Dr employee advance / Cr settlement
+    Expense claim        Dr expense (+ tax) / Cr advance (net available) + Cr settlement (rest)
     """
     kind = normalize_team_expense_kind(invoice.team_expense_kind)
     settlement = get_team_settlement_account_mapping(config)
@@ -141,7 +149,6 @@ def _team_expense_entries(
             ),
         ]
 
-    credit = advance if kind == TEAM_EXPENSE_KIND_AGAINST_ADVANCE else settlement
     lines = [
         JournalLine(
             entry_date,
@@ -164,16 +171,31 @@ def _team_expense_entries(
                 EntryType.DEBIT,
             )
         )
-    lines.append(
-        JournalLine(
-            entry_date,
-            credit.account_code,
-            credit.account_name,
-            Decimal("0"),
-            total,
-            EntryType.CREDIT,
+
+    net_advance = claim_advance_net_amount(total, advance_available)
+    settle_credit = _quantize_money(total - net_advance)
+    if net_advance > 0:
+        lines.append(
+            JournalLine(
+                entry_date,
+                advance.account_code,
+                advance.account_name,
+                Decimal("0"),
+                net_advance,
+                EntryType.CREDIT,
+            )
         )
-    )
+    if settle_credit > 0:
+        lines.append(
+            JournalLine(
+                entry_date,
+                settlement.account_code,
+                settlement.account_name,
+                Decimal("0"),
+                settle_credit,
+                EntryType.CREDIT,
+            )
+        )
     return lines
 
 
@@ -313,6 +335,7 @@ def generate_entries(
     customer_registry_id: int | None = None,
     control_mapping: AccountMapping | None = None,
     base_currency: str | None = None,
+    advance_available: Decimal | None = None,
 ) -> list[JournalLine]:
     from app.schemas.rule_book_config import RuleBookConfigPayload as ConfigPayload
 
@@ -332,6 +355,7 @@ def generate_entries(
             gst=gst,
             total=total,
             control_mapping=control_mapping,
+            advance_available=advance_available,
         )
         return _with_accrual_fx(lines, invoice=invoice, base_currency=base_currency)
 
@@ -434,11 +458,10 @@ def get_unresolved_control_accounts(
         team = config.team_expense_posting
         kind = normalize_team_expense_kind(invoice.team_expense_kind)
         settlement_label = team_settlement_account_label(config)
-        if kind != TEAM_EXPENSE_KIND_AGAINST_ADVANCE and not category_resolved_in_coa(
-            settlement_label, config
-        ):
+        # Settlement always; Staff Advance needed for requisitions and claim netting.
+        if not category_resolved_in_coa(settlement_label, config):
             unresolved.append("settlement_account")
-        if kind != TEAM_EXPENSE_KIND_CLAIM and not category_resolved_in_coa(
+        if not category_resolved_in_coa(
             team.default_advance_parent_ledger, config
         ):
             unresolved.append("staff_advance_account")

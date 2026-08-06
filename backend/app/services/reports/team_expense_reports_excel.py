@@ -41,7 +41,7 @@ ZEBRA_FILL = PatternFill("solid", fgColor="F3F7F8")
 
 SHEET_ADVANCE = "Employee Advance Settlement"
 SHEET_BUDGET = "Employee Spending Limit Utilization"
-SHEET_DEPT = "Department Budget Utilization"
+SHEET_DEPT = "GL Account Budget Utilization"
 SHEET_SUMMARY = "Employee Expense Summary"
 
 ADVANCE_HEADERS = [
@@ -70,8 +70,10 @@ ADVANCE_HEADERS = [
     "Claim Count",
     "Last Claim Date",
     "Claim YTD Spent",
+    "Advance Taken",
+    "Advance Used",
     "Advance Ledger Balance",
-    "Pending Against Advance",
+    "Pending Claims",
     "Available Advance",
 ]
 
@@ -124,18 +126,14 @@ BUDGET_HEADERS = [
 ]
 
 DEPT_BUDGET_HEADERS = [
-    "Department",
-    "GL Ledger",
+    "Parent GL",
+    "Sub-GL",
     "Period Kind",
     "Period Key",
-    "Allocated",
-    "Consumed (expense)",
-    "Remaining (expense)",
-    "Utilization % (expense)",
-    "Advance float",
-    "Cash committed",
-    "Cash remaining",
-    "Cash utilization %",
+    "Budget",
+    "Spent So Far",
+    "Left",
+    "Utilization %",
     "Notes",
 ]
 
@@ -262,6 +260,8 @@ def _advance_values(row: EmployeeAdvanceSettlementRow) -> list[Any]:
         row.claim_count,
         row.last_claim,
         row.claim_ytd_spent,
+        row.advance_taken,
+        row.advance_used,
         row.advance_ledger_balance,
         row.pending_against_advance,
         row.available_advance,
@@ -326,27 +326,43 @@ def _budget_values(row: EmployeeBudgetUtilizationRow) -> list[Any]:
 
 def _dept_budget_values(row: DepartmentBudgetUtilizationRow) -> list[Any]:
     return [
-        row.department,
-        row.gl_ledger or "(all GL)",
+        row.gl_ledger,
+        "",
         row.period_kind,
         row.period_key,
         row.allocated,
         row.consumed,
         row.remaining if row.remaining is not None else "",
         row.utilization_pct if row.utilization_pct is not None else "",
-        row.advance_float,
-        row.cash_committed,
-        row.cash_remaining if row.cash_remaining is not None else "",
-        row.cash_utilization_pct if row.cash_utilization_pct is not None else "",
         row.notes or "",
+    ]
+
+
+def _dept_budget_sub_values(
+    parent: DepartmentBudgetUtilizationRow,
+    sub_gl: str,
+    consumed: float,
+    pct: float,
+) -> list[Any]:
+    return [
+        parent.gl_ledger,
+        sub_gl,
+        parent.period_kind,
+        parent.period_key,
+        "",
+        consumed,
+        "",
+        pct,
+        "",
     ]
 
 
 def _kind_label(kind: str) -> str:
     mapping = {
         "advance_requisition": "Advance requisition",
-        "expense_against_advance": "Expense against advance",
         "expense_claim": "Expense claim",
+        # Legacy stored value — display as claim.
+        "expense_against_advance": "Expense claim",
     }
     return mapping.get((kind or "").strip(), kind or "")
 
@@ -434,8 +450,8 @@ async def build_team_expense_excel_export(
             title="Employee Advance Settlement",
             subtitle=(
                 "Live Staff Advance balances by employee. "
-                "Ledger = journal outstanding; Pending = open against-advance claims; "
-                "Available = ledger − pending. Claim YTD is claim spend only (not advances)."
+                "Ledger / Available = journal outstanding float from advance requisitions. "
+                "Claim YTD is expense-claim spend only (not advances)."
             ),
             headers=ADVANCE_HEADERS,
             data_rows=[_advance_values(r) for r in rows],
@@ -462,15 +478,28 @@ async def build_team_expense_excel_export(
         ws = wb.create_sheet(SHEET_DEPT)
         count = _write_sheet(
             ws,
-            title="Department Budget Utilization",
+            title="Parent GL Budget Utilization",
             subtitle=(
-                "Department budget envelopes for the current period vs consumed Team Expense "
-                "spend (claims and against-advance). Empty GL means all expense ledgers. "
-                "Cash columns reserve outstanding department advance float against "
-                "dept-wide (empty GL) envelopes only."
+                "Parent GL wallets for the current period. Sub-GL spend rolls into the parent. "
+                "Advances do not count as spend. Left can be negative when overspent."
             ),
             headers=DEPT_BUDGET_HEADERS,
-            data_rows=[_dept_budget_values(r) for r in rows],
+            data_rows=[
+                value
+                for r in rows
+                for value in (
+                    [_dept_budget_values(r)]
+                    + [
+                        _dept_budget_sub_values(
+                            r,
+                            sub.gl_ledger,
+                            float(sub.consumed),
+                            float(sub.pct_of_budget),
+                        )
+                        for sub in (r.sub_breakdown or [])
+                    ]
+                )
+            ],
         )
         filename = _slug_filename("department_budget_utilization", tenant_slug)
     elif report == "expense-summary":

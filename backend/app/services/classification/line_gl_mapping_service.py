@@ -1,9 +1,9 @@
-"""LLM-assisted sub-ledger assignment for invoice line items."""
+"""LLM-assisted sub-ledger assignment under a fixed Document Type parent GL."""
 
 from __future__ import annotations
 
 import json
-from decimal import Decimal
+from collections import Counter
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,28 +18,23 @@ from app.services.extraction.llm_coa_catalogue import (
     parent_ledger_has_sub_ledger_catalogue,
 )
 from app.services.invoice.line_item_gl_service import (
+    _is_team_expense_invoice,
     apply_sub_ledger_to_line,
     line_gl_mapping_applicable,
     resolve_doc_type_default_sub_ledger,
+    resolve_effective_ledger_mapping,
     resolve_parent_ledger,
     resolve_vendor_default_sub_ledger,
     validate_sub_ledger_for_parent,
 )
 from app.services.master_data.chart_of_accounts_service import sub_ledger_exists
+from app.services.prompt_registry import resolve_system_prompt_text
 from app.services.rule_book.account_mapper import resolve_category_for_config
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-_LINE_GL_SYSTEM = """You assign sub-ledgers to invoice line items for accounts payable.
-The main GL account is FIXED — do not suggest a different parent ledger.
-Return JSON only: {"line_suggestions": [{"line_index": 0, "sub_ledger": "", "confidence": 0.0, "reasoning": ""}]}
-
-Rules:
-- sub_ledger MUST be exactly one catalogue name or "" (empty string)
-- empty sub_ledger means inherit the document-type or vendor default, or no segment
-- one suggestion per line index provided
-- homogeneous lines may share the same sub_ledger"""
+PROMPT_KEY = "llm.sub_ledger.assign.system"
 
 
 def _fallback_sub_ledger(
@@ -48,6 +43,11 @@ def _fallback_sub_ledger(
     *,
     parent_ledger: str,
 ) -> tuple[str, str, str]:
+    """Soft defaults only when they exist under the parent; else keep main GL ("")."""
+    if not parent_ledger_has_sub_ledger_catalogue(
+        parent_ledger, config.chart_of_accounts
+    ):
+        return "", "main_gl", "No sub-ledgers under parent — keep main GL"
     doc_default = resolve_doc_type_default_sub_ledger(invoice, config)
     if doc_default and sub_ledger_exists(parent_ledger, doc_default, config.chart_of_accounts):
         return doc_default, "doc_type_default", "Document type default sub-ledger"
@@ -58,7 +58,7 @@ def _fallback_sub_ledger(
         parent_ledger, vendor_default, config.chart_of_accounts
     ):
         return vendor_default, "vendor_default", "Vendor default sub-ledger"
-    return "", "doc_type_default", "No sub-ledger segment — uses main ledger"
+    return "", "main_gl", "No matching sub-ledger — keep main GL"
 
 
 def _keyword_sub_ledger_hint(description: str, catalogue: list[dict[str, str]]) -> str:
@@ -87,6 +87,33 @@ def _parse_llm_suggestions(raw: dict[str, Any] | None) -> list[dict[str, Any]]:
     return cleaned
 
 
+def _parse_document_sub_ledger(raw: dict[str, Any] | None) -> tuple[str, float | None, str]:
+    if not raw:
+        return "", None, ""
+    candidate = str(raw.get("document_sub_ledger") or "").strip()
+    reasoning = str(raw.get("document_reasoning") or "").strip()
+    confidence_raw = raw.get("document_confidence")
+    try:
+        confidence = float(confidence_raw) if confidence_raw is not None else None
+    except (TypeError, ValueError):
+        confidence = None
+    return candidate, confidence, reasoning
+
+
+def _document_text_blob(invoice: Invoice) -> str:
+    parts: list[str] = []
+    heading = (getattr(invoice, "document_heading", None) or "").strip()
+    if heading:
+        parts.append(heading)
+    text = (getattr(invoice, "document_text", None) or "").strip()
+    if text:
+        parts.append(text[:6000])
+    vendor = (invoice.vendor or "").strip()
+    if vendor:
+        parts.append(f"vendor: {vendor}")
+    return "\n".join(parts)
+
+
 def _build_user_payload(
     *,
     parent_ledger: str,
@@ -97,7 +124,7 @@ def _build_user_payload(
     vendor_sub_ledger: str,
 ) -> str:
     lines = []
-    for index, line in enumerate(invoice.line_items):
+    for index, line in enumerate(invoice.line_items or []):
         lines.append(
             {
                 "line_index": index,
@@ -112,11 +139,16 @@ def _build_user_payload(
         "vendor_default_sub_ledger": vendor_sub_ledger,
         "sub_ledger_catalogue": catalogue,
         "line_items": lines,
+        "document_text": _document_text_blob(invoice),
+        "document_heading": (getattr(invoice, "document_heading", None) or "").strip(),
+        "route_target": (invoice.route_target or "").strip(),
+        "team_expense_kind": (getattr(invoice, "team_expense_kind", None) or "").strip(),
+        "document_type_code": (invoice.document_type_code or "").strip(),
     }
     return json.dumps(payload, default=str)
 
 
-async def _llm_sub_ledger_suggestions(
+async def _llm_sub_ledger_assign(
     *,
     parent_ledger: str,
     parent_code: str,
@@ -124,10 +156,10 @@ async def _llm_sub_ledger_suggestions(
     invoice: Invoice,
     doc_type_sub_ledger: str,
     vendor_sub_ledger: str,
-) -> list[dict[str, Any]]:
+) -> dict[str, Any] | None:
     settings = get_settings()
     if not settings.line_gl_llm_available:
-        return []
+        return None
     user = _build_user_payload(
         parent_ledger=parent_ledger,
         parent_code=parent_code,
@@ -136,13 +168,18 @@ async def _llm_sub_ledger_suggestions(
         doc_type_sub_ledger=doc_type_sub_ledger,
         vendor_sub_ledger=vendor_sub_ledger,
     )
+    try:
+        system = resolve_system_prompt_text(PROMPT_KEY)
+    except KeyError:
+        logger.warning("sub_ledger_prompt_missing", prompt_key=PROMPT_KEY)
+        return None
     raw = await chat_json_async(
-        system=_LINE_GL_SYSTEM,
+        system=system,
         user=user,
         timeout_seconds=settings.runtime_llm_timeout_seconds,
         require_runtime=True,
     )
-    return _parse_llm_suggestions(raw)
+    return raw if isinstance(raw, dict) else None
 
 
 def _accept_llm_sub_ledger(
@@ -164,15 +201,40 @@ def _accept_llm_sub_ledger(
     )
 
 
-async def apply_line_gl_mapping(
-    session: AsyncSession,
+def _dominant_line_sub_ledger(invoice: Invoice) -> str:
+    counts: Counter[str] = Counter()
+    for line in invoice.line_items or []:
+        sub = (getattr(line, "sub_ledger", None) or "").strip()
+        if sub:
+            counts[sub] += 1
+    if not counts:
+        return ""
+    return counts.most_common(1)[0][0]
+
+
+def _keep_main_gl_on_header(
     invoice: Invoice,
     config: RuleBookConfigPayload,
+    *,
+    parent_ledger: str,
+) -> None:
+    """Header posts to parent GL when no Sub-GL was chosen."""
+    parent_resolved = resolve_category_for_config(parent_ledger, config)
+    invoice.account_name = parent_resolved.account_name or parent_ledger
+    if parent_resolved.account_code:
+        invoice.account_code = parent_resolved.account_code
+
+
+def stamp_team_expense_header_sub_ledger(
+    invoice: Invoice,
+    config: RuleBookConfigPayload,
+    *,
+    document_sub_ledger: str = "",
+    document_confidence: float | None = None,
+    document_reasoning: str = "",
 ) -> bool:
-    """Assign sub-ledgers to line items under the document-type parent ledger."""
-    if not line_gl_mapping_applicable(invoice, config):
-        return False
-    if not invoice.line_items:
+    """Stamp TE header to content Sub-GL; fall back to main (parent) GL when none."""
+    if not _is_team_expense_invoice(invoice, config):
         return False
 
     parent_ledger = resolve_parent_ledger(invoice, config)
@@ -182,13 +244,109 @@ async def apply_line_gl_mapping(
     if not parent_ledger_has_sub_ledger_catalogue(
         parent_ledger, config.chart_of_accounts
     ):
-        for line in invoice.line_items:
+        _keep_main_gl_on_header(invoice, config, parent_ledger=parent_ledger)
+        return False
+
+    min_confidence = float(get_settings().runtime_llm_min_confidence)
+    candidate = (document_sub_ledger or "").strip()
+    accepted = _accept_llm_sub_ledger(
+        candidate,
+        document_confidence,
+        parent_ledger=parent_ledger,
+        accounts=config.chart_of_accounts,
+        min_confidence=min_confidence,
+    )
+    if not accepted:
+        # Prefer dominant line Sub-GL when lines were mapped the same way.
+        candidate = _dominant_line_sub_ledger(invoice)
+        if not candidate or not validate_sub_ledger_for_parent(
+            candidate,
+            parent_ledger=parent_ledger,
+            accounts=config.chart_of_accounts,
+        ):
+            hint = _keyword_sub_ledger_hint(
+                _document_text_blob(invoice),
+                build_line_sub_ledger_catalogue(
+                    parent_ledger, config.chart_of_accounts
+                ),
+            )
+            candidate = hint
+        if not candidate:
+            fallback, _source, _reason = _fallback_sub_ledger(
+                invoice, config, parent_ledger=parent_ledger
+            )
+            candidate = fallback
+
+    if not candidate or not validate_sub_ledger_for_parent(
+        candidate,
+        parent_ledger=parent_ledger,
+        accounts=config.chart_of_accounts,
+    ):
+        _keep_main_gl_on_header(invoice, config, parent_ledger=parent_ledger)
+        return False
+
+    parent_resolved = resolve_category_for_config(parent_ledger, config)
+    mapped = resolve_effective_ledger_mapping(
+        parent_ledger=parent_ledger,
+        effective_ledger=candidate,
+        config=config,
+    )
+    invoice.account_name = mapped.account_name or candidate
+    invoice.account_code = mapped.account_code or parent_resolved.account_code
+    if document_reasoning:
+        logger.info(
+            "te_header_sub_ledger_stamped",
+            invoice_id=invoice.id,
+            parent_ledger=parent_ledger,
+            sub_ledger=candidate,
+            reason=document_reasoning,
+        )
+    return True
+
+
+async def apply_line_gl_mapping(
+    session: AsyncSession,
+    invoice: Invoice,
+    config: RuleBookConfigPayload,
+) -> bool:
+    """Assign Sub-GLs under the Document Type parent ledger (content-driven)."""
+    if not line_gl_mapping_applicable(invoice, config):
+        return False
+
+    parent_ledger = resolve_parent_ledger(invoice, config)
+    if not parent_ledger:
+        return False
+
+    is_te = _is_team_expense_invoice(invoice, config)
+    has_lines = bool(invoice.line_items)
+
+    if not parent_ledger_has_sub_ledger_catalogue(
+        parent_ledger, config.chart_of_accounts
+    ):
+        # No children under main GL → every line + TE header keep parent (main GL).
+        for line in invoice.line_items or []:
             apply_sub_ledger_to_line(
                 line,
                 sub_ledger="",
-                source="doc_type_default",
-                reason="Main ledger has no sub-ledger catalogue",
+                source="main_gl",
+                reason="No sub-ledgers under parent — keep main GL",
             )
+        if is_te:
+            _keep_main_gl_on_header(invoice, config, parent_ledger=parent_ledger)
+        await session.flush()
+        await log_event(
+            session,
+            "line_gl_mapping_applied",
+            invoice_id=invoice.id,
+            detail={
+                "parent_ledger": parent_ledger,
+                "lines_mapped": len(invoice.line_items or []),
+                "llm_used": False,
+                "prompt_key": PROMPT_KEY,
+                "fallback": "main_gl",
+                "had_lines": has_lines,
+            },
+        )
         return True
 
     catalogue = build_line_sub_ledger_catalogue(
@@ -200,7 +358,7 @@ async def apply_line_gl_mapping(
         invoice, config, parent_ledger=parent_ledger
     )
 
-    suggestions = await _llm_sub_ledger_suggestions(
+    llm_raw = await _llm_sub_ledger_assign(
         parent_ledger=parent_ledger,
         parent_code=parent_code,
         catalogue=catalogue,
@@ -208,6 +366,9 @@ async def apply_line_gl_mapping(
         doc_type_sub_ledger=doc_default,
         vendor_sub_ledger=vendor_default,
     )
+    suggestions = _parse_llm_suggestions(llm_raw)
+    doc_sub, doc_confidence, doc_reasoning = _parse_document_sub_ledger(llm_raw)
+
     suggestion_by_index: dict[int, dict[str, Any]] = {}
     for row in suggestions:
         raw_index = row.get("line_index")
@@ -219,7 +380,8 @@ async def apply_line_gl_mapping(
 
     min_confidence = float(get_settings().runtime_llm_min_confidence)
     applied = 0
-    for index, line in enumerate(invoice.line_items):
+    # Same content → Sub-GL rules for every line under the fixed parent.
+    for index, line in enumerate(invoice.line_items or []):
         row = suggestion_by_index.get(index)
         if row is not None:
             candidate = str(row.get("sub_ledger") or "").strip()
@@ -259,7 +421,6 @@ async def apply_line_gl_mapping(
                 )
                 applied += 1
                 continue
-            # Invalid or low-confidence LLM name → fall through to keyword/defaults.
 
         hint = _keyword_sub_ledger_hint(line.description or "", catalogue)
         if hint:
@@ -283,6 +444,16 @@ async def apply_line_gl_mapping(
         )
         applied += 1
 
+    header_stamped = False
+    if is_te:
+        header_stamped = stamp_team_expense_header_sub_ledger(
+            invoice,
+            config,
+            document_sub_ledger=doc_sub,
+            document_confidence=doc_confidence,
+            document_reasoning=doc_reasoning,
+        )
+
     await session.flush()
     await log_event(
         session,
@@ -291,7 +462,11 @@ async def apply_line_gl_mapping(
         detail={
             "parent_ledger": parent_ledger,
             "lines_mapped": applied,
-            "llm_used": bool(suggestions),
+            "llm_used": bool(llm_raw),
+            "prompt_key": PROMPT_KEY,
+            "team_expense_header_stamped": header_stamped,
+            "document_sub_ledger": (invoice.account_name if header_stamped else doc_sub) or "",
+            "had_lines": has_lines,
         },
     )
-    return applied > 0
+    return applied > 0 or header_stamped

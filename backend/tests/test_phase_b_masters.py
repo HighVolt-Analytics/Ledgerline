@@ -349,8 +349,9 @@ async def test_quarterly_budget_validation(
         config=capture_config,
     )
     by_rule = {row.rule: row for row in results}
-    assert not by_rule["VR-TE02"].passed
-    assert "quarterly" in by_rule["VR-TE02"].message.lower()
+    # Employee period limits retired — budgets are enforced per GL (VR-TE08).
+    assert by_rule["VR-TE02"].passed and by_rule["VR-TE02"].skipped
+    assert "gl account" in by_rule["VR-TE02"].message.lower()
 
 
 @pytest.mark.asyncio

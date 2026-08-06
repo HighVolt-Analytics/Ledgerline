@@ -119,6 +119,36 @@ def test_fallback_sub_ledger_uses_doc_type_default() -> None:
     assert source == "doc_type_default"
 
 
+def test_fallback_keeps_main_gl_when_parent_has_no_subs() -> None:
+    config = RuleBookConfigPayload(
+        chart_of_accounts=[
+            ChartOfAccountEntry(code="6100", name="Operating Expenses", type="Expense"),
+        ],
+        document_types=[
+            DocumentTypeDefinition(
+                code="DT-01",
+                title="Invoice",
+                short_title="Invoice",
+                klass="Transactional",
+                posting="Yes",
+                recognition_mode="signals",
+                recognition_signals=[],
+                llm_prompt="",
+                route_target="Purchase Management",
+                post_to=DocumentTypePostTo(ledger="Operating Expenses", sub_ledger=""),
+            ),
+        ],
+    )
+    invoice = SimpleNamespace(vendor="Acme", document_type_code="DT-01")
+    sub, source, reason = _fallback_sub_ledger(
+        invoice, config, parent_ledger="Operating Expenses"
+    )
+    assert sub == ""
+    assert source == "main_gl"
+    assert "main GL" in reason
+
+
+
 def test_keyword_sub_ledger_hint() -> None:
     catalogue = build_line_sub_ledger_catalogue(
         "Cloud Hosting Expense",
@@ -127,15 +157,60 @@ def test_keyword_sub_ledger_hint() -> None:
     assert _keyword_sub_ledger_hint("AWS monthly hosting", catalogue) == "AWS Production"
 
 
-def test_line_gl_mapping_skips_team_expenses() -> None:
+def test_line_gl_mapping_applies_to_team_expense_claims() -> None:
     config = _config_with_sub_ledgers()
     invoice = SimpleNamespace(
         document_type_code="DT-08",
         route_target="Team Expenses",
         account_name="Cloud Hosting Expense",
         gl_posting_applicable=True,
+        team_expense_kind="expense_claim",
+    )
+    assert line_gl_mapping_applicable(invoice, config) is True
+
+
+def test_line_gl_mapping_skips_team_expense_advances() -> None:
+    config = _config_with_sub_ledgers()
+    invoice = SimpleNamespace(
+        document_type_code="DT-08",
+        route_target="Team Expenses",
+        account_name="Cloud Hosting Expense",
+        gl_posting_applicable=True,
+        team_expense_kind="advance_requisition",
     )
     assert line_gl_mapping_applicable(invoice, config) is False
+
+
+def test_stamp_team_expense_header_sub_ledger_from_document() -> None:
+    from app.services.classification.line_gl_mapping_service import (
+        stamp_team_expense_header_sub_ledger,
+    )
+
+    config = _config_with_sub_ledgers()
+    invoice = SimpleNamespace(
+        id=1,
+        document_type_code="DT-08",
+        route_target="Team Expenses",
+        account_name="Cloud Hosting Expense",
+        account_code="6110",
+        team_expense_kind="expense_claim",
+        line_items=[],
+        document_text="AWS Production hosting for March",
+        document_heading="",
+        vendor="Amazon",
+    )
+    assert (
+        stamp_team_expense_header_sub_ledger(
+            invoice,
+            config,
+            document_sub_ledger="AWS Production",
+            document_confidence=0.95,
+            document_reasoning="Hosting vendor",
+        )
+        is True
+    )
+    assert invoice.account_name == "AWS Production"
+    assert invoice.account_code == "6110-01"
 
 
 def test_line_sub_ledger_review_required_when_catalogue_and_blank() -> None:

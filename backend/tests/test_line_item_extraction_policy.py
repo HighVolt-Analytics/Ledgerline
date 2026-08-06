@@ -163,7 +163,29 @@ def test_advance_kinds_do_not_hard_require_line_items() -> None:
         team_expense_hard_requires_line_items,
     )
 
-    against = DocumentTypeDefinition(
+    advance = DocumentTypeDefinition(
+        code="DT-09",
+        title="Advance requisition",
+        short_title="Advance",
+        klass="Transactional",
+        posting="Yes",
+        route_target="Team Expenses",
+        playbook_profile="employee_claim",
+        team_expense_kind="advance_requisition",
+        extraction_fields=["vendor", "total", "line_items"],
+    )
+    assert document_requires_line_items(advance) is True
+    assert team_expense_hard_requires_line_items(advance) is False
+
+
+def test_legacy_against_advance_dt_treated_as_claim_for_line_items() -> None:
+    """Legacy against-advance pin clears on DT; kind normalizes to claim → may require lines."""
+    from app.schemas.document_type import DocumentTypeDefinition
+    from app.services.extraction.line_item_extraction_policy import (
+        team_expense_hard_requires_line_items,
+    )
+
+    legacy = DocumentTypeDefinition(
         code="DT-10",
         title="Expense against advance",
         short_title="Against",
@@ -174,5 +196,12 @@ def test_advance_kinds_do_not_hard_require_line_items() -> None:
         team_expense_kind="expense_against_advance",
         extraction_fields=["vendor", "total", "line_items"],
     )
-    assert document_requires_line_items(against) is True
-    assert team_expense_hard_requires_line_items(against) is False
+    assert legacy.team_expense_kind == ""
+    assert document_requires_line_items(legacy) is True
+    assert team_expense_hard_requires_line_items(legacy) is True
+    assert (
+        team_expense_hard_requires_line_items(
+            legacy, team_expense_kind="expense_against_advance"
+        )
+        is True
+    )

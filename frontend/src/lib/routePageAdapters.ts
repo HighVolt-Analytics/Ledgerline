@@ -291,6 +291,8 @@ export function invoiceToTeamClaim(
 
 export function normalizeTeamExpenseKind(value: string | null | undefined): TeamExpenseKind {
   const cleaned = (value ?? "").trim().toLowerCase();
+  // Legacy against-advance invoices display/edit as expense claims.
+  if (cleaned === "expense_against_advance") return "expense_claim";
   return TEAM_EXPENSE_KINDS.includes(cleaned as TeamExpenseKind)
     ? (cleaned as TeamExpenseKind)
     : "expense_claim";

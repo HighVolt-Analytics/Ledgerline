@@ -6,10 +6,16 @@ export type TeamExpensePostingPreview = {
   note: string;
 };
 
+function money(n: number): string {
+  return n.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
 /**
  * Ledger sides each Team Expenses claim kind posts to, for review before journaling.
- * The expense ledger comes from the document type Post to; the employee advance child
- * comes from the employee master.
+ * Expense claims partially net available Staff Advance, then pay the rest from settlement.
  */
 export function teamExpensePostingPreview(
   kind: TeamExpenseKind,
@@ -17,10 +23,14 @@ export function teamExpensePostingPreview(
     expenseLedger,
     advanceLedger,
     settlementLedger,
+    claimAmount = 0,
+    advanceAvailable = 0,
   }: {
     expenseLedger: string;
     advanceLedger: string;
     settlementLedger: string;
+    claimAmount?: number;
+    advanceAvailable?: number;
   }
 ): TeamExpensePostingPreview {
   const expense = expenseLedger.trim() || "Expense ledger";
@@ -34,16 +44,29 @@ export function teamExpensePostingPreview(
       note: "Money paid out — the employee now holds an advance.",
     };
   }
-  if (kind === "expense_against_advance") {
+
+  const total = Number.isFinite(claimAmount) ? Math.max(0, claimAmount) : 0;
+  const available = Number.isFinite(advanceAvailable) ? Math.max(0, advanceAvailable) : 0;
+  const netAdvance = Math.min(total, available);
+  const settle = Math.max(0, total - netAdvance);
+
+  if (netAdvance > 0 && settle > 0) {
+    return {
+      debit: expense,
+      credit: `${advance} (${money(netAdvance)}) + ${settlement} (${money(settle)})`,
+      note: `Nets ${money(netAdvance)} advance; company pays the ${money(settle)} difference. Budget is checked on the full claim.`,
+    };
+  }
+  if (netAdvance > 0) {
     return {
       debit: expense,
       credit: advance,
-      note: "Spend clears the advance already given — no new cash paid.",
+      note: "Fully cleared against the employee’s outstanding advance — no new cash paid.",
     };
   }
   return {
     debit: expense,
     credit: settlement,
-    note: "Employee paid from their own pocket — reimbursed from settlement.",
+    note: "No advance float available — reimbursed from settlement.",
   };
 }

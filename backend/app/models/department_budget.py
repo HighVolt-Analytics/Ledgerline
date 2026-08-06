@@ -1,4 +1,4 @@
-"""Department-level budget envelopes for Team Expenses."""
+"""GL-account budget envelopes for Team Expenses."""
 
 from __future__ import annotations
 
@@ -13,15 +13,16 @@ from app.database import Base
 
 
 class DepartmentBudget(Base):
+    """Budget pot keyed by GL ledger + period (department is optional metadata)."""
+
     __tablename__ = "department_budgets"
     __table_args__ = (
         UniqueConstraint(
             "tenant_id",
-            "department",
             "gl_ledger",
             "period_kind",
             "period_key",
-            name="uq_department_budget_period",
+            name="uq_gl_account_budget_period",
         ),
     )
 
@@ -31,11 +32,16 @@ class DepartmentBudget(Base):
         ForeignKey("tenants.id", ondelete="CASCADE"),
         index=True,
     )
-    department: Mapped[str] = mapped_column(String(255), index=True)
-    gl_ledger: Mapped[str] = mapped_column(String(255), default="", server_default="")
+    # Optional label only — budgets are enforced by GL account.
+    department: Mapped[str] = mapped_column(String(255), default="", server_default="")
+    gl_ledger: Mapped[str] = mapped_column(String(255), index=True)
     period_kind: Mapped[str] = mapped_column(String(16))
     period_key: Mapped[str] = mapped_column(String(32))
     allocated: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0"))
+    # soft = over budget → manager override; hard = validation block until budget raised
+    enforcement: Mapped[str] = mapped_column(
+        String(16), default="soft", server_default="soft"
+    )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

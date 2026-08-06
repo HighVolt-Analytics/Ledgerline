@@ -40,8 +40,10 @@ export default defineConfig({
       "/api": {
         target: process.env.VITE_API_PROXY_TARGET ?? "http://127.0.0.1:8001",
         changeOrigin: true,
-        timeout: 30_000,
-        proxyTimeout: 30_000,
+        // Approve / ingest paths can exceed 30s when LLM posting runs; empty
+        // proxy responses show up as net::ERR_EMPTY_RESPONSE in the browser.
+        timeout: 180_000,
+        proxyTimeout: 180_000,
       },
       "/health": {
         target: process.env.VITE_API_PROXY_TARGET ?? "http://127.0.0.1:8001",

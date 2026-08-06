@@ -245,7 +245,23 @@ export function TeamExpensesRulesTab({
                           className="h-8 text-xs"
                         />
                       </FieldLabel>
+                      <FieldLabel label="Department equals (optional)">
+                        <Input
+                          value={m.departmentEquals ?? ""}
+                          onChange={(e) =>
+                            updateMatch(rule.id, {
+                              departmentEquals: e.target.value || undefined,
+                            })
+                          }
+                          placeholder="e.g. Marketing"
+                          className="h-8 text-xs"
+                        />
+                      </FieldLabel>
                     </div>
+                    <p className="text-[10px] text-muted-foreground mt-1.5">
+                      Use department to disambiguate the same keywords (e.g. taxi for Marketing vs
+                      Sales). Matches the employee&apos;s department from Employee Master.
+                    </p>
                   </div>
 
                   <div>
@@ -253,7 +269,7 @@ export function TeamExpensesRulesTab({
                       Post to
                     </h4>
                     <div className="grid sm:grid-cols-2 gap-2.5 max-w-lg">
-                      <FieldLabel label="Ledger (GL)">
+                      <FieldLabel label="Parent GL (budget wallet)">
                         <Select
                           value={rule.postTo.ledger}
                           onValueChange={(ledger) =>
@@ -271,7 +287,7 @@ export function TeamExpensesRulesTab({
                           className="w-full"
                         />
                       </FieldLabel>
-                      <FieldLabel label="Sub-ledger">
+                      <FieldLabel label="Sub-GL (tracking)">
                         <SubLedgerField
                           ledger={rule.postTo.ledger}
                           value={rule.postTo.subLedger}
@@ -281,6 +297,9 @@ export function TeamExpensesRulesTab({
                         />
                       </FieldLabel>
                     </div>
+                    <p className="text-[10px] text-muted-foreground mt-1.5">
+                      Budget is checked on the Parent GL. Sub-GL only tracks where the money went.
+                    </p>
                     {!coaLoading && !hasRealAccounts ? (
                       <p className="text-[10px] text-muted-foreground mt-2">
                         Add accounts in Settings → Chart of accounts.

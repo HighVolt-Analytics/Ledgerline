@@ -334,3 +334,64 @@ def test_commercial_due_date_not_forced_on_save() -> None:
     )
     assert payload.document_types[0].required_fields == ["vendor", "total"]
     assert "due_date" not in payload.document_types[0].required_fields
+
+
+def test_orphaned_post_to_ledger_remaps_to_coa_expense() -> None:
+    """Starter 'Operating Expenses' remaps when tenant COA no longer has it."""
+    from app.schemas.rule_book_config import validate_rule_book_config_for_save
+
+    payload = validate_rule_book_config_for_save(
+        {
+            "schema_version": 1,
+            "chart_of_accounts": [
+                {"code": "6200", "name": "Marketing Expenses", "type": "Expense"},
+                {"code": "1000", "name": "Bank Account", "type": "Asset"},
+            ],
+            "document_types": [
+                {
+                    "code": "DT-03",
+                    "title": "Expense claim",
+                    "shortTitle": "Claim",
+                    "klass": "Transactional",
+                    "posting": "Yes",
+                    "playbookProfile": "employee_claim",
+                    "recognition_mode": "signals",
+                    "recognition_signals": ["heading_invoice"],
+                    "llm_prompt": "",
+                    "routeTarget": "Team Expenses",
+                    "enabled": True,
+                    "postTo": {"ledger": "Operating Expenses"},
+                },
+                {
+                    "code": "DT-09",
+                    "title": "Direct expense",
+                    "shortTitle": "Direct",
+                    "klass": "Transactional",
+                    "posting": "Yes",
+                    "playbookProfile": "direct_expense",
+                    "recognition_mode": "signals",
+                    "recognition_signals": ["heading_invoice"],
+                    "llm_prompt": "",
+                    "routeTarget": "Purchase Management",
+                    "enabled": True,
+                    "postTo": {"ledger": "Operating Expenses"},
+                },
+                {
+                    "code": "DT-10",
+                    "title": "Invoice",
+                    "shortTitle": "Invoice",
+                    "klass": "Transactional",
+                    "posting": "Yes",
+                    "playbookProfile": "standard_transactional",
+                    "recognition_mode": "signals",
+                    "recognition_signals": ["heading_invoice"],
+                    "llm_prompt": "",
+                    "routeTarget": "Purchase Management",
+                    "enabled": True,
+                    "postTo": {"ledger": "Operating Expenses"},
+                },
+            ],
+        }
+    )
+    for defn in payload.document_types:
+        assert defn.post_to.ledger == "Marketing Expenses"

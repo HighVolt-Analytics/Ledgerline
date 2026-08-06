@@ -93,3 +93,119 @@ def ledger_has_sub_ledger_catalog(
     entries: list[ChartOfAccountEntry],
 ) -> bool:
     return bool(sub_ledgers_for_ledger(ledger_name, entries))
+
+
+def _find_coa_entry(
+    ledger_name: str,
+    entries: list[ChartOfAccountEntry],
+) -> ChartOfAccountEntry | None:
+    cleaned = (ledger_name or "").strip()
+    if not cleaned:
+        return None
+    lookup = coa_lookup(entries)
+    entry = lookup.get(cleaned)
+    if entry is not None:
+        return entry
+    lowered = cleaned.lower()
+    for name, candidate in lookup.items():
+        if name.lower() == lowered:
+            return candidate
+    return None
+
+
+def parent_ledger_for_account(
+    account_name: str,
+    entries: list[ChartOfAccountEntry],
+) -> str | None:
+    """Return the budget parent for an account name.
+
+    - If ``account_name`` is a known parent COA row, return that parent name.
+    - If it matches a sub-ledger under a parent, return that parent name.
+    - Otherwise return None.
+    """
+    cleaned = (account_name or "").strip()
+    if not cleaned:
+        return None
+    direct = _find_coa_entry(cleaned, entries)
+    if direct is not None:
+        return direct.name.strip()
+    lowered = cleaned.lower()
+    for entry in entries:
+        parent = (entry.name or "").strip()
+        if not parent:
+            continue
+        for sub in entry.sub_ledgers or []:
+            if (sub.name or "").strip().lower() == lowered:
+                return parent
+            if (sub.code or "").strip().lower() == lowered:
+                return parent
+    return None
+
+
+def account_is_sub_ledger(
+    account_name: str,
+    entries: list[ChartOfAccountEntry],
+) -> bool:
+    """True when ``account_name`` is a COA child Sub-GL (not a top-level parent)."""
+    cleaned = (account_name or "").strip()
+    if not cleaned:
+        return False
+    if _find_coa_entry(cleaned, entries) is not None:
+        return False
+    parent = parent_ledger_for_account(cleaned, entries)
+    if not parent:
+        return False
+    return parent.casefold() != cleaned.casefold()
+
+
+def child_ledger_names(
+    parent_ledger: str,
+    entries: list[ChartOfAccountEntry],
+) -> list[str]:
+    """Parent name plus all of its COA sub-ledger names (and codes when distinct).
+
+    Used to sum budget spend across a parent wallet and its tracking children.
+    """
+    parent = (parent_ledger or "").strip()
+    if not parent:
+        return []
+    entry = _find_coa_entry(parent, entries)
+    names: list[str] = []
+    seen: set[str] = set()
+
+    def _add(token: str) -> None:
+        cleaned = (token or "").strip()
+        if not cleaned:
+            return
+        key = cleaned.casefold()
+        if key in seen:
+            return
+        seen.add(key)
+        names.append(cleaned)
+
+    if entry is not None:
+        _add(entry.name)
+        _add(entry.code)
+        for sub in entry.sub_ledgers or []:
+            _add(sub.name)
+            _add(sub.code)
+    else:
+        _add(parent)
+    return names
+
+
+def budget_parent_for_claim_gl(
+    claim_gl: str,
+    entries: list[ChartOfAccountEntry],
+    *,
+    fallback_parent: str | None = None,
+) -> str:
+    """Resolve which parent wallet a claim GL should check against."""
+    resolved = parent_ledger_for_account(claim_gl, entries)
+    if resolved:
+        return resolved
+    fallback = (fallback_parent or "").strip()
+    if fallback:
+        parent = parent_ledger_for_account(fallback, entries)
+        return parent or fallback
+    return (claim_gl or "").strip()

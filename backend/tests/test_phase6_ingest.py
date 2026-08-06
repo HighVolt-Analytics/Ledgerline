@@ -250,8 +250,9 @@ async def test_team_expense_budget_validation_fails(
     )
     by_rule = {row.rule: row for row in results}
     assert by_rule["VR-TE01"].passed
-    assert not by_rule["VR-TE02"].passed
-    assert "spending limit exceeded" in by_rule["VR-TE02"].message.lower()
+    # Employee spending limits retired — GL budgets (VR-TE08) are the control.
+    assert by_rule["VR-TE02"].passed and by_rule["VR-TE02"].skipped
+    assert "gl account" in by_rule["VR-TE02"].message.lower()
 
 
 @pytest.mark.asyncio

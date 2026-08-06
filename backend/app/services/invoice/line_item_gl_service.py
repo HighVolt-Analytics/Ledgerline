@@ -144,7 +144,7 @@ def _is_team_expense_invoice(
     invoice: Invoice,
     config: RuleBookConfigPayload,
 ) -> bool:
-    """True for Team Expenses route / employee_claim DTs (skip line sub-ledger LLM)."""
+    """True for Team Expenses route / employee_claim DTs."""
     from app.services.classification.document_type_catalog import (
         ROUTE_TEAM,
         get_document_type_definition,
@@ -160,16 +160,33 @@ def _is_team_expense_invoice(
     return is_team_expenses_document_type(defn)
 
 
+def _is_team_expense_advance(invoice: Invoice) -> bool:
+    from app.schemas.rule_book_config import (
+        TEAM_EXPENSE_KIND_ADVANCE,
+        normalize_team_expense_kind,
+    )
+
+    return (
+        normalize_team_expense_kind(getattr(invoice, "team_expense_kind", None))
+        == TEAM_EXPENSE_KIND_ADVANCE
+    )
+
+
 def line_gl_mapping_applicable(
     invoice: Invoice,
     config: RuleBookConfigPayload,
 ) -> bool:
+    """Parent GL is fixed by Document Type; content picks Sub-GL under that parent.
+
+    Team Expense claims use the same path. Advance requisitions keep the employee
+    advance child from header mapping and skip content Sub-GL assignment.
+    """
     if not gl_posting_applicable_for_invoice(
         invoice,
         document_types=list(config.document_types),
     ):
         return False
-    if _is_team_expense_invoice(invoice, config):
+    if _is_team_expense_invoice(invoice, config) and _is_team_expense_advance(invoice):
         return False
     return bool(resolve_parent_ledger(invoice, config))
 
@@ -178,8 +195,13 @@ def line_sub_ledger_gate_applies(
     invoice: Invoice,
     config: RuleBookConfigPayload,
 ) -> bool:
-    """True when blank line sub-ledgers must block posting (parent has catalogue)."""
+    """True when blank line sub-ledgers must block posting (parent has catalogue).
+
+    Team Expenses stay soft: blank Sub-GL falls back to parent wallet for budget.
+    """
     if not line_gl_mapping_applicable(invoice, config):
+        return False
+    if _is_team_expense_invoice(invoice, config):
         return False
     if not getattr(invoice, "line_items", None):
         return False

@@ -518,6 +518,7 @@ def _team_expense_rule_matches(
     rule: TeamExpenseRule,
     *,
     amount: float | None,
+    employee_department: str | None = None,
 ) -> bool:
     desc = " ".join(doc.lines).lower()
     merchant = doc.vendor.lower()
@@ -532,6 +533,11 @@ def _team_expense_rule_matches(
         channel = doc.capture_channel or infer_capture_channel(doc.email_from)
         if not channel_rule_matches(match_on.channel_equals, channel):
             return False
+    if match_on.department_equals:
+        expected = (match_on.department_equals or "").strip().casefold()
+        actual = (employee_department or "").strip().casefold()
+        if not expected or actual != expected:
+            return False
     if amount is not None:
         if match_on.amount_min is not None and amount < match_on.amount_min:
             return False
@@ -545,9 +551,15 @@ def match_team_expense_rule(
     rules: list[TeamExpenseRule],
     *,
     amount: float | None = None,
+    employee_department: str | None = None,
 ) -> TeamExpenseRule | None:
     for rule in _iter_category_rules(rules, enabled_only=True):
-        if _team_expense_rule_matches(doc, rule, amount=amount):
+        if _team_expense_rule_matches(
+            doc,
+            rule,
+            amount=amount,
+            employee_department=employee_department,
+        ):
             return rule
     return None
 
@@ -557,9 +569,15 @@ def match_disabled_team_expense_rule(
     rules: list[TeamExpenseRule],
     *,
     amount: float | None = None,
+    employee_department: str | None = None,
 ) -> TeamExpenseRule | None:
     for rule in _iter_category_rules(rules, enabled_only=False):
-        if _team_expense_rule_matches(doc, rule, amount=amount):
+        if _team_expense_rule_matches(
+            doc,
+            rule,
+            amount=amount,
+            employee_department=employee_department,
+        ):
             return rule
     return None
 

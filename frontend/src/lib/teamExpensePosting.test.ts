@@ -16,14 +16,24 @@ describe("teamExpensePostingPreview", () => {
     expect(preview.credit).toBe("Bank Account");
   });
 
-  it("credits the employee advance when expenses clear an advance", () => {
-    const preview = teamExpensePostingPreview("expense_against_advance", LEDGERS);
+  it("partially nets available advance on an expense claim", () => {
+    const preview = teamExpensePostingPreview("expense_claim", {
+      ...LEDGERS,
+      claimAmount: 800,
+      advanceAvailable: 500,
+    });
     expect(preview.debit).toBe("Travel Expense");
-    expect(preview.credit).toBe("Marcus Webb");
+    expect(preview.credit).toContain("Marcus Webb");
+    expect(preview.credit).toContain("Bank Account");
+    expect(preview.note.toLowerCase()).toContain("nets");
   });
 
-  it("credits settlement for a reimbursed expense claim", () => {
-    const preview = teamExpensePostingPreview("expense_claim", LEDGERS);
+  it("credits settlement only when no advance float is available", () => {
+    const preview = teamExpensePostingPreview("expense_claim", {
+      ...LEDGERS,
+      claimAmount: 100,
+      advanceAvailable: 0,
+    });
     expect(preview.debit).toBe("Travel Expense");
     expect(preview.credit).toBe("Bank Account");
   });
@@ -46,8 +56,8 @@ describe("normalizeTeamExpenseKind", () => {
     expect(normalizeTeamExpenseKind("nonsense")).toBe("expense_claim");
   });
 
-  it("accepts the supported kinds case-insensitively", () => {
+  it("accepts the supported kinds case-insensitively and maps legacy against-advance to claim", () => {
     expect(normalizeTeamExpenseKind("Advance_Requisition")).toBe("advance_requisition");
-    expect(normalizeTeamExpenseKind("expense_against_advance")).toBe("expense_against_advance");
+    expect(normalizeTeamExpenseKind("expense_against_advance")).toBe("expense_claim");
   });
 });

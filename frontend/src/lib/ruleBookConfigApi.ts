@@ -136,6 +136,7 @@ function mapTeamMatchOn(raw: Record<string, unknown>): TeamExpenseRule["matchOn"
     channelEquals: raw.channel_equals as string | undefined,
     amountMin: raw.amount_min as number | undefined,
     amountMax: raw.amount_max as number | undefined,
+    departmentEquals: raw.department_equals as string | undefined,
   };
 }
 
@@ -148,6 +149,7 @@ function teamMatchOnToApi(matchOn: TeamExpenseRule["matchOn"]): Record<string, u
   if (matchOn.channelEquals != null) out.channel_equals = matchOn.channelEquals;
   if (matchOn.amountMin != null) out.amount_min = matchOn.amountMin;
   if (matchOn.amountMax != null) out.amount_max = matchOn.amountMax;
+  if (matchOn.departmentEquals != null) out.department_equals = matchOn.departmentEquals;
   return out;
 }
 
@@ -431,6 +433,7 @@ function mapTeamExpenseKind(raw: Record<string, unknown>): DocumentTypeTeamExpen
   const token = String(raw.team_expense_kind ?? raw.teamExpenseKind ?? "")
     .trim()
     .toLowerCase();
+  if (token === "expense_against_advance") return "";
   return (TEAM_EXPENSE_KINDS as readonly string[]).includes(token)
     ? (token as DocumentTypeTeamExpenseKind)
     : "";
