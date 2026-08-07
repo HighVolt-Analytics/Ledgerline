@@ -2,7 +2,7 @@ import { useMemo } from "react";
 
 import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
-import { coaAccountsToSelectOptions } from "@/lib/coaAccountOptions";
+import { coaAccountsToSelectOptions, ledgerExistsInCoa } from "@/lib/coaAccountOptions";
 import { useChartOfAccounts } from "@/hooks/useChartOfAccounts";
 import type { TeamExpensePostingDefaults } from "@/lib/v4RuleBookTypes";
 
@@ -15,9 +15,20 @@ export function TeamExpensePostingPanel({ defaults, onChange }: TeamExpensePosti
   const { data: accounts = [], isLoading, isError, blocked } = useChartOfAccounts();
 
   const allOptions = useMemo(
-    () => coaAccountsToSelectOptions(accounts, { includeEmpty: false }),
+    () =>
+      coaAccountsToSelectOptions(accounts, {
+        includeEmpty: true,
+        emptyLabel: "— Select account —",
+      }),
     [accounts]
   );
+
+  const advanceValue = ledgerExistsInCoa(defaults.defaultAdvanceParentLedger, accounts)
+    ? defaults.defaultAdvanceParentLedger
+    : "";
+  const settlementValue = ledgerExistsInCoa(defaults.settlementAccount, accounts)
+    ? defaults.settlementAccount
+    : "";
 
   if (isLoading || blocked) {
     return (
@@ -40,9 +51,11 @@ export function TeamExpensePostingPanel({ defaults, onChange }: TeamExpensePosti
     <Card className="p-4 mb-0" data-testid="team-expense-posting-panel">
       <h3 className="text-sm font-semibold mb-1">Team expense posting</h3>
       <p className="text-xs text-muted-foreground mb-4">
-        Advance requisitions debit the employee sub-ledger under their advance parent and credit
-        settlement. Expense claims credit settlement; expenses against an advance credit the
-        employee sub-ledger instead. Expense ledgers still come from document type Post to.
+        Choose the advance parent and settlement ledgers from your chart of accounts. Advance
+        requisitions debit the employee sub-ledger under the advance parent and credit settlement.
+        Expense claims credit settlement (or the employee sub-ledger when netting an advance).
+        Expense ledgers still come from document type Post to. Advance requisitions cannot post
+        until the advance parent exists in COA and is selected here.
       </p>
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-1.5">
@@ -51,7 +64,7 @@ export function TeamExpensePostingPanel({ defaults, onChange }: TeamExpensePosti
           </label>
           <Select
             id="team-advance-parent"
-            value={defaults.defaultAdvanceParentLedger}
+            value={advanceValue}
             onValueChange={(defaultAdvanceParentLedger) =>
               onChange({ ...defaults, defaultAdvanceParentLedger })
             }
@@ -66,7 +79,7 @@ export function TeamExpensePostingPanel({ defaults, onChange }: TeamExpensePosti
           </label>
           <Select
             id="team-settlement-account"
-            value={defaults.settlementAccount}
+            value={settlementValue}
             onValueChange={(settlementAccount) => onChange({ ...defaults, settlementAccount })}
             options={allOptions}
             className="w-full"

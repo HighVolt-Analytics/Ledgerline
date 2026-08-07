@@ -1598,7 +1598,7 @@ export function InvoiceDetailDrawer({
                     <label className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-md border border-dashed border-input bg-background px-3 py-2 text-sm shadow-sm hover:bg-muted/50">
                       <input
                         type="file"
-                        accept=".pdf,.jpg,.jpeg,.png,.docx"
+                        accept=".pdf,.jpg,.jpeg,.png,.docx,.webp"
                         className="sr-only"
                         disabled={attachBusy}
                         onChange={(e) => {

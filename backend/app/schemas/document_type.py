@@ -201,6 +201,25 @@ class DocumentTypeDefinition(BaseModel):
             object.__setattr__(self, "posting", posting)
         return self
 
+    @model_validator(mode="after")
+    def _reconcile_team_expense_kind_with_title(self) -> DocumentTypeDefinition:
+        """Heal swapped claim/advance pins using title wording (Team Expenses only)."""
+        route = (self.route_target or "").strip()
+        if route != "Team Expenses":
+            return self
+        from app.services.purchase.team_expense_kind_service import (
+            reconcile_team_expense_kind_for_document_type,
+        )
+
+        reconciled = reconcile_team_expense_kind_for_document_type(
+            title=self.title,
+            short_title=self.short_title,
+            configured=self.team_expense_kind,
+        )
+        if reconciled != (self.team_expense_kind or ""):
+            object.__setattr__(self, "team_expense_kind", reconciled)
+        return self
+
     @field_validator("recognition_mode", mode="before")
     @classmethod
     def _normalize_recognition_mode(cls, value: Any) -> str:

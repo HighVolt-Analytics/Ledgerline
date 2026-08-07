@@ -23,7 +23,10 @@ import {
   useImportEmployeeMasters,
   useUpdateEmployeeMaster,
 } from "@/hooks/useMasterData";
+import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useRoutedInvoices } from "@/hooks/useRoutedInvoices";
+import { ledgerExistsInCoa } from "@/lib/coaAccountOptions";
+import { useChartOfAccounts } from "@/hooks/useChartOfAccounts";
 import { cn } from "@/lib/cn";
 import { recentClaimValidationsFromInvoices } from "@/lib/routePageAdapters";
 import { fmtAud } from "@/lib/v4MockData";
@@ -55,6 +58,8 @@ export function EmployeesTab() {
   const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set());
 
   const { data: employees = [], isLoading } = useEmployeeMasters();
+  const { data: ruleBook } = useRuleBookConfig();
+  const { data: coaAccounts = [] } = useChartOfAccounts();
   const { data: teamClaims = [], isLoading: claimsLoading } = useRoutedInvoices("Team Expenses");
   const recentClaimValidations = useMemo(
     () => recentClaimValidationsFromInvoices(teamClaims, employees, 10),
@@ -64,6 +69,12 @@ export function EmployeesTab() {
   const updateMutation = useUpdateEmployeeMaster();
   const deleteMutation = useDeleteEmployeeMaster();
   const importMutation = useImportEmployeeMasters();
+
+  const defaultAdvanceParent = useMemo(() => {
+    const label = ruleBook?.teamExpensePosting?.defaultAdvanceParentLedger?.trim() ?? "";
+    if (label && ledgerExistsInCoa(label, coaAccounts)) return label;
+    return "";
+  }, [coaAccounts, ruleBook?.teamExpensePosting?.defaultAdvanceParentLedger]);
 
   const employeeById = (id: string) => employees.find((e) => e.id === id);
 
@@ -133,6 +144,7 @@ export function EmployeesTab() {
         whatsappNumber: "+61 ",
         bank: { accountNumber: "", accountName: "", bankName: "" },
         budget: { monthly: 500, quarterly: 1200, annual: 4500, categories: [] },
+        advanceParentLedger: defaultAdvanceParent,
         ytdSpent: 0,
         mtdSpent: 0,
         qtdSpent: 0,

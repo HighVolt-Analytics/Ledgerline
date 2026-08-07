@@ -346,10 +346,16 @@ def normalize_team_expense_kind(value: str | None) -> TeamExpenseKind:
 
 
 class TeamExpensePostingDefaults(BaseModel):
-    """Team Expenses posting accounts — kept out of shared posting defaults."""
+    """Team Expenses posting accounts — kept out of shared posting defaults.
 
-    default_advance_parent_ledger: str = DEFAULT_STAFF_ADVANCE_ACCOUNT
-    settlement_account: str = "Bank Account"
+    Both fields are COA account names chosen by the tenant. Empty means unconfigured;
+    journaling fails closed via the control-account gate until the user picks ledgers
+    in Rule Book. Greenfield starter tenants set the advance parent explicitly when the
+    starter COA is provisioned — do not assume ``DEFAULT_STAFF_ADVANCE_ACCOUNT`` here.
+    """
+
+    default_advance_parent_ledger: str = ""
+    settlement_account: str = ""
 
     @field_validator("default_advance_parent_ledger", "settlement_account", mode="before")
     @classmethod
@@ -360,10 +366,10 @@ class TeamExpensePostingDefaults(BaseModel):
 
     @classmethod
     def for_posting_defaults(cls, posting: PostingDefaults) -> "TeamExpensePostingDefaults":
-        """Seed settlement from the jurisdiction bank account; editable independently after."""
+        """Seed settlement from the jurisdiction bank account; advance parent stays empty."""
         return cls(
-            default_advance_parent_ledger=DEFAULT_STAFF_ADVANCE_ACCOUNT,
-            settlement_account=(posting.bank_account or "").strip() or "Bank Account",
+            default_advance_parent_ledger="",
+            settlement_account=(posting.bank_account or "").strip(),
         )
 
 

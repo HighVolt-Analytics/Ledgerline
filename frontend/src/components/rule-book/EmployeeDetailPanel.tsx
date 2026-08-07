@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Check,
   ChevronDown,
@@ -10,8 +10,12 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, toSelectOptions } from "@/components/ui/select";
 import { useCoaAccountOptions } from "@/hooks/useCoaAccountOptions";
+import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { cn } from "@/lib/cn";
-import { mergeCoaOptionsWithSavedValue } from "@/lib/coaAccountOptions";
+import {
+  ledgerExistsInCoa,
+  mergeCoaOptionsWithSavedValue,
+} from "@/lib/coaAccountOptions";
 import type { EmployeeMaster } from "@/lib/v4RuleBookTypes";
 import { fmtAud } from "@/lib/v4MockData";
 import { BankDetailsSection } from "./BankDetailsSection";
@@ -31,9 +35,47 @@ export function EmployeeDetailPanel({
   onToggleMask?: () => void;
 }) {
   const [rulesOpen, setRulesOpen] = useState(false);
-  const { options: ledgerOptions } = useCoaAccountOptions({
-    includeEmpty: false,
+  const { data: ruleBook } = useRuleBookConfig();
+  const {
+    options: ledgerOptions,
+    allAccounts,
+    isLoading: coaLoading,
+  } = useCoaAccountOptions({
+    includeEmpty: true,
+    emptyLabel: "— Select account —",
   });
+
+  const teamDefaultAdvanceParent =
+    ruleBook?.teamExpensePosting?.defaultAdvanceParentLedger?.trim() ?? "";
+
+  const advanceParentValue = useMemo(() => {
+    const saved = (emp.advanceParentLedger || "").trim();
+    if (saved && (ledgerExistsInCoa(saved, allAccounts) || !allAccounts.length)) {
+      return saved;
+    }
+    if (
+      teamDefaultAdvanceParent &&
+      ledgerExistsInCoa(teamDefaultAdvanceParent, allAccounts)
+    ) {
+      return teamDefaultAdvanceParent;
+    }
+    return saved;
+  }, [allAccounts, emp.advanceParentLedger, teamDefaultAdvanceParent]);
+
+  // Persist the visible team default onto the draft so Save writes the parent ledger.
+  useEffect(() => {
+    if (coaLoading || allAccounts.length === 0) return;
+    const saved = (emp.advanceParentLedger || "").trim();
+    if (saved) return;
+    if (
+      teamDefaultAdvanceParent &&
+      ledgerExistsInCoa(teamDefaultAdvanceParent, allAccounts)
+    ) {
+      onChange({ advanceParentLedger: teamDefaultAdvanceParent });
+    }
+    // Intentionally omit onChange from deps — parent patchDraft is stable enough per render cycle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- seed once when COA/default available
+  }, [allAccounts, coaLoading, emp.advanceParentLedger, emp.id, teamDefaultAdvanceParent]);
 
   const validationRules = [
     {
@@ -43,6 +85,10 @@ export function EmployeeDetailPanel({
     {
       label: "Bank details present for reimbursement",
       ok: Boolean(emp.bank.accountNumber),
+    },
+    {
+      label: "Advance parent ledger selected from chart of accounts",
+      ok: Boolean(advanceParentValue) && ledgerExistsInCoa(advanceParentValue, allAccounts),
     },
   ];
 
@@ -165,11 +211,12 @@ export function EmployeeDetailPanel({
         <div className="grid sm:grid-cols-2 gap-2.5">
           <FieldLabel label="Advance parent ledger">
             <Select
-              value={emp.advanceParentLedger}
+              value={advanceParentValue}
               onValueChange={(advanceParentLedger) => onChange({ advanceParentLedger })}
-              options={mergeCoaOptionsWithSavedValue(ledgerOptions, emp.advanceParentLedger)}
+              options={mergeCoaOptionsWithSavedValue(ledgerOptions, advanceParentValue)}
               size="sm"
               className="w-full text-xs"
+              placeholder={coaLoading ? "Loading accounts…" : "Select account…"}
               data-testid={`employee-advance-parent-${emp.id}`}
             />
           </FieldLabel>
@@ -192,8 +239,8 @@ export function EmployeeDetailPanel({
           </FieldLabel>
         </div>
         <p className="text-[11px] text-muted-foreground mt-1.5">
-          Outstanding Staff Advance float from advance requisitions posted to this employee&apos;s
-          own sub-ledger under the parent selected here.
+          Pick any ledger from Settings → Chart of accounts (defaults to Rules → Team expense
+          posting). Advance requisitions post to this employee&apos;s sub-ledger under that parent.
         </p>
       </div>
 

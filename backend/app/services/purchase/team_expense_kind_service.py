@@ -17,16 +17,64 @@ from app.services.invoice.invoice_evaluation_service import ROUTE_TEAM
 from app.services.rule_book.account_mapper import AccountMapping, MappingDetail
 
 
+def infer_team_expense_kind_from_labels(*labels: str) -> TeamExpenseKind | None:
+    """Infer claim vs advance from document-type title / short title wording."""
+    blob = " ".join((label or "").strip().lower() for label in labels if label).strip()
+    if not blob:
+        return None
+    # Legacy / claim wording wins over bare "advance" substrings.
+    if "expense against advance" in blob:
+        return TEAM_EXPENSE_KIND_CLAIM
+    if "expense claim" in blob or "reimbursement" in blob:
+        return TEAM_EXPENSE_KIND_CLAIM
+    if "advance requisition" in blob or "advance request" in blob:
+        return TEAM_EXPENSE_KIND_ADVANCE
+    if "employee advance" in blob and "expense" not in blob:
+        return TEAM_EXPENSE_KIND_ADVANCE
+    return None
+
+
+def reconcile_team_expense_kind_for_document_type(
+    *,
+    title: str | None = None,
+    short_title: str | None = None,
+    configured: str | None = None,
+) -> str:
+    """Effective TE kind for a catalogue row.
+
+    Clear title semantics win when they conflict with a mis-set pin (common Rules
+    mis-click). Clear titles also fill an empty pin so claim/advance DTs stay aligned.
+    """
+    inferred = infer_team_expense_kind_from_labels(title or "", short_title or "")
+    raw = (configured or "").strip().lower()
+    if raw == "expense_against_advance":
+        pinned: TeamExpenseKind | None = None
+    elif raw in {TEAM_EXPENSE_KIND_ADVANCE, TEAM_EXPENSE_KIND_CLAIM}:
+        pinned = normalize_team_expense_kind(raw)
+    else:
+        pinned = None
+
+    if inferred is not None:
+        if pinned is not None and pinned != inferred:
+            return inferred
+        return inferred if pinned is None else pinned
+    return pinned or ""
+
+
 def document_type_team_expense_kind(
     definition: DocumentTypeDefinition | None,
 ) -> TeamExpenseKind | None:
-    """Claim kind pinned on the document type, or None when it is left on auto."""
+    """Claim kind for the document type after title/pin reconciliation, or None when auto."""
     if definition is None:
         return None
-    configured = (getattr(definition, "team_expense_kind", "") or "").strip()
-    if not configured:
+    reconciled = reconcile_team_expense_kind_for_document_type(
+        title=getattr(definition, "title", None),
+        short_title=getattr(definition, "short_title", None),
+        configured=getattr(definition, "team_expense_kind", None),
+    )
+    if not reconciled:
         return None
-    return normalize_team_expense_kind(configured)
+    return normalize_team_expense_kind(reconciled)
 
 
 async def resolve_default_team_expense_kind(
@@ -38,7 +86,7 @@ async def resolve_default_team_expense_kind(
 ) -> TeamExpenseKind:
     """Claim kind to stamp on a new Team Expenses claim.
 
-    A document type that pins a kind wins (advance requisition vs expense claim).
+    A document type that resolves to a kind wins (advance requisition vs expense claim).
     Otherwise default to expense claim — float balance no longer switches kinds.
     """
     _ = session
@@ -57,7 +105,7 @@ async def stamp_team_expense_kind(
     *,
     definition: DocumentTypeDefinition | None = None,
 ) -> TeamExpenseKind | None:
-    """Fill the claim kind; DT-pinned kind always wins over a stale prior stamp."""
+    """Fill the claim kind; DT-resolved kind always wins over a stale prior stamp."""
     if (invoice.route_target or "").strip() != ROUTE_TEAM:
         return None
 

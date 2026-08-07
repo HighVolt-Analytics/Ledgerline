@@ -12,6 +12,7 @@ import {
   isTransPosting,
 } from "@/lib/documentTypeKlass";
 import { defaultPlaybookProfileForCode as shippedDefaultPlaybookProfileForCode } from "@/lib/documentTypePlaybookDefaults";
+import { reconcileTeamExpenseKindForDocumentType } from "@/lib/teamExpenseKind";
 
 export type PlaybookProfile =
   | "po_goods"
@@ -506,7 +507,19 @@ export function reconcileDocumentTypeDraft(
   draft: DocumentTypeDefinition,
   documentTypes?: DocumentTypeDefinition[]
 ): DocumentTypeDefinition {
-  return reconcileBundleDraft(reconcilePlaybookDraft(draft), documentTypes);
+  const reconciled = reconcileBundleDraft(reconcilePlaybookDraft(draft), documentTypes);
+  if ((reconciled.routeTarget || "").trim() !== "Team Expenses") {
+    return reconciled;
+  }
+  const teamExpenseKind = reconcileTeamExpenseKindForDocumentType({
+    title: reconciled.title,
+    shortTitle: reconciled.shortTitle,
+    configured: reconciled.teamExpenseKind,
+  });
+  if (teamExpenseKind === (reconciled.teamExpenseKind || "")) {
+    return reconciled;
+  }
+  return { ...reconciled, teamExpenseKind: teamExpenseKind as DocumentTypeDefinition["teamExpenseKind"] };
 }
 
 export function applyRoutePlaybookAndBundleDefaults(

@@ -659,9 +659,9 @@ async def upload_invoice(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[InvoiceResponse]:
-    allowed = (".pdf", ".jpg", ".jpeg", ".png", ".docx")
+    allowed = (".pdf", ".jpg", ".jpeg", ".png", ".docx", ".webp")
     if not file.filename or not file.filename.lower().endswith(allowed):
-        raise HTTPException(400, "Accepted: PDF, JPG, PNG, DOCX")
+        raise HTTPException(400, "Accepted: PDF, JPG, PNG, DOCX, WEBP")
 
     data = await _read_upload_file(file)
     if not data:
@@ -724,7 +724,7 @@ async def upload_invoice(
     )
 
 
-_ALLOWED_ATTACH = (".pdf", ".jpg", ".jpeg", ".png", ".docx")
+_ALLOWED_ATTACH = (".pdf", ".jpg", ".jpeg", ".png", ".docx", ".webp")
 
 
 @router.post("/{invoice_id:int}/attach", response_model=ApiEnvelope[InvoiceResponse])
@@ -742,7 +742,7 @@ async def attach_invoice_file(
     """
     inv = await _get_invoice_for_tenant(db, invoice_id, ctx.tenant_id)
     if not file.filename or not file.filename.lower().endswith(_ALLOWED_ATTACH):
-        raise HTTPException(400, "Accepted: PDF, JPG, PNG, DOCX")
+        raise HTTPException(400, "Accepted: PDF, JPG, PNG, DOCX, WEBP")
 
     data = await _read_upload_file(file)
     if not data:

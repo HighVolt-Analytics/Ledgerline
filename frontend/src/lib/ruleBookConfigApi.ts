@@ -861,8 +861,8 @@ export function ruleBookConfigFromApi(api: RuleBookConfig): RuleBookConfigState 
     },
     teamExpensePosting: {
       defaultAdvanceParentLedger:
-        api.team_expense_posting?.default_advance_parent_ledger ?? "Staff Advance",
-      settlementAccount: api.team_expense_posting?.settlement_account ?? "Bank Account",
+        api.team_expense_posting?.default_advance_parent_ledger ?? "",
+      settlementAccount: api.team_expense_posting?.settlement_account ?? "",
     },
     documentSets: (api.document_sets ?? []).map((set) => ({
       id: set.id,
@@ -960,8 +960,8 @@ export function ruleBookConfigToApi(state: RuleBookConfigState): RuleBookRulesPa
     },
     team_expense_posting: {
       default_advance_parent_ledger:
-        state.teamExpensePosting?.defaultAdvanceParentLedger ?? "Staff Advance",
-      settlement_account: state.teamExpensePosting?.settlementAccount ?? "Bank Account",
+        state.teamExpensePosting?.defaultAdvanceParentLedger ?? "",
+      settlement_account: state.teamExpensePosting?.settlementAccount ?? "",
     },
     document_sets: state.documentSets.map((set) => ({
       id: set.id,

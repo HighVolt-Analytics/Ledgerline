@@ -8,7 +8,7 @@ from pathlib import Path
 from app.config import get_settings
 
 ALLOWED_SUFFIXES: frozenset[str] = frozenset(
-    {".pdf", ".jpg", ".jpeg", ".png", ".docx"}
+    {".pdf", ".jpg", ".jpeg", ".png", ".docx", ".webp"}
 )
 ALLOWED_MIME: frozenset[str] = frozenset(
     {
@@ -17,6 +17,7 @@ ALLOWED_MIME: frozenset[str] = frozenset(
         "image/jpeg",
         "image/jpg",
         "image/png",
+        "image/webp",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     }
 )
@@ -165,7 +166,7 @@ def evaluate_file_validity(path: str | Path) -> FileValidityResult:
                 file_size_bytes=size,
                 page_count=page_count,
             )
-    elif suffix in {".jpg", ".jpeg", ".png"}:
+    elif suffix in {".jpg", ".jpeg", ".png", ".webp"}:
         if not _image_readable(file_path):
             return FileValidityResult(
                 passed=False,

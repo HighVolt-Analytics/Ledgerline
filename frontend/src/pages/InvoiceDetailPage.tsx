@@ -112,7 +112,7 @@ export function InvoiceDetailPage() {
             Upload PDF
             <input
               type="file"
-              accept=".pdf,.jpg,.jpeg,.png,.docx"
+              accept=".pdf,.jpg,.jpeg,.png,.docx,.webp"
               className="hidden"
               onChange={onAttach}
             />

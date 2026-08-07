@@ -293,3 +293,27 @@ def test_filter_invoice_image_and_docx() -> None:
     )
     files = filter_invoice_attachments(email)
     assert {f.filename for f in files} == {"scan.png", "bill.docx"}
+
+
+def test_filter_keeps_webp_and_mime_only_image() -> None:
+    email = RawEmail(
+        message_id="x",
+        subject="Photo receipt",
+        sender="a@b.com",
+        mailbox_email="a@b.com",
+        attachments=[
+            EmailAttachment("snap.webp", "image/webp", b"data"),
+            EmailAttachment("IMG_001", "image/jpeg", b"\xff\xd8\xff"),
+            EmailAttachment("logo.gif", "image/gif", b"gif"),
+        ],
+    )
+    files = filter_invoice_attachments(email)
+    assert {f.filename for f in files} == {"snap.webp", "IMG_001.jpg"}
+    assert email.attachment_drops[0]["filename"] == "logo.gif"
+
+
+def test_unread_filter_does_not_require_attachments() -> None:
+    from app.services.ingest.email_ingestion import build_unread_inbox_filter
+
+    assert build_unread_inbox_filter() == "isRead eq false"
+    assert "hasAttachments" not in build_unread_inbox_filter()

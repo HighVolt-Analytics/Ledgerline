@@ -111,11 +111,11 @@ def test_ensure_keeps_claim_dt_for_against_advance_heading() -> None:
             routeTarget=ROUTE_TEAM,
             enabled=True,
             playbookProfile="employee_claim",
-            # Legacy pin is rejected / cleared on the DT schema.
+            # Legacy pin is rejected on the DT schema; title heals to expense_claim.
             teamExpenseKind="expense_against_advance",
         ),
     ]
-    assert types[1].team_expense_kind == ""
+    assert types[1].team_expense_kind == "expense_claim"
 
     inv = Invoice(
         tenant_id=TESTING_TENANT_UUID,

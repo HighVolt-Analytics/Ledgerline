@@ -81,7 +81,7 @@ def evaluate_layout_readiness(path: str | Path) -> LayoutReadinessResult:
     reasons: list[str] = []
     hints: list[str] = []
 
-    if suffix in {".jpg", ".jpeg", ".png"}:
+    if suffix in {".jpg", ".jpeg", ".png", ".webp"}:
         return LayoutReadinessResult(
             ocr_mode=OcrMode.ENHANCED_SCAN,
             allow_di_fallback=False,

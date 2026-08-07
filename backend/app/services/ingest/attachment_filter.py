@@ -1,50 +1,43 @@
-import re
-from pathlib import Path
+"""Keep email attachments that match accepted invoice/receipt formats."""
+
+from __future__ import annotations
 
 from app.services.ingest.email_ingestion import EmailAttachment, RawEmail
-
-_INVOICE_NAME = re.compile(r"(invoice|inv|bill|tax.?invoice)", re.I)
-_PDF_MIME = {"application/pdf", "application/x-pdf"}
-_IMAGE_MIME = {"image/jpeg", "image/jpg", "image/png"}
-_DOCX_MIME = {
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-}
-_ALLOWED_SUFFIX = {".pdf", ".jpg", ".jpeg", ".png", ".docx"}
+from app.services.ingest.ingest_file_types import (
+    ensure_filename_extension,
+    is_allowed_document,
+)
 
 
 def _is_invoice_attachment(att: EmailAttachment) -> bool:
-    mime = (att.content_type or "application/octet-stream").split(";")[0].strip().lower()
-    name = (att.filename or "").lower()
-    if not name:
-        return False
-    suffix = Path(name).suffix.lower()
-
-    is_pdf = mime in _PDF_MIME or suffix == ".pdf"
-    is_image = mime in _IMAGE_MIME or suffix in {".jpg", ".jpeg", ".png"}
-    is_docx = mime in _DOCX_MIME or suffix == ".docx"
-
-    if suffix not in _ALLOWED_SUFFIX and not (is_pdf or is_image or is_docx):
-        return False
-
-    if _INVOICE_NAME.search(name):
-        return True
-    return suffix in _ALLOWED_SUFFIX
+    return is_allowed_document(filename=att.filename, content_type=att.content_type)
 
 
 def filter_invoice_attachments(email: RawEmail) -> list[EmailAttachment]:
-    """PDF, JPG/PNG, and DOCX attachments per assessment brief §2.
+    """PDF, JPG/PNG/WEBP, and DOCX attachments (brief + WhatsApp parity).
 
     Filtered-out attachments are recorded on ``email.attachment_drops`` for durable audit.
+    Missing extensions are filled from MIME when the type is otherwise allowed.
     """
     kept: list[EmailAttachment] = []
     for att in email.attachments:
-        if _is_invoice_attachment(att):
-            kept.append(att)
-        else:
+        if not _is_invoice_attachment(att):
             email.attachment_drops.append(
                 {
                     "reason": "attachment_type_filtered",
                     "filename": att.filename or "",
                 }
             )
+            continue
+        fixed_name = ensure_filename_extension(att.filename, att.content_type)
+        if fixed_name != (att.filename or ""):
+            kept.append(
+                EmailAttachment(
+                    filename=fixed_name,
+                    content_type=att.content_type,
+                    data=att.data,
+                )
+            )
+        else:
+            kept.append(att)
     return kept

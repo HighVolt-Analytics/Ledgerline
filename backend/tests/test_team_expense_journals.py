@@ -238,3 +238,23 @@ def test_control_account_gate_flags_missing_staff_advance() -> None:
         config=config,
     )
     assert unresolved == ["staff_advance_account"]
+
+
+def test_control_account_gate_flags_empty_staff_advance() -> None:
+    config = _config()
+    config.team_expense_posting.default_advance_parent_ledger = ""
+    unresolved = get_unresolved_control_accounts(
+        invoice=_invoice("advance_requisition"),
+        config=config,
+    )
+    assert unresolved == ["staff_advance_account"]
+
+
+def test_team_expense_posting_defaults_are_empty_until_configured() -> None:
+    posting = PostingDefaults(bank_account="Operating Bank")
+    seeded = TeamExpensePostingDefaults.for_posting_defaults(posting)
+    assert seeded.default_advance_parent_ledger == ""
+    assert seeded.settlement_account == "Operating Bank"
+    bare = TeamExpensePostingDefaults()
+    assert bare.default_advance_parent_ledger == ""
+    assert bare.settlement_account == ""

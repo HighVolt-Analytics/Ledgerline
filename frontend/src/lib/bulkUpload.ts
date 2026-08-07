@@ -5,10 +5,10 @@ import { PIPELINE_STATUSES } from "@/lib/invoiceActions";
 export const BULK_UPLOAD_CONCURRENCY = 1;
 export const BULK_UPLOAD_MAX_FILES = 50;
 
-export const UPLOAD_ACCEPT = ".pdf,.jpg,.jpeg,.png,.docx";
-export const UPLOAD_ACCEPT_LABEL = "PDF, JPG, PNG, DOCX";
+export const UPLOAD_ACCEPT = ".pdf,.jpg,.jpeg,.png,.docx,.webp";
+export const UPLOAD_ACCEPT_LABEL = "PDF, JPG, PNG, DOCX, WEBP";
 
-const UPLOAD_EXTENSIONS = new Set([".pdf", ".jpg", ".jpeg", ".png", ".docx"]);
+const UPLOAD_EXTENSIONS = new Set([".pdf", ".jpg", ".jpeg", ".png", ".docx", ".webp"]);
 const UPLOAD_RETRY_STATUSES = new Set([500, 502, 503, 504]);
 
 export type BulkUploadItemResult =

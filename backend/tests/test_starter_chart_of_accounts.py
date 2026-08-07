@@ -129,6 +129,23 @@ async def test_starter_coa_supports_purchase_and_sales_journals(db_session: Asyn
     assert get_unresolved_control_accounts(invoice=purchase, config=config) == []
     assert get_unresolved_control_accounts(invoice=sales, config=config) == []
 
+    # Greenfield seed binds advance parent to starter Staff Advance (user can change later).
+    assert config.team_expense_posting.default_advance_parent_ledger == STAFF_ADVANCE_ACCOUNT
+    assert category_resolved_in_coa(
+        config.team_expense_posting.default_advance_parent_ledger, config
+    )
+    team_advance = Invoice(
+        tenant_id=tenant_id,
+        invoice_date=date(2026, 6, 14),
+        subtotal=Decimal("100"),
+        gst=Decimal("0"),
+        total=Decimal("100"),
+        route_target="Team Expenses",
+        team_expense_kind="advance_requisition",
+        currency="AUD",
+    )
+    assert get_unresolved_control_accounts(invoice=team_advance, config=config) == []
+
     purchase_lines = generate_entries(purchase, expense_mapping, config=config)
     sales_lines = generate_entries(sales, revenue_mapping, config=config)
 

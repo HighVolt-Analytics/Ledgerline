@@ -166,11 +166,21 @@ def _list_folder_message_pages(
 
 
 def build_recent_inbox_filter(since: datetime) -> str:
-    """Graph filter for messages received since a timestamp (read + unread)."""
+    """Graph filter for messages received since a timestamp (read + unread).
+
+    Unread poll intentionally omits hasAttachments so inline image-only mails are
+    still inspected; the recent window keeps the attachment filter to limit volume.
+    """
     return (
         f"receivedDateTime ge {_graph_datetime(since)} and "
         f"hasAttachments eq true"
     )
+
+
+def build_unread_inbox_filter() -> str:
+    """Unread messages — do not require hasAttachments (inline photos often omit it)."""
+    return "isRead eq false"
+
 
 
 def _merge_emails_by_message_id(*batches: list[RawEmail]) -> list[RawEmail]:
@@ -211,7 +221,8 @@ def _messages_to_emails(
             access_token=access_token,
             poll_folder=poll_folder,
         )
-        if raw:
+        # Skip empty mails (unread poll no longer requires hasAttachments).
+        if raw and (raw.attachments or raw.attachment_drops):
             emails.append(raw)
     return emails
 
@@ -221,15 +232,16 @@ def _list_unread_messages(
     access_token: str | None = None,
     folder_id: str | None = None,
 ) -> list[dict[str, object]]:
-    """Fetch unread messages that have attachments from inbox or a child folder."""
+    """Fetch unread messages (inline image mails often report hasAttachments=false)."""
     limit = get_settings().graph_max_messages
+    unread_filter = build_unread_inbox_filter()
     rows: list[dict[str, object]] = []
     pages = (
         _list_folder_message_pages(
             mailbox_email,
             folder_id,
             access_token=access_token,
-            odata_filter="isRead eq false and hasAttachments eq true",
+            odata_filter=unread_filter,
             page_size=limit,
             max_messages=limit,
         )
@@ -237,7 +249,7 @@ def _list_unread_messages(
         else _list_inbox_message_pages(
             mailbox_email,
             access_token=access_token,
-            odata_filter="isRead eq false and hasAttachments eq true",
+            odata_filter=unread_filter,
             page_size=limit,
             max_messages=limit,
         )
@@ -365,12 +377,17 @@ def _list_attachments(
 
 def _decode_attachment(record: dict[str, object]) -> tuple[EmailAttachment | None, str | None]:
     """Return (attachment, drop_reason). drop_reason set when attachment is skipped."""
+    from app.services.ingest.ingest_file_types import ensure_filename_extension
+
     odata_type = record.get("@odata.type", "")
     if odata_type != "#microsoft.graph.fileAttachment":
         return None, "attachment_not_file"
 
-    name = str(record.get("name") or "attachment.bin")
     content_type = str(record.get("contentType") or "application/octet-stream")
+    name = ensure_filename_extension(
+        str(record.get("name") or "").strip() or None,
+        content_type,
+    )
     raw = record.get("contentBytes")
     if not raw:
         return None, "attachment_bytes_missing"

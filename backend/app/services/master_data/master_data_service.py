@@ -439,6 +439,25 @@ async def delete_vendor_master(db: AsyncSession, tenant_id: int, master_id: str)
     await sync_masters_to_config_file(db, tenant_id)
 
 
+async def _default_employee_advance_parent(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> str:
+    """Prefer Team Expenses posting default when it exists in the live COA."""
+    from app.services.master_data.party_coa_subledger_service import find_coa_entry_by_name
+    from app.services.rule_book.rule_book_config_io import load_rule_book_config_dict
+    from app.schemas.rule_book_config import validate_rule_book_config_payload
+
+    raw = await load_rule_book_config_dict(db, tenant_id)
+    config = validate_rule_book_config_payload(raw)
+    label = (config.team_expense_posting.default_advance_parent_ledger or "").strip()
+    if not label:
+        return ""
+    if find_coa_entry_by_name(list(config.chart_of_accounts or []), label) is None:
+        return ""
+    return label
+
+
 async def create_employee_master(
     db: AsyncSession,
     tenant_id: int,
@@ -449,6 +468,10 @@ async def create_employee_master(
     existing = await get_employee_master_by_id(db, tenant_id, master_id)
     if existing:
         raise ValueError(f"Employee master id '{master_id}' already exists")
+
+    advance_parent = (body.advance_parent_ledger or "").strip()
+    if not advance_parent:
+        advance_parent = await _default_employee_advance_parent(db, tenant_id)
 
     row = EmployeeMasterRecord(
         tenant_id=tenant_id,
@@ -467,7 +490,7 @@ async def create_employee_master(
         supervisor_2=body.supervisor_2,
         bank=body.bank.model_dump(exclude_none=True),
         spending_limits=body.spending_limits.model_dump(),
-        advance_parent_ledger=(body.advance_parent_ledger or "").strip(),
+        advance_parent_ledger=advance_parent,
         ytd_spent=body.ytd_spent,
         mtd_spent=body.mtd_spent,
         qtd_spent=body.qtd_spent,

@@ -32,7 +32,15 @@ export function useSaveChartOfAccounts() {
     mutationFn: async (accounts: ChartOfAccountRow[]) =>
       (await api.updateChartOfAccounts({ accounts })).accounts ?? [],
     onSuccess: async (accounts) => {
-      queryClient.setQueryData(queryKeys.chartOfAccounts(), accounts);
+      const normalized = (accounts ?? []).map((row) => {
+        const raw = row as ChartOfAccountRow & { sub_ledgers?: SubLedgerRow[] };
+        return {
+          ...row,
+          type: normalizeChartOfAccountType(row.type),
+          subLedgers: normalizeSubLedgers(raw.subLedgers ?? raw.sub_ledgers),
+        };
+      });
+      queryClient.setQueryData(queryKeys.chartOfAccounts(), normalized);
       await queryClient.refetchQueries({ queryKey: queryKeys.chartOfAccounts() });
       void queryClient.invalidateQueries({ queryKey: queryKeys.ruleBookConfig() });
     },
@@ -106,7 +114,7 @@ export function inferChartOfAccountTypeFromName(name: string): ChartOfAccountTyp
   if (!lower) return "Expense";
   if (/\b(receivable|debtor|debtors|trade)\b/.test(lower)) return "Asset";
   if (/\b(payable|suspense|gst collected|tax collected|output tax)\b/.test(lower)) return "Liability";
-  if (/\b(gst paid|bank)\b/.test(lower)) return "Asset";
+  if (/\b(gst paid|bank|advance|float)\b/.test(lower)) return "Asset";
   if (/\b(sales|revenue|income|turnover)\b/.test(lower)) return "Revenue";
   if (/\b(equity|retained)\b/.test(lower)) return "Equity";
   return "Expense";

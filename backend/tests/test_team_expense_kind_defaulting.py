@@ -142,6 +142,54 @@ def test_document_type_kind_reads_pin_and_ignores_auto() -> None:
     assert document_type_team_expense_kind(None) is None
 
 
+def test_title_wins_over_swapped_team_expense_kind_pin() -> None:
+    from app.services.purchase.team_expense_kind_service import (
+        reconcile_team_expense_kind_for_document_type,
+    )
+
+    assert (
+        reconcile_team_expense_kind_for_document_type(
+            title="Employee expense claim",
+            configured=TEAM_EXPENSE_KIND_ADVANCE,
+        )
+        == TEAM_EXPENSE_KIND_CLAIM
+    )
+    assert (
+        reconcile_team_expense_kind_for_document_type(
+            title="Employee advance request",
+            configured=TEAM_EXPENSE_KIND_CLAIM,
+        )
+        == TEAM_EXPENSE_KIND_ADVANCE
+    )
+
+
+@pytest.mark.asyncio
+async def test_stamp_heals_swapped_expense_claim_document_type_pin(
+    db_session: AsyncSession,
+) -> None:
+    """DT title says expense claim even if Rules pin was wrongly set to advance."""
+    claim_dt = DocumentTypeDefinition(
+        code="DT-04",
+        title="Employee expense claim",
+        short_title="Expense claim",
+        klass="Transactional",
+        posting="Yes",
+        route_target=ROUTE_TEAM,
+        playbook_profile="employee_claim",
+        team_expense_kind=TEAM_EXPENSE_KIND_ADVANCE,
+        budget_control=True,
+        advance_control=True,
+        post_to={"ledger": "Operating Expenses"},
+    )
+    config = await _setup(db_session, claim_dt)
+    invoice = await _claim(db_session, document_type_code="DT-04")
+
+    stamped = await stamp_team_expense_kind(db_session, invoice, config)
+
+    assert stamped == TEAM_EXPENSE_KIND_CLAIM
+    assert invoice.team_expense_kind == TEAM_EXPENSE_KIND_CLAIM
+
+
 def test_unknown_document_type_kind_falls_back_to_auto() -> None:
     assert _document_type("DT-12", team_expense_kind="nonsense").team_expense_kind == ""
 

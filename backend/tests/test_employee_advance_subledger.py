@@ -137,10 +137,36 @@ async def test_employee_without_parent_falls_back_to_team_default(
     )
 
     assert employee.advance_sub_ledger == "Lee Chan"
+    assert employee.advance_parent_ledger == "Staff Advance"
     config = await _reload(db_session)
     assert (
         resolve_party_child_mapping(
             config, parent_ledger_name="Staff Advance", slug="em-lee"
+        )
+        is not None
+    )
+
+
+@pytest.mark.asyncio
+async def test_creating_employee_uses_custom_coa_team_default(
+    db_session: AsyncSession,
+) -> None:
+    config = _config()
+    config.team_expense_posting.default_advance_parent_ledger = "Director Advance"
+    await save_rule_book_config(db_session, config, TESTING_TENANT_UUID)
+
+    employee = await create_employee_master(
+        db_session,
+        TESTING_TENANT_UUID,
+        EmployeeMasterCreate(master_id="em-custom", name="Custom Default"),
+    )
+
+    assert employee.advance_parent_ledger == "Director Advance"
+    assert employee.advance_sub_ledger == "Custom Default"
+    reloaded = await _reload(db_session)
+    assert (
+        resolve_party_child_mapping(
+            reloaded, parent_ledger_name="Director Advance", slug="em-custom"
         )
         is not None
     )
