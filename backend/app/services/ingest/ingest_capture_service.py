@@ -71,14 +71,44 @@ def _effective_capture_rules(
 
 
 EMPLOYEE_BYPASS_CAPTURE_RULE_ID = "ec-employee-bypass"
+DEFAULT_CATCH_ALL_CAPTURE_RULE_IDS = frozenset(
+    {DEFAULT_CATCH_ALL_CAPTURE_RULE_ID, "ec-default"}
+)
+_CATCH_ALL_RULE_NAMES = frozenset(
+    {
+        "all mailbox attachments",
+        "catch all",
+        "catch-all",
+        "all attachments",
+    }
+)
+
+
+def capture_rule_requires_employee_sender(rule: EmailCaptureRule | None) -> bool:
+    """True when ingest must also match an employee master email.
+
+    Catch-all / Team Expenses rules must not pull arbitrary senders — only registered
+    employees. Specific Purchase/Sales capture rules (e.g. vendor ``from`` filters) do not.
+    """
+    if rule is None:
+        return False
+    route = (rule.action.route_to or "").strip()
+    if route == "Team Expenses":
+        return True
+    if (rule.id or "").strip() in DEFAULT_CATCH_ALL_CAPTURE_RULE_IDS:
+        return True
+    if (rule.id or "").strip() == EMPLOYEE_BYPASS_CAPTURE_RULE_ID:
+        return True
+    if (rule.name or "").strip().lower() in _CATCH_ALL_RULE_NAMES:
+        return True
+    return False
 
 
 def employee_bypass_capture_rule(mailbox_email: str) -> EmailCaptureRule:
     """Synthetic rule used when sender matches an employee in the registry.
 
-    Employee senders on email/WhatsApp/Viber are always ingested regardless of
-    whether a human-authored capture rule exists — the employee registry is the
-    implicit allow-list for Team Expenses ingest.
+    Employee senders on email/WhatsApp/Viber are ingested when no human-authored
+    capture rule matches — the employee registry is the allow-list for Team Expenses.
     """
     mailbox = mailbox_email.strip() or "inbox"
     return EmailCaptureRule(

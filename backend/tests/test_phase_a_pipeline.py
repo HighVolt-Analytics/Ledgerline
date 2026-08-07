@@ -176,6 +176,9 @@ async def test_ingest_allows_email_when_no_capture_rules_configured(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Empty capture rules use catch-all — still requires employee master match."""
+    from app.models.employee_master import EmployeeMasterRecord
+
     empty_config = validate_rule_book_config_payload(
         {
             "schema_version": 1,
@@ -192,6 +195,19 @@ async def test_ingest_allows_email_when_no_capture_rules_configured(
             "legacy_cascade": {"enabled": False},
         }
     )
+
+    db_session.add(
+        EmployeeMasterRecord(
+            tenant_id=TESTING_TENANT_UUID,
+            master_id="emp-catch-all-1",
+            name="Random User",
+            email="random@unknown.com",
+            status="Active",
+            bank={},
+            spending_limits={},
+        )
+    )
+    await db_session.flush()
 
     async def _empty_config(_session: AsyncSession, _tenant_id) -> RuleBookConfigPayload:
         return empty_config
@@ -217,6 +233,207 @@ async def test_ingest_allows_email_when_no_capture_rules_configured(
     )
     assert result.ingested_count == 1
 
+
+@pytest.mark.asyncio
+async def test_catch_all_skips_non_employee_sender(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Staging-style ec-default catch-all must not pull unknown senders."""
+    catch_all_config = validate_rule_book_config_payload(
+        {
+            "schema_version": 1,
+            "email_capture_rules": [
+                {
+                    "id": "ec-default",
+                    "name": "All mailbox attachments",
+                    "enabled": True,
+                    "priority": 9999,
+                    "mailbox": "*",
+                    "root": {
+                        "type": "group",
+                        "operator": "OR",
+                        "children": [
+                            {
+                                "type": "condition",
+                                "field": "attachment_name",
+                                "operator": "contains",
+                                "value": ".",
+                            }
+                        ],
+                    },
+                    "action": {
+                        "save_attachment": True,
+                        "route_to": "Team Expenses",
+                        "tags": [],
+                    },
+                }
+            ],
+            "purchase_rules": [],
+            "expense_rules": [],
+            "team_expense_rules": [],
+            "posting_defaults": {
+                "tax_account": "GST Paid",
+                "payable_account": "Accounts Payable",
+                "fallback_account": "Suspense Account",
+            },
+            "document_sets": [],
+            "legacy_cascade": {"enabled": False},
+        }
+    )
+
+    async def _catch_all_config(_session: AsyncSession, _tenant_id) -> RuleBookConfigPayload:
+        return catch_all_config
+
+    monkeypatch.setattr(
+        "app.services.invoice.pipeline.load_config_for_tenant",
+        _catch_all_config,
+    )
+    monkeypatch.setattr(
+        "app.services.invoice.pipeline._finish_email_message",
+        lambda *args, **kwargs: None,
+    )
+
+    result = await ingest_email_attachments(
+        db_session,
+        [_unmatched_email()],
+        tenant_id=TESTING_TENANT_UUID,
+        tenant_slug="hv-org",
+    )
+    assert result.ingested_count == 0
+    assert result.preskip_exceptions["msg-unknown-1"] == "sender_not_employee"
+
+
+@pytest.mark.asyncio
+async def test_catch_all_pulls_when_sender_is_employee(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.models.employee_master import EmployeeMasterRecord
+
+    catch_all_config = validate_rule_book_config_payload(
+        {
+            "schema_version": 1,
+            "email_capture_rules": [
+                {
+                    "id": "ec-default",
+                    "name": "All mailbox attachments",
+                    "enabled": True,
+                    "priority": 9999,
+                    "mailbox": "*",
+                    "root": {
+                        "type": "group",
+                        "operator": "OR",
+                        "children": [
+                            {
+                                "type": "condition",
+                                "field": "attachment_name",
+                                "operator": "contains",
+                                "value": ".",
+                            }
+                        ],
+                    },
+                    "action": {
+                        "save_attachment": True,
+                        "route_to": "Team Expenses",
+                        "tags": [],
+                    },
+                }
+            ],
+            "purchase_rules": [],
+            "expense_rules": [],
+            "team_expense_rules": [],
+            "posting_defaults": {
+                "tax_account": "GST Paid",
+                "payable_account": "Accounts Payable",
+                "fallback_account": "Suspense Account",
+            },
+            "document_sets": [],
+            "legacy_cascade": {"enabled": False},
+        }
+    )
+
+    db_session.add(
+        EmployeeMasterRecord(
+            tenant_id=TESTING_TENANT_UUID,
+            master_id="emp-catch-all-2",
+            name="Known Employee",
+            email="random@unknown.com",
+            status="Active",
+            bank={},
+            spending_limits={},
+        )
+    )
+    await db_session.flush()
+
+    async def _catch_all_config(_session: AsyncSession, _tenant_id) -> RuleBookConfigPayload:
+        return catch_all_config
+
+    monkeypatch.setattr(
+        "app.services.invoice.pipeline.load_config_for_tenant",
+        _catch_all_config,
+    )
+    monkeypatch.setattr(
+        "app.services.ingest.ingest_fanout_service.store_invoice_pdf",
+        lambda *args, **kwargs: "uploads/test.pdf",
+    )
+    monkeypatch.setattr(
+        "app.services.invoice.pipeline._finish_email_message",
+        lambda *args, **kwargs: None,
+    )
+
+    result = await ingest_email_attachments(
+        db_session,
+        [_unmatched_email()],
+        tenant_id=TESTING_TENANT_UUID,
+        tenant_slug="hv-org",
+    )
+    assert result.ingested_count == 1
+    assert "msg-unknown-1" not in result.preskip_exceptions
+
+
+@pytest.mark.asyncio
+async def test_ingest_skips_unknown_when_no_capture_rules_and_not_employee(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    empty_config = validate_rule_book_config_payload(
+        {
+            "schema_version": 1,
+            "email_capture_rules": [],
+            "purchase_rules": [],
+            "expense_rules": [],
+            "team_expense_rules": [],
+            "posting_defaults": {
+                "tax_account": "GST Paid",
+                "payable_account": "Accounts Payable",
+                "fallback_account": "Suspense Account",
+            },
+            "document_sets": [],
+            "legacy_cascade": {"enabled": False},
+        }
+    )
+
+    async def _empty_config(_session: AsyncSession, _tenant_id) -> RuleBookConfigPayload:
+        return empty_config
+
+    monkeypatch.setattr(
+        "app.services.invoice.pipeline.load_config_for_tenant",
+        _empty_config,
+    )
+    monkeypatch.setattr(
+        "app.services.invoice.pipeline._finish_email_message",
+        lambda *args, **kwargs: None,
+    )
+
+    result = await ingest_email_attachments(
+        db_session,
+        [_unmatched_email()],
+        tenant_id=TESTING_TENANT_UUID,
+        tenant_slug="hv-org",
+    )
+    assert result.ingested_count == 0
+    assert result.preskip_exceptions["msg-unknown-1"] == "sender_not_employee"
 
 @pytest.mark.asyncio
 async def test_upload_routing_from_category_rules_after_parse(

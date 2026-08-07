@@ -82,6 +82,60 @@ def test_employee_bypass_capture_rule_is_valid() -> None:
     assert rule.action.route_to == "Team Expenses"
 
 
+def test_capture_rule_requires_employee_sender_for_catch_all_and_team() -> None:
+    from app.services.ingest.ingest_capture_service import (
+        capture_rule_requires_employee_sender,
+        default_catch_all_capture_rule,
+        employee_bypass_capture_rule,
+    )
+    from app.schemas.rule_book_config import EmailCaptureAction, EmailCaptureRule, RuleCondition, RuleConditionGroup
+
+    assert capture_rule_requires_employee_sender(default_catch_all_capture_rule("inbox"))
+    assert capture_rule_requires_employee_sender(employee_bypass_capture_rule("inbox"))
+    te_rule = EmailCaptureRule(
+        id="ec-te",
+        name="TE from domain",
+        enabled=True,
+        priority=1,
+        mailbox="*",
+        root=RuleConditionGroup(
+            type="group",
+            operator="AND",
+            children=[
+                RuleCondition(
+                    type="condition",
+                    field="from",
+                    operator="contains",
+                    value="@company.com",
+                )
+            ],
+        ),
+        action=EmailCaptureAction(save_attachment=True, route_to="Team Expenses", tags=[]),
+    )
+    assert capture_rule_requires_employee_sender(te_rule)
+    purchase = EmailCaptureRule(
+        id="ec-vendor",
+        name="Vendor invoices",
+        enabled=True,
+        priority=1,
+        mailbox="*",
+        root=RuleConditionGroup(
+            type="group",
+            operator="AND",
+            children=[
+                RuleCondition(
+                    type="condition",
+                    field="from",
+                    operator="contains",
+                    value="invoices@vendor.com",
+                )
+            ],
+        ),
+        action=EmailCaptureAction(save_attachment=True, route_to="Purchase Management", tags=[]),
+    )
+    assert not capture_rule_requires_employee_sender(purchase)
+
+
 def test_raw_email_to_sample_email_maps_fields() -> None:
     email = _aws_billing_email()
     email.body = "Please find your invoice attached."

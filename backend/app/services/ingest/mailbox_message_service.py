@@ -29,6 +29,7 @@ _SKIPPED_PRESKIP_REASONS = frozenset(
         "no_invoice_attachments",
         "attachment_type_filtered",
         "no_capture_rule_match",
+        "sender_not_employee",
     }
 )
 
@@ -37,6 +38,7 @@ _SKIPPED_PRESKIP_REASONS = frozenset(
 _RETRYABLE_SKIP_REASONS = frozenset(
     {
         "no_capture_rule_match",
+        "sender_not_employee",
         # Transient ingest crashes (e.g. synthetic employee-bypass rule validation)
         # should be retried once the underlying bug is fixed.
         "ingest_message_failed",

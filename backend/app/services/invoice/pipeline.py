@@ -36,6 +36,7 @@ from app.services.dossier.document_ref_service import (
 )
 from app.services.ingest.ingest_capture_service import (
     apply_ingest_capture,
+    capture_rule_requires_employee_sender,
     evaluate_ingest_capture,
     log_ingest_capture_decision,
 )
@@ -1084,23 +1085,20 @@ async def _ingest_single_email(
         )
         return
 
+    # Gate: ingest capture rule first, then employee master for catch-all / Team Expenses.
+    # Specific Purchase/Sales ``from`` rules do not require an employee match.
+    from app.services.ingest.ingest_capture_service import employee_bypass_capture_rule
+    from app.services.master_data.master_data_service import list_employee_masters
+    from app.services.purchase.team_expense_validator import find_employee_by_sender
+
+    employees = await list_employee_masters(session, tenant_id)
+    matched_employee = find_employee_by_sender(employees, email.sender)
+
     capture_rule_blocked = False
     for att in attachments:
         capture_rule = evaluate_ingest_capture(email, att, capture_config)
         if not capture_rule:
-            # Employee senders bypass the capture-rule gate: the employee registry
-            # is the implicit allow-list for Team Expenses ingest on email/WA/Viber.
-            # Load from DB (not file-only config) so Creations → Employees always applies.
-            from app.services.ingest.ingest_capture_service import (
-                employee_bypass_capture_rule,
-            )
-            from app.services.master_data.master_data_service import list_employee_masters
-            from app.services.purchase.team_expense_validator import (
-                find_employee_by_sender,
-            )
-
-            employees = await list_employee_masters(session, tenant_id)
-            matched_employee = find_employee_by_sender(employees, email.sender)
+            # No human-authored rule: employees may still ingest via registry bypass.
             if matched_employee is not None:
                 capture_rule = employee_bypass_capture_rule(email.mailbox_email or "")
                 await log_event(
@@ -1132,6 +1130,27 @@ async def _ingest_single_email(
                     },
                 )
                 continue
+
+        # Catch-all / Team Expenses: rule matched, but sender must be an employee.
+        if capture_rule_requires_employee_sender(capture_rule) and matched_employee is None:
+            capture_rule_blocked = True
+            log_ingest_capture_decision(email, att, capture_config, matched_rule=capture_rule)
+            await log_event(
+                session,
+                "email_skipped",
+                detail={
+                    "reason": "sender_not_employee",
+                    "message_id": email.message_id,
+                    "sender": email.sender,
+                    "subject": email.subject,
+                    "attachment": att.filename,
+                    "mailbox": email.mailbox_email,
+                    "capture_rule_id": capture_rule.id,
+                    "capture_rule_name": capture_rule.name,
+                },
+            )
+            result.preskip_exceptions[email.message_id] = "sender_not_employee"
+            continue
 
         log_ingest_capture_decision(email, att, capture_config, matched_rule=capture_rule)
 
@@ -1289,7 +1308,7 @@ async def _ingest_single_email(
             result.ingested_count += 1
 
     if capture_rule_blocked and result.ingested_count == ingested_before and not duplicate_handled:
-        result.preskip_exceptions[email.message_id] = "no_capture_rule_match"
+        result.preskip_exceptions.setdefault(email.message_id, "no_capture_rule_match")
 
     _maybe_finish_email_message(
         email,
