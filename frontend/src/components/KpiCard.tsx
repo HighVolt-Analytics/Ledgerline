@@ -1,5 +1,5 @@
-import type { LucideIcon } from "lucide-react";
-import { Minus, TrendingDown, TrendingUp } from "lucide-react";
+import type { Icon } from "@phosphor-icons/react";
+import { Minus, TrendDown, TrendUp } from "@phosphor-icons/react";
 import { Area, AreaChart, ResponsiveContainer } from "recharts";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/cn";
@@ -35,6 +35,7 @@ export function KpiCard({
   label,
   value,
   delta,
+  hint,
   spark,
   icon: Icon,
   moduleColor = "cyan",
@@ -44,21 +45,23 @@ export function KpiCard({
   label: string;
   value: string | number;
   delta?: { dir: "up" | "down" | "flat"; text: string; good?: boolean };
+  /** Muted footnote when there is no delta (e.g. "per document"). */
+  hint?: string;
   spark?: number[];
-  icon?: LucideIcon;
+  icon?: Icon;
   moduleColor?: KpiModuleColor;
   testid?: string;
   onClick?: () => void;
 }) {
-  const DeltaIcon = delta?.dir === "up" ? TrendingUp : delta?.dir === "down" ? TrendingDown : Minus;
+  const DeltaIcon = delta?.dir === "up" ? TrendUp : delta?.dir === "down" ? TrendDown : Minus;
   const positive = delta?.good ?? delta?.dir === "up";
   const showSpark = Boolean(spark?.length) && !Icon;
 
   return (
     <Card
       className={cn(
-        "kpi-card p-4 min-w-0 border-border/55 shadow-none",
-        onClick && "cursor-pointer hover-elevate transition-colors"
+        "kpi-card kpi-card--elevated p-4 min-w-0",
+        onClick && "cursor-pointer hover-elevate transition-shadow"
       )}
       data-testid={testid}
       onClick={onClick}
@@ -75,19 +78,23 @@ export function KpiCard({
           : undefined
       }
     >
-      <div className="flex items-start gap-3">
+      <div className="flex flex-col gap-3 min-w-0">
         {Icon && (
           <span className={kpiModuleIconClass(moduleColor)} aria-hidden>
-            <Icon strokeWidth={2} />
+            <Icon size={18} weight="duotone" />
           </span>
         )}
 
-        <div className="min-w-0 flex-1 space-y-1">
-          <p className="text-xs font-medium text-muted-foreground truncate">{label}</p>
-          <p className="text-lg font-semibold tnum tracking-tight truncate leading-tight">{value}</p>
+        <div className="min-w-0 space-y-1.5">
+          <p className="text-xs font-medium text-muted-foreground truncate leading-snug">
+            {label}
+          </p>
+          <p className="text-[1.375rem] font-semibold tnum tracking-tight truncate leading-none text-foreground">
+            {value}
+          </p>
 
-          {(delta || showSpark) && (
-            <div className="flex items-center justify-between gap-2 pt-0.5">
+          {(delta || hint || showSpark) && (
+            <div className="flex items-center justify-between gap-2 pt-0.5 min-h-[1.125rem]">
               {delta ? (
                 <span
                   className={cn(
@@ -95,13 +102,15 @@ export function KpiCard({
                     delta.dir === "flat"
                       ? "text-muted-foreground"
                       : positive
-                        ? "text-[hsl(var(--cyan-600))] dark:text-[hsl(var(--cyan-400))]"
+                        ? "text-emerald-600 dark:text-emerald-400"
                         : "text-destructive"
                   )}
                 >
-                  <DeltaIcon className="h-3 w-3" />
+                  <DeltaIcon size={12} weight="bold" />
                   {delta.text}
                 </span>
+              ) : hint ? (
+                <span className="text-xs text-muted-foreground truncate">{hint}</span>
               ) : (
                 <span />
               )}

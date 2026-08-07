@@ -164,8 +164,6 @@ const MOBILE_NAV: NavItem[] = [
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 
-const TRUST = ["SOC 2 Type II", "ISO 27001", "Bank-level encryption", "7-year retention"];
-
 const SIDEBAR_PIN_STORAGE_KEY = "ledgerline_sidebar_pinned";
 
 function navTestId(label: string) {
@@ -667,22 +665,6 @@ export function Layout() {
             <Outlet key={user?.tenant_id ?? "anon"} context={{ refreshCounts }} />
           </div>
         </main>
-
-        <footer className="app-workspace__footer flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span className="font-medium text-foreground/70 shrink-0">Ledgerlink v4</span>
-          {user?.email && !user.is_support_session && (
-            <span className="hidden sm:inline truncate max-w-[10rem] md:max-w-none">
-              {user.email}
-            </span>
-          )}
-          {TRUST.map((t) => (
-            <span key={t} className="hidden lg:inline">
-              {t}
-            </span>
-          ))}
-          <span className="ml-auto hidden sm:inline">© 2026 Ledgerlink · Sandbox environment</span>
-          <span className="ml-auto sm:hidden">© 2026</span>
-        </footer>
 
         <nav className="app-mobile-nav" aria-label="Mobile navigation">
           {MOBILE_NAV.filter(canShowNavItem).map(({ to, label, icon: Icon }) => {

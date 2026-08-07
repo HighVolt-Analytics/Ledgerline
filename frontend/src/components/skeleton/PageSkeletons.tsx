@@ -7,17 +7,26 @@ import { Link } from "react-router-dom";
 export function KpiGridSkeleton({
   count = 4,
   className,
+  compact = false,
 }: {
   count?: number;
   className?: string;
+  /** Thin label+value cards (no sparkline placeholder) — matches matrix KPI row */
+  compact?: boolean;
 }) {
   return (
     <div className={cn("grid gap-3 sm:grid-cols-2 lg:grid-cols-4", className)}>
       {Array.from({ length: count }).map((_, i) => (
-        <Card key={i} className="p-4 space-y-3">
+        <Card
+          key={i}
+          className={cn(
+            "kpi-card min-w-0 border-border/55 shadow-none p-4",
+            compact ? "space-y-1.5" : "space-y-3"
+          )}
+        >
           <Skeleton className="h-3 w-24" />
-          <Skeleton className="h-7 w-16" />
-          <Skeleton className="h-9 w-full rounded-md" />
+          <Skeleton className={cn(compact ? "h-5 w-10" : "h-7 w-16")} />
+          {!compact ? <Skeleton className="h-9 w-full rounded-md" /> : null}
         </Card>
       ))}
     </div>
@@ -260,30 +269,42 @@ export function ListDetailSkeleton({ listRows = 5 }: { listRows?: number }) {
 
 export function DashboardPageSkeleton() {
   return (
-    <div className="space-y-3">
-      <Card className="p-4 mb-1">
-        <Skeleton className="h-4 w-64" />
+    <div className="space-y-4">
+      <Card className="px-4 py-2.5">
+        <Skeleton className="h-4 w-72 max-w-full" />
       </Card>
-      <KpiGridSkeleton className="mb-3" />
-      <KpiGridSkeleton className="mb-6" />
-      <div className="grid gap-4 lg:grid-cols-3 mb-6">
-        <ChartCardSkeleton tall className="lg:col-span-2" />
-        <ChartCardSkeleton />
+      <KpiGridSkeleton count={5} compact className="lg:grid-cols-5 mb-2" />
+      <div className="grid gap-4 lg:grid-cols-3 lg:items-stretch">
+        <Card className="p-4 lg:col-span-2 space-y-3.5">
+          <div className="flex justify-between gap-3">
+            <Skeleton className="h-4 w-20" />
+            <Skeleton className="h-8 w-36 rounded-md" />
+          </div>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-3">
+              <Skeleton className="h-3 w-20" />
+              <Skeleton className="h-2.5 flex-1 rounded-full" />
+              <Skeleton className="h-3 w-16" />
+            </div>
+          ))}
+        </Card>
+        <Card className="p-4 space-y-2">
+          <Skeleton className="h-3 w-36" />
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="flex items-center justify-between gap-3 py-1.5">
+              <Skeleton className="h-3.5 flex-1 max-w-[10rem]" />
+              <Skeleton className="h-3.5 w-8" />
+              <Skeleton circle className="h-2 w-2" />
+            </div>
+          ))}
+        </Card>
       </div>
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-3">
+        <ChartCardSkeleton tall className="lg:col-span-2" />
         <Card className="p-4 space-y-3">
           <Skeleton className="h-4 w-28" />
           {Array.from({ length: 5 }).map((_, i) => (
             <ListRowSkeleton key={i} actionWidth="w-12" />
-          ))}
-        </Card>
-        <Card className="p-4 space-y-3">
-          <Skeleton className="h-4 w-32" />
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="flex items-center justify-between gap-3 py-2">
-              <Skeleton className="h-3.5 flex-1 max-w-[12rem]" />
-              <Skeleton pill className="h-5 w-14" />
-            </div>
           ))}
         </Card>
       </div>

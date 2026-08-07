@@ -15,6 +15,97 @@
   height: 1.125rem;
 }
 
+/* Elevated executive KPI cards — soft depth like reference tiles */
+.kpi-card--elevated,
+.dash-card--elevated {
+  border-color: hsl(var(--border) / 0.55);
+  border-radius: 1rem;
+  box-shadow:
+    0 1px 2px rgb(15 23 42 / 0.04),
+    0 4px 14px rgb(15 23 42 / 0.06);
+  background: hsl(var(--card));
+}
+
+.dark .kpi-card--elevated,
+.dark .dash-card--elevated {
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.25),
+    0 6px 18px rgb(0 0 0 / 0.28);
+}
+
+.kpi-card--elevated:hover,
+.dash-card--elevated:hover {
+  box-shadow:
+    0 2px 4px rgb(15 23 42 / 0.05),
+    0 8px 20px rgb(15 23 42 / 0.08);
+}
+
+.dark .kpi-card--elevated:hover,
+.dark .dash-card--elevated:hover {
+  box-shadow:
+    0 2px 4px rgb(0 0 0 / 0.3),
+    0 10px 24px rgb(0 0 0 / 0.35);
+}
+
+.dash-card--priority {
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.2),
+    0 8px 24px rgb(0 0 0 / 0.28);
+}
+
+.dash-card--priority:hover {
+  box-shadow:
+    0 2px 4px rgb(0 0 0 / 0.25),
+    0 12px 28px rgb(0 0 0 / 0.32);
+}
+
+.attention-priority-card {
+  box-shadow:
+    0 1px 2px rgb(15 23 42 / 0.04),
+    0 4px 14px rgb(15 23 42 / 0.06);
+}
+
+.dark .attention-priority-card {
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.25),
+    0 6px 18px rgb(0 0 0 / 0.28);
+}
+
+/* Light: dark button. Dark: white button. Inline-proof against Card/link theme colors. */
+.attention-priority-cta {
+  background-color: #000000 !important;
+  color: #ffffff !important;
+}
+
+.attention-priority-cta:hover {
+  background-color: #18181b !important;
+  color: #ffffff !important;
+}
+
+.dark .attention-priority-cta {
+  background-color: #ffffff !important;
+  color: #111111 !important;
+}
+
+.dark .attention-priority-cta:hover {
+  background-color: #f4f4f5 !important;
+  color: #111111 !important;
+}
+
+.ops-stacked-bar-value {
+  /* Light mode pastels — dark labels */
+  color: #1c1c1e !important;
+}
+
+.dark .ops-stacked-bar-value {
+  /* Dark mode deep bars — white labels */
+  color: #ffffff !important;
+}
+
+.attention-metric-card {
+  border-radius: 1.5rem;
+}
+
 /* violet — Active users */
 .kpi-module-icon--violet {
   background-color: #cfb8ec;

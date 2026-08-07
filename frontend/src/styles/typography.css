@@ -431,13 +431,16 @@
 
 
 
+.app-workspace__main .kpi-card p.text-[1.375rem].font-semibold,
+.app-workspace__scroll .kpi-card p.text-[1.375rem].font-semibold {
+  font-size: 1.375rem;
+  line-height: 1.15;
+}
+
 .app-workspace__main .kpi-card p.text-lg.font-semibold,
 .app-workspace__scroll .kpi-card p.text-lg.font-semibold {
-
   font-size: 1.125rem;
-
   line-height: 1.25;
-
 }
 
 
