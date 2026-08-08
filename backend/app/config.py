@@ -115,6 +115,19 @@ class Settings(BaseSettings):
     redis_host: str = Field(default="", validation_alias="REDIS_HOST")
     redis_ssl_port: int = Field(default=6380, validation_alias="REDIS_SSL_PORT")
     redis_password: str = Field(default="", validation_alias="REDIS_PASSWORD")
+    redis_db: int = Field(
+        default=0,
+        validation_alias="REDIS_DB",
+        description="Broker Redis DB index; result backend uses redis_db + 1",
+    )
+    celery_task_queue: str = Field(
+        default="",
+        validation_alias="CELERY_TASK_QUEUE",
+        description=(
+            "Celery queue name. Empty = derive from environment so staging/prod "
+            "do not steal each other's tasks when Redis is shared."
+        ),
+    )
 
     azure_tenant_id: str = ""
     azure_client_id: str = ""
@@ -1060,18 +1073,19 @@ class Settings(BaseSettings):
             self.database_url = normalize_database_url(self.database_url)
 
         if self.redis_host.strip() and self.redis_password:
+            broker_db = max(0, int(self.redis_db))
             self.redis_url = build_redis_url(
                 host=self.redis_host.strip(),
                 port=self.redis_ssl_port,
                 password=self.redis_password,
-                db=0,
+                db=broker_db,
             )
             self.celery_broker_url = self.redis_url
             self.celery_result_backend = build_redis_url(
                 host=self.redis_host.strip(),
                 port=self.redis_ssl_port,
                 password=self.redis_password,
-                db=1,
+                db=broker_db + 1,
             )
         else:
             self.redis_url = normalize_redis_url(self.redis_url)
@@ -1276,6 +1290,21 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.app_env.strip().lower() in ("production", "prod")
+
+    @property
+    def celery_task_queue_resolved(self) -> str:
+        """Queue name that keeps staging/prod workers from stealing shared-Redis jobs."""
+        explicit = self.celery_task_queue.strip()
+        if explicit:
+            return explicit
+        env = (self.environment or self.app_env or "development").strip().lower()
+        if env in {"production", "prod"}:
+            return "ledgerlink.production"
+        if env in {"staging", "stage", "ledgerlink"}:
+            # Staging AKS historically uses APP_ENV=ledgerlink.
+            return "ledgerlink.staging"
+        # Local/docker-compose workers listen to the default "celery" queue.
+        return "celery"
 
     @property
     def is_preview(self) -> bool:

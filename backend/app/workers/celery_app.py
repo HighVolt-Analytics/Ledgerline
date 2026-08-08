@@ -1,10 +1,12 @@
 from celery import Celery
 from celery.schedules import crontab
+from kombu import Queue
 
 from app.azure_env import celery_redis_ssl_options
 from app.config import get_settings
 
 s = get_settings()
+_QUEUE = s.celery_task_queue_resolved
 
 celery_app = Celery(
     "invoice_pipeline",
@@ -22,6 +24,9 @@ celery_app.conf.update(
     task_acks_late=True,
     task_default_retry_delay=60,
     task_max_retries=3,
+    task_default_queue=_QUEUE,
+    task_queues=(Queue(_QUEUE),),
+    task_create_missing_queues=True,
     **celery_redis_ssl_options(s.celery_broker_url, s.celery_result_backend),
 )
 

@@ -24,13 +24,13 @@ spec:
           image: highvoltacr1778087855.azurecr.io/ledgerlink-api:placeholder
           imagePullPolicy: Always
           command:
-            - celery
-            - -A
-            - app.workers.celery_app
-            - worker
-            - --loglevel=info
-            - --concurrency=1
-            - --prefetch-multiplier=1
+            - sh
+            - -c
+            # Env-specific queue so staging/prod do not share the default "celery" queue.
+            - >
+              Q=$(python -c "from app.config import get_settings; print(get_settings().celery_task_queue_resolved)")
+              && exec celery -A app.workers.celery_app worker
+              --loglevel=info --concurrency=1 --prefetch-multiplier=1 -Q "$Q"
           env:
             - name: CELERY_WORKER
               value: "1"

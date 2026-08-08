@@ -171,7 +171,7 @@ async def process_invoice_background(
     invoice_id: int,
     *,
     tenant_id: uuid.UUID | None = None,
-) -> None:
+) -> bool:
     """FastAPI background task — must be async (uvicorn already has a running loop)."""
     global _last_run
 
@@ -180,7 +180,7 @@ async def process_invoice_background(
     async with lock:
         _mark_pipeline_enter(resolved_tid)
         try:
-            await _run_invoice_pipeline(invoice_id, tenant_id=tenant_id)
+            return await _run_invoice_pipeline(invoice_id, tenant_id=tenant_id)
         finally:
             _mark_pipeline_exit(resolved_tid)
             _last_run = datetime.now(timezone.utc).isoformat()
@@ -233,24 +233,23 @@ def _try_enqueue_celery_invoices(
 ) -> list[str] | None:
     """Enqueue Celery invoice tasks when SYNC_PROCESSING is off.
 
-    Returns Celery task ids on success, or ``None`` when Celery is skipped/unavailable
-    so callers can fall back to in-process background work.
+    Always fans out one ``process_invoice_task`` per invoice so a shared/stolen
+    batch consumer cannot mark a whole group successful while leaving staging
+    rows PENDING. Returns Celery task ids on success, or ``None`` when Celery is
+    skipped/unavailable so callers can fall back to in-process background work.
     """
     settings = get_settings()
     if settings.sync_processing:
         return None
     try:
         tid = str(tenant_id)
-        if len(invoice_ids) == 1:
-            async_result = process_invoice_task.delay(invoice_ids[0], tenant_id=tid)
-            task_ids = [str(async_result.id)]
-        else:
-            async_result = process_invoices_batch_task.delay(
-                invoice_ids, tenant_id=tid
-            )
-            task_ids = [str(async_result.id)]
-        if not task_ids or not task_ids[0] or task_ids[0] == "None":
-            raise RuntimeError("celery delay returned empty task id")
+        task_ids: list[str] = []
+        for invoice_id in invoice_ids:
+            async_result = process_invoice_task.delay(invoice_id, tenant_id=tid)
+            task_id = str(async_result.id)
+            if not task_id or task_id == "None":
+                raise RuntimeError("celery delay returned empty task id")
+            task_ids.append(task_id)
         return task_ids
     except Exception as exc:
         logger.warning(
@@ -471,22 +470,28 @@ async def _run_invoice_pipeline(
     invoice_id: int,
     *,
     tenant_id: uuid.UUID | None = None,
-) -> None:
+) -> bool:
     resolved_tid = await _resolve_invoice_tenant_id(invoice_id, tenant_id)
     if resolved_tid is None:
         logger.warning("invoice_pipeline_missing_tenant", invoice_id=invoice_id)
-        return
+        return False
 
     async with db_session_with_rls(resolved_tid) as session:
         inv = await get_for_tenant(session, Invoice, invoice_id, resolved_tid)
     if inv is None:
-        return
+        logger.warning(
+            "invoice_pipeline_not_found",
+            invoice_id=invoice_id,
+            tenant_id=str(resolved_tid),
+        )
+        return False
     logger.info("invoice_pipeline_started", **invoice_log_fields(inv))
     await process_invoice_by_id(invoice_id, tenant_id=resolved_tid)
     async with db_session_with_rls(resolved_tid) as session:
         inv = await get_for_tenant(session, Invoice, invoice_id, resolved_tid)
     if inv is not None:
         logger.info("invoice_pipeline_finished", **invoice_log_fields(inv))
+    return True
 
 
 def process_invoice_by_id_sync(invoice_id: int, *, tenant_id: uuid.UUID | None = None) -> None:
@@ -557,7 +562,17 @@ def process_invoices_batch_task(
 
     async def run_with_cleanup() -> None:
         try:
-            await process_invoices_batch_background(unique_ids, tenant_id=tid)
+            results = await asyncio.gather(
+                *(
+                    process_invoice_background(invoice_id, tenant_id=tid)
+                    for invoice_id in unique_ids
+                )
+            )
+            ok_count = sum(1 for ok in results if ok)
+            if ok_count != len(unique_ids):
+                raise RuntimeError(
+                    f"batch pipeline incomplete: {ok_count}/{len(unique_ids)} ok"
+                )
         finally:
             await dispose_engine()
 
