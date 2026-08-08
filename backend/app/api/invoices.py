@@ -254,6 +254,13 @@ async def list_invoices(
                             ),
                         )
                     )
+                # Upload / channel inbox pages hide Approvals-queue rows so page
+                # totals match the Detailed list (client also filters these out).
+                query = query.where(
+                    Invoice.status.notin_(
+                        (InvoiceStatus.REJECTED, InvoiceStatus.DUPLICATE_SKIPPED)
+                    )
+                )
         if route_target and route_target.strip():
             query = query.where(Invoice.route_target == route_target.strip())
             # Rejected / duplicate docs belong on Approvals, not management pages.
@@ -984,18 +991,34 @@ async def resolve_classification(
     )
 
     if body.reprocess:
+        previous_status = inv.status.value
         await reset_invoice_for_reprocess(
             db,
             inv,
             preserve_document_type=True,
             clear_overrides=False,
         )
+        await log_event(
+            db,
+            "invoice_requeued",
+            tenant_id=ctx.tenant_id,
+            invoice_id=invoice_id,
+            detail={
+                "previous_status": previous_status,
+                "reason": "classification_resolved",
+                "confirmed_dt": confirmed,
+                "preserved_document_type": True,
+            },
+        )
+        # Commit before enqueue so the worker always sees PENDING + locked DT.
         await db.commit()
-        enqueue_invoice_pipelines(
+        queue_status = enqueue_invoice_pipelines(
             [invoice_id],
             tenant_id=ctx.tenant_id,
             background_tasks=background_tasks,
         )
+        if queue_status == "idle":
+            raise HTTPException(500, "Failed to queue pipeline after classification resolve")
     else:
         await db.commit()
 

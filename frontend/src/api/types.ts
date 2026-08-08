@@ -966,6 +966,126 @@ export interface DashboardOverview {
   kpi_sparklines: KpiSparklines;
   integrations_connected: number;
   invoice_volume_sparkline: number[];
+  executive_kpis?: ExecutiveKpis;
+  capture_sources?: CaptureSourceApiRow[];
+  risk_compliance?: RiskComplianceApiRow[];
+  attention?: AttentionPanelApi | null;
+  operations?: OperationsPanelApi;
+  extraction_quality?: ExtractionQualityPointApi[];
+  approval_queue?: ApprovalQueueStatsApi;
+  user_layer?: UserLayerMetricApi[];
+}
+
+export interface ExecutiveKpiDelta {
+  direction: "up" | "down" | "flat";
+  text: string;
+  favorable: boolean | null;
+}
+
+export interface ExecutiveKpis {
+  documents_processed: number;
+  documents_delta: ExecutiveKpiDelta | null;
+  time_saved_minutes: number;
+  time_saved_hours_label: string;
+  avg_time_saved_per_doc_minutes: number;
+  automation_efficiency_pct: number;
+  automation_delta: ExecutiveKpiDelta | null;
+  cost_saved: number;
+}
+
+export interface CaptureSourceApiRow {
+  id: "email" | "whatsapp" | "viber" | "upload";
+  label: string;
+  document_count: number;
+  avg_time_saved_minutes: number;
+  time_saved_minutes: number;
+  manual_minutes: number;
+  cost_saved: number;
+  href: string;
+}
+
+export interface RiskComplianceApiRow {
+  id: string;
+  label: string;
+  count: number;
+  href: string;
+  badge: string;
+}
+
+export interface AttentionPriorityApi {
+  title: string;
+  body: string;
+  cta_label: string;
+  cta_href: string;
+}
+
+export interface AttentionMetricApi {
+  label: string;
+  value: string;
+  delta_text: string;
+  delta_down?: boolean;
+  delta_good: boolean;
+  bars: number[];
+}
+
+export interface AttentionPanelApi {
+  priority: AttentionPriorityApi;
+  processed: AttentionMetricApi;
+  turnaround: AttentionMetricApi;
+}
+
+export interface OpsStatusCountsApi {
+  processed: number;
+  posted: number;
+  rejected: number;
+  review_pending: number;
+  approvals_pending: number;
+}
+
+export interface OpsDocTypeRowApi {
+  id: string;
+  label: string;
+  counts: OpsStatusCountsApi;
+}
+
+export interface OpsMemberSnapshotApi {
+  id: string;
+  label: string;
+  documents_processed: number;
+  time_saved_minutes: number;
+  automation_rate_pct: number;
+  pending_actions: number;
+  accuracy_pct: number;
+  by_doc_type: OpsDocTypeRowApi[];
+}
+
+export interface OperationsPanelApi {
+  windows: Record<string, OpsMemberSnapshotApi[]>;
+}
+
+export interface ExtractionQualityPointApi {
+  metric: string;
+  accuracy: number;
+}
+
+export interface ApprovalQueueStatsApi {
+  pending: number;
+  value_label: string;
+  median_time_label: string;
+}
+
+export interface UserLayerStagesApi {
+  document_fetched: number;
+  pending_confirmation: number;
+  pending_approval: number;
+  pending_posting: number;
+  pending_payment: number;
+}
+
+export interface UserLayerMetricApi {
+  id: string;
+  label: string;
+  stages: UserLayerStagesApi;
 }
 
 export interface ReportDocumentRow {
@@ -1120,6 +1240,7 @@ export interface DepartmentBudgetUtilizationRow {
   remaining: number | null;
   utilization_pct: number | null;
   notes: string | null;
+  enforcement?: "soft" | "hard";
   budget_id: number;
   sub_breakdown?: Array<{
     gl_ledger: string;
@@ -1134,9 +1255,12 @@ export interface DepartmentBudgetUtilizationRow {
 }
 
 export interface EmployeeExpenseSummaryRow {
+  employee_id: string;
   employee_name: string;
+  role: string;
   employee_email: string;
   mobile: string;
+  department: string;
   division: string;
   location: string;
   document_no: string;
@@ -1147,11 +1271,96 @@ export interface EmployeeExpenseSummaryRow {
   line_qty: number | string | null;
   line_amount: number | string | null;
   ledger_code: string;
-  ledger_name: string;
+  main_gl: string;
+  sub_ledger: string;
   status: string;
   evaluation_status: string;
   invoice_id: number;
   currency: string;
+}
+
+export interface EmployeeSpendDetailRow {
+  employee_id: string;
+  name: string;
+  role: string;
+  email: string;
+  whatsapp_number: string;
+  whatsapp_number_2: string;
+  viber_number: string | null;
+  date_of_joining: string;
+  department: string;
+  location: string;
+  division: string;
+  supervisor_1: string;
+  supervisor_2: string;
+  bank_name: string;
+  bank_account_name: string;
+  bank_account_number: string;
+  bank_bsb: string;
+  bank_swift: string;
+  bank_iban: string;
+  advance_parent_ledger: string;
+  advance_sub_ledger: string;
+  status: string;
+  main_gl: string;
+  sub_ledger: string;
+  sub_gl_budget: number;
+  employee_spend_ytd: number;
+  pct_of_sub_gl_used: number | null;
+  claim_count: number;
+  advance_pending: number | string;
+  cash_reimbursed_ytd: number;
+  last_claim_date: string;
+  budget_monthly: number;
+  budget_quarterly: number;
+  budget_annual: number;
+  mtd_spent: number;
+  qtd_spent: number;
+  ytd_spent_total: number;
+  monthly_remaining: number | null;
+  quarterly_remaining: number | null;
+  annual_remaining: number | null;
+  monthly_utilization_pct: number | null;
+  quarterly_utilization_pct: number | null;
+  annual_utilization_pct: number | null;
+}
+
+export interface EmployeeAdvanceDetailRow {
+  employee_id: string;
+  name: string;
+  role: string;
+  email: string;
+  whatsapp_number: string;
+  whatsapp_number_2: string;
+  viber_number: string | null;
+  date_of_joining: string;
+  department: string;
+  location: string;
+  division: string;
+  supervisor_1: string;
+  supervisor_2: string;
+  bank_name: string;
+  bank_account_name: string;
+  bank_account_number: string;
+  bank_bsb: string;
+  bank_swift: string;
+  bank_iban: string;
+  advance_parent_ledger: string;
+  advance_sub_ledger: string;
+  status: string;
+  movement_type: string;
+  document_no: string;
+  document_date: string | null;
+  took: number | string;
+  used: number | string;
+  outstanding_after: number | string;
+  pending_claims: number | string;
+  available: number | string;
+  cash_reimbursed: number | string;
+  document_status: string;
+  approved_by: string;
+  approved_on: string;
+  invoice_id: number;
 }
 
 export interface SubledgerBalanceRow {

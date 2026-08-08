@@ -325,3 +325,46 @@ async def test_list_invoices_capture_source_channel_parity(
     assert "capture-email-explicit" in email_hashes
     assert "capture-email-legacy-mailbox" in email_hashes
     assert "capture-upload-with-claimant" not in email_hashes
+
+
+async def test_list_invoices_capture_source_excludes_approvals_queue_rows(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Channel inbox totals must not count rejected/duplicate_skipped rows."""
+    visible = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Visible Co",
+        status=InvoiceStatus.PENDING,
+        currency="AUD",
+        file_hash="capture-email-visible",
+        capture_source="email",
+    )
+    duplicate = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Dup Co",
+        status=InvoiceStatus.DUPLICATE_SKIPPED,
+        currency="AUD",
+        file_hash="capture-email-dup",
+        capture_source="email",
+    )
+    rejected = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Reject Co",
+        status=InvoiceStatus.REJECTED,
+        currency="AUD",
+        file_hash="capture-email-rejected",
+        capture_source="email",
+    )
+    db_session.add_all([visible, duplicate, rejected])
+    await db_session.flush()
+
+    res = await client.get("/api/invoices?page=1&page_size=50&capture_source=email")
+    assert res.status_code == 200
+    body = res.json()
+    hashes = {row["file_hash"] for row in body["data"]}
+    assert "capture-email-visible" in hashes
+    assert "capture-email-dup" not in hashes
+    assert "capture-email-rejected" not in hashes
+    assert body["meta"]["total"] == 1
+    assert body["meta"]["pages"] == 1

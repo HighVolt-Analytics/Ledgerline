@@ -1,27 +1,31 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, Trash2, Upload } from "lucide-react";
+import { api } from "@/api/client";
+import type { DepartmentBudgetRow } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
+import { FieldLabel } from "@/components/rule-book/FieldLabel";
+import { BudgetUtilBar } from "@/components/team-expenses/BudgetUtilBar";
+import { GlBudgetImportDialog } from "@/components/team-expenses/GlBudgetImportDialog";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { NumericInput } from "@/components/ui/numeric-input";
 import { Select, toSelectOptions } from "@/components/ui/select";
-import { BudgetUtilBar } from "@/components/team-expenses/BudgetUtilBar";
+import { useToast } from "@/context/ToastContext";
+import { useCoaAccountOptions } from "@/hooks/useCoaAccountOptions";
 import {
   useDeleteParentGlBudgetTree,
   useDepartmentBudgets,
+  useImportDepartmentBudgets,
   useUpsertParentGlBudgetTree,
 } from "@/hooks/useDepartmentBudgets";
-import { useCoaAccountOptions } from "@/hooks/useCoaAccountOptions";
 import { useTeamExpenseDepartmentBudgetUtilization } from "@/hooks/useTeamExpenseReports";
+import { cn } from "@/lib/cn";
 import {
   mergeCoaOptionsWithSavedValue,
   subLedgersForLedger,
 } from "@/lib/coaAccountOptions";
 import { money } from "@/lib/format";
-import { FieldLabel } from "@/components/rule-book/FieldLabel";
-import { cn } from "@/lib/cn";
-import type { DepartmentBudgetRow } from "@/api/types";
 
 const PERIOD_KINDS = ["monthly", "quarterly", "annual"] as const;
 
@@ -47,17 +51,19 @@ type BudgetTreeGroup = {
 };
 
 export function DepartmentBudgetsPanel({ currency }: { currency: string }) {
+  const { toast } = useToast();
   const { data: rows = [], isLoading } = useDepartmentBudgets();
   const { data: utilization = [] } = useTeamExpenseDepartmentBudgetUtilization();
   const upsertMut = useUpsertParentGlBudgetTree();
   const deleteTreeMut = useDeleteParentGlBudgetTree();
+  const importMut = useImportDepartmentBudgets();
   const {
     options: coaOptions,
     allAccounts,
     isLoading: coaLoading,
   } = useCoaAccountOptions({
-    routeTarget: "Team Expenses",
-    types: ["Expense"],
+    // Same catalogue as Team Expenses rules Parent GL (not Expense-only).
+    // Budgets must be creatable for any wallet rules can post to.
     includeEmpty: true,
     emptyLabel: "— Select parent GL —",
   });
@@ -70,6 +76,7 @@ export function DepartmentBudgetsPanel({ currency }: { currency: string }) {
   const [notes, setNotes] = useState("");
   const [enforcement, setEnforcement] = useState<"soft" | "hard">("soft");
   const [error, setError] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
   /** Keys of parent rows whose Sub-GLs are expanded in the table. */
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => new Set());
 
@@ -290,13 +297,41 @@ export function DepartmentBudgetsPanel({ currency }: { currency: string }) {
 
   return (
     <div className="space-y-3">
-      <div>
-        <h3 className="text-sm font-semibold">GL budgets</h3>
-        <p className="text-xs text-muted-foreground mt-0.5">
-          Choose a Parent GL to load all of its Sub-GLs. Set each Sub-GL budget so their sum
-          equals the parent budget, then save once.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-semibold">GL budgets</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Choose a Parent GL to load all of its Sub-GLs. Set each Sub-GL budget so their sum
+            equals the parent budget, then save once — or import many wallets from a spreadsheet.
+          </p>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => setImportOpen(true)}
+          data-testid="button-import-gl-budgets"
+        >
+          <Upload className="h-3.5 w-3.5 mr-1" />
+          Import spreadsheet
+        </Button>
       </div>
+
+      <GlBudgetImportDialog
+        open={importOpen}
+        busy={importMut.isPending}
+        onClose={() => setImportOpen(false)}
+        onDownloadTemplate={(opts) => api.downloadDepartmentBudgetImportTemplate(opts)}
+        onPreview={(file) => importMut.mutateAsync({ file, dryRun: true })}
+        onImport={async (file) => {
+          const result = await importMut.mutateAsync({ file, dryRun: false });
+          toast({
+            title: "GL budgets imported",
+            description: `${result.created} created, ${result.updated} updated`,
+          });
+          return result;
+        }}
+      />
 
       <Card className="p-3 space-y-3">
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">

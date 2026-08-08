@@ -23,12 +23,12 @@ export type RiskComplianceRow = {
 
 export type RiskView = "list" | "donut";
 
-/** Placeholder risk counts until overview API exposes period-scoped risk_compliance. */
+/** Empty risk rows when overview has no risk_compliance payload. */
 export const PLACEHOLDER_RISK_ROWS: RiskComplianceRow[] = [
   {
     id: "duplicates",
     label: "Duplicate documents",
-    count: 12,
+    count: 0,
     href: "/approvals",
     tone: "rust",
     badge: "Review",
@@ -36,7 +36,7 @@ export const PLACEHOLDER_RISK_ROWS: RiskComplianceRow[] = [
   {
     id: "fraud",
     label: "Fraud invoices",
-    count: 3,
+    count: 0,
     href: "/upload?view=detailed&q=DT-21",
     tone: "rose",
     badge: "Urgent",
@@ -44,7 +44,7 @@ export const PLACEHOLDER_RISK_ROWS: RiskComplianceRow[] = [
   {
     id: "bank",
     label: "Bank changes",
-    count: 7,
+    count: 0,
     href: "/upload?view=detailed&q=DT-23",
     tone: "violet",
     badge: "Monitor",
@@ -52,7 +52,7 @@ export const PLACEHOLDER_RISK_ROWS: RiskComplianceRow[] = [
   {
     id: "counterparties",
     label: "New counterparties",
-    count: 18,
+    count: 0,
     href: "/creations?tab=vendors",
     tone: "green",
     badge: "New",

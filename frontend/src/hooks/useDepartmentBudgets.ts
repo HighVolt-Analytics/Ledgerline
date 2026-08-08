@@ -75,4 +75,17 @@ export function useDeleteDepartmentBudget() {
   });
 }
 
+export function useImportDepartmentBudgets() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ file, dryRun }: { file: File; dryRun: boolean }) =>
+      api.importDepartmentBudgets(file, dryRun),
+    onSuccess: (_data, variables) => {
+      if (variables.dryRun) return;
+      void queryClient.invalidateQueries({ queryKey: queryKeys.departmentBudgets() });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.teDepartmentBudgetUtilization() });
+    },
+  });
+}
+
 export type { DepartmentBudgetRow };

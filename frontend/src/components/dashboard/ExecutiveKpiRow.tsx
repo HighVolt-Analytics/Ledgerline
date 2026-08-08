@@ -7,17 +7,33 @@ import {
 } from "@phosphor-icons/react";
 import { KpiCard } from "@/components/KpiCard";
 
-/** Placeholder executive KPIs until overview API exposes savings metrics. */
-export const PLACEHOLDER_EXECUTIVE_KPIS = {
-  documentsProcessed: 125,
-  documentsDelta: { dir: "up" as const, text: "18% vs. prior period", good: true },
-  timeSavedMinutes: 1458,
-  timeSavedHoursLabel: "24.3 hours recovered",
-  avgTimeSavedPerDoc: 12,
-  aiSavingsPct: 22,
-  aiSavingsDelta: { dir: "up" as const, text: "3.8 pts vs. prior period", good: true },
-  costSaved: 4167,
-  currency: "USD",
+export type ExecutiveKpiDeltaView = {
+  dir: "up" | "down" | "flat";
+  text: string;
+  good: boolean;
+};
+
+export type ExecutiveKpisView = {
+  documentsProcessed: number;
+  documentsDelta: ExecutiveKpiDeltaView | undefined;
+  timeSavedMinutes: number;
+  timeSavedHoursLabel: string;
+  avgTimeSavedPerDoc: number;
+  aiSavingsPct: number;
+  aiSavingsDelta: ExecutiveKpiDeltaView | undefined;
+  costSaved: number;
+};
+
+/** Fallback when overview has not yet returned executive KPIs. */
+export const PLACEHOLDER_EXECUTIVE_KPIS: ExecutiveKpisView = {
+  documentsProcessed: 0,
+  documentsDelta: undefined,
+  timeSavedMinutes: 0,
+  timeSavedHoursLabel: "0.0 hours recovered",
+  avgTimeSavedPerDoc: 0,
+  aiSavingsPct: 0,
+  aiSavingsDelta: undefined,
+  costSaved: 0,
 };
 
 function formatMinutes(minutes: number): string {
@@ -26,10 +42,12 @@ function formatMinutes(minutes: number): string {
 
 export function ExecutiveKpiRow({
   currencySymbol = "$",
+  kpis = PLACEHOLDER_EXECUTIVE_KPIS,
 }: {
   currencySymbol?: string;
+  kpis?: ExecutiveKpisView;
 }) {
-  const k = PLACEHOLDER_EXECUTIVE_KPIS;
+  const k = kpis;
 
   return (
     <div

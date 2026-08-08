@@ -65,6 +65,8 @@ import type {
   DepartmentBudgetRow,
   DepartmentBudgetUtilizationRow,
   EmployeeExpenseSummaryRow,
+  EmployeeSpendDetailRow,
+  EmployeeAdvanceDetailRow,
   SubledgerBalancesResponse,
   Invoice,
   InvoiceDetails,
@@ -175,6 +177,30 @@ export interface EmployeeImportResult {
   skipped: number;
   errors: EmployeeImportRowError[];
   previews: EmployeeImportRowPreview[];
+}
+
+export interface DepartmentBudgetImportRowError {
+  row_number: number;
+  parent_gl: string | null;
+  message: string;
+}
+
+export interface DepartmentBudgetImportRowPreview {
+  row_number: number;
+  parent_gl: string;
+  period_kind: string;
+  period_key: string;
+  action: string;
+  detail: string;
+}
+
+export interface DepartmentBudgetImportResult {
+  dry_run: boolean;
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: DepartmentBudgetImportRowError[];
+  previews: DepartmentBudgetImportRowPreview[];
 }
 
 export function setUnauthorizedHandler(handler: (() => void | Promise<void>) | null) {
@@ -1559,6 +1585,31 @@ export const api = {
     }),
   deleteDepartmentBudget: (budgetId: number) =>
     request<void>(`/api/department-budgets/${budgetId}`, { method: "DELETE" }),
+  downloadDepartmentBudgetImportTemplate: async (params?: {
+    period_kind?: "monthly" | "quarterly" | "annual";
+    period_key?: string;
+    prefill_coa?: boolean;
+  }) => {
+    const q = new URLSearchParams();
+    if (params?.period_kind) q.set("period_kind", params.period_kind);
+    if (params?.period_key?.trim()) q.set("period_key", params.period_key.trim());
+    if (params?.prefill_coa === false) q.set("prefill_coa", "false");
+    const qs = q.toString();
+    const { blob, filename } = await requestBlob(
+      `/api/department-budgets/import/template${qs ? `?${qs}` : ""}`,
+      undefined,
+      "gl-budget-template.xlsx"
+    );
+    saveBlobAsFile(blob, filename);
+  },
+  importDepartmentBudgets: (file: File, dryRun: boolean) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return request<DepartmentBudgetImportResult>(
+      `/api/department-budgets/import?dry_run=${dryRun ? "true" : "false"}`,
+      { method: "POST", body: fd }
+    );
+  },
   downloadEmployeeImportTemplate: async (mode: EmployeeImportMode) => {
     const { blob, filename } = await requestBlob(
       `/api/employee-masters/import/templates/${mode}`,
@@ -1811,18 +1862,27 @@ export const api = {
     request<EmployeeExpenseSummaryRow[]>(
       `/api/reports/team-expenses/expense-summary${reportDateQuery(filter)}`
     ),
+  getTeamExpenseEmployeeSpendDetail: () =>
+    request<EmployeeSpendDetailRow[]>(
+      "/api/reports/team-expenses/employee-spend-detail"
+    ),
+  getTeamExpenseEmployeeAdvanceDetail: () =>
+    request<EmployeeAdvanceDetailRow[]>(
+      "/api/reports/team-expenses/employee-advance-detail"
+    ),
   downloadTeamExpenseReport: async (
     report:
-      | "advance-settlement"
       | "budget-utilization"
       | "department-budget-utilization"
-      | "expense-summary",
+      | "expense-summary"
+      | "employee-spend-detail"
+      | "employee-advance-detail",
     filter?: ReportDateFilter
   ) => {
     const { blob, filename, headers } = await requestBlob(
       `/api/reports/team-expenses/${report}/export${reportDateQuery(filter)}`,
       undefined,
-      `employee_${report.replace(/-/g, "_")}.xlsx`
+      `te_${report.replace(/-/g, "_")}.xlsx`
     );
     const parsedRows = Number(headers.get("X-Data-Rows") ?? "");
     const dataRows = Number.isFinite(parsedRows) && parsedRows >= 0 ? parsedRows : 0;

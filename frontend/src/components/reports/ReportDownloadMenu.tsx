@@ -22,10 +22,10 @@ export type ReportDownloadKind =
   | "gl"
   | "vendors"
   | "audit"
-  | "te-advance-settlement"
-  | "te-budget-utilization"
   | "te-department-budget-utilization"
-  | "te-expense-summary";
+  | "te-expense-summary"
+  | "te-employee-spend-detail"
+  | "te-employee-advance-detail";
 
 const TYPE_OPTIONS: SelectOption[] = [
   { value: "workbook", label: "Excel workbook" },
@@ -34,12 +34,15 @@ const TYPE_OPTIONS: SelectOption[] = [
   { value: "gl", label: "GL account summary (CSV)" },
   { value: "vendors", label: "Top vendors (CSV)" },
   { value: "audit", label: "Audit trail (CSV)" },
-  { value: "te-advance-settlement", label: "Employee advance settlement (Excel)" },
-  { value: "te-budget-utilization", label: "Employee spending limit utilization (Excel)" },
   {
-    value: "te-department-budget-utilization",
-    label: "Department budget utilization (Excel)",
+    value: "te-employee-spend-detail",
+    label: "Employee spend detail / budget utilization (Excel)",
   },
+  {
+    value: "te-employee-advance-detail",
+    label: "Employee advance detail (Excel)",
+  },
+  { value: "te-department-budget-utilization", label: "GL budgets only (Excel)" },
   { value: "te-expense-summary", label: "Employee expense summary (Excel)" },
 ];
 
@@ -51,9 +54,9 @@ const PERIOD_OPTIONS: SelectOption[] = [
 
 /** Snapshot reports ignore period (current balances / counters). */
 const SNAPSHOT_KINDS = new Set<ReportDownloadKind>([
-  "te-advance-settlement",
-  "te-budget-utilization",
   "te-department-budget-utilization",
+  "te-employee-spend-detail",
+  "te-employee-advance-detail",
 ]);
 
 const MONTH_ONLY_KINDS = new Set<ReportDownloadKind>(["gl", "vendors"]);
@@ -162,22 +165,26 @@ export function ReportDownloadMenu({
           onToast("Audit trail downloaded.");
           break;
         }
-        case "te-advance-settlement": {
-          const { dataRows } = await api.downloadTeamExpenseReport("advance-settlement");
+        case "te-employee-spend-detail": {
+          const { dataRows } = await api.downloadTeamExpenseReport(
+            "employee-spend-detail"
+          );
           if (dataRows === 0) {
-            onToast("No employees to export.");
+            onToast("No employees or claim spend to export.");
             return;
           }
-          onToast("Employee advance settlement workbook downloaded.");
+          onToast("Employee spend detail workbook downloaded.");
           break;
         }
-        case "te-budget-utilization": {
-          const { dataRows } = await api.downloadTeamExpenseReport("budget-utilization");
+        case "te-employee-advance-detail": {
+          const { dataRows } = await api.downloadTeamExpenseReport(
+            "employee-advance-detail"
+          );
           if (dataRows === 0) {
-            onToast("No employees to export.");
+            onToast("No advance movements to export.");
             return;
           }
-          onToast("Employee spending limit utilization workbook downloaded.");
+          onToast("Employee advance detail workbook downloaded.");
           break;
         }
         case "te-department-budget-utilization": {
@@ -185,10 +192,10 @@ export function ReportDownloadMenu({
             "department-budget-utilization"
           );
           if (dataRows === 0) {
-            onToast("No department budgets for the current period to export.");
+            onToast("No GL budgets for the current period to export.");
             return;
           }
-          onToast("Department budget utilization workbook downloaded.");
+          onToast("GL budgets workbook downloaded.");
           break;
         }
         case "te-expense-summary": {

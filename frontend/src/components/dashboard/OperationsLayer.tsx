@@ -18,7 +18,7 @@ import {
   type KpiModuleColor,
 } from "@/lib/kpiModuleColors";
 
-export type OpsMemberId = "all" | "arup" | "khushi" | "shreya" | "vishnu";
+export type OpsMemberId = string;
 
 export type OpsStatusKey =
   | "processed"
@@ -43,14 +43,6 @@ export type OpsMemberSnapshot = {
   accuracyPct: number;
   byDocType: OpsDocTypeRow[];
 };
-
-const MEMBER_OPTIONS: { value: OpsMemberId; label: string }[] = [
-  { value: "all", label: "All team members" },
-  { value: "arup", label: "Arup" },
-  { value: "khushi", label: "Khushi" },
-  { value: "shreya", label: "Shreya" },
-  { value: "vishnu", label: "Vishnu" },
-];
 
 const PERIOD_OPTIONS = [
   { value: "30d", label: "Last 30 days" },
@@ -108,226 +100,20 @@ function sumCounts(
   return { label: "All document types", counts };
 }
 
-/** Placeholder ops metrics until overview API exposes member-scoped operations. */
+/** Empty ops rollup when overview has no operations payload yet. */
 export const PLACEHOLDER_OPS_MEMBERS: OpsMemberSnapshot[] = [
   {
     id: "all",
     label: "All team members",
-    documentsProcessed: 80,
-    timeSavedMinutes: 933,
-    automationRatePct: 72,
-    pendingActions: 4,
-    accuracyPct: 97,
+    documentsProcessed: 0,
+    timeSavedMinutes: 0,
+    automationRatePct: 0,
+    pendingActions: 0,
+    accuracyPct: 0,
     byDocType: [
-      {
-        id: "invoice",
-        label: "Invoice",
-        counts: {
-          processed: 42,
-          posted: 38,
-          rejected: 3,
-          review_pending: 10,
-          approvals_pending: 2,
-        },
-      },
-      {
-        id: "advance",
-        label: "Advance",
-        counts: {
-          processed: 22,
-          posted: 20,
-          rejected: 1,
-          review_pending: 5,
-          approvals_pending: 1,
-        },
-      },
-      {
-        id: "claim",
-        label: "Claim",
-        counts: {
-          processed: 16,
-          posted: 14,
-          rejected: 1,
-          review_pending: 3,
-          approvals_pending: 1,
-        },
-      },
-    ],
-  },
-  {
-    id: "arup",
-    label: "Arup",
-    documentsProcessed: 28,
-    timeSavedMinutes: 340,
-    automationRatePct: 74,
-    pendingActions: 1,
-    accuracyPct: 96,
-    byDocType: [
-      {
-        id: "invoice",
-        label: "Invoice",
-        counts: {
-          processed: 16,
-          posted: 14,
-          rejected: 1,
-          review_pending: 3,
-          approvals_pending: 1,
-        },
-      },
-      {
-        id: "advance",
-        label: "Advance",
-        counts: {
-          processed: 7,
-          posted: 7,
-          rejected: 0,
-          review_pending: 2,
-          approvals_pending: 0,
-        },
-      },
-      {
-        id: "claim",
-        label: "Claim",
-        counts: {
-          processed: 5,
-          posted: 4,
-          rejected: 0,
-          review_pending: 1,
-          approvals_pending: 0,
-        },
-      },
-    ],
-  },
-  {
-    id: "khushi",
-    label: "Khushi",
-    documentsProcessed: 18,
-    timeSavedMinutes: 210,
-    automationRatePct: 69,
-    pendingActions: 1,
-    accuracyPct: 95,
-    byDocType: [
-      {
-        id: "invoice",
-        label: "Invoice",
-        counts: {
-          processed: 10,
-          posted: 9,
-          rejected: 1,
-          review_pending: 2,
-          approvals_pending: 1,
-        },
-      },
-      {
-        id: "advance",
-        label: "Advance",
-        counts: {
-          processed: 5,
-          posted: 4,
-          rejected: 0,
-          review_pending: 1,
-          approvals_pending: 0,
-        },
-      },
-      {
-        id: "claim",
-        label: "Claim",
-        counts: {
-          processed: 3,
-          posted: 3,
-          rejected: 0,
-          review_pending: 1,
-          approvals_pending: 0,
-        },
-      },
-    ],
-  },
-  {
-    id: "shreya",
-    label: "Shreya",
-    documentsProcessed: 24,
-    timeSavedMinutes: 312,
-    automationRatePct: 78,
-    pendingActions: 1,
-    accuracyPct: 98,
-    byDocType: [
-      {
-        id: "invoice",
-        label: "Invoice",
-        counts: {
-          processed: 12,
-          posted: 11,
-          rejected: 0,
-          review_pending: 3,
-          approvals_pending: 1,
-        },
-      },
-      {
-        id: "advance",
-        label: "Advance",
-        counts: {
-          processed: 7,
-          posted: 6,
-          rejected: 1,
-          review_pending: 1,
-          approvals_pending: 0,
-        },
-      },
-      {
-        id: "claim",
-        label: "Claim",
-        counts: {
-          processed: 5,
-          posted: 5,
-          rejected: 0,
-          review_pending: 1,
-          approvals_pending: 0,
-        },
-      },
-    ],
-  },
-  {
-    id: "vishnu",
-    label: "Vishnu",
-    documentsProcessed: 10,
-    timeSavedMinutes: 71,
-    automationRatePct: 65,
-    pendingActions: 1,
-    accuracyPct: 97,
-    byDocType: [
-      {
-        id: "invoice",
-        label: "Invoice",
-        counts: {
-          processed: 4,
-          posted: 4,
-          rejected: 1,
-          review_pending: 2,
-          approvals_pending: 0,
-        },
-      },
-      {
-        id: "advance",
-        label: "Advance",
-        counts: {
-          processed: 3,
-          posted: 3,
-          rejected: 0,
-          review_pending: 1,
-          approvals_pending: 1,
-        },
-      },
-      {
-        id: "claim",
-        label: "Claim",
-        counts: {
-          processed: 3,
-          posted: 2,
-          rejected: 0,
-          review_pending: 0,
-          approvals_pending: 0,
-        },
-      },
+      { id: "invoice", label: "Invoice", counts: emptyCounts() },
+      { id: "advance", label: "Advance", counts: emptyCounts() },
+      { id: "claim", label: "Claim", counts: emptyCounts() },
     ],
   },
 ];
@@ -423,10 +209,13 @@ function StackedStatusBar({
 }
 
 export function OperationsLayer({
-  members = PLACEHOLDER_OPS_MEMBERS,
+  members,
+  windows,
   className,
 }: {
   members?: OpsMemberSnapshot[];
+  /** Prefer period-scoped windows from overview (`7d` | `30d` | `month`). */
+  windows?: Record<string, OpsMemberSnapshot[]>;
   className?: string;
 }) {
   const { theme } = useTheme();
@@ -434,10 +223,26 @@ export function OperationsLayer({
   const [period, setPeriod] = useState("30d");
   const [docTypeId, setDocTypeId] = useState("all");
 
-  const snapshot = useMemo(
-    () => members.find((m) => m.id === memberId) ?? members[0]!,
-    [members, memberId]
+  const periodMembers = useMemo(() => {
+    if (windows) {
+      return windows[period] ?? windows["30d"] ?? windows["month"] ?? PLACEHOLDER_OPS_MEMBERS;
+    }
+    return members ?? PLACEHOLDER_OPS_MEMBERS;
+  }, [windows, members, period]);
+
+  const memberOptions = useMemo(
+    () =>
+      periodMembers.map((m) => ({
+        value: m.id,
+        label: m.label,
+      })),
+    [periodMembers]
   );
+
+  const snapshot = useMemo(() => {
+    const found = periodMembers.find((m) => m.id === memberId);
+    return found ?? periodMembers[0] ?? PLACEHOLDER_OPS_MEMBERS[0]!;
+  }, [periodMembers, memberId]);
 
   const fills = useMemo(() => {
     const map = {} as Record<KpiModuleColor, string>;
@@ -477,9 +282,9 @@ export function OperationsLayer({
         </h3>
         <div className="flex flex-wrap items-center gap-2">
           <Select
-            value={memberId}
-            onValueChange={(v) => setMemberId(v as OpsMemberId)}
-            options={MEMBER_OPTIONS}
+            value={memberOptions.some((o) => o.value === memberId) ? memberId : "all"}
+            onValueChange={(v) => setMemberId(v)}
+            options={memberOptions}
             className="w-[170px] h-8 text-xs"
             size="sm"
             data-testid="select-ops-member"

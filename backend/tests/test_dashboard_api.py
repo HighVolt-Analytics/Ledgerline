@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
+from app.services.shared.currency import convert_to_base
 
 
 @pytest.mark.asyncio
@@ -73,7 +74,7 @@ async def test_dashboard_overview(
     assert body["top_vendors"][0]["vendor"] == "Acme Corp"
     assert len(body["cash_forecast"]) == 6
     seven_day = next(b for b in body["cash_forecast"] if b["label"] == "7 days")
-    assert Decimal(seven_day["amount"]) == Decimal("1000.00")
+    assert Decimal(seven_day["amount"]) == convert_to_base(Decimal("1000.00"), "AUD")
     assert len(body["invoice_volume_sparkline"]) >= 1
     assert "period" in body
     assert "mailbox_breakdown" in body
@@ -204,7 +205,9 @@ async def test_total_value_counts_processed_only(
     body = overview.json()["data"]
     assert len(body["top_vendors"]) == 1
     assert body["top_vendors"][0]["vendor"] == "Booked Co"
-    assert Decimal(body["top_vendors"][0]["amount"]) == Decimal("1000.00")
+    assert Decimal(body["top_vendors"][0]["amount"]) == convert_to_base(
+        Decimal("1000.00"), "AUD"
+    )
     forecast_total = sum(
         Decimal(b["amount"]) for b in body["cash_forecast"]
     )
@@ -431,3 +434,177 @@ async def test_dashboard_anomalies_include_rule_book_routing(
     tags = {row["tag"] for row in overview["anomalies"]}
     assert "Pending vendor" in tags
     assert "Needs review" in tags
+
+
+@pytest.mark.asyncio
+async def test_dashboard_overview_panels_capture_and_executive(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    db_session.add_all(
+        [
+            Invoice(
+                tenant_id=TESTING_TENANT_UUID,
+                vendor="Email Vendor",
+                status=InvoiceStatus.PROCESSED,
+                currency="AUD",
+                total=Decimal("100.00"),
+                capture_source="email",
+                email_sender="ap@vendor.com",
+                evaluation_status="auto_coded",
+                file_hash="dash-panel-email",
+                uploaded_by_email="ops@example.com",
+                uploaded_by_name="Ops User",
+            ),
+            Invoice(
+                tenant_id=TESTING_TENANT_UUID,
+                vendor="WA Vendor",
+                status=InvoiceStatus.EXCEPTION,
+                currency="AUD",
+                total=Decimal("50.00"),
+                capture_source="whatsapp",
+                whatsapp_connection_id=1,
+                evaluation_status="pending_approval",
+                file_hash="dash-panel-wa",
+                uploaded_by_email="ops@example.com",
+                uploaded_by_name="Ops User",
+            ),
+            Invoice(
+                tenant_id=TESTING_TENANT_UUID,
+                vendor="Upload Vendor",
+                status=InvoiceStatus.PROCESSED,
+                currency="AUD",
+                total=Decimal("25.00"),
+                capture_source="upload",
+                evaluation_status="needs_review",
+                file_hash="dash-panel-upload",
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    body = (await client.get("/api/dashboard/overview")).json()["data"]
+
+    by_id = {row["id"]: row for row in body["capture_sources"]}
+    assert by_id["email"]["document_count"] == 1
+    assert by_id["whatsapp"]["document_count"] == 1
+    assert by_id["upload"]["document_count"] == 1
+    assert by_id["viber"]["document_count"] == 0
+    assert by_id["email"]["time_saved_minutes"] > 0
+    assert by_id["email"]["cost_saved"] > 0
+
+    exec_kpis = body["executive_kpis"]
+    assert exec_kpis["documents_processed"] == 3
+    assert exec_kpis["time_saved_minutes"] > 0
+    assert exec_kpis["cost_saved"] > 0
+    assert 0 <= exec_kpis["automation_efficiency_pct"] <= 100
+
+    assert body["approval_queue"]["pending"] >= 1
+    assert body["approval_queue"]["value_label"] != "—"
+
+    assert len(body["extraction_quality"]) == 4
+    assert {p["metric"] for p in body["extraction_quality"]} == {
+        "Header",
+        "Line items",
+        "Tax/GST",
+        "GL coding",
+    }
+
+    assert body["attention"]["priority"]["cta_href"]
+    assert body["attention"]["processed"]["value"] is not None
+    assert len(body["attention"]["processed"]["bars"]) == 7
+    assert len(body["attention"]["turnaround"]["bars"]) == 7
+
+    ops = body["operations"]["windows"]
+    assert "7d" in ops and "30d" in ops and "month" in ops
+    all_snap = next(m for m in ops["month"] if m["id"] == "all")
+    assert all_snap["documents_processed"] >= 1
+    member = next(
+        (m for m in ops["month"] if m["id"] == "ops@example.com"),
+        None,
+    )
+    assert member is not None
+    assert member["label"] == "Ops User"
+
+    user_ids = {m["id"] for m in body["user_layer"]}
+    assert user_ids == {
+        "email_mapped",
+        "phone_synced",
+        "doc_types",
+        "manual_handoff",
+        "vendors",
+    }
+    for metric in body["user_layer"]:
+        stages = metric["stages"]
+        for key in (
+            "document_fetched",
+            "pending_confirmation",
+            "pending_approval",
+            "pending_posting",
+            "pending_payment",
+        ):
+            assert key in stages
+            assert isinstance(stages[key], int)
+
+
+@pytest.mark.asyncio
+async def test_dashboard_overview_risk_buckets(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    db_session.add_all(
+        [
+            Invoice(
+                tenant_id=TESTING_TENANT_UUID,
+                vendor="Dup Co",
+                status=InvoiceStatus.DUPLICATE_SKIPPED,
+                currency="AUD",
+                file_hash="dash-risk-dup",
+            ),
+            Invoice(
+                tenant_id=TESTING_TENANT_UUID,
+                vendor="Fraud Co",
+                status=InvoiceStatus.EXCEPTION,
+                currency="AUD",
+                document_type_code="DT-21",
+                file_hash="dash-risk-fraud",
+            ),
+            Invoice(
+                tenant_id=TESTING_TENANT_UUID,
+                vendor="Bank Co",
+                status=InvoiceStatus.EXCEPTION,
+                currency="AUD",
+                document_type_code="DT-23",
+                file_hash="dash-risk-bank",
+            ),
+            Invoice(
+                tenant_id=TESTING_TENANT_UUID,
+                vendor="Brand New Vendor XYZ",
+                status=InvoiceStatus.PROCESSED,
+                currency="AUD",
+                total=Decimal("10.00"),
+                file_hash="dash-risk-new-cp",
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    body = (await client.get("/api/dashboard/overview")).json()["data"]
+    by_id = {row["id"]: row for row in body["risk_compliance"]}
+    assert by_id["duplicates"]["count"] >= 1
+    assert by_id["fraud"]["count"] >= 1
+    assert by_id["bank"]["count"] >= 1
+    assert by_id["counterparties"]["count"] >= 1
+    assert by_id["fraud"]["href"].endswith("DT-21")
+    assert by_id["bank"]["href"].endswith("DT-23")
+
+
+def test_dashboard_savings_math() -> None:
+    from app.services.reports.dashboard_savings import (
+        cost_saved_from_minutes,
+        minutes_saved_per_doc,
+        time_saved_minutes,
+    )
+
+    assert minutes_saved_per_doc("email", actual_processing_minutes=0) == 12
+    assert minutes_saved_per_doc("whatsapp", actual_processing_minutes=3) == 12
+    assert time_saved_minutes(2, "upload", actual_processing_minutes=0) == 22
+    assert cost_saved_from_minutes(60) == 45

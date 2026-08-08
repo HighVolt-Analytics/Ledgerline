@@ -634,6 +634,23 @@ class Settings(BaseSettings):
         validation_alias="INVOICE_PIPELINE_CONCURRENCY",
         description="Max concurrent invoice pipelines when processing a batch inline",
     )
+    stuck_pending_requeue_after_seconds: int = Field(
+        default=180,
+        ge=60,
+        le=3600,
+        validation_alias="STUCK_PENDING_REQUEUE_AFTER_SECONDS",
+        description=(
+            "Re-enqueue PENDING invoices with a stored file when no audit activity "
+            "has occurred for this many seconds (safety net when Celery enqueue is dropped)"
+        ),
+    )
+    stuck_pending_requeue_batch_size: int = Field(
+        default=25,
+        ge=1,
+        le=200,
+        validation_alias="STUCK_PENDING_REQUEUE_BATCH_SIZE",
+        description="Max stuck PENDING invoices to requeue per tenant per recovery cycle",
+    )
     jwt_secret: str = "change-me-in-production"
     jwt_expire_minutes: int = 60 * 24 * 7
     access_token_expire_minutes: int = Field(

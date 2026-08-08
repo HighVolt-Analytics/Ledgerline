@@ -217,6 +217,7 @@ export function UploadPage() {
   const {
     data: listData,
     isLoading: listLoading,
+    isFetching: listFetching,
     isError: listIsError,
     error: listError,
     refetch: refetchInvoiceList,
@@ -245,7 +246,9 @@ export function UploadPage() {
 
   const totalInvoices = listData?.total ?? 0;
   const totalPages = listData?.pages ?? 1;
-  const loading = listLoading && all.length === 0;
+  // Treat page transitions as loading when this page has no rows yet (RQ keeps
+  // isLoading=false while placeholder/previous data is shown or cleared).
+  const loading = (listLoading || listFetching) && all.length === 0;
   const error =
     listIsError && listError instanceof Error ? listError.message : listIsError ? "Failed to load documents" : null;
 
@@ -277,17 +280,20 @@ export function UploadPage() {
     }
   }, [channelTab]);
 
-  // Clear merged rows only on page/source/channel changes. Search keeps previous rows via
-  // keepPreviousData so the list (and search input) do not unmount mid-keystroke.
+  // Clear merged local overrides only when the channel/mailbox changes. Keep rows
+  // across page flips so pagination does not flash the inbox EmptyState.
   useEffect(() => {
     prevMergedRef.current = [];
-  }, [page, source, channelTab]);
+  }, [source, channelTab]);
 
   useEffect(() => {
+    // Only clamp after a settled response for this query — never while fetching,
+    // or placeholder totalPages=1 from a cold key snaps page back and looks empty.
+    if (listFetching) return;
     if (page > totalPages) {
       setPage(totalPages);
     }
-  }, [page, totalPages]);
+  }, [page, totalPages, listFetching]);
 
   useEffect(() => {
     if (!fetchNotice || isProgressNotice(fetchNotice)) return;
@@ -315,9 +321,14 @@ export function UploadPage() {
   }, [captured, evalFilter]);
 
   const hasActiveSearch = Boolean(searchQuery.trim() || debouncedSearch);
-  // Keep the captured-documents chrome (incl. search) mounted while searching so
-  // focus is not lost when the query key refetches or returns zero matches.
-  const showCapturedChrome = captured.length > 0 || hasActiveSearch;
+  // Keep list chrome (search, filters, pagination) whenever this channel has docs
+  // or we are mid page/search fetch — do not tear down to "No documents yet".
+  const showCapturedChrome =
+    captured.length > 0 ||
+    hasActiveSearch ||
+    totalInvoices > 0 ||
+    page > 1 ||
+    listFetching;
 
   useEffect(() => {
     setProcessingIds((prev) => {
@@ -925,7 +936,11 @@ export function UploadPage() {
               <p className="px-4 py-8 text-center text-sm text-muted-foreground">
                 {hasActiveSearch
                   ? "No documents match your search."
-                  : "No documents match this filter."}
+                  : evalFilter !== "all"
+                    ? "No documents match this filter."
+                    : totalInvoices > 0
+                      ? "No documents on this page."
+                      : "No documents match this filter."}
               </p>
             )}
             {filtered.map((inv) => (
@@ -970,7 +985,11 @@ export function UploadPage() {
                     <td colSpan={11} className="px-4 py-8 text-center text-muted-foreground">
                       {hasActiveSearch
                         ? "No documents match your search."
-                        : "No documents match this filter."}
+                        : evalFilter !== "all"
+                          ? "No documents match this filter."
+                          : totalInvoices > 0
+                            ? "No documents on this page."
+                            : "No documents match this filter."}
                     </td>
                   </tr>
                 )}
@@ -997,7 +1016,7 @@ export function UploadPage() {
                 size="sm"
                 className="h-8 px-2 text-xs"
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page <= 1}
+                disabled={page <= 1 || listFetching}
               >
                 Prev
               </Button>
@@ -1009,6 +1028,7 @@ export function UploadPage() {
                   size="sm"
                   className="h-8 min-w-8 px-2 text-xs tnum"
                   onClick={() => setPage(p)}
+                  disabled={listFetching && p !== page}
                 >
                   {p}
                 </Button>
@@ -1019,7 +1039,7 @@ export function UploadPage() {
                 size="sm"
                 className="h-8 px-2 text-xs"
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page >= totalPages}
+                disabled={page >= totalPages || listFetching}
               >
                 Next
               </Button>

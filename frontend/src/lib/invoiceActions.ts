@@ -394,6 +394,26 @@ export async function approveAndProcess(
   return { invoice, payment, collection };
 }
 
+/** Confirm document type and re-run the pipeline, polling until settled. */
+export async function resolveClassificationAndWatch(
+  invoiceId: number,
+  confirmedDt: string,
+  refresh: () => Promise<void>
+): Promise<Invoice> {
+  const queued = await api.resolveInvoiceClassification(invoiceId, {
+    confirmed_dt: confirmedDt,
+    reprocess: true,
+  });
+  if (!PIPELINE_ACTIVE.has(queued.status)) {
+    await refresh();
+    return queued;
+  }
+  await watchInvoiceUntilSettled(invoiceId, refresh, PROCESSING_TIMEOUT_MS, {
+    requirePipelineObserved: true,
+  });
+  return api.getInvoice(invoiceId, { fresh: true });
+}
+
 /** Re-parse a stuck invoice (clears extracted fields, runs pipeline for this row). */
 export async function reprocessAndWatch(
   invoiceId: number,

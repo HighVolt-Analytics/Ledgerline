@@ -34,7 +34,7 @@ import {
 import { tenantTodayIso } from "@/lib/tenantTime";
 
 const REPORTS_SUBTITLE =
-  "Spend analytics, party balances, and team expense settlement.";
+  "Spend analytics, party balances, and team expense finance (advances + GL budgets).";
 
 const CHART_MARGIN = { top: 4, right: 12, left: 8, bottom: 0 };
 const PIE_HOVER_OFFSET = 6;

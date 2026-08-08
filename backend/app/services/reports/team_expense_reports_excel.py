@@ -18,17 +18,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.department_budget import DepartmentBudgetUtilizationRow
 from app.schemas.team_expense_reports import (
-    EmployeeAdvanceSettlementRow,
+    EmployeeAdvanceDetailRow,
     EmployeeBudgetUtilizationRow,
     EmployeeExpenseSummaryRow,
+    EmployeeMasterReportRow,
+    EmployeeSpendDetailRow,
 )
 from app.services.master_data.department_budget_service import (
     build_department_budget_utilization_rows,
 )
 from app.services.reports.team_expense_reports_service import (
-    build_advance_settlement_rows,
     build_budget_utilization_rows,
+    build_employee_advance_detail_rows,
     build_employee_expense_summary_rows,
+    build_employee_spend_detail_rows,
 )
 
 HEADER_FILL = PatternFill("solid", fgColor="1F6E7A")
@@ -39,12 +42,13 @@ SUBTITLE_FONT = Font(size=9, color="334455")
 BODY_FONT = Font(size=10)
 ZEBRA_FILL = PatternFill("solid", fgColor="F3F7F8")
 
-SHEET_ADVANCE = "Employee Advance Settlement"
-SHEET_BUDGET = "Employee Spending Limit Utilization"
-SHEET_DEPT = "GL Account Budget Utilization"
+SHEET_BUDGET = "Employee Limits (Info)"
+SHEET_DEPT = "GL Budgets"
 SHEET_SUMMARY = "Employee Expense Summary"
+SHEET_SPEND_DETAIL = "Employee Spend Detail"
+SHEET_ADVANCE_DETAIL = "Employee Advance Detail"
 
-ADVANCE_HEADERS = [
+EMPLOYEE_MASTER_HEADERS = [
     "Employee ID",
     "Employee Name",
     "Role",
@@ -67,14 +71,47 @@ ADVANCE_HEADERS = [
     "Advance Parent Ledger",
     "Advance Sub-Ledger",
     "Employee Status",
-    "Claim Count",
+]
+
+SPEND_DETAIL_HEADERS = [
+    *EMPLOYEE_MASTER_HEADERS,
+    "Main GL",
+    "Sub-Ledger",
+    "Sub-GL Budget",
+    "Employee Spend (YTD)",
+    "% of Sub-GL Used by Employee",
+    "No. of Claims",
+    "Advance Pending",
+    "Cash Reimbursed YTD",
     "Last Claim Date",
-    "Claim YTD Spent",
-    "Advance Taken",
-    "Advance Used",
-    "Advance Ledger Balance",
+    "Monthly Spending Limit",
+    "Monthly Spent",
+    "Monthly Remaining",
+    "Monthly Utilization %",
+    "Quarterly Spending Limit",
+    "Quarterly Spent",
+    "Quarterly Remaining",
+    "Quarterly Utilization %",
+    "Annual Spending Limit",
+    "Annual Spent",
+    "Annual Remaining",
+    "Annual Utilization %",
+]
+
+ADVANCE_DETAIL_HEADERS = [
+    *EMPLOYEE_MASTER_HEADERS,
+    "Movement Type",
+    "Document No.",
+    "Document Date",
+    "Took",
+    "Used",
+    "Outstanding After",
     "Pending Claims",
-    "Available Advance",
+    "Available",
+    "Cash Reimbursed",
+    "Document Status",
+    "Approved By",
+    "Approved On",
 ]
 
 BUDGET_HEADERS = [
@@ -134,25 +171,31 @@ DEPT_BUDGET_HEADERS = [
     "Spent So Far",
     "Left",
     "Utilization %",
+    "Enforcement",
     "Notes",
 ]
 
 SUMMARY_HEADERS = [
+    "Employee ID",
     "Employee Name",
+    "Role",
     "Email",
     "Mobile",
+    "Department",
     "Division",
     "Location",
     "Document No.",
     "Invoice Date",
     "Expense Type",
+    "Finance Role",
     "Document Type",
     "Line Item",
     "Qty",
     "Line Amount",
     "Currency",
     "Ledger Code",
-    "Ledger Name",
+    "Main GL",
+    "Sub-Ledger",
     "Document Status",
     "Evaluation Status",
 ]
@@ -192,14 +235,21 @@ def _write_title_block(ws: Worksheet, title: str, subtitle: str, col_count: int)
     return 4
 
 
-def _write_header_row(ws: Worksheet, headers: Sequence[str], header_row: int) -> None:
+def _write_header_row(
+    ws: Worksheet,
+    headers: Sequence[str],
+    header_row: int,
+    *,
+    freeze_col: int = 1,
+) -> None:
     for col, header in enumerate(headers, start=1):
         cell = ws.cell(row=header_row, column=col, value=header)
         cell.fill = HEADER_FILL
         cell.font = HEADER_FONT
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
     ws.row_dimensions[header_row].height = 30
-    ws.freeze_panes = f"A{header_row + 1}"
+    freeze_letter = get_column_letter(max(1, freeze_col))
+    ws.freeze_panes = f"{freeze_letter}{header_row + 1}"
     ws.auto_filter.ref = (
         f"A{header_row}:{get_column_letter(len(headers))}{header_row}"
     )
@@ -233,7 +283,7 @@ def _append_data_rows(
     return row_idx - start_row
 
 
-def _advance_values(row: EmployeeAdvanceSettlementRow) -> list[Any]:
+def _master_values(row: EmployeeMasterReportRow) -> list[Any]:
     return [
         row.employee_id,
         row.name,
@@ -257,14 +307,101 @@ def _advance_values(row: EmployeeAdvanceSettlementRow) -> list[Any]:
         row.advance_parent_ledger,
         row.advance_sub_ledger,
         row.status,
+    ]
+
+
+def _spend_detail_values(row: EmployeeSpendDetailRow) -> list[Any]:
+    return [
+        *_master_values(
+            EmployeeMasterReportRow(
+                employee_id=row.employee_id,
+                name=row.name,
+                role=row.role,
+                email=row.email,
+                whatsapp_number=row.whatsapp_number,
+                whatsapp_number_2=row.whatsapp_number_2,
+                viber_number=row.viber_number,
+                date_of_joining=row.date_of_joining,
+                department=row.department,
+                location=row.location,
+                division=row.division,
+                supervisor_1=row.supervisor_1,
+                supervisor_2=row.supervisor_2,
+                bank_name=row.bank_name,
+                bank_account_name=row.bank_account_name,
+                bank_account_number=row.bank_account_number,
+                bank_bsb=row.bank_bsb,
+                bank_swift=row.bank_swift,
+                bank_iban=row.bank_iban,
+                advance_parent_ledger=row.advance_parent_ledger,
+                advance_sub_ledger=row.advance_sub_ledger,
+                status=row.status,
+            )
+        ),
+        row.main_gl,
+        row.sub_ledger,
+        row.sub_gl_budget,
+        row.employee_spend_ytd,
+        row.pct_of_sub_gl_used if row.pct_of_sub_gl_used is not None else "",
         row.claim_count,
-        row.last_claim,
-        row.claim_ytd_spent,
-        row.advance_taken,
-        row.advance_used,
-        row.advance_ledger_balance,
-        row.pending_against_advance,
-        row.available_advance,
+        row.advance_pending,
+        row.cash_reimbursed_ytd,
+        row.last_claim_date,
+        row.budget_monthly,
+        row.mtd_spent,
+        row.monthly_remaining if row.monthly_remaining is not None else "",
+        row.monthly_utilization_pct if row.monthly_utilization_pct is not None else "",
+        row.budget_quarterly,
+        row.qtd_spent,
+        row.quarterly_remaining if row.quarterly_remaining is not None else "",
+        row.quarterly_utilization_pct if row.quarterly_utilization_pct is not None else "",
+        row.budget_annual,
+        row.ytd_spent_total,
+        row.annual_remaining if row.annual_remaining is not None else "",
+        row.annual_utilization_pct if row.annual_utilization_pct is not None else "",
+    ]
+
+
+def _advance_detail_values(row: EmployeeAdvanceDetailRow) -> list[Any]:
+    return [
+        *_master_values(
+            EmployeeMasterReportRow(
+                employee_id=row.employee_id,
+                name=row.name,
+                role=row.role,
+                email=row.email,
+                whatsapp_number=row.whatsapp_number,
+                whatsapp_number_2=row.whatsapp_number_2,
+                viber_number=row.viber_number,
+                date_of_joining=row.date_of_joining,
+                department=row.department,
+                location=row.location,
+                division=row.division,
+                supervisor_1=row.supervisor_1,
+                supervisor_2=row.supervisor_2,
+                bank_name=row.bank_name,
+                bank_account_name=row.bank_account_name,
+                bank_account_number=row.bank_account_number,
+                bank_bsb=row.bank_bsb,
+                bank_swift=row.bank_swift,
+                bank_iban=row.bank_iban,
+                advance_parent_ledger=row.advance_parent_ledger,
+                advance_sub_ledger=row.advance_sub_ledger,
+                status=row.status,
+            )
+        ),
+        row.movement_type,
+        row.document_no,
+        row.document_date.isoformat() if row.document_date else "",
+        row.took,
+        row.used,
+        row.outstanding_after,
+        row.pending_claims,
+        row.available,
+        row.cash_reimbursed,
+        row.document_status,
+        row.approved_by,
+        row.approved_on,
     ]
 
 
@@ -334,6 +471,7 @@ def _dept_budget_values(row: DepartmentBudgetUtilizationRow) -> list[Any]:
         row.consumed,
         row.remaining if row.remaining is not None else "",
         row.utilization_pct if row.utilization_pct is not None else "",
+        getattr(row, "enforcement", None) or "soft",
         row.notes or "",
     ]
 
@@ -353,6 +491,7 @@ def _dept_budget_sub_values(
         consumed,
         "",
         pct,
+        getattr(parent, "enforcement", None) or "soft",
         "",
     ]
 
@@ -367,6 +506,14 @@ def _kind_label(kind: str) -> str:
     return mapping.get((kind or "").strip(), kind or "")
 
 
+def _finance_role(kind: str) -> str:
+    """How finance should treat the document in books."""
+    token = (kind or "").strip().lower()
+    if token == "advance_requisition":
+        return "Balance-sheet float (no GL budget)"
+    return "P&L / GL budget spend"
+
+
 def _status_label(status: str) -> str:
     token = (status or "").strip()
     if not token:
@@ -376,21 +523,26 @@ def _status_label(status: str) -> str:
 
 def _summary_values(row: EmployeeExpenseSummaryRow) -> list[Any]:
     return [
+        row.employee_id,
         row.employee_name,
+        row.role,
         row.employee_email,
         row.mobile,
+        row.department,
         row.division,
         row.location,
         row.document_no,
         row.invoice_date.isoformat() if row.invoice_date else "",
         _kind_label(row.team_expense_kind),
+        _finance_role(row.team_expense_kind),
         row.document_type_code,
         row.line_description,
-        row.line_qty,
-        row.line_amount,
+        row.line_qty if row.line_qty is not None else "",
+        row.line_amount if row.line_amount is not None else "",
         row.currency,
         row.ledger_code,
-        row.ledger_name,
+        row.main_gl,
+        row.sub_ledger,
         _status_label(row.status),
         row.evaluation_status,
     ]
@@ -408,9 +560,10 @@ def _write_sheet(
     subtitle: str,
     headers: Sequence[str],
     data_rows: Sequence[Sequence[Any]],
+    freeze_col: int = 1,
 ) -> int:
     header_row = _write_title_block(ws, title, subtitle, len(headers))
-    _write_header_row(ws, headers, header_row)
+    _write_header_row(ws, headers, header_row, freeze_col=freeze_col)
     count = _append_data_rows(ws, start_row=header_row + 1, rows=data_rows)
     if count > 0:
         last = header_row + count
@@ -432,61 +585,77 @@ async def build_team_expense_excel_export(
     date_to: date | None = None,
 ) -> TeamExpenseExcelExport:
     """
-    Build a single-sheet styled workbook for one TE report kind.
+    Build a styled workbook for Team Expense finance reporting.
 
-    report: advance-settlement | budget-utilization | spending-limit-utilization |
-            department-budget-utilization | expense-summary
+    report:
+      department-budget-utilization | expense-summary |
+      budget-utilization | spending-limit-utilization |
+      employee-spend-detail | employee-advance-detail
     """
     wb = Workbook()
-    # remove default sheet; we'll create named sheets
     default = wb.active
     wb.remove(default)
 
-    if report == "advance-settlement":
-        rows = await build_advance_settlement_rows(session, tenant_id)
-        ws = wb.create_sheet(SHEET_ADVANCE)
-        count = _write_sheet(
+    total_rows = 0
+    kind = (report or "").strip().lower()
+
+    if kind == "employee-advance-detail":
+        detail_rows = await build_employee_advance_detail_rows(session, tenant_id)
+        ws = wb.create_sheet(SHEET_ADVANCE_DETAIL)
+        total_rows += _write_sheet(
             ws,
-            title="Employee Advance Settlement",
+            title="Employee Advance Detail",
             subtitle=(
-                "Live Staff Advance balances by employee. "
-                "Ledger / Available = journal outstanding float from advance requisitions. "
-                "Claim YTD is expense-claim spend only (not advances)."
+                "Employee Staff Advance movement ledger (not GL budget). "
+                "Advance row = Took; Claim row = Used when a claim nets float. "
+                "Outstanding After = running float; Pending Claims / Available = current snapshot."
             ),
-            headers=ADVANCE_HEADERS,
-            data_rows=[_advance_values(r) for r in rows],
+            headers=ADVANCE_DETAIL_HEADERS,
+            data_rows=[_advance_detail_values(r) for r in detail_rows],
         )
-        filename = _slug_filename("employee_advance_settlement", tenant_slug)
-    elif report in ("budget-utilization", "spending-limit-utilization"):
-        rows = await build_budget_utilization_rows(session, tenant_id)
-        ws = wb.create_sheet(SHEET_BUDGET)
-        count = _write_sheet(
-            ws,
-            title="Employee Spending Limit Utilization",
+        return TeamExpenseExcelExport(
+            xlsx_bytes=_workbook_bytes(wb),
+            filename=_slug_filename("te_employee_advance_detail", tenant_slug),
+            data_rows=total_rows,
+        )
+
+    if kind == "employee-spend-detail":
+        spend_rows = await build_employee_spend_detail_rows(session, tenant_id)
+        ws_spend = wb.create_sheet(SHEET_SPEND_DETAIL)
+        total_rows += _write_sheet(
+            ws_spend,
+            title="Employee Spend Detail",
             subtitle=(
-                "Employee spending limits vs MTD / QTD / YTD claim spend (accrual) from "
-                "processed Team Expense invoices. Advances do not count toward spend. "
-                "Cash columns reserve outstanding Staff Advance float against the same "
-                "limits (cash committed = claim spend + advance float)."
+                "One row per employee per expense Sub-GL. "
+                "A–V = employee master; then Sub-GL spend vs GL budget; "
+                "then employee spending limits (MTD/QTD/YTD claim spend, advances excluded). "
+                "Cash Reimbursed = settlement credits on claims."
             ),
-            headers=BUDGET_HEADERS,
-            data_rows=[_budget_values(r) for r in rows],
+            headers=SPEND_DETAIL_HEADERS,
+            data_rows=[_spend_detail_values(r) for r in spend_rows],
         )
-        filename = _slug_filename("employee_spending_limit_utilization", tenant_slug)
-    elif report == "department-budget-utilization":
-        rows = await build_department_budget_utilization_rows(session, tenant_id)
+        return TeamExpenseExcelExport(
+            xlsx_bytes=_workbook_bytes(wb),
+            filename=_slug_filename("te_employee_spend_detail", tenant_slug),
+            data_rows=total_rows,
+        )
+
+    if kind == "department-budget-utilization":
+        gl_rows = await build_department_budget_utilization_rows(session, tenant_id)
         ws = wb.create_sheet(SHEET_DEPT)
-        count = _write_sheet(
+        total_rows += _write_sheet(
             ws,
-            title="Parent GL Budget Utilization",
+            title="GL Budget Utilization",
             subtitle=(
-                "Parent GL wallets for the current period. Sub-GL spend rolls into the parent. "
-                "Advances do not count as spend. Left can be negative when overspent."
+                "GL account budgets (finance control). "
+                "Expense claims consume budget on the full claim amount. Advances do not. "
+                "Enforcement soft = manager can approve overruns; hard = raise budget first. "
+                "Sub-GL spend rolls into the parent wallet."
             ),
             headers=DEPT_BUDGET_HEADERS,
             data_rows=[
                 value
-                for r in rows
+                for r in gl_rows
                 for value in (
                     [_dept_budget_values(r)]
                     + [
@@ -501,9 +670,14 @@ async def build_team_expense_excel_export(
                 )
             ],
         )
-        filename = _slug_filename("department_budget_utilization", tenant_slug)
-    elif report == "expense-summary":
-        rows = await build_employee_expense_summary_rows(
+        return TeamExpenseExcelExport(
+            xlsx_bytes=_workbook_bytes(wb),
+            filename=_slug_filename("te_gl_budget_utilization", tenant_slug),
+            data_rows=total_rows,
+        )
+
+    if kind == "expense-summary":
+        summary_rows = await build_employee_expense_summary_rows(
             session, tenant_id, date_from=date_from, date_to=date_to
         )
         period = "All dates"
@@ -514,23 +688,48 @@ async def build_team_expense_excel_export(
         elif date_to:
             period = f"Through {date_to.isoformat()}"
         ws = wb.create_sheet(SHEET_SUMMARY)
-        count = _write_sheet(
+        total_rows += _write_sheet(
             ws,
             title="Employee Expense Summary",
             subtitle=(
-                f"Team Expenses line items with employee, ledger, and status. Period: {period}."
+                f"One row per team expense document line. "
+                f"Claims = P&L / GL budget spend (full claim amount). "
+                f"Advances = employee float only (no GL budget). Period: {period}."
             ),
             headers=SUMMARY_HEADERS,
-            data_rows=[_summary_values(r) for r in rows],
+            data_rows=[_summary_values(r) for r in summary_rows],
         )
-        filename = _slug_filename("employee_expense_summary", tenant_slug)
-    else:
-        raise ValueError(f"Unknown team expense report: {report}")
+        return TeamExpenseExcelExport(
+            xlsx_bytes=_workbook_bytes(wb),
+            filename=_slug_filename("te_employee_expense_summary", tenant_slug),
+            data_rows=total_rows,
+        )
 
+    if kind in {"budget-utilization", "spending-limit-utilization"}:
+        # Informational only — employee limits are not the finance budget control.
+        rows = await build_budget_utilization_rows(session, tenant_id)
+        ws = wb.create_sheet(SHEET_BUDGET)
+        count = _write_sheet(
+            ws,
+            title="Employee Spending Limits (Informational)",
+            subtitle=(
+                "NOT the primary finance control. GL Budgets enforce claim spend. "
+                "This sheet shows optional employee spending-limit counters vs claim MTD/QTD/YTD. "
+                "Advances do not count as spend."
+            ),
+            headers=BUDGET_HEADERS,
+            data_rows=[_budget_values(r) for r in rows],
+        )
+        return TeamExpenseExcelExport(
+            xlsx_bytes=_workbook_bytes(wb),
+            filename=_slug_filename("te_employee_limits_info", tenant_slug),
+            data_rows=count,
+        )
+
+    raise ValueError(f"Unknown team expense report: {report}")
+
+
+def _workbook_bytes(wb: Workbook) -> bytes:
     buf = io.BytesIO()
     wb.save(buf)
-    return TeamExpenseExcelExport(
-        xlsx_bytes=buf.getvalue(),
-        filename=filename,
-        data_rows=count,
-    )
+    return buf.getvalue()

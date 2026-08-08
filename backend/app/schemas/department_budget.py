@@ -94,6 +94,7 @@ class DepartmentBudgetUtilizationRow(BaseModel):
     remaining: float | None = None
     utilization_pct: float | None = None
     department: str = ""
+    enforcement: BudgetEnforcement = "soft"
     notes: str | None = None
     budget_id: int
     sub_breakdown: list[GlBudgetSubBreakdownRow] = Field(default_factory=list)
@@ -136,3 +137,27 @@ class ParentGlBudgetTreeUpsert(BaseModel):
     def _normalize_tree_enforcement(cls, value: object) -> str:
         token = str(value or "soft").strip().lower()
         return token if token in {"soft", "hard"} else "soft"
+
+
+class DepartmentBudgetImportRowErrorResponse(BaseModel):
+    row_number: int
+    parent_gl: str | None = None
+    message: str
+
+
+class DepartmentBudgetImportRowPreviewResponse(BaseModel):
+    row_number: int
+    parent_gl: str
+    period_kind: str
+    period_key: str
+    action: str
+    detail: str
+
+
+class DepartmentBudgetImportResultResponse(BaseModel):
+    dry_run: bool
+    created: int = 0
+    updated: int = 0
+    skipped: int = 0
+    errors: list[DepartmentBudgetImportRowErrorResponse] = Field(default_factory=list)
+    previews: list[DepartmentBudgetImportRowPreviewResponse] = Field(default_factory=list)

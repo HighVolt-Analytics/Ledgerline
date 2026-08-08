@@ -230,25 +230,37 @@ def _try_enqueue_celery_invoices(
     invoice_ids: list[int],
     *,
     tenant_id: uuid.UUID,
-) -> bool:
-    """Enqueue Celery invoice tasks when SYNC_PROCESSING is off. Returns True on success."""
+) -> list[str] | None:
+    """Enqueue Celery invoice tasks when SYNC_PROCESSING is off.
+
+    Returns Celery task ids on success, or ``None`` when Celery is skipped/unavailable
+    so callers can fall back to in-process background work.
+    """
     settings = get_settings()
     if settings.sync_processing:
-        return False
+        return None
     try:
         tid = str(tenant_id)
         if len(invoice_ids) == 1:
-            process_invoice_task.delay(invoice_ids[0], tenant_id=tid)
+            async_result = process_invoice_task.delay(invoice_ids[0], tenant_id=tid)
+            task_ids = [str(async_result.id)]
         else:
-            process_invoices_batch_task.delay(invoice_ids, tenant_id=tid)
-        return True
+            async_result = process_invoices_batch_task.delay(
+                invoice_ids, tenant_id=tid
+            )
+            task_ids = [str(async_result.id)]
+        if not task_ids or not task_ids[0] or task_ids[0] == "None":
+            raise RuntimeError("celery delay returned empty task id")
+        return task_ids
     except Exception as exc:
         logger.warning(
             "celery_invoice_enqueue_failed",
             error=str(exc),
+            invoice_ids=invoice_ids,
             invoice_count=len(invoice_ids),
+            tenant_id=str(tenant_id),
         )
-        return False
+        return None
 
 
 async def queue_invoices_for_processing(
@@ -260,17 +272,37 @@ async def queue_invoices_for_processing(
     unique_ids = list(dict.fromkeys(invoice_ids))
     if not unique_ids:
         return
-    if _try_enqueue_celery_invoices(unique_ids, tenant_id=tenant_id):
+    task_ids = _try_enqueue_celery_invoices(unique_ids, tenant_id=tenant_id)
+    if task_ids is not None:
+        logger.info(
+            "pipeline_enqueued",
+            mode="celery",
+            invoice_ids=unique_ids,
+            task_ids=task_ids,
+            tenant_id=str(tenant_id),
+        )
         return
     if len(unique_ids) == 1:
         asyncio.create_task(
             process_invoice_background(unique_ids[0], tenant_id=tenant_id),
             name=f"invoice-pipeline-{unique_ids[0]}",
         )
+        logger.info(
+            "pipeline_enqueued",
+            mode="asyncio",
+            invoice_ids=unique_ids,
+            tenant_id=str(tenant_id),
+        )
         return
     asyncio.create_task(
         process_invoices_batch_background(unique_ids, tenant_id=tenant_id),
         name=f"invoice-pipeline-batch-{unique_ids[0]}",
+    )
+    logger.info(
+        "pipeline_enqueued",
+        mode="asyncio_batch",
+        invoice_ids=unique_ids,
+        tenant_id=str(tenant_id),
     )
 
 
@@ -284,7 +316,15 @@ def enqueue_invoice_pipelines(
     unique_ids = list(dict.fromkeys(invoice_ids))
     if not unique_ids:
         return "idle"
-    if _try_enqueue_celery_invoices(unique_ids, tenant_id=tenant_id):
+    task_ids = _try_enqueue_celery_invoices(unique_ids, tenant_id=tenant_id)
+    if task_ids is not None:
+        logger.info(
+            "pipeline_enqueued",
+            mode="celery",
+            invoice_ids=unique_ids,
+            task_ids=task_ids,
+            tenant_id=str(tenant_id),
+        )
         return "queued"
     if background_tasks is not None:
         if len(unique_ids) == 1:
@@ -295,6 +335,12 @@ def enqueue_invoice_pipelines(
             background_tasks.add_task(
                 process_invoices_batch_background, unique_ids, tenant_id=tenant_id
             )
+        logger.info(
+            "pipeline_enqueued",
+            mode="fastapi_background",
+            invoice_ids=unique_ids,
+            tenant_id=str(tenant_id),
+        )
         return "running"
     # Fire-and-forget when no FastAPI BackgroundTasks (e.g. tests / scripts).
     if len(unique_ids) == 1:
@@ -307,6 +353,12 @@ def enqueue_invoice_pipelines(
             process_invoices_batch_background(unique_ids, tenant_id=tenant_id),
             name=f"invoice-pipeline-batch-{unique_ids[0]}",
         )
+    logger.info(
+        "pipeline_enqueued",
+        mode="asyncio",
+        invoice_ids=unique_ids,
+        tenant_id=str(tenant_id),
+    )
     return "running"
 
 
@@ -724,6 +776,81 @@ def poll_all_tenants_task(self) -> dict[str, int]:
     result = asyncio.run(run_with_cleanup())
     _last_run = datetime.now(timezone.utc).isoformat()
     logger.info("poll_all_tenants_done", **result)
+    return result
+
+
+async def requeue_stuck_pending_for_tenant(
+    tenant_id: uuid.UUID,
+    *,
+    stale_after_seconds: int | None = None,
+    limit: int | None = None,
+) -> list[int]:
+    """Find and re-enqueue orphaned PENDING invoices for one tenant."""
+    settings = get_settings()
+    stale = (
+        int(stale_after_seconds)
+        if stale_after_seconds is not None
+        else int(settings.stuck_pending_requeue_after_seconds)
+    )
+    batch = (
+        int(limit)
+        if limit is not None
+        else int(settings.stuck_pending_requeue_batch_size)
+    )
+    from app.services.invoice.stuck_pending_requeue_service import (
+        find_stuck_pending_invoice_ids,
+    )
+
+    async with db_session_with_rls(tenant_id) as session:
+        stuck_ids = await find_stuck_pending_invoice_ids(
+            session,
+            tenant_id,
+            stale_after_seconds=stale,
+            limit=batch,
+        )
+    if not stuck_ids:
+        return []
+    await queue_invoices_for_processing(stuck_ids, tenant_id=tenant_id)
+    logger.info(
+        "stuck_pending_requeued",
+        tenant_id=str(tenant_id),
+        invoice_ids=stuck_ids,
+        count=len(stuck_ids),
+        stale_after_seconds=stale,
+    )
+    return stuck_ids
+
+
+@celery_app.task(
+    bind=True,
+    name="app.workers.tasks.requeue_stuck_pending_task",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    max_retries=2,
+)
+def requeue_stuck_pending_task(self) -> dict[str, int]:
+    """Safety net: requeue PENDING invoices whose Celery enqueue was lost."""
+    configure_logging(get_settings().log_level)
+    logger.info("requeue_stuck_pending_started", task_id=self.request.id)
+
+    async def run_with_cleanup() -> dict[str, int]:
+        from app.database import async_session_factory
+        from app.services.tenant.tenant_context_service import list_active_tenant_ids
+
+        totals = {"tenants": 0, "requeued": 0}
+        try:
+            async with async_session_factory() as session:
+                tenant_ids = await list_active_tenant_ids(session)
+            for tid in tenant_ids:
+                ids = await requeue_stuck_pending_for_tenant(tid)
+                totals["tenants"] += 1
+                totals["requeued"] += len(ids)
+            return totals
+        finally:
+            await dispose_engine()
+
+    result = asyncio.run(run_with_cleanup())
+    logger.info("requeue_stuck_pending_done", **result)
     return result
 
 

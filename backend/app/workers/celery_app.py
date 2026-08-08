@@ -37,4 +37,9 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.tasks.poll_all_tenants_task",
         "schedule": _poll_schedule,
     },
+    # Mail poll uses skip_pending_check=True; this recovers orphaned PENDING rows.
+    "requeue-stuck-pending": {
+        "task": "app.workers.tasks.requeue_stuck_pending_task",
+        "schedule": crontab(minute="*/2"),
+    },
 }

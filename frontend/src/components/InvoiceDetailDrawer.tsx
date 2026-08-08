@@ -41,8 +41,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { documentDisplayRef, normalizeCurrencyCode, vendorInvoiceNo } from "@/lib/format";
-import { CURRENCIES } from "@/lib/settingsData";
 import { fetchDossierById, type DossierSummaryWithInvoiceId } from "@/lib/dossierApi";
+import { useSetupCatalogs } from "@/hooks/useSetupCatalogs";
+import type { CurrencyOption } from "@/data/orgSetup";
 import {
   additionalExtractedFieldKeys,
   lineItemGridTemplateColumns,
@@ -60,6 +61,7 @@ import {
   canRequestInfo,
   invoiceCanAttemptReprocess,
   reprocessAndWatch,
+  resolveClassificationAndWatch,
   settlementApprovalHint,
   validateInvoiceReadyForApproval,
 } from "@/lib/invoiceActions";
@@ -326,36 +328,14 @@ type InvoiceEditDraft = {
   extractedFields: Record<string, string>;
 };
 
-const COMMON_CURRENCY_OPTIONS: { value: string; label: string }[] = [
-  { value: "AUD", label: "AUD (A$)" },
-  { value: "USD", label: "USD (US$)" },
-  { value: "EUR", label: "EUR (€)" },
-  { value: "GBP", label: "GBP (£)" },
-  { value: "SGD", label: "SGD (S$)" },
-  { value: "INR", label: "INR (₹)" },
-  { value: "NZD", label: "NZD (NZ$)" },
-  { value: "AED", label: "AED (د.إ)" },
-  { value: "CAD", label: "CAD (C$)" },
-  { value: "JPY", label: "JPY (¥)" },
-  { value: "CHF", label: "CHF" },
-  { value: "HKD", label: "HKD (HK$)" },
-  { value: "MYR", label: "MYR (RM)" },
-  { value: "THB", label: "THB (฿)" },
-  { value: "PHP", label: "PHP (₱)" },
-  { value: "CNY", label: "CNY (¥)" },
-];
-
-const INVOICE_CURRENCY_OPTIONS = Array.from(
-  new Map(
-    [
-      ...COMMON_CURRENCY_OPTIONS,
-      ...CURRENCIES.map((currency) => ({
-        value: currency.code,
-        label: `${currency.code} (${currency.symbol})`,
-      })),
-    ].map((option) => [option.value, option])
-  ).values()
-);
+function currencyOptionsFromCatalog(
+  currencies: CurrencyOption[]
+): { value: string; label: string }[] {
+  return currencies.map((currency) => ({
+    value: currency.code,
+    label: `${currency.code}${currency.symbol ? ` (${currency.symbol})` : ""} — ${currency.name}`,
+  }));
+}
 
 /** True ISO 4217 alpha-3 only — symbols like "$" do not count as set. */
 function isSetInvoiceCurrency(currency: string | null | undefined): boolean {
@@ -715,20 +695,16 @@ function FieldRow({
   );
 }
 
-function currencySelectOptions(current: string) {
+function currencySelectOptions(
+  catalog: { value: string; label: string }[],
+  current: string
+) {
   const selected = (current || "").trim().toUpperCase();
-  if (
-    !selected ||
-    INVOICE_CURRENCY_OPTIONS.some((option) => option.value === selected)
-  ) {
-    return INVOICE_CURRENCY_OPTIONS;
+  if (!selected || catalog.some((option) => option.value === selected)) {
+    return catalog;
   }
-  // Rare valid ISO not in the curated list — still show the stored code so the
-  // select is never blank while Total formats with that currency.
-  return [
-    ...INVOICE_CURRENCY_OPTIONS,
-    { value: selected, label: `${selected} (from document)` },
-  ];
+  // Stored code not yet in catalog (e.g. catalog still loading) — keep select usable.
+  return [...catalog, { value: selected, label: `${selected} (from document)` }];
 }
 
 function CurrencySelectRow({
@@ -744,6 +720,11 @@ function CurrencySelectRow({
   disabled?: boolean;
   onChange: (value: string) => void;
 }) {
+  const { currencies } = useSetupCatalogs();
+  const catalogOptions = useMemo(
+    () => currencyOptionsFromCatalog(currencies),
+    [currencies]
+  );
   const selected = (value || "").trim().toUpperCase();
   return (
     <div className="grid grid-cols-[120px_1fr] gap-3 items-center">
@@ -755,7 +736,8 @@ function CurrencySelectRow({
           value={selected}
           disabled={disabled}
           onValueChange={onChange}
-          options={currencySelectOptions(selected)}
+          options={currencySelectOptions(catalogOptions, selected)}
+          searchable
           placeholder={
             symbolHint
               ? `Select ISO code (amounts show as ${symbolHint})`
@@ -873,10 +855,18 @@ export function InvoiceDetailDrawer({
     const targetId = activeInvoiceId;
     setActionBusy(true);
     try {
-      await api.resolveInvoiceClassification(targetId, {
-        confirmed_dt: confirmedDt,
-        reprocess: true,
+      await resolveClassificationAndWatch(targetId, confirmedDt, async () => {
+        if (!isStillViewing(targetId)) return;
+        const [freshInv, freshAudit] = await Promise.all([
+          api.getInvoice(targetId, { fresh: true }),
+          api.getInvoiceClassificationAudit(targetId, { fresh: true }),
+        ]);
+        if (!isStillViewing(targetId)) return;
+        setInv(freshInv);
+        setClassificationAudit(freshAudit);
+        onUpdated?.();
       });
+      if (!isStillViewing(targetId)) return;
       const [freshInv, freshAudit] = await Promise.all([
         api.getInvoice(targetId, { fresh: true }),
         api.getInvoiceClassificationAudit(targetId, { fresh: true }),

@@ -448,6 +448,7 @@ async def build_department_budget_utilization_rows(
                 remaining=_remaining(allocated, consumed_f),
                 utilization_pct=_utilization_pct(allocated, consumed_f),
                 department=bud.department or "",
+                enforcement=(bud.enforcement or "soft"),  # type: ignore[arg-type]
                 notes=bud.notes,
                 budget_id=bud.id,
                 sub_breakdown=breakdown,

@@ -46,18 +46,18 @@ const PIPELINE_STAGES: { id: PipelineStageId; label: string; shortLabel: string 
   { id: "pending_payment", label: "Pending For Payment", shortLabel: "Payment" },
 ];
 
-/** Placeholder user-layer coverage until overview API exposes these metrics. */
+/** Empty user-layer coverage when overview has no user_layer payload. */
 export const PLACEHOLDER_USER_LAYER: UserLayerMetric[] = [
   {
     id: "email_mapped",
     label: "No. of E-mail ID Mapped",
     tone: "blue",
     stages: {
-      document_fetched: 42,
-      pending_confirmation: 8,
-      pending_approval: 5,
-      pending_posting: 3,
-      pending_payment: 1,
+      document_fetched: 0,
+      pending_confirmation: 0,
+      pending_approval: 0,
+      pending_posting: 0,
+      pending_payment: 0,
     },
   },
   {
@@ -65,10 +65,10 @@ export const PLACEHOLDER_USER_LAYER: UserLayerMetric[] = [
     label: "Phone no. synched",
     tone: "violet",
     stages: {
-      document_fetched: 28,
-      pending_confirmation: 4,
-      pending_approval: 2,
-      pending_posting: 1,
+      document_fetched: 0,
+      pending_confirmation: 0,
+      pending_approval: 0,
+      pending_posting: 0,
       pending_payment: 0,
     },
   },
@@ -77,11 +77,11 @@ export const PLACEHOLDER_USER_LAYER: UserLayerMetric[] = [
     label: "No. of Doc Types",
     tone: "green",
     stages: {
-      document_fetched: 50,
-      pending_confirmation: 12,
-      pending_approval: 8,
-      pending_posting: 6,
-      pending_payment: 4,
+      document_fetched: 0,
+      pending_confirmation: 0,
+      pending_approval: 0,
+      pending_posting: 0,
+      pending_payment: 0,
     },
   },
   {
@@ -89,11 +89,11 @@ export const PLACEHOLDER_USER_LAYER: UserLayerMetric[] = [
     label: "Manual Handoff",
     tone: "rust",
     stages: {
-      document_fetched: 20,
-      pending_confirmation: 9,
-      pending_approval: 7,
-      pending_posting: 5,
-      pending_payment: 3,
+      document_fetched: 0,
+      pending_confirmation: 0,
+      pending_approval: 0,
+      pending_posting: 0,
+      pending_payment: 0,
     },
   },
   {
@@ -101,11 +101,11 @@ export const PLACEHOLDER_USER_LAYER: UserLayerMetric[] = [
     label: "No of Vendors",
     tone: "rose",
     stages: {
-      document_fetched: 50,
-      pending_confirmation: 2,
+      document_fetched: 0,
+      pending_confirmation: 0,
       pending_approval: 0,
-      pending_posting: 2,
-      pending_payment: 2,
+      pending_posting: 0,
+      pending_payment: 0,
     },
   },
 ];

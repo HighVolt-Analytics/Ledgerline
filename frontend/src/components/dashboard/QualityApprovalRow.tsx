@@ -24,19 +24,18 @@ export type ApprovalQueueStats = {
   medianTimeLabel: string;
 };
 
-/** Placeholder extraction quality until overview API exposes field accuracy. */
+/** Empty quality / queue stats when overview has no payload yet. */
 export const PLACEHOLDER_EXTRACTION_QUALITY: ExtractionQualityPoint[] = [
-  { metric: "Header", accuracy: 98.7 },
-  { metric: "Line items", accuracy: 94.2 },
-  { metric: "Tax/GST", accuracy: 97.4 },
-  { metric: "GL coding", accuracy: 93.8 },
+  { metric: "Header", accuracy: 0 },
+  { metric: "Line items", accuracy: 0 },
+  { metric: "Tax/GST", accuracy: 0 },
+  { metric: "GL coding", accuracy: 0 },
 ];
 
-/** Placeholder approval queue until overview API exposes queue stats. */
 export const PLACEHOLDER_APPROVAL_QUEUE: ApprovalQueueStats = {
-  pending: 12,
-  valueLabel: "₹4.82L",
-  medianTimeLabel: "3h 24m",
+  pending: 0,
+  valueLabel: "—",
+  medianTimeLabel: "—",
 };
 
 const CHART_HEIGHT = 200;
@@ -101,7 +100,7 @@ export function ExtractionQualityCard({
               interval={0}
             />
             <YAxis
-              domain={[90, 100]}
+              domain={[0, 100]}
               tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
               stroke="hsl(var(--muted-foreground))"
               tickLine={false}

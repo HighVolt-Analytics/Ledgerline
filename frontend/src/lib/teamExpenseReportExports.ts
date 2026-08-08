@@ -202,9 +202,12 @@ export function buildBudgetUtilizationCsv(rows: EmployeeBudgetUtilizationRow[]):
 }
 
 const SUMMARY_HEADERS = [
+  "Employee ID",
   "Employee name",
+  "Role",
   "Email",
   "Mobile",
+  "Department",
   "Division",
   "Location",
   "Document no.",
@@ -216,7 +219,8 @@ const SUMMARY_HEADERS = [
   "Line amount",
   "Currency",
   "Ledger code",
-  "Ledger",
+  "Main GL",
+  "Sub-Ledger",
   "Status",
   "Evaluation status",
 ];
@@ -225,9 +229,12 @@ export function buildExpenseSummaryCsv(rows: EmployeeExpenseSummaryRow[]): strin
   return rowsToCsv(
     SUMMARY_HEADERS,
     rows.map((r) => [
+      r.employee_id,
       r.employee_name,
+      r.role,
       r.employee_email,
       r.mobile,
+      r.department,
       r.division,
       r.location,
       r.document_no,
@@ -239,7 +246,8 @@ export function buildExpenseSummaryCsv(rows: EmployeeExpenseSummaryRow[]): strin
       blank(r.line_amount == null ? null : toNumber(r.line_amount)),
       r.currency,
       r.ledger_code,
-      r.ledger_name,
+      r.main_gl,
+      r.sub_ledger,
       r.status,
       r.evaluation_status,
     ])

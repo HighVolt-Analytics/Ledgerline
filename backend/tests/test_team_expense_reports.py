@@ -298,6 +298,7 @@ async def test_expense_summary_lines_employee_and_date_filter(
         team_expense_kind=TEAM_EXPENSE_KIND_CLAIM,
         document_type_code="DT-08",
         email_sender=EMPLOYEE_EMAIL,
+        employee_email=EMPLOYEE_EMAIL,
         evaluation_status="auto_coded",
         vendor="Grab",
         file_hash="rpt-sum-1",
@@ -338,16 +339,19 @@ async def test_expense_summary_lines_employee_and_date_filter(
     )
     assert len(rows) == 1
     row = rows[0]
+    assert row.employee_id == EMPLOYEE_ID
     assert row.employee_name == "Marcus Webb"
     assert row.employee_email == EMPLOYEE_EMAIL
     assert row.mobile == "+6591110001"
+    assert row.department == "Ops"
     assert row.division == "Ops"
     assert row.location == "Singapore"
     assert row.document_no == "DOC-10"
     assert row.line_description == "Airport transfer"
     assert row.line_amount == Decimal("80")
     assert row.ledger_code == "5000"
-    assert row.ledger_name == "Travel"
+    assert row.main_gl == "Operating Expenses"
+    assert row.sub_ledger == "Travel"
     assert row.status == InvoiceStatus.PROCESSED.value
     assert row.team_expense_kind == TEAM_EXPENSE_KIND_CLAIM
 
@@ -447,7 +451,7 @@ async def test_team_expense_report_apis(client: AsyncClient, db_session: AsyncSe
 
 
 @pytest.mark.asyncio
-async def test_team_expense_excel_export_has_readable_headers(
+async def test_team_expense_gl_budget_excel_export_has_readable_headers(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
     from openpyxl import load_workbook
@@ -456,18 +460,404 @@ async def test_team_expense_excel_export_has_readable_headers(
     await _setup_employee(db_session)
     await db_session.flush()
 
-    res = await client.get("/api/reports/team-expenses/advance-settlement/export")
-    assert res.status_code == 200
-    assert (
-        "spreadsheetml.sheet"
-        in (res.headers.get("content-type") or "")
+    res = await client.get(
+        "/api/reports/team-expenses/department-budget-utilization/export"
     )
+    assert res.status_code == 200
+    assert "spreadsheetml.sheet" in (res.headers.get("content-type") or "")
     wb = load_workbook(BytesIO(res.content))
-    ws = wb.active
-    # Title row 1, subtitle row 2, spacer row 3, headers row 4
+    ws = wb["GL Budgets"]
     headers = [cell.value for cell in ws[4]]
-    assert "Employee Name" in headers
-    assert "Advance Ledger Balance" in headers
-    assert "Available Advance" in headers
-    assert int(res.headers.get("X-Data-Rows") or 0) >= 1
+    assert "Parent GL" in headers
+    assert "Budget" in headers
+    assert "Enforcement" in headers
+
+
+@pytest.mark.asyncio
+async def test_employee_spend_detail_one_row_per_employee_sub_gl(
+    db_session: AsyncSession,
+) -> None:
+    from app.models.department_budget import DepartmentBudget
+    from app.schemas.rule_book_config import ChartOfAccountEntry, SubLedgerEntry
+    from app.services.purchase.team_expense_spend_service import current_period_keys
+    from app.services.reports.team_expense_reports_service import (
+        build_employee_spend_detail_rows,
+    )
+
+    cfg = _config()
+    cfg.chart_of_accounts = [
+        ChartOfAccountEntry(code="1000", name="Bank Account", type="Asset"),
+        ChartOfAccountEntry(code="1300", name="Staff Advance", type="Asset"),
+        ChartOfAccountEntry(
+            code="6000",
+            name="Marketing Expenses",
+            type="Expense",
+            sub_ledgers=[
+                SubLedgerEntry(code="6001", name="Traveling"),
+                SubLedgerEntry(code="6002", name="Hotel"),
+            ],
+        ),
+        ChartOfAccountEntry(code="2000", name="Accounts Payable", type="Liability"),
+    ]
+    await save_rule_book_config(db_session, cfg, TESTING_TENANT_UUID)
+    await create_employee_master(
+        db_session,
+        TESTING_TENANT_UUID,
+        EmployeeMasterCreate(
+            master_id=EMPLOYEE_ID,
+            name="Marcus Webb",
+            email=EMPLOYEE_EMAIL,
+            role="Marketing Executive",
+            whatsapp_number="+6591110001",
+            whatsapp_number_2="+6591110002",
+            department="Marketing",
+            division="B2B Sales",
+            location="Singapore",
+            supervisor_1="Priya Sharma",
+            supervisor_2="Amit Rao",
+            advance_parent_ledger="Staff Advance",
+            status="Active",
+            budget=EmployeeBudget(
+                monthly=120000,
+                quarterly=300000,
+                annual=500000,
+            ),
+        ),
+    )
+
+    today = date.today()
+    keys = current_period_keys(today)
+    db_session.add(
+        DepartmentBudget(
+            tenant_id=TESTING_TENANT_UUID,
+            gl_ledger="Traveling",
+            period_kind="annual",
+            period_key=keys["annual"],
+            allocated=Decimal("200000"),
+        )
+    )
+    db_session.add(
+        DepartmentBudget(
+            tenant_id=TESTING_TENANT_UUID,
+            gl_ledger="Hotel",
+            period_kind="annual",
+            period_key=keys["annual"],
+            allocated=Decimal("100000"),
+        )
+    )
+
+    travel_claim = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PROCESSED,
+        currency="SGD",
+        invoice_date=today,
+        total=Decimal("80000"),
+        route_target=ROUTE_TEAM,
+        team_expense_kind=TEAM_EXPENSE_KIND_CLAIM,
+        employee_email=EMPLOYEE_EMAIL,
+        email_sender=EMPLOYEE_EMAIL,
+        file_hash="spend-travel",
+        account_name="Traveling",
+    )
+    hotel_claim = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PROCESSED,
+        currency="SGD",
+        invoice_date=today,
+        total=Decimal("20000"),
+        route_target=ROUTE_TEAM,
+        team_expense_kind=TEAM_EXPENSE_KIND_CLAIM,
+        employee_email=EMPLOYEE_EMAIL,
+        email_sender=EMPLOYEE_EMAIL,
+        file_hash="spend-hotel",
+        account_name="Hotel",
+    )
+    # Advance must not create a spend-detail row.
+    advance = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PROCESSED,
+        currency="SGD",
+        invoice_date=today,
+        total=Decimal("5000"),
+        route_target=ROUTE_TEAM,
+        team_expense_kind=TEAM_EXPENSE_KIND_ADVANCE,
+        employee_email=EMPLOYEE_EMAIL,
+        email_sender=EMPLOYEE_EMAIL,
+        file_hash="spend-adv",
+        account_name="Traveling",
+    )
+    db_session.add_all([travel_claim, hotel_claim, advance])
+    await db_session.flush()
+
+    # Cash reimbursed = settlement credit on the travel claim only.
+    db_session.add(
+        JournalEntry(
+            tenant_id=TESTING_TENANT_UUID,
+            invoice_id=travel_claim.id,
+            date=today,
+            account_code="1000",
+            account_name="Bank Account",
+            debit=Decimal("0"),
+            credit=Decimal("75000"),
+            entry_type=EntryType.CREDIT,
+        )
+    )
+    await db_session.flush()
+
+    rows = await build_employee_spend_detail_rows(db_session, TESTING_TENANT_UUID)
+    assert len(rows) == 2
+    by_sub = {r.sub_ledger: r for r in rows}
+
+    travel = by_sub["Traveling"]
+    assert travel.employee_id == EMPLOYEE_ID
+    assert travel.name == "Marcus Webb"
+    assert travel.role == "Marketing Executive"
+    assert travel.whatsapp_number == "+6591110001"
+    assert travel.department == "Marketing"
+    assert travel.supervisor_1 == "Priya Sharma"
+    assert travel.main_gl == "Marketing Expenses"
+    assert travel.sub_gl_budget == 200000
+    assert travel.employee_spend_ytd == 80000
+    assert travel.pct_of_sub_gl_used == 40.0
+    assert travel.claim_count == 1
+    assert travel.cash_reimbursed_ytd == 75000
+    assert travel.last_claim_date == today.isoformat()
+    # Employee-level spending limits (same on every Sub-GL row for this employee).
+    assert travel.budget_monthly == 120000
+    assert travel.budget_quarterly == 300000
+    assert travel.budget_annual == 500000
+    assert travel.mtd_spent == 100000  # 80k Traveling + 20k Hotel
+    assert travel.qtd_spent == 100000
+    assert travel.ytd_spent_total == 100000
+    assert travel.monthly_remaining == 20000
+    assert travel.monthly_utilization_pct == round((100000 / 120000) * 100, 2)
+    assert travel.annual_remaining == 400000
+    assert travel.annual_utilization_pct == 20.0
+
+    hotel = by_sub["Hotel"]
+    assert hotel.main_gl == "Marketing Expenses"
+    assert hotel.sub_gl_budget == 100000
+    assert hotel.employee_spend_ytd == 20000
+    assert hotel.pct_of_sub_gl_used == 20.0
+    assert hotel.cash_reimbursed_ytd == 0
+    assert hotel.mtd_spent == 100000
+    assert hotel.budget_annual == 500000
+
+
+@pytest.mark.asyncio
+async def test_employee_spend_detail_excel_has_master_and_spend_sheets(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    await _setup_employee(db_session)
+    await db_session.flush()
+
+    res = await client.get("/api/reports/team-expenses/employee-spend-detail/export")
+    assert res.status_code == 200
+    wb = load_workbook(BytesIO(res.content))
+    assert wb.sheetnames == ["Employee Spend Detail"]
+
+    spend_headers = [c.value for c in wb["Employee Spend Detail"][4]]
+    assert spend_headers[0] == "Employee ID"
+    assert spend_headers[21] == "Employee Status"
+    assert spend_headers[22:31] == [
+        "Main GL",
+        "Sub-Ledger",
+        "Sub-GL Budget",
+        "Employee Spend (YTD)",
+        "% of Sub-GL Used by Employee",
+        "No. of Claims",
+        "Advance Pending",
+        "Cash Reimbursed YTD",
+        "Last Claim Date",
+    ]
+    assert spend_headers[31:43] == [
+        "Monthly Spending Limit",
+        "Monthly Spent",
+        "Monthly Remaining",
+        "Monthly Utilization %",
+        "Quarterly Spending Limit",
+        "Quarterly Spent",
+        "Quarterly Remaining",
+        "Quarterly Utilization %",
+        "Annual Spending Limit",
+        "Annual Spent",
+        "Annual Remaining",
+        "Annual Utilization %",
+    ]
+    # Header row only — continuous horizontal scroll (no column freeze).
+    assert wb["Employee Spend Detail"].freeze_panes == "A5"
+
+
+@pytest.mark.asyncio
+async def test_employee_advance_detail_take_and_spend_rows(
+    db_session: AsyncSession,
+) -> None:
+    from app.models.audit import AuditLog
+    from app.services.reports.team_expense_reports_service import (
+        build_employee_advance_detail_rows,
+    )
+
+    await _setup_employee(db_session)
+    raw = await load_rule_book_config_dict(db_session, TESTING_TENANT_UUID)
+    validate_rule_book_config_payload(raw)
+    code = party_sub_ledger_code(EMPLOYEE_ID)
+
+    advance = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PROCESSED,
+        currency="SGD",
+        invoice_date=date(2026, 7, 1),
+        invoice_no="ADV-100",
+        total=Decimal("500"),
+        route_target=ROUTE_TEAM,
+        team_expense_kind=TEAM_EXPENSE_KIND_ADVANCE,
+        employee_email=EMPLOYEE_EMAIL,
+        email_sender=EMPLOYEE_EMAIL,
+        file_hash="adv-detail-1",
+    )
+    db_session.add(advance)
+    await db_session.flush()
+    db_session.add(
+        JournalEntry(
+            tenant_id=TESTING_TENANT_UUID,
+            invoice_id=advance.id,
+            date=date(2026, 7, 1),
+            account_code=code,
+            account_name="Marcus Webb",
+            debit=Decimal("500"),
+            credit=Decimal("0"),
+            entry_type=EntryType.DEBIT,
+        )
+    )
+    db_session.add(
+        AuditLog(
+            event="invoice_approved",
+            tenant_id=TESTING_TENANT_UUID,
+            invoice_id=advance.id,
+            detail={"actor_name": "Priya Sharma", "actor_email": "priya@example.com"},
+        )
+    )
+
+    claim = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PROCESSED,
+        currency="SGD",
+        invoice_date=date(2026, 7, 15),
+        invoice_no="CLM-200",
+        total=Decimal("300"),
+        route_target=ROUTE_TEAM,
+        team_expense_kind=TEAM_EXPENSE_KIND_CLAIM,
+        employee_email=EMPLOYEE_EMAIL,
+        email_sender=EMPLOYEE_EMAIL,
+        file_hash="adv-detail-2",
+        account_name="Operating Expenses",
+    )
+    db_session.add(claim)
+    await db_session.flush()
+    db_session.add(
+        JournalEntry(
+            tenant_id=TESTING_TENANT_UUID,
+            invoice_id=claim.id,
+            date=date(2026, 7, 15),
+            account_code=code,
+            account_name="Marcus Webb",
+            debit=Decimal("0"),
+            credit=Decimal("300"),
+            entry_type=EntryType.CREDIT,
+        )
+    )
+    db_session.add(
+        JournalEntry(
+            tenant_id=TESTING_TENANT_UUID,
+            invoice_id=claim.id,
+            date=date(2026, 7, 15),
+            account_code="1000",
+            account_name="Bank Account",
+            debit=Decimal("0"),
+            credit=Decimal("0"),  # fully netted — no cash; still a Used row
+            entry_type=EntryType.CREDIT,
+        )
+    )
+    await db_session.flush()
+
+    rows = await build_employee_advance_detail_rows(db_session, TESTING_TENANT_UUID)
+    assert len(rows) == 2
+    assert rows[0].movement_type == "Advance"
+    assert rows[0].took == Decimal("500")
+    assert rows[0].used == Decimal("0")
+    assert rows[0].outstanding_after == Decimal("500")
+    assert rows[0].approved_by == "Priya Sharma"
+    assert rows[0].document_date == date(2026, 7, 1)
+
+    assert rows[1].movement_type == "Claim"
+    assert rows[1].took == Decimal("0")
+    assert rows[1].used == Decimal("300")
+    assert rows[1].outstanding_after == Decimal("200")
+    assert rows[1].available == Decimal("200")
+    assert rows[1].pending_claims == Decimal("0")
+
+
+@pytest.mark.asyncio
+async def test_employee_advance_detail_excel_headers(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    await _setup_employee(db_session)
+    code = party_sub_ledger_code(EMPLOYEE_ID)
+    advance = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PROCESSED,
+        currency="SGD",
+        invoice_date=date(2026, 8, 1),
+        total=Decimal("100"),
+        route_target=ROUTE_TEAM,
+        team_expense_kind=TEAM_EXPENSE_KIND_ADVANCE,
+        employee_email=EMPLOYEE_EMAIL,
+        email_sender=EMPLOYEE_EMAIL,
+        file_hash="adv-xlsx-1",
+    )
+    db_session.add(advance)
+    await db_session.flush()
+    db_session.add(
+        JournalEntry(
+            tenant_id=TESTING_TENANT_UUID,
+            invoice_id=advance.id,
+            date=date(2026, 8, 1),
+            account_code=code,
+            account_name="Marcus Webb",
+            debit=Decimal("100"),
+            credit=Decimal("0"),
+            entry_type=EntryType.DEBIT,
+        )
+    )
+    await db_session.flush()
+
+    res = await client.get("/api/reports/team-expenses/employee-advance-detail/export")
+    assert res.status_code == 200
+    wb = load_workbook(BytesIO(res.content))
+    assert wb.sheetnames == ["Employee Advance Detail"]
+    headers = [c.value for c in wb["Employee Advance Detail"][4]]
+    assert headers[0] == "Employee ID"
+    assert headers[21] == "Employee Status"
+    assert headers[22:34] == [
+        "Movement Type",
+        "Document No.",
+        "Document Date",
+        "Took",
+        "Used",
+        "Outstanding After",
+        "Pending Claims",
+        "Available",
+        "Cash Reimbursed",
+        "Document Status",
+        "Approved By",
+        "Approved On",
+    ]
 

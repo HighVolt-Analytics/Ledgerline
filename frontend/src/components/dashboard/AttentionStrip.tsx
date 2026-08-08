@@ -36,31 +36,31 @@ export type AttentionMetric = {
   moduleColor: KpiModuleColor;
 };
 
-/** Placeholder attention strip until overview API exposes priority + throughput. */
+/** Empty attention strip when overview has no attention payload. */
 export const PLACEHOLDER_PRIORITY: AttentionPriority = {
-  title: "Three invoices need your approval.",
-  body: "Two have a bank-account change and one has a duplicate-risk signal. Review them before the next payment run.",
-  ctaLabel: "Review exceptions",
-  ctaHref: "/approvals",
+  title: "You're clear for now.",
+  body: "No urgent approvals or risk flags in this period.",
+  ctaLabel: "View documents",
+  ctaHref: "/upload",
 };
 
 export const PLACEHOLDER_PROCESSED_TODAY: AttentionMetric = {
   label: "Processed today",
-  value: "38",
-  deltaText: "12% vs. yesterday",
+  value: "0",
+  deltaText: "vs. yesterday",
   deltaGood: true,
-  bars: [14, 18, 16, 22, 20, 28, 38],
+  bars: [0, 0, 0, 0, 0, 0, 0],
   icon: SealCheck,
   moduleColor: "cyan",
 };
 
 export const PLACEHOLDER_TURNAROUND: AttentionMetric = {
   label: "Average turnaround",
-  value: "4m 18s",
-  deltaText: "46s faster this week",
+  value: "—",
+  deltaText: "vs. last week",
   deltaDown: true,
   deltaGood: true,
-  bars: [40, 36, 34, 30, 28, 26, 20],
+  bars: [0, 0, 0, 0, 0, 0, 0],
   icon: Gauge,
   moduleColor: "rose",
 };

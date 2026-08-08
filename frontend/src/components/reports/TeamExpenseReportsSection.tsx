@@ -1,20 +1,20 @@
-import { Fragment, useMemo } from "react";
+import { Fragment, useMemo, useState } from "react";
 import type {
   EmployeeAdvanceSettlementRow,
-  EmployeeBudgetUtilizationRow,
   DepartmentBudgetUtilizationRow,
   EmployeeExpenseSummaryRow,
 } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
 import { KpiCard } from "@/components/KpiCard";
+import { ListSearchInput } from "@/components/ListSearchInput";
 import { Card } from "@/components/ui/card";
 import {
   useTeamExpenseAdvanceSettlement,
-  useTeamExpenseBudgetUtilization,
   useTeamExpenseDepartmentBudgetUtilization,
   useTeamExpenseExpenseSummary,
 } from "@/hooks/useTeamExpenseReports";
 import { money, toNumber } from "@/lib/format";
+import { matchesListSearch } from "@/lib/listSearch";
 import { monthToDateRange } from "@/lib/reportExports";
 
 type TeamExpenseReportsSectionProps = {
@@ -40,6 +40,10 @@ function statusLabel(status: string): string {
   return status.replace(/_/g, " ");
 }
 
+function enforcementLabel(value: string | undefined): string {
+  return value === "hard" ? "Hard" : "Soft";
+}
+
 export function TeamExpenseReportsSection({
   month,
   currency,
@@ -47,7 +51,6 @@ export function TeamExpenseReportsSection({
 }: TeamExpenseReportsSectionProps) {
   const range = useMemo(() => monthToDateRange(month), [month]);
   const { data: advanceRows, isLoading: advanceLoading } = useTeamExpenseAdvanceSettlement();
-  const { data: budgetRows, isLoading: budgetLoading } = useTeamExpenseBudgetUtilization();
   const { data: deptBudgetRows, isLoading: deptBudgetLoading } =
     useTeamExpenseDepartmentBudgetUtilization();
   const { data: summaryRows, isLoading: summaryLoading } = useTeamExpenseExpenseSummary(
@@ -59,97 +62,99 @@ export function TeamExpenseReportsSection({
     money(toNumber(value), currency, locale);
 
   const advance = advanceRows ?? [];
-  const budgets = budgetRows ?? [];
   const deptBudgets = deptBudgetRows ?? [];
   const summary = summaryRows ?? [];
 
   const totals = useMemo(() => {
-    const advanceOutstanding = advance.reduce(
+    const took = advance.reduce((sum, row) => sum + toNumber(row.advance_taken), 0);
+    const used = advance.reduce((sum, row) => sum + toNumber(row.advance_used), 0);
+    const outstanding = advance.reduce(
       (sum, row) => sum + toNumber(row.advance_ledger_balance),
       0
     );
     const available = advance.reduce((sum, row) => sum + toNumber(row.available_advance), 0);
-    const overBudget = budgets.filter((row) => {
-      const monthlyCap = row.budget_monthly ?? 0;
-      return monthlyCap > 0 && row.mtd_spent > monthlyCap;
+    const overGl = deptBudgets.filter(
+      (row) => row.allocated > 0 && row.consumed > row.allocated
+    ).length;
+    const claimLines = summary.filter((row) => {
+      const kind = (row.team_expense_kind || "").toLowerCase();
+      return kind === "expense_claim" || kind === "expense_against_advance" || !kind;
     }).length;
-    const cashTight = budgets.filter((row) => {
-      const monthlyCap = row.budget_monthly ?? 0;
-      const cashPct = row.monthly_cash_utilization_pct;
-      return monthlyCap > 0 && cashPct != null && cashPct >= 100;
-    }).length;
-    const overDept = deptBudgets.filter((row) => {
-      return row.allocated > 0 && row.consumed > row.allocated;
-    }).length;
-    const cashOverDept = overDept;
+    const advanceLines = summary.filter(
+      (row) => (row.team_expense_kind || "").toLowerCase() === "advance_requisition"
+    ).length;
     return {
-      advanceOutstanding,
+      took,
+      used,
+      outstanding,
       available,
-      overBudget,
-      cashTight,
-      overDept,
-      cashOverDept,
-      employeeCount: advance.length || budgets.length,
-      summaryCount: summary.length,
+      overGl,
+      claimLines,
+      advanceLines,
+      employeeCount: advance.filter(
+        (row) =>
+          toNumber(row.advance_taken) > 0 ||
+          toNumber(row.advance_used) > 0 ||
+          toNumber(row.advance_ledger_balance) > 0
+      ).length,
     };
-  }, [advance, budgets, deptBudgets, summary.length]);
+  }, [advance, deptBudgets, summary]);
 
-  const loading = advanceLoading || budgetLoading || deptBudgetLoading || summaryLoading;
+  const loading = advanceLoading || deptBudgetLoading || summaryLoading;
 
   return (
     <Card className="p-4 mt-6">
-      <h2 className="text-base font-semibold mb-1">Team expense reports</h2>
+      <h2 className="text-base font-semibold mb-1">Team expense finance reports</h2>
       <p className="text-xs text-muted-foreground mb-4">
-        Accrual spend excludes advances (balance-sheet float). Cash columns reserve outstanding
-        advances against the same limits so managers see cash still free. Expense summary shows
-        Team Expenses documents for {month}. Download full workbooks from the menu above.
+        Advances are employee float (balance sheet) — Took / Used / Outstanding. Expense claims
+        hit GL budgets on the full claim amount and net any available advance first. Soft budgets
+        route overruns for approval; hard budgets block until raised. Period shown for documents:{" "}
+        {month}.
       </p>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5 mb-4">
         <KpiCard
           label="Advance outstanding"
-          value={loading ? "…" : fmt(totals.advanceOutstanding)}
-          delta={{ dir: "flat", text: `${totals.employeeCount} employees` }}
+          value={loading ? "…" : fmt(totals.outstanding)}
+          delta={{ dir: "flat", text: `${totals.employeeCount} with float` }}
           testid="kpi-te-advance"
         />
         <KpiCard
-          label="Available advance"
+          label="Advance taken"
+          value={loading ? "…" : fmt(totals.took)}
+          delta={{ dir: "flat", text: `${fmt(totals.used)} used` }}
+          testid="kpi-te-took"
+        />
+        <KpiCard
+          label="Advance available"
           value={loading ? "…" : fmt(totals.available)}
-          delta={{
-            dir: "flat",
-            text: "Staff Advance float",
-          }}
+          delta={{ dir: "flat", text: "after pending claims" }}
           testid="kpi-te-available"
         />
         <KpiCard
-          label="Over monthly limit"
-          value={loading ? "…" : totals.overBudget}
-          delta={{ dir: "flat", text: "accrual · employees" }}
-          testid="kpi-te-over-budget"
+          label="GL budgets over"
+          value={loading ? "…" : totals.overGl}
+          delta={{ dir: "flat", text: "parent wallets" }}
+          testid="kpi-te-over-dept"
         />
         <KpiCard
-          label="Cash overcommitted"
-          value={loading ? "…" : totals.cashTight}
-          delta={{ dir: "flat", text: "spend + float ≥ limit" }}
-          testid="kpi-te-cash-tight"
-        />
-        <KpiCard
-          label="Over dept budget"
-          value={loading ? "…" : totals.overDept}
+          label="Docs this month"
+          value={loading ? "…" : summary.length}
           delta={{
             dir: "flat",
-            text:
-              totals.cashOverDept > 0
-                ? `${totals.cashOverDept} cash-tight envelopes`
-                : "envelopes",
+            text: `${totals.claimLines} claims · ${totals.advanceLines} advances`,
           }}
-          testid="kpi-te-over-dept"
+          testid="kpi-te-summary"
         />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2 mb-4">
-        <AdvanceSettlementTable rows={advance} currency={currency} locale={locale} loading={advanceLoading} />
-        <BudgetUtilizationTable rows={budgets} currency={currency} locale={locale} loading={budgetLoading} />
+      <div className="mb-4">
+        <AdvanceSettlementTable
+          rows={advance}
+          currency={currency}
+          locale={locale}
+          loading={advanceLoading}
+        />
       </div>
 
       <div className="mb-4">
@@ -183,139 +188,101 @@ function AdvanceSettlementTable({
   locale?: string;
   loading: boolean;
 }) {
+  const [searchQuery, setSearchQuery] = useState("");
   const fmt = (value: number | string | null | undefined) =>
     money(toNumber(value), currency, locale);
 
-  return (
-    <div>
-      <h3 className="text-sm font-semibold mb-3">Employee advance settlement</h3>
-      {loading ? (
-        <p className="text-sm text-muted-foreground py-6 text-center">Loading…</p>
-      ) : rows.length === 0 ? (
-        <EmptyState
-          title="No employees"
-          hint="Add employees in Rule Book to see advance balances."
-        />
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs text-muted-foreground border-b border-border">
-                <th className="py-1.5 font-medium">Employee</th>
-                <th className="py-1.5 font-medium text-right">Took</th>
-                <th className="py-1.5 font-medium text-right">Used</th>
-                <th className="py-1.5 font-medium text-right">Outstanding</th>
-                <th className="py-1.5 font-medium text-right">Pending</th>
-                <th className="py-1.5 font-medium text-right">Available</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.employee_id} className="row-band border-b border-border/60">
-                  <td className="py-1.5">
-                    <div className="truncate max-w-[180px] font-medium">{row.name}</div>
-                    <div className="text-xs text-muted-foreground truncate max-w-[180px]">
-                      {row.email || row.division || row.location || "—"}
-                    </div>
-                  </td>
-                  <td className="py-1.5 text-right tnum">{fmt(row.advance_taken)}</td>
-                  <td className="py-1.5 text-right tnum">{fmt(row.advance_used)}</td>
-                  <td className="py-1.5 text-right tnum font-medium">
-                    {fmt(row.advance_ledger_balance)}
-                  </td>
-                  <td className="py-1.5 text-right tnum text-muted-foreground">
-                    {fmt(row.pending_against_advance)}
-                  </td>
-                  <td className="py-1.5 text-right tnum">{fmt(row.available_advance)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
+  const active = useMemo(
+    () =>
+      rows.filter(
+        (row) =>
+          toNumber(row.advance_taken) > 0 ||
+          toNumber(row.advance_used) > 0 ||
+          toNumber(row.advance_ledger_balance) > 0 ||
+          toNumber(row.pending_against_advance) > 0
+      ),
+    [rows]
   );
-}
 
-function BudgetUtilizationTable({
-  rows,
-  currency,
-  locale,
-  loading,
-}: {
-  rows: EmployeeBudgetUtilizationRow[];
-  currency: string;
-  locale?: string;
-  loading: boolean;
-}) {
-  const fmt = (value: number | string | null | undefined) =>
-    money(toNumber(value), currency, locale);
+  const filtered = useMemo(
+    () =>
+      active.filter((row) =>
+        matchesListSearch(
+          searchQuery,
+          row.employee_id,
+          row.name,
+          row.email,
+          row.department,
+          row.division,
+          row.location
+        )
+      ),
+    [active, searchQuery]
+  );
 
   return (
     <div>
-      <h3 className="text-sm font-semibold mb-1">Employee spending limit utilization</h3>
+      <h3 className="text-sm font-semibold mb-1">Employee advance float</h3>
       <p className="text-xs text-muted-foreground mb-3">
-        Accrual remaining ignores advances. Cash remaining = limit − claim spend − advance float.
+        Took = paid out · Used = netted by claims · Outstanding = still held · Available =
+        outstanding minus open claims
       </p>
       {loading ? (
         <p className="text-sm text-muted-foreground py-6 text-center">Loading…</p>
-      ) : rows.length === 0 ? (
+      ) : active.length === 0 ? (
         <EmptyState
-          title="No employees"
-          hint="Spending limits and claim spend appear from the employee master."
+          title="No advance float"
+          hint="Posted advance requisitions and claim netting appear here."
         />
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs text-muted-foreground border-b border-border">
-                <th className="py-1.5 font-medium">Employee</th>
-                <th className="py-1.5 font-medium text-right">MTD / Cap</th>
-                <th className="py-1.5 font-medium text-right">Float</th>
-                <th className="py-1.5 font-medium text-right">Cash left</th>
-                <th className="py-1.5 font-medium text-right">Cash used</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => {
-                const cashPct = row.monthly_cash_utilization_pct;
-                const cashOver =
-                  (row.budget_monthly ?? 0) > 0 && cashPct != null && cashPct >= 100;
-                return (
-                  <tr key={row.employee_id} className="row-band border-b border-border/60">
-                    <td className="py-1.5">
-                      <div className="truncate max-w-[180px] font-medium">{row.name}</div>
-                      <div className="text-xs text-muted-foreground truncate max-w-[180px]">
-                        {row.department || row.division || "—"}
-                      </div>
-                    </td>
-                    <td className="py-1.5 text-right tnum">
-                      {fmt(row.mtd_spent)}
-                      <span className="text-muted-foreground">
-                        {" "}
-                        / {row.budget_monthly > 0 ? fmt(row.budget_monthly) : "—"}
-                      </span>
-                    </td>
-                    <td className="py-1.5 text-right tnum text-muted-foreground">
-                      {toNumber(row.advance_float) > 0 ? fmt(row.advance_float) : "—"}
-                    </td>
-                    <td className="py-1.5 text-right tnum text-muted-foreground">
-                      {row.monthly_cash_remaining == null
-                        ? "—"
-                        : fmt(row.monthly_cash_remaining)}
-                    </td>
-                    <td
-                      className={`py-1.5 text-right tnum font-medium ${
-                        cashOver ? "text-destructive" : ""
-                      }`}
-                    >
-                      {cashPct == null ? "—" : `${cashPct}%`}
-                    </td>
+        <div className="space-y-2">
+          <ListSearchInput
+            value={searchQuery}
+            onChange={setSearchQuery}
+            placeholder="Search employees…"
+            testId="input-report-te-advance-search"
+          />
+          {filtered.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-4">
+              No employees match your search.
+            </p>
+          ) : (
+            <div className="overflow-x-auto max-h-[min(360px,45dvh)] overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-card z-10">
+                  <tr className="text-left text-xs text-muted-foreground border-b border-border">
+                    <th className="py-1.5 font-medium">Employee</th>
+                    <th className="py-1.5 font-medium text-right">Took</th>
+                    <th className="py-1.5 font-medium text-right">Used</th>
+                    <th className="py-1.5 font-medium text-right">Outstanding</th>
+                    <th className="py-1.5 font-medium text-right">Pending</th>
+                    <th className="py-1.5 font-medium text-right">Available</th>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                </thead>
+                <tbody>
+                  {filtered.map((row) => (
+                    <tr key={row.employee_id} className="row-band border-b border-border/60">
+                      <td className="py-1.5">
+                        <div className="truncate max-w-[180px] font-medium">{row.name}</div>
+                        <div className="text-xs text-muted-foreground truncate max-w-[180px]">
+                          {row.email || row.division || row.location || "—"}
+                        </div>
+                      </td>
+                      <td className="py-1.5 text-right tnum">{fmt(row.advance_taken)}</td>
+                      <td className="py-1.5 text-right tnum">{fmt(row.advance_used)}</td>
+                      <td className="py-1.5 text-right tnum font-medium">
+                        {fmt(row.advance_ledger_balance)}
+                      </td>
+                      <td className="py-1.5 text-right tnum text-muted-foreground">
+                        {fmt(row.pending_against_advance)}
+                      </td>
+                      <td className="py-1.5 text-right tnum">{fmt(row.available_advance)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -333,84 +300,114 @@ function DepartmentBudgetUtilizationTable({
   locale?: string;
   loading: boolean;
 }) {
+  const [searchQuery, setSearchQuery] = useState("");
   const fmt = (value: number | string | null | undefined) =>
     money(toNumber(value), currency, locale);
 
+  const filtered = useMemo(
+    () =>
+      rows.filter((row) =>
+        matchesListSearch(searchQuery, row.gl_ledger, row.period_key, row.notes, row.department)
+      ),
+    [rows, searchQuery]
+  );
+
   return (
     <div>
-      <h3 className="text-sm font-semibold mb-1">Parent GL budget utilization</h3>
+      <h3 className="text-sm font-semibold mb-1">GL budget utilization</h3>
       <p className="text-xs text-muted-foreground mb-3">
-        Budget vs spent vs left on parent wallets. Child Sub-GL spend rolls up into the parent.
+        Finance control for expense claims. Soft = manager override on overrun; Hard = raise
+        budget first. Advances do not consume these wallets.
       </p>
       {loading ? (
         <p className="text-sm text-muted-foreground py-6 text-center">Loading…</p>
       ) : rows.length === 0 ? (
         <EmptyState
-          title="No parent GL budgets for current period"
+          title="No GL budgets for current period"
           hint="Configure budgets on Team Expenses → GL budgets."
         />
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs text-muted-foreground border-b border-border">
-                <th className="py-1.5 font-medium">Parent GL</th>
-                <th className="py-1.5 font-medium">Period</th>
-                <th className="py-1.5 font-medium text-right">Budget</th>
-                <th className="py-1.5 font-medium text-right">Spent so far</th>
-                <th className="py-1.5 font-medium text-right">Left</th>
-                <th className="py-1.5 font-medium text-right">Used %</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => {
-                const left = row.remaining;
-                const over = left != null && left < 0;
-                const pct = row.utilization_pct;
-                const breakdown = row.sub_breakdown ?? [];
-                return (
-                  <Fragment key={row.budget_id}>
-                    <tr className="row-band border-b border-border/60">
-                      <td className="py-1.5 font-medium">{row.gl_ledger}</td>
-                      <td className="py-1.5 text-muted-foreground">
-                        {row.period_kind} · {row.period_key}
-                      </td>
-                      <td className="py-1.5 text-right tnum">{fmt(row.allocated)}</td>
-                      <td className="py-1.5 text-right tnum">{fmt(row.consumed)}</td>
-                      <td
-                        className={`py-1.5 text-right tnum font-medium ${
-                          over ? "text-destructive" : ""
-                        }`}
-                      >
-                        {left == null ? "—" : fmt(left)}
-                        {over ? " ❌" : ""}
-                      </td>
-                      <td
-                        className={`py-1.5 text-right tnum font-medium ${
-                          over ? "text-destructive" : ""
-                        }`}
-                      >
-                        {pct == null ? "—" : `${pct}%`}
-                      </td>
-                    </tr>
-                    {breakdown.map((sub) => (
-                      <tr
-                        key={`${row.budget_id}-${sub.gl_ledger}`}
-                        className="border-b border-border/40 text-muted-foreground"
-                      >
-                        <td className="py-1 pl-4 text-xs">↳ {sub.gl_ledger}</td>
-                        <td className="py-1" />
-                        <td className="py-1" />
-                        <td className="py-1 text-right tnum text-xs">{fmt(sub.consumed)}</td>
-                        <td className="py-1" />
-                        <td className="py-1 text-right tnum text-xs">{sub.pct_of_budget}%</td>
-                      </tr>
-                    ))}
-                  </Fragment>
-                );
-              })}
-            </tbody>
-          </table>
+        <div className="space-y-2">
+          <ListSearchInput
+            value={searchQuery}
+            onChange={setSearchQuery}
+            placeholder="Search GL budgets…"
+            testId="input-report-te-gl-budget-search"
+          />
+          {filtered.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-4">
+              No budgets match your search.
+            </p>
+          ) : (
+            <div className="overflow-x-auto max-h-[min(360px,45dvh)] overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-card z-10">
+                  <tr className="text-left text-xs text-muted-foreground border-b border-border">
+                    <th className="py-1.5 font-medium">GL account</th>
+                    <th className="py-1.5 font-medium">Period</th>
+                    <th className="py-1.5 font-medium">Rule</th>
+                    <th className="py-1.5 font-medium text-right">Budget</th>
+                    <th className="py-1.5 font-medium text-right">Spent</th>
+                    <th className="py-1.5 font-medium text-right">Left</th>
+                    <th className="py-1.5 font-medium text-right">Used %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((row) => {
+                    const left = row.remaining;
+                    const over = left != null && left < 0;
+                    const pct = row.utilization_pct;
+                    const breakdown = row.sub_breakdown ?? [];
+                    return (
+                      <Fragment key={row.budget_id}>
+                        <tr className="row-band border-b border-border/60">
+                          <td className="py-1.5 font-medium">{row.gl_ledger}</td>
+                          <td className="py-1.5 text-muted-foreground">
+                            {row.period_kind} · {row.period_key}
+                          </td>
+                          <td className="py-1.5 text-xs text-muted-foreground">
+                            {enforcementLabel(row.enforcement)}
+                          </td>
+                          <td className="py-1.5 text-right tnum">{fmt(row.allocated)}</td>
+                          <td className="py-1.5 text-right tnum">{fmt(row.consumed)}</td>
+                          <td
+                            className={`py-1.5 text-right tnum font-medium ${
+                              over ? "text-destructive" : ""
+                            }`}
+                          >
+                            {left == null ? "—" : fmt(left)}
+                          </td>
+                          <td
+                            className={`py-1.5 text-right tnum font-medium ${
+                              over ? "text-destructive" : ""
+                            }`}
+                          >
+                            {pct == null ? "—" : `${pct}%`}
+                          </td>
+                        </tr>
+                        {breakdown.map((sub) => (
+                          <tr
+                            key={`${row.budget_id}-${sub.gl_ledger}`}
+                            className="border-b border-border/40 text-muted-foreground"
+                          >
+                            <td className="py-1 pl-4 text-xs">↳ {sub.gl_ledger}</td>
+                            <td className="py-1" />
+                            <td className="py-1" />
+                            <td className="py-1" />
+                            <td className="py-1 text-right tnum text-xs">{fmt(sub.consumed)}</td>
+                            <td className="py-1" />
+                            <td className="py-1 text-right tnum text-xs">
+                              {sub.pct_of_budget}%
+                            </td>
+                          </tr>
+                        ))}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -430,15 +427,42 @@ function ExpenseSummaryTable({
   loading: boolean;
   month: string;
 }) {
+  const [searchQuery, setSearchQuery] = useState("");
   const fmt = (value: number | string | null | undefined) =>
     money(toNumber(value), currency, locale);
 
+  const filtered = useMemo(
+    () =>
+      rows.filter((row) =>
+        matchesListSearch(
+          searchQuery,
+          row.employee_id,
+          row.employee_name,
+          row.employee_email,
+          row.document_no,
+          row.team_expense_kind,
+          row.line_description,
+          row.main_gl,
+          row.sub_ledger,
+          row.ledger_code,
+          row.department,
+          row.division,
+          row.location,
+          row.status
+        )
+      ),
+    [rows, searchQuery]
+  );
+
   return (
     <div>
-      <div className="flex items-baseline justify-between gap-2 mb-3">
+      <div className="flex items-baseline justify-between gap-2 mb-1">
         <h3 className="text-sm font-semibold">Employee expense summary</h3>
         <p className="text-xs text-muted-foreground">{month}</p>
       </div>
+      <p className="text-xs text-muted-foreground mb-3">
+        Claims = P&amp;L / GL budget spend. Advances = float only (do not hit GL budgets).
+      </p>
       {loading ? (
         <p className="text-sm text-muted-foreground py-6 text-center">Loading…</p>
       ) : rows.length === 0 ? (
@@ -447,57 +471,75 @@ function ExpenseSummaryTable({
           hint="Claims and advance requisitions appear here after capture."
         />
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs text-muted-foreground border-b border-border">
-                <th className="py-1.5 font-medium">Employee</th>
-                <th className="py-1.5 font-medium">Document</th>
-                <th className="py-1.5 font-medium">Line / ledger</th>
-                <th className="py-1.5 font-medium text-right">Amount</th>
-                <th className="py-1.5 font-medium text-right">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row, index) => (
-                <tr
-                  key={`${row.invoice_id}-${index}`}
-                  className="row-band border-b border-border/60"
-                >
-                  <td className="py-1.5">
-                    <div className="truncate max-w-[140px] font-medium">
-                      {row.employee_name || "Unmatched"}
-                    </div>
-                    <div className="text-xs text-muted-foreground truncate max-w-[140px]">
-                      {[row.division, row.location].filter(Boolean).join(" · ") ||
-                        row.employee_email ||
-                        "—"}
-                    </div>
-                  </td>
-                  <td className="py-1.5">
-                    <div className="truncate max-w-[120px]">{row.document_no}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {kindLabel(row.team_expense_kind)}
-                    </div>
-                  </td>
-                  <td className="py-1.5">
-                    <div className="truncate max-w-[180px]">
-                      {row.line_description || "—"}
-                    </div>
-                    <div className="text-xs text-muted-foreground truncate max-w-[180px]">
-                      {row.ledger_name || row.ledger_code || "—"}
-                    </div>
-                  </td>
-                  <td className="py-1.5 text-right tnum font-medium">
-                    {row.line_amount == null ? "—" : fmt(row.line_amount)}
-                  </td>
-                  <td className="py-1.5 text-right text-xs capitalize text-muted-foreground">
-                    {statusLabel(row.status)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="space-y-2">
+          <ListSearchInput
+            value={searchQuery}
+            onChange={setSearchQuery}
+            placeholder="Search documents, employees, ledgers…"
+            testId="input-report-te-summary-search"
+          />
+          {filtered.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-4">
+              No rows match your search.
+            </p>
+          ) : (
+            <div className="overflow-x-auto max-h-[min(420px,50dvh)] overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-card z-10">
+                  <tr className="text-left text-xs text-muted-foreground border-b border-border">
+                    <th className="py-1.5 font-medium">Employee</th>
+                    <th className="py-1.5 font-medium">Document</th>
+                    <th className="py-1.5 font-medium">Line / ledger</th>
+                    <th className="py-1.5 font-medium text-right">Amount</th>
+                    <th className="py-1.5 font-medium text-right">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((row, index) => (
+                    <tr
+                      key={`${row.invoice_id}-${index}`}
+                      className="row-band border-b border-border/60"
+                    >
+                      <td className="py-1.5">
+                        <div className="truncate max-w-[140px] font-medium">
+                          {row.employee_name || "Unmatched"}
+                        </div>
+                        <div className="text-xs text-muted-foreground truncate max-w-[140px]">
+                          {[row.employee_id, row.department, row.division, row.location]
+                            .filter(Boolean)
+                            .join(" · ") ||
+                            row.employee_email ||
+                            "—"}
+                        </div>
+                      </td>
+                      <td className="py-1.5">
+                        <div className="truncate max-w-[120px]">{row.document_no}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {kindLabel(row.team_expense_kind)}
+                        </div>
+                      </td>
+                      <td className="py-1.5">
+                        <div className="truncate max-w-[180px]">
+                          {row.line_description || "—"}
+                        </div>
+                        <div className="text-xs text-muted-foreground truncate max-w-[180px]">
+                          {[row.main_gl, row.sub_ledger].filter(Boolean).join(" · ") ||
+                            row.ledger_code ||
+                            "—"}
+                        </div>
+                      </td>
+                      <td className="py-1.5 text-right tnum font-medium">
+                        {row.line_amount == null ? "—" : fmt(row.line_amount)}
+                      </td>
+                      <td className="py-1.5 text-right text-xs capitalize text-muted-foreground">
+                        {statusLabel(row.status)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
     </div>

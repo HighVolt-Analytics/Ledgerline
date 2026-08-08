@@ -21,9 +21,11 @@ from app.schemas.subledger import SubledgerBalancesResponse
 from app.schemas.subledger_api import SubledgerBalancesRequest
 from app.schemas.department_budget import DepartmentBudgetUtilizationRow
 from app.schemas.team_expense_reports import (
+    EmployeeAdvanceDetailRow,
     EmployeeAdvanceSettlementRow,
     EmployeeBudgetUtilizationRow,
     EmployeeExpenseSummaryRow,
+    EmployeeSpendDetailRow,
 )
 from app.services.reports.documents_bundle_export_service import (
     build_documents_bundle_export,
@@ -41,7 +43,9 @@ from app.services.master_data.department_budget_service import (
 from app.services.reports.team_expense_reports_service import (
     build_advance_settlement_rows,
     build_budget_utilization_rows,
+    build_employee_advance_detail_rows,
     build_employee_expense_summary_rows,
+    build_employee_spend_detail_rows,
 )
 from app.services.reports.team_expense_reports_excel import build_team_expense_excel_export
 from app.services.reports.workbook_writer import write_workbook
@@ -165,7 +169,7 @@ async def reports_team_expense_advance_settlement(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[list[EmployeeAdvanceSettlementRow]]:
-    """Employee advance ledger and available float."""
+    """Employee Staff Advance float: took, used, outstanding, available."""
     rows = await build_advance_settlement_rows(db, ctx.tenant_id)
     return ApiEnvelope(data=rows)
 
@@ -196,7 +200,7 @@ async def reports_team_expense_department_budget_utilization(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[list[DepartmentBudgetUtilizationRow]]:
-    """Department budget envelopes vs consumed Team Expense spend for the current period."""
+    """GL account budgets vs claim spend for the current period (soft/hard enforcement)."""
     rows = await build_department_budget_utilization_rows(db, ctx.tenant_id)
     return ApiEnvelope(data=rows)
 
@@ -229,17 +233,44 @@ async def reports_team_expense_expense_summary(
     return ApiEnvelope(data=rows)
 
 
+@router.get(
+    "/team-expenses/employee-spend-detail",
+    response_model=ApiEnvelope[list[EmployeeSpendDetailRow]],
+)
+async def reports_team_expense_employee_spend_detail(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[list[EmployeeSpendDetailRow]]:
+    """Employee × Sub-GL YTD spend vs Sub-GL budget (employee-wise budget utilization)."""
+    rows = await build_employee_spend_detail_rows(db, ctx.tenant_id)
+    return ApiEnvelope(data=rows)
+
+
+@router.get(
+    "/team-expenses/employee-advance-detail",
+    response_model=ApiEnvelope[list[EmployeeAdvanceDetailRow]],
+)
+async def reports_team_expense_employee_advance_detail(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[list[EmployeeAdvanceDetailRow]]:
+    """Staff Advance movement ledger: one row per Took (advance) and Used (claim netting)."""
+    rows = await build_employee_advance_detail_rows(db, ctx.tenant_id)
+    return ApiEnvelope(data=rows)
+
+
 @router.get("/team-expenses/{report}/export")
 async def export_team_expense_report(
     report: Annotated[
         Literal[
-            "advance-settlement",
             "budget-utilization",
             "spending-limit-utilization",
             "department-budget-utilization",
             "expense-summary",
+            "employee-spend-detail",
+            "employee-advance-detail",
         ],
-        Path(description="Which team expense report workbook to build"),
+        Path(description="Which team expense finance workbook to build"),
     ],
     date_from: Annotated[
         date | None, Query(description="Inclusive start of invoice date range")
@@ -250,7 +281,7 @@ async def export_team_expense_report(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> Response:
-    """Download a styled Excel workbook for one Team Expense report."""
+    """Download a styled Excel workbook for Team Expense finance reporting."""
     try:
         payload = await build_team_expense_excel_export(
             db,

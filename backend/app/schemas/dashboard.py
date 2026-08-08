@@ -131,6 +131,120 @@ class KpiSparklines(BaseModel):
     )
 
 
+class ExecutiveKpiDelta(BaseModel):
+    direction: Literal["up", "down", "flat"]
+    text: str
+    favorable: bool | None = None
+
+
+class ExecutiveKpis(BaseModel):
+    documents_processed: int = 0
+    documents_delta: ExecutiveKpiDelta | None = None
+    time_saved_minutes: int = 0
+    time_saved_hours_label: str = "0.0 hours recovered"
+    avg_time_saved_per_doc_minutes: int = 0
+    automation_efficiency_pct: int = 0
+    automation_delta: ExecutiveKpiDelta | None = None
+    cost_saved: int = 0
+
+
+class CaptureSourceRow(BaseModel):
+    id: Literal["email", "whatsapp", "viber", "upload"]
+    label: str
+    document_count: int = 0
+    avg_time_saved_minutes: int = 0
+    time_saved_minutes: int = 0
+    manual_minutes: int = 0
+    cost_saved: int = 0
+    href: str
+
+
+class RiskComplianceRow(BaseModel):
+    id: str
+    label: str
+    count: int = 0
+    href: str
+    badge: str
+
+
+class AttentionPriority(BaseModel):
+    title: str
+    body: str
+    cta_label: str
+    cta_href: str
+
+
+class AttentionMetricPayload(BaseModel):
+    label: str
+    value: str
+    delta_text: str
+    delta_down: bool = False
+    delta_good: bool = True
+    bars: list[int] = Field(default_factory=list)
+
+
+class AttentionPanel(BaseModel):
+    priority: AttentionPriority
+    processed: AttentionMetricPayload
+    turnaround: AttentionMetricPayload
+
+
+class OpsStatusCounts(BaseModel):
+    processed: int = 0
+    posted: int = 0
+    rejected: int = 0
+    review_pending: int = 0
+    approvals_pending: int = 0
+
+
+class OpsDocTypeRow(BaseModel):
+    id: str
+    label: str
+    counts: OpsStatusCounts = Field(default_factory=OpsStatusCounts)
+
+
+class OpsMemberSnapshot(BaseModel):
+    id: str
+    label: str
+    documents_processed: int = 0
+    time_saved_minutes: int = 0
+    automation_rate_pct: int = 0
+    pending_actions: int = 0
+    accuracy_pct: int = 0
+    by_doc_type: list[OpsDocTypeRow] = Field(default_factory=list)
+
+
+class OperationsPanel(BaseModel):
+    """Member snapshots keyed by window: 7d | 30d | month."""
+
+    windows: dict[str, list[OpsMemberSnapshot]] = Field(default_factory=dict)
+
+
+class ExtractionQualityPoint(BaseModel):
+    metric: str
+    accuracy: float
+
+
+class ApprovalQueueStats(BaseModel):
+    pending: int = 0
+    value_label: str = "—"
+    median_time_label: str = "—"
+
+
+class UserLayerStages(BaseModel):
+    document_fetched: int = 0
+    pending_confirmation: int = 0
+    pending_approval: int = 0
+    pending_posting: int = 0
+    pending_payment: int = 0
+
+
+class UserLayerMetric(BaseModel):
+    id: str
+    label: str
+    stages: UserLayerStages = Field(default_factory=UserLayerStages)
+
+
 class DashboardOverview(BaseModel):
     period: str = Field(description="Selected month as YYYY-MM")
     period_has_data: bool = Field(
@@ -151,3 +265,11 @@ class DashboardOverview(BaseModel):
     invoice_volume_sparkline: list[int] = Field(
         description="Alias of kpi_sparklines.invoice_volume for backward compatibility.",
     )
+    executive_kpis: ExecutiveKpis = Field(default_factory=ExecutiveKpis)
+    capture_sources: list[CaptureSourceRow] = Field(default_factory=list)
+    risk_compliance: list[RiskComplianceRow] = Field(default_factory=list)
+    attention: AttentionPanel | None = None
+    operations: OperationsPanel = Field(default_factory=OperationsPanel)
+    extraction_quality: list[ExtractionQualityPoint] = Field(default_factory=list)
+    approval_queue: ApprovalQueueStats = Field(default_factory=ApprovalQueueStats)
+    user_layer: list[UserLayerMetric] = Field(default_factory=list)

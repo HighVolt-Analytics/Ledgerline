@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import {
   Buildings,
   CurrencyCircleDollar,
+  Gauge,
+  SealCheck,
 } from "@phosphor-icons/react";
 import {
   Bar,
@@ -13,14 +15,33 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { CaptureSourceBars } from "@/components/dashboard/CaptureSourceBars";
-import { AttentionStrip } from "@/components/dashboard/AttentionStrip";
-import { ExecutiveKpiRow } from "@/components/dashboard/ExecutiveKpiRow";
-import { OperationsLayer } from "@/components/dashboard/OperationsLayer";
+import { CaptureSourceBars, type CaptureSourceRow } from "@/components/dashboard/CaptureSourceBars";
+import {
+  AttentionStrip,
+  type AttentionMetric,
+  type AttentionPriority,
+} from "@/components/dashboard/AttentionStrip";
+import {
+  ExecutiveKpiRow,
+  type ExecutiveKpisView,
+} from "@/components/dashboard/ExecutiveKpiRow";
+import {
+  OperationsLayer,
+  type OpsMemberSnapshot,
+  type OpsStatusKey,
+} from "@/components/dashboard/OperationsLayer";
 import { QualityApprovalRow } from "@/components/dashboard/QualityApprovalRow";
-import { RecentActivityCard } from "@/components/dashboard/RecentActivityCard";
-import { RiskCompliancePanel } from "@/components/dashboard/RiskCompliancePanel";
-import { UserLayerChart } from "@/components/dashboard/UserLayerChart";
+import {
+  RiskCompliancePanel,
+  PLACEHOLDER_RISK_ROWS,
+  type RiskComplianceRow,
+} from "@/components/dashboard/RiskCompliancePanel";
+import {
+  UserLayerChart,
+  PLACEHOLDER_USER_LAYER,
+  type UserLayerMetric,
+  type UserLayerMetricId,
+} from "@/components/dashboard/UserLayerChart";
 import { ChartTooltip } from "@/components/ChartTooltip";
 import { PageHeader } from "@/components/PageHeader";
 import { PageLoader } from "@/components/PageLoader";
@@ -30,6 +51,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useDashboardOverview } from "@/hooks/useDashboardOverview";
 import { useTenantTime } from "@/hooks/useTenantTime";
 import { axisMoney, currencySymbol, money, toNumber } from "@/lib/format";
+import type { KpiModuleColor } from "@/lib/kpiModuleColors";
 import {
   buildMonthsForYear,
   buildReconYears,
@@ -37,8 +59,38 @@ import {
 } from "@/lib/reconciliation";
 import { defaultReportPeriod } from "@/lib/reportsData";
 import { API_PORT_HINT, formatTenantLoadError } from "@/lib/tenantSession";
+import type {
+  CaptureSourceApiRow,
+  DashboardOverview,
+  ExecutiveKpiDelta,
+  OpsMemberSnapshotApi,
+  RiskComplianceApiRow,
+  UserLayerMetricApi,
+} from "@/api/types";
 
 const CHART_MARGIN = { top: 4, right: 4, left: -18, bottom: 0 };
+
+const CAPTURE_COLORS: Record<CaptureSourceRow["id"], KpiModuleColor> = {
+  email: "blue",
+  whatsapp: "violet",
+  viber: "rose",
+  upload: "rust",
+};
+
+const RISK_TONES: Record<string, KpiModuleColor> = {
+  duplicates: "rust",
+  fraud: "rose",
+  bank: "violet",
+  counterparties: "green",
+};
+
+const USER_LAYER_TONES: Record<UserLayerMetricId, KpiModuleColor> = {
+  email_mapped: "blue",
+  phone_synced: "violet",
+  doc_types: "green",
+  manual_handoff: "rust",
+  vendors: "rose",
+};
 
 function forecastBarFill(index: number): string {
   return `hsl(186 ${64 - index * 8}% ${34 + index * 6}%)`;
@@ -48,15 +100,159 @@ function firstName(fullName: string) {
   return fullName.trim().split(/\s+/)[0] || fullName;
 }
 
-function relativePollTime(iso: string | null): string {
-  if (!iso) return "—";
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
+function mapDelta(
+  delta: ExecutiveKpiDelta | null | undefined
+): ExecutiveKpisView["documentsDelta"] {
+  if (!delta) return undefined;
+  const dir = delta.direction === "down" ? "down" : delta.direction === "flat" ? "flat" : "up";
+  return {
+    dir,
+    text: delta.text,
+    good: delta.favorable ?? dir !== "down",
+  };
+}
+
+function mapExecutiveKpis(overview: DashboardOverview): ExecutiveKpisView {
+  const k = overview.executive_kpis;
+  if (!k) {
+    return {
+      documentsProcessed: overview.stats.invoices_this_month,
+      documentsDelta: undefined,
+      timeSavedMinutes: 0,
+      timeSavedHoursLabel: "0.0 hours recovered",
+      avgTimeSavedPerDoc: 0,
+      aiSavingsPct: 0,
+      aiSavingsDelta: undefined,
+      costSaved: 0,
+    };
+  }
+  return {
+    documentsProcessed: k.documents_processed,
+    documentsDelta: mapDelta(k.documents_delta),
+    timeSavedMinutes: k.time_saved_minutes,
+    timeSavedHoursLabel: k.time_saved_hours_label,
+    avgTimeSavedPerDoc: k.avg_time_saved_per_doc_minutes,
+    aiSavingsPct: k.automation_efficiency_pct,
+    aiSavingsDelta: mapDelta(k.automation_delta),
+    costSaved: k.cost_saved,
+  };
+}
+
+function mapCaptureSources(rows: CaptureSourceApiRow[] | undefined): CaptureSourceRow[] {
+  if (!rows?.length) return [];
+  return rows.map((row) => ({
+    id: row.id,
+    label: row.label,
+    documentCount: row.document_count,
+    avgTimeSavedMinutes: row.avg_time_saved_minutes,
+    timeSavedMinutes: row.time_saved_minutes,
+    manualMinutes: row.manual_minutes,
+    costSaved: row.cost_saved,
+    moduleColor: CAPTURE_COLORS[row.id],
+    href: row.href,
+  }));
+}
+
+function mapRiskRows(rows: RiskComplianceApiRow[] | undefined): RiskComplianceRow[] {
+  if (!rows?.length) return PLACEHOLDER_RISK_ROWS;
+  return rows.map((row) => ({
+    id: row.id,
+    label: row.label,
+    count: row.count,
+    href: row.href,
+    badge: row.badge,
+    tone: RISK_TONES[row.id] ?? "cyan",
+  }));
+}
+
+function mapAttention(overview: DashboardOverview): {
+  priority: AttentionPriority;
+  processed: AttentionMetric;
+  turnaround: AttentionMetric;
+} | null {
+  const a = overview.attention;
+  if (!a) return null;
+  return {
+    priority: {
+      title: a.priority.title,
+      body: a.priority.body,
+      ctaLabel: a.priority.cta_label,
+      ctaHref: a.priority.cta_href,
+    },
+    processed: {
+      label: a.processed.label,
+      value: a.processed.value,
+      deltaText: a.processed.delta_text,
+      deltaGood: a.processed.delta_good,
+      bars: a.processed.bars,
+      icon: SealCheck,
+      moduleColor: "cyan",
+    },
+    turnaround: {
+      label: a.turnaround.label,
+      value: a.turnaround.value,
+      deltaText: a.turnaround.delta_text,
+      deltaDown: a.turnaround.delta_down,
+      deltaGood: a.turnaround.delta_good,
+      bars: a.turnaround.bars,
+      icon: Gauge,
+      moduleColor: "rose",
+    },
+  };
+}
+
+function mapOpsMember(row: OpsMemberSnapshotApi): OpsMemberSnapshot {
+  return {
+    id: row.id,
+    label: row.label,
+    documentsProcessed: row.documents_processed,
+    timeSavedMinutes: row.time_saved_minutes,
+    automationRatePct: row.automation_rate_pct,
+    pendingActions: row.pending_actions,
+    accuracyPct: row.accuracy_pct,
+    byDocType: row.by_doc_type.map((dt) => ({
+      id: dt.id,
+      label: dt.label,
+      counts: {
+        processed: dt.counts.processed ?? 0,
+        posted: dt.counts.posted ?? 0,
+        rejected: dt.counts.rejected ?? 0,
+        review_pending: dt.counts.review_pending ?? 0,
+        approvals_pending: dt.counts.approvals_pending ?? 0,
+      } satisfies Record<OpsStatusKey, number>,
+    })),
+  };
+}
+
+function mapOpsWindows(
+  overview: DashboardOverview
+): Record<string, OpsMemberSnapshot[]> | undefined {
+  const windows = overview.operations?.windows;
+  if (!windows) return undefined;
+  const out: Record<string, OpsMemberSnapshot[]> = {};
+  for (const [key, members] of Object.entries(windows)) {
+    out[key] = members.map(mapOpsMember);
+  }
+  return out;
+}
+
+function mapUserLayer(rows: UserLayerMetricApi[] | undefined): UserLayerMetric[] {
+  if (!rows?.length) return PLACEHOLDER_USER_LAYER;
+  return rows.map((row) => {
+    const id = row.id as UserLayerMetricId;
+    return {
+      id,
+      label: row.label,
+      tone: USER_LAYER_TONES[id] ?? "cyan",
+      stages: {
+        document_fetched: row.stages.document_fetched,
+        pending_confirmation: row.stages.pending_confirmation,
+        pending_approval: row.stages.pending_approval,
+        pending_posting: row.stages.pending_posting,
+        pending_payment: row.stages.pending_payment,
+      },
+    };
+  });
 }
 
 function dashboardSubtitle(user: { is_support_session?: boolean; tenant_name: string }) {
@@ -173,10 +369,27 @@ export function DashboardPage() {
     );
   }
 
-  const { stats, top_vendors, cash_forecast, activity } = overview;
+  const { stats, top_vendors, cash_forecast } = overview;
   const baseCurrency = stats.base_currency || "SGD";
   const fmt = (v: string | number | null | undefined) => money(v, baseCurrency, locale);
   const currencySym = currencySymbol(baseCurrency);
+  const executiveKpis = mapExecutiveKpis(overview);
+  const captureRows = mapCaptureSources(overview.capture_sources);
+  const riskRows = mapRiskRows(overview.risk_compliance);
+  const attention = mapAttention(overview);
+  const opsWindows = mapOpsWindows(overview);
+  const extractionPoints = (overview.extraction_quality ?? []).map((p) => ({
+    metric: p.metric,
+    accuracy: p.accuracy,
+  }));
+  const approvalStats = overview.approval_queue
+    ? {
+        pending: overview.approval_queue.pending,
+        valueLabel: overview.approval_queue.value_label,
+        medianTimeLabel: overview.approval_queue.median_time_label,
+      }
+    : undefined;
+  const userLayer = mapUserLayer(overview.user_layer);
 
   if (stats.total_invoices === 0) {
     return (
@@ -210,16 +423,6 @@ export function DashboardPage() {
   }));
   const forecastTotal = forecastData.reduce((sum, row) => sum + row.amount, 0);
 
-  const activityFeed = activity.slice(0, 10).map((a) => ({
-    id: String(a.id),
-    invoiceId: a.invoice_id,
-    event: a.event,
-    documentRef: a.document_ref ?? (a.invoice_id != null ? `DOC-${a.invoice_id}` : null),
-    vendor: a.vendor,
-    summary: a.summary ?? null,
-    time: relativePollTime(a.created_at),
-  }));
-
   return (
     <div>
       <PageHeader
@@ -230,20 +433,35 @@ export function DashboardPage() {
 
       <DashboardWelcomeCard user={user} />
 
-      <ExecutiveKpiRow currencySymbol={currencySym} />
+      <ExecutiveKpiRow currencySymbol={currencySym} kpis={executiveKpis} />
 
       <div className="grid gap-4 lg:grid-cols-3 lg:items-stretch mb-6">
-        <CaptureSourceBars className="lg:col-span-2" expand={riskView === "donut"} />
-        <RiskCompliancePanel view={riskView} onViewChange={setRiskView} />
+        <CaptureSourceBars
+          className="lg:col-span-2"
+          expand={riskView === "donut"}
+          rows={captureRows.length ? captureRows : undefined}
+        />
+        <RiskCompliancePanel
+          view={riskView}
+          onViewChange={setRiskView}
+          rows={riskRows}
+        />
       </div>
 
-      <AttentionStrip />
+      <AttentionStrip
+        priority={attention?.priority}
+        processed={attention?.processed}
+        turnaround={attention?.turnaround}
+      />
 
-      <OperationsLayer />
+      <OperationsLayer windows={opsWindows} />
 
-      <QualityApprovalRow />
+      <QualityApprovalRow
+        extraction={extractionPoints.length ? extractionPoints : undefined}
+        approval={approvalStats}
+      />
 
-      <UserLayerChart />
+      <UserLayerChart metrics={userLayer} />
 
       <div className="grid gap-4 lg:grid-cols-3 mb-6">
         <Card className="p-4 lg:col-span-2 dash-card--elevated">
@@ -327,7 +545,6 @@ export function DashboardPage() {
         </Card>
       </div>
 
-      <RecentActivityCard items={activityFeed} />
     </div>
   );
 }

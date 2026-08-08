@@ -43,6 +43,7 @@ from app.schemas.dashboard import (
     NavBadges,
     TopVendorRow,
 )
+from app.services.reports.dashboard_panels_service import build_dashboard_panels
 from app.schemas.invoice import InvoiceStatus as InvoiceStatusSchema
 from app.tenant_settings import tenant_currency, tenant_today
 
@@ -1532,6 +1533,27 @@ async def build_overview(
         month_end=month_end,
         today=today,
     )
+    prev_end = month_start - timedelta(days=1)
+    prev_start = prev_end.replace(day=1)
+    prior_avg_seconds = await _avg_processing_seconds(
+        db,
+        tenant_id=tenant_id,
+        month_start=prev_start,
+        month_end=prev_end,
+    )
+    panels = await build_dashboard_panels(
+        db,
+        tenant_id=tenant_id,
+        month_start=month_start,
+        month_end=month_end,
+        today=today,
+        pending_approval=stats.pending_approval,
+        avg_processing_seconds=stats.avg_processing_seconds,
+        prior_avg_processing_seconds=prior_avg_seconds,
+        invoice_volume_sparkline=kpi_sparklines.invoice_volume,
+        avg_processing_sparkline=kpi_sparklines.avg_processing_seconds,
+        base_currency=stats.base_currency or BASE_CURRENCY,
+    )
     return DashboardOverview(
         period=period,
         period_has_data=stats.invoices_this_month > 0,
@@ -1562,4 +1584,12 @@ async def build_overview(
         integrations_connected=await _integrations_connected(db, tenant_id),
         kpi_sparklines=kpi_sparklines,
         invoice_volume_sparkline=kpi_sparklines.invoice_volume,
+        executive_kpis=panels["executive_kpis"],
+        capture_sources=panels["capture_sources"],
+        risk_compliance=panels["risk_compliance"],
+        attention=panels["attention"],
+        operations=panels["operations"],
+        extraction_quality=panels["extraction_quality"],
+        approval_queue=panels["approval_queue"],
+        user_layer=panels["user_layer"],
     )
