@@ -361,6 +361,16 @@ def test_invoice_like_pool_excludes_team_without_claim_cues() -> None:
     )
     assert {d.code for d in kept} == {"TE-01", "AP-01"}
 
+    forced = _pool_excluding_team_expenses_without_claim(
+        [team, purchase],
+        heading_kind="tax_invoice",
+        document_heading="TAX INVOICE",
+        canonical_document_type="Tax Invoice",
+        invoice=None,
+        force_team_expenses=True,
+    )
+    assert {d.code for d in forced} == {"TE-01", "AP-01"}
+
 
 @pytest.mark.asyncio
 async def test_dossier_chain_pending_on_team_expense_approval(

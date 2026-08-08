@@ -886,3 +886,223 @@ def test_dt_map_fallback_prompt_mentions_summary() -> None:
     body = catalog_default_body("vision.dt_map_fallback.system") or ""
     assert "document_summary" in body
     assert "document_role_hints" in body
+    assert "sales receipts" in body.lower() or "POS" in body
+
+
+@pytest.mark.asyncio
+async def test_employee_email_retail_receipt_forces_team_expense_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """POS / sales-receipt shape must still get TE claim DT for employee email."""
+    from app.models.invoice import Invoice, InvoiceStatus
+    from app.schemas.rule_book_config import EmployeeMaster
+    from app.tenant_ids import TESTING_TENANT_UUID
+
+    async def _should_not_call_llm(**_kwargs):
+        raise AssertionError("LLM must not run when employee-channel TE is forced")
+
+    monkeypatch.setattr(
+        "app.services.invoice.vision_document_type_map._llm_pick_catalogue_dt",
+        _should_not_call_llm,
+    )
+
+    catalogue = [
+        DocumentTypeDefinition(
+            code="DT-03",
+            title="PO-based goods invoice",
+            shortTitle="PO Goods",
+            klass="Transactional",
+            posting="Yes",
+            recognitionMode="prompt",
+            recognitionSignals=[],
+            llmPrompt="",
+            routeTarget="Purchase Management",
+            enabled=True,
+            playbookProfile="po_goods",
+            classifier={"enabled": False, "priority": 40, "confidence": 0.9},
+        ),
+        DocumentTypeDefinition(
+            code="DT-04",
+            title="Employee expense claim",
+            shortTitle="Claim",
+            klass="Transactional",
+            posting="Yes",
+            recognitionMode="prompt",
+            recognitionSignals=[],
+            llmPrompt="",
+            routeTarget="Team Expenses",
+            enabled=True,
+            playbookProfile="employee_claim",
+            teamExpenseKind="expense_claim",
+            classifier={"enabled": False, "priority": 50, "confidence": 0.9},
+        ),
+        DocumentTypeDefinition(
+            code="DT-05",
+            title="Advance requisition",
+            shortTitle="Advance",
+            klass="Transactional",
+            posting="Yes",
+            recognitionMode="prompt",
+            recognitionSignals=[],
+            llmPrompt="",
+            routeTarget="Team Expenses",
+            enabled=True,
+            playbookProfile="employee_claim",
+            teamExpenseKind="advance_requisition",
+            classifier={"enabled": False, "priority": 55, "confidence": 0.9},
+        ),
+    ]
+    employee = EmployeeMaster(
+        id="e1",
+        name="Ka",
+        email="ka12122000@gmail.com",
+        status="Active",
+    )
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PARSING,
+        document_heading="Family Floral Gift Shop",
+        capture_source="email",
+        email_sender="ka12122000@gmail.com",
+        extracted_fields={
+            "canonical_document_type": "Sales Receipt",
+            "document_summary": (
+                "Seller-issued retail POS sales receipt (cash) from a gift shop."
+            ),
+        },
+    )
+    result = await map_vision_label_to_document_type_with_llm_fallback(
+        document_heading="Family Floral Gift Shop",
+        canonical_document_type="Sales Receipt",
+        document_types=catalogue,
+        invoice=inv,
+        employees=[employee],
+    )
+    assert result.code == "DT-04"
+    assert result.method == "te_employee_channel"
+    assert result.reason == "employee_channel_forced"
+
+
+@pytest.mark.asyncio
+async def test_employee_whatsapp_advance_heading_picks_advance_dt() -> None:
+    from app.models.invoice import Invoice, InvoiceStatus
+    from app.schemas.rule_book_config import EmployeeMaster
+    from app.tenant_ids import TESTING_TENANT_UUID
+
+    catalogue = [
+        DocumentTypeDefinition(
+            code="DT-04",
+            title="Employee expense claim",
+            shortTitle="Claim",
+            klass="Transactional",
+            posting="Yes",
+            recognitionMode="prompt",
+            recognitionSignals=[],
+            llmPrompt="",
+            routeTarget="Team Expenses",
+            enabled=True,
+            playbookProfile="employee_claim",
+            teamExpenseKind="expense_claim",
+        ),
+        DocumentTypeDefinition(
+            code="DT-05",
+            title="Advance requisition",
+            shortTitle="Advance",
+            klass="Transactional",
+            posting="Yes",
+            recognitionMode="prompt",
+            recognitionSignals=[],
+            llmPrompt="",
+            routeTarget="Team Expenses",
+            enabled=True,
+            playbookProfile="employee_claim",
+            teamExpenseKind="advance_requisition",
+        ),
+    ]
+    employee = EmployeeMaster(
+        id="e1",
+        name="Priya",
+        email="priya@acme.com",
+        whatsapp_number="+61412345678",
+        status="Active",
+    )
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PARSING,
+        document_heading="Advance request form",
+        capture_source="whatsapp",
+        email_sender="+61412345678",
+        extracted_fields={"document_summary": "Employee advance request for travel."},
+    )
+    result = await map_vision_label_to_document_type_with_llm_fallback(
+        document_heading="Advance request form",
+        canonical_document_type="",
+        document_types=catalogue,
+        invoice=inv,
+        employees=[employee],
+    )
+    assert result.code == "DT-05"
+    assert result.method == "te_employee_channel"
+
+
+@pytest.mark.asyncio
+async def test_upload_does_not_force_team_expense_channel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.models.invoice import Invoice, InvoiceStatus
+    from app.schemas.rule_book_config import EmployeeMaster
+    from app.services.invoice.vision_document_type_map import VisionDocumentTypeMapResult
+    from app.tenant_ids import TESTING_TENANT_UUID
+
+    async def _fake_llm(**_kwargs):
+        return VisionDocumentTypeMapResult(
+            code=None,
+            confidence=0.2,
+            heading_kind=None,
+            reason="llm_empty",
+            method="llm_catalogue_fallback",
+            rule_reason="no_kind",
+            llm_reasoning="no match",
+        )
+
+    monkeypatch.setattr(
+        "app.services.invoice.vision_document_type_map._llm_pick_catalogue_dt",
+        _fake_llm,
+    )
+
+    catalogue = [
+        DocumentTypeDefinition(
+            code="DT-04",
+            title="Employee expense claim",
+            shortTitle="Claim",
+            klass="Transactional",
+            posting="Yes",
+            recognitionMode="prompt",
+            recognitionSignals=[],
+            llmPrompt="",
+            routeTarget="Team Expenses",
+            enabled=True,
+            playbookProfile="employee_claim",
+            teamExpenseKind="expense_claim",
+        ),
+    ]
+    employee = EmployeeMaster(
+        id="e1", name="Ka", email="ka@acme.com", status="Active"
+    )
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PARSING,
+        document_heading="Family Floral Gift Shop",
+        capture_source="upload",
+        email_sender="ka@acme.com",
+        extracted_fields={"canonical_document_type": "Sales Receipt"},
+    )
+    result = await map_vision_label_to_document_type_with_llm_fallback(
+        document_heading="Family Floral Gift Shop",
+        canonical_document_type="Sales Receipt",
+        document_types=catalogue,
+        invoice=inv,
+        employees=[employee],
+    )
+    assert result.code is None
+    assert result.method != "te_employee_channel"

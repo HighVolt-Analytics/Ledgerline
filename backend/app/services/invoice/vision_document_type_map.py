@@ -2,10 +2,12 @@
 
 Hybrid resolve order:
 1) Human lock (reviewer confirmed DT on this invoice)
-2) Deterministic heading-kind scoring (same scorer as PDF segment classify)
-3) Tenant heading learning (exact normalized title → prior human_confirmed_dt)
-4) Configured classifiers (recognition / playbook identity signals)
-5) Text-LLM catalogue fallback — may pick ONLY a catalogue DT-xx, or leave empty
+2) Known employee on email/WhatsApp/Viber → catalogue Team Expenses DT
+   (expense claim vs advance requisition; any receipt/invoice shape)
+3) Deterministic heading-kind scoring (same scorer as PDF segment classify)
+4) Tenant heading learning (exact normalized title → prior human_confirmed_dt)
+5) Configured classifiers (recognition / playbook identity signals)
+6) Text-LLM catalogue fallback — may pick ONLY a catalogue DT-xx, or leave empty
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ _METHOD_RULES = "heading_kind_score"
 _METHOD_LEARNING = "tenant_heading_learning"
 _METHOD_CLASSIFIER = "config_classifier"
 _METHOD_LLM = "llm_catalogue_fallback"
+_METHOD_TE_CHANNEL = "te_employee_channel"
 _LLM_FALLBACK_REASONS = frozenset({"no_kind", "below_threshold", "ambiguous"})
 _LLM_MIN_CONFIDENCE = 0.55
 _PROMPT_KEY = "vision.dt_map_fallback.system"
@@ -263,8 +266,14 @@ def _pool_excluding_team_expenses_without_claim(
     document_heading: str,
     canonical_document_type: str,
     invoice: Any | None,
+    force_team_expenses: bool = False,
 ) -> list[DocumentTypeDefinition]:
-    """Drop Team Expenses DTs for upload, or on invoice-like headings without claim cues."""
+    """Drop Team Expenses DTs for upload, or on invoice-like headings without claim cues.
+
+    When ``force_team_expenses`` is set (known employee on email/WhatsApp/Viber),
+    keep TE catalogue rows so receipts / POS slips / tax-invoice-shaped claims can
+    map without requiring explicit "expense claim" title wording.
+    """
     from app.services.classification.document_type_catalog import (
         is_team_expenses_document_type,
     )
@@ -273,6 +282,8 @@ def _pool_excluding_team_expenses_without_claim(
     )
 
     rows = list(pool)
+    if force_team_expenses:
+        return rows
     if invoice is not None and team_expenses_blocked_for_upload(invoice):
         return [dt for dt in rows if not is_team_expenses_document_type(dt)]
     if (heading_kind or "") not in _INVOICE_LIKE_HEADING_KINDS:
@@ -284,6 +295,59 @@ def _pool_excluding_team_expenses_without_claim(
     ):
         return rows
     return [dt for dt in rows if not is_team_expenses_document_type(dt)]
+
+
+def _resolve_force_team_expenses(
+    *,
+    invoice: Any | None,
+    employees: Sequence[Any] | None,
+    force_team_expenses: bool | None,
+) -> bool:
+    if force_team_expenses is not None:
+        return bool(force_team_expenses)
+    if invoice is None:
+        return False
+    from app.services.purchase.team_expense_route_policy import should_force_team_expenses
+
+    return should_force_team_expenses(invoice, employees)
+
+
+def _team_expense_channel_map_result(
+    *,
+    invoice: Any | None,
+    document_types: Sequence[DocumentTypeDefinition],
+    heading_kind: str | None,
+    rule_reason: str | None = None,
+) -> VisionDocumentTypeMapResult | None:
+    """Pick claim vs advance TE DT for employee-channel force path."""
+    from app.schemas.rule_book_config import TEAM_EXPENSE_KIND_CLAIM
+    from app.services.purchase.team_expense_route_policy import (
+        infer_preferred_team_expense_kind,
+        primary_team_expenses_document_type,
+    )
+
+    preferred = infer_preferred_team_expense_kind(invoice, document_types)
+    primary = primary_team_expenses_document_type(
+        document_types,
+        preferred_kind=preferred or TEAM_EXPENSE_KIND_CLAIM,
+    )
+    if primary is None:
+        return None
+    code = (primary.code or "").strip().upper() or None
+    if not code:
+        return None
+    return VisionDocumentTypeMapResult(
+        code=code,
+        confidence=0.95,
+        heading_kind=heading_kind,
+        reason="employee_channel_forced",
+        method=_METHOD_TE_CHANNEL,
+        rule_reason=rule_reason,
+        llm_reasoning=(
+            "Known employee on email/WhatsApp/Viber: catalogue Team Expenses DT "
+            f"({preferred or TEAM_EXPENSE_KIND_CLAIM})."
+        ),
+    )
 
 
 def map_vision_via_configured_classifiers(
@@ -628,13 +692,16 @@ async def map_vision_label_to_document_type_with_llm_fallback(
     org: Any | None = None,
     few_shots: Sequence[dict[str, str]] | None = None,
     vendor_key: str | None = None,
+    employees: Sequence[Any] | None = None,
+    force_team_expenses: bool | None = None,
 ) -> VisionDocumentTypeMapResult:
     """Hybrid: rules → tenant heading learning → classifiers → LLM catalogue pick.
 
     Learning uses exact normalized title matches from prior reviewer confirmations
     (synonyms / org-specific naming). LLM receives the same few-shots + org block
     when deterministic scoring fails. Structural ``no_dt_for_role_*`` and human
-    locks are never bypassed.
+    locks are never bypassed — except known employee email/WhatsApp/Viber senders,
+    which always resolve to a catalogue Team Expenses DT (claim vs advance).
     """
     from app.services.classification.document_role_resolve_service import (
         perspective_from_invoice,
@@ -649,6 +716,21 @@ async def map_vision_label_to_document_type_with_llm_fallback(
     )
     if rule.reason == "human_locked":
         return rule
+
+    force_te = _resolve_force_team_expenses(
+        invoice=invoice,
+        employees=employees,
+        force_team_expenses=force_team_expenses,
+    )
+    if force_te:
+        forced = _team_expense_channel_map_result(
+            invoice=invoice,
+            document_types=document_types,
+            heading_kind=rule.heading_kind,
+            rule_reason=rule.reason,
+        )
+        if forced is not None:
+            return forced
 
     # Never learn/LLM into a commercial DT when role resolution already said
     # there is no supporting PO/GRN/SO/DN card in the catalogue.
@@ -705,6 +787,7 @@ async def map_vision_label_to_document_type_with_llm_fallback(
             document_heading=document_heading or "",
             canonical_document_type=canonical_document_type or "",
             invoice=invoice,
+            force_team_expenses=force_te,
         )
         classifier = map_vision_via_configured_classifiers(
             invoice=invoice,
@@ -724,7 +807,8 @@ async def map_vision_label_to_document_type_with_llm_fallback(
                 classifier.code, document_types=document_types
             )
             allow_team = (
-                not invoice_like
+                force_te
+                or not invoice_like
                 or not is_team_expenses_document_type(matched_defn)
                 or has_strong_team_expense_claim_evidence(
                     document_heading=document_heading or "",
@@ -753,6 +837,7 @@ async def map_vision_label_to_document_type_with_llm_fallback(
         document_heading=document_heading or "",
         canonical_document_type=canonical_document_type or "",
         invoice=invoice,
+        force_team_expenses=force_te,
     )
     if rule.heading_kind and not llm_pool:
         return rule

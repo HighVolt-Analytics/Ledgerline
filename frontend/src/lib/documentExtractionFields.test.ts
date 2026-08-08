@@ -81,6 +81,7 @@ describe("standardExtractionFieldsForRoute", () => {
     expect(keys).toContain("invoice_no");
     expect(keys).toContain("so_reference");
     expect(keys).toContain("currency");
+    expect(keys).toContain("line_items");
   });
 
   it("returns sales-oriented fields for Sales Management", () => {
@@ -88,6 +89,13 @@ describe("standardExtractionFieldsForRoute", () => {
     expect(keys).toContain("so_reference");
     expect(keys).toContain("invoice_no");
     expect(keys).toContain("po_reference");
+    expect(keys).toContain("line_items");
+  });
+
+  it("includes line items for expenses and team expenses", () => {
+    expect(standardExtractionFieldsForRoute("Expenses Management")).toContain("line_items");
+    expect(standardExtractionFieldsForRoute("Team Expenses")).toContain("line_items");
+    expect(standardExtractionFieldsForRoute("Team Expenses")).toContain("email_sender");
   });
 
   it("always includes linking fields on every route", () => {
@@ -194,6 +202,21 @@ describe("reconcileExtractionFieldsForRoute", () => {
     expect(result.extractionFields).toEqual(["vendor", "permit_no"]);
     expect(result.requiredFields).toEqual(["vendor"]);
     expect(result.removedStandardFields).toEqual(["seller_name"]);
+  });
+
+  it("keeps line_items when switching to Team Expenses", () => {
+    const result = reconcileExtractionFieldsForRoute({
+      extractionFields: ["vendor", "line_items", "total"],
+      requiredFields: ["vendor", "line_items"],
+      nextRoute: "Team Expenses",
+    });
+    expect(result.extractionFields).toEqual(
+      expect.arrayContaining(["vendor", "line_items", "total"])
+    );
+    expect(result.requiredFields).toEqual(
+      expect.arrayContaining(["vendor", "line_items"])
+    );
+    expect(result.removedStandardFields).toEqual([]);
   });
 });
 

@@ -22,7 +22,14 @@ RECOMMENDED_FIELDS_BY_PLAYBOOK: dict[str, tuple[str, ...]] = {
     "debit_note": ("invoice_no", "invoice_date", "vendor"),
     "freight_logistics": ("invoice_no", "invoice_date", "vendor", "total"),
     "import_dossier": ("invoice_no", "invoice_date"),
-    "employee_claim": ("email_sender", "invoice_date", "total", "vendor", "invoice_no"),
+    "employee_claim": (
+        "email_sender",
+        "invoice_date",
+        "total",
+        "vendor",
+        "invoice_no",
+        "line_items",
+    ),
     "intercompany": ("invoice_no", "invoice_date", "vendor", "total"),
     "pre_transactional": ("invoice_no",),
 }

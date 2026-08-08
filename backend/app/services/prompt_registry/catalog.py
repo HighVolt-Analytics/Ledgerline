@@ -1279,6 +1279,9 @@ HOW TO CHOOSE
   Expenses catalogue rows. On email/WhatsApp/Viber, a known employee sender forces
   Team Expenses after mapping; do not refuse a claim-like row solely because the
   sender is an employee.
+- Retail POS slips, shop receipts, taxi/meal receipts, and similar seller-issued
+  sales receipts from an employee capture channel still map to Team Expenses claim
+  catalogue rows when those rows exist — they are employee expense evidence, not AR.
 - A printed TAX INVOICE or COMMERCIAL INVOICE must NOT be mapped to a Team Expenses
   catalogue row unless the title/summary clearly indicates employee expense claim or
   reimbursement (employee identity is applied later by route policy).

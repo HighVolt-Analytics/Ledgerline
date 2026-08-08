@@ -187,6 +187,7 @@ const STANDARD_EXTRACTION_FIELDS_BY_ROUTE: Record<RouteTarget, ExtractionFieldKe
     "gst",
     "gst_rate",
     "total",
+    "line_items",
   ]),
   "Team Expenses": withLinkingStandardFields([
     "email_sender",
@@ -201,6 +202,7 @@ const STANDARD_EXTRACTION_FIELDS_BY_ROUTE: Record<RouteTarget, ExtractionFieldKe
     "gst",
     "gst_rate",
     "total",
+    "line_items",
   ]),
   // invoice_date feeds Vault year/month folders; vendor feeds the vendor folder.
   Vault: withLinkingStandardFields([

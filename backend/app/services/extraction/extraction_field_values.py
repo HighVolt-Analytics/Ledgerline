@@ -184,6 +184,7 @@ _TRANSACTIONAL_ROUTES = frozenset(
         "Purchase Management",
         "Sales Management",
         "Expenses Management",
+        "Team Expenses",
     }
 )
 

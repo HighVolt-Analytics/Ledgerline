@@ -2284,9 +2284,15 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             map_vision_label_to_document_type_with_llm_fallback,
         )
         from app.services.invoice.vision_header_extract import CANONICAL_DOCUMENT_TYPE_KEY
+        from app.services.master_data.master_data_service import list_employee_masters
         from app.services.rule_book.rule_book_mapper import load_classification_config
 
         rb_config = await load_classification_config(session, invoice.tenant_id)
+        # Employee registry needed before DT map so email/WhatsApp/Viber claims
+        # resolve to Team Expenses even when vision titles look like retail receipts.
+        te_employees = await list_employee_masters(
+            session, invoice.tenant_id, include_advance_balances=False
+        )
         enabled_dt_codes = {
             (dt.code or "").strip().upper()
             for dt in (rb_config.document_types or [])
@@ -2353,6 +2359,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                 org=org,
                 few_shots=vision_few_shots,
                 vendor_key=vendor_learning_key,
+                employees=te_employees,
             )
             if dt_map.reason != "human_locked" and dt_map.code:
                 apply_document_type_to_invoice(
@@ -2400,29 +2407,60 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             await session.flush()
 
             if not (invoice.document_type_code or "").strip() and not human_locked_dt:
-                await sync_vision_header_vault_path(
-                    session, invoice, parsed_vendor=invoice.vendor
+                from app.services.purchase.team_expense_route_policy import (
+                    ensure_team_expenses_document_type,
+                    should_force_team_expenses,
                 )
-                await session.flush()
-                invoice.status = InvoiceStatus.EXCEPTION
-                invoice.evaluation_status = EVAL_VISION_HEADER_REVIEW
-                await log_event(
-                    session,
-                    "vision_path_pending",
-                    invoice_id=invoice.id,
-                    detail=audit_document_detail(
-                        invoice,
-                        reason="dt_map_unresolved",
-                        path=invoice.raw_file_path,
-                        document_ai_provider=provider_token,
-                        can_understand=True,
-                        understand_confidence=understand.confidence,
-                        document_heading=invoice.document_heading,
-                        evaluation_status=invoice.evaluation_status,
-                    ),
-                )
-                send_notification(invoice, InvoiceStatus.EXCEPTION)
-                return
+
+                # Safety net: employee-channel TE must not stop on empty DT map.
+                if should_force_team_expenses(invoice, te_employees):
+                    te_defn = ensure_team_expenses_document_type(
+                        invoice, rb_config.document_types
+                    )
+                    if te_defn is not None and (invoice.document_type_code or "").strip():
+                        await log_event(
+                            session,
+                            "vision_document_type_mapped",
+                            invoice_id=invoice.id,
+                            detail=audit_document_detail(
+                                invoice,
+                                code=invoice.document_type_code,
+                                confidence=invoice.document_type_confidence,
+                                reason="employee_channel_forced",
+                                method="te_employee_channel",
+                                rule_reason="dt_map_unresolved_safety_net",
+                                document_heading=invoice.document_heading,
+                                canonical_document_type=fields.get(
+                                    CANONICAL_DOCUMENT_TYPE_KEY
+                                ),
+                                document_type_code=invoice.document_type_code,
+                            ),
+                        )
+                        await session.flush()
+                if not (invoice.document_type_code or "").strip():
+                    await sync_vision_header_vault_path(
+                        session, invoice, parsed_vendor=invoice.vendor
+                    )
+                    await session.flush()
+                    invoice.status = InvoiceStatus.EXCEPTION
+                    invoice.evaluation_status = EVAL_VISION_HEADER_REVIEW
+                    await log_event(
+                        session,
+                        "vision_path_pending",
+                        invoice_id=invoice.id,
+                        detail=audit_document_detail(
+                            invoice,
+                            reason="dt_map_unresolved",
+                            path=invoice.raw_file_path,
+                            document_ai_provider=provider_token,
+                            can_understand=True,
+                            understand_confidence=understand.confidence,
+                            document_heading=invoice.document_heading,
+                            evaluation_status=invoice.evaluation_status,
+                        ),
+                    )
+                    send_notification(invoice, InvoiceStatus.EXCEPTION)
+                    return
 
             posting_defn_early = None
             from app.services.invoice.vision_posting_continue import (
@@ -2540,6 +2578,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                 org=org,
                 few_shots=vision_few_shots,
                 vendor_key=vendor_learning_key,
+                employees=te_employees,
             )
             if dt_map.reason != "human_locked" and dt_map.code:
                 apply_document_type_to_invoice(
@@ -2645,7 +2684,6 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             vision_posting_skip_reason,
             vision_should_continue_posting,
         )
-        from app.services.master_data.master_data_service import list_employee_masters
         from app.services.purchase.team_expense_route_policy import (
             ensure_team_expenses_document_type,
             should_force_team_expenses,
@@ -2656,10 +2694,8 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
 
         # Known employee on email/WhatsApp/Viber must land on Team Expenses *before*
         # the posting gate — otherwise line_items_review on a wrong Expense Claim DT
-        # skips continue and force-TE never runs.
-        employees = await list_employee_masters(
-            session, invoice.tenant_id, include_advance_balances=False
-        )
+        # skips continue and force-TE never runs. Reuse the registry loaded for DT map.
+        employees = te_employees
         if should_force_team_expenses(invoice, employees):
             ensure_team_expenses_document_type(invoice, rb_config.document_types)
             invoice.route_target = ROUTE_TEAM
