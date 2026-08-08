@@ -173,6 +173,42 @@ async def test_stamp_team_expense_employee_identity_fills_employee_name(
 
 
 @pytest.mark.asyncio
+async def test_stamp_team_expense_employee_identity_overwrites_ocr_employee_name(
+    db_session: AsyncSession,
+) -> None:
+    from app.models.employee_master import EmployeeMasterRecord
+    from app.services.purchase.team_expense_service import stamp_team_expense_employee_identity
+
+    db_session.add(
+        EmployeeMasterRecord(
+            tenant_id=TESTING_TENANT_UUID,
+            master_id="em-stamp-2",
+            name="Dr. Sai Kyaw",
+            email="ka12122000@gmail.com",
+            status="Active",
+        )
+    )
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        route_target=ROUTE_TEAM,
+        email_sender="ka12122000@gmail.com",
+        vendor="Junction City / Junction Center Nay Pyi Taw",
+        status=InvoiceStatus.MAPPING,
+        currency="MMK",
+        file_hash="te-stamp-overwrite",
+        extracted_fields={"employee_name": "OCR garbage from receipt"},
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    name = await stamp_team_expense_employee_identity(db_session, inv)
+    assert name == "Dr. Sai Kyaw"
+    assert (inv.extracted_fields or {}).get("employee_name") == "Dr. Sai Kyaw"
+    # Merchant OCR on vendor column is preserved.
+    assert inv.vendor == "Junction City / Junction Center Nay Pyi Taw"
+
+
+@pytest.mark.asyncio
 async def test_has_manager_approval_with_duplicate_audit_rows(db_session: AsyncSession) -> None:
     inv = Invoice(
         tenant_id=TESTING_TENANT_UUID,

@@ -72,6 +72,14 @@ INFRASTRUCTURE_ATTRS: frozenset[str] = INFRASTRUCTURE_EXTRACTION_FIELD_KEYS | fr
     {"email_subject"}
 )
 
+# Capture-channel / Employee Master identity — never fill from OCR/LLM.
+CHANNEL_IDENTITY_ATTRS: frozenset[str] = frozenset(
+    {
+        "email_sender",
+        "employee_name",
+    }
+)
+
 # Party fields the LLM should populate via seller/buyer objects, not bogus top-level keys.
 PARTY_FIELD_KEYS: frozenset[str] = frozenset(
     {
@@ -257,7 +265,7 @@ def label_value_backfill_keys(
         token = str(raw or "").strip().lower()
         if not token or token in seen or not is_valid_extraction_field_key(token):
             continue
-        if token in INFRASTRUCTURE_ATTRS or token == "line_items":
+        if token in INFRASTRUCTURE_ATTRS or token in CHANNEL_IDENTITY_ATTRS or token == "line_items":
             continue
         if token in INVOICE_SCALAR_ATTRS:
             if parsed is not None:
@@ -315,6 +323,8 @@ def expand_extraction_keys_for_llm(keys: Sequence[str]) -> list[str]:
     for raw in keys:
         token = str(raw or "").strip().lower()
         if not token or not is_valid_extraction_field_key(token):
+            continue
+        if token in CHANNEL_IDENTITY_ATTRS or token in INFRASTRUCTURE_ATTRS:
             continue
         if token == "bank_details":
             for sub in _BANK_DETAILS_LLM_KEYS:
@@ -1500,7 +1510,7 @@ def harvest_configured_fields_from_llm_raw(
     for token in selected:
         if not token or not is_valid_extraction_field_key(token):
             continue
-        if token in INFRASTRUCTURE_ATTRS or token == "line_items":
+        if token in INFRASTRUCTURE_ATTRS or token in CHANNEL_IDENTITY_ATTRS or token == "line_items":
             continue
         if token in out:
             continue

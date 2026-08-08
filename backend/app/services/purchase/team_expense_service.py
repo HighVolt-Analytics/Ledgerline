@@ -66,15 +66,10 @@ async def stamp_team_expense_employee_identity(
             merge_invoice_extracted_fields,
         )
 
-        existing_fields = getattr(invoice, "extracted_fields", None) or {}
-        existing_name = (
-            (existing_fields.get("employee_name") or "").strip()
-            if isinstance(existing_fields, dict)
-            else ""
-        )
-        if not existing_name:
-            merge_invoice_extracted_fields(invoice, {"employee_name": name})
+        # Always prefer Employee Master over OCR/LLM (receipt text is not the claimant).
+        merge_invoice_extracted_fields(invoice, {"employee_name": name})
         # Back-compat: older TE UIs used vendor as the employee display name.
+        # Only fill when empty so merchant OCR on the receipt is preserved.
         if not (invoice.vendor or "").strip():
             invoice.vendor = name
             merge_invoice_extracted_fields(invoice, {"vendor": name})

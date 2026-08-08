@@ -1155,19 +1155,14 @@ export function InvoiceDetailDrawer({
         : ruleBook && resolvedDocumentTypeCode
           ? extractionFieldsForDocumentType(ruleBook.documentTypes, resolvedDocumentTypeCode)
           : [];
-    // Team Expenses identity: capture-channel sender + resolved employee name.
+    // Team Expenses identity: capture-channel sender + Employee Master name only.
+    // Drop vendor — legacy TE configs remapped it to "Employee" and OCR fills merchant/place text.
     if ((inv.route_target || "").trim() === ROUTE_TEAM) {
-      if (!keys.includes("email_sender")) {
-        keys = ["email_sender", ...keys];
-      }
-      if (!keys.includes("employee_name")) {
-        const senderIdx = keys.indexOf("email_sender");
-        keys = [
-          ...keys.slice(0, senderIdx + 1),
-          "employee_name",
-          ...keys.slice(senderIdx + 1),
-        ];
-      }
+      const withoutVendor = keys.filter((key) => key !== "vendor");
+      const rest = withoutVendor.filter(
+        (key) => key !== "email_sender" && key !== "employee_name"
+      );
+      keys = ["email_sender", "employee_name", ...rest];
     }
     return keys;
   }, [inv, ruleBook, resolvedDocumentTypeCode]);
@@ -1179,7 +1174,12 @@ export function InvoiceDetailDrawer({
 
   const extraExtractedFieldKeys = useMemo(() => {
     if (!inv) return [];
-    return additionalExtractedFieldKeys(inv, extractionFieldKeys);
+    const extras = additionalExtractedFieldKeys(inv, extractionFieldKeys);
+    // TE: never surface OCR vendor leftovers as a second "Employee" row.
+    if ((inv.route_target || "").trim() === ROUTE_TEAM) {
+      return extras.filter((key) => key !== "vendor");
+    }
+    return extras;
   }, [inv, extractionFieldKeys]);
 
   const documentTypeInCatalogue = useMemo(() => {
@@ -1773,7 +1773,14 @@ export function InvoiceDetailDrawer({
                           <FieldRow
                             label={extractionFieldDisplayLabel(key, inv, tax)}
                             value={(() => {
-                              const raw = readExtractionFieldValue(
+                              if (key === "employee_name" && matchedTeamEmployee?.name) {
+                                if (editing && draft && key in draft.extractedFields) {
+                                  const edited = draft.extractedFields[key]?.trim();
+                                  if (edited) return edited;
+                                }
+                                return matchedTeamEmployee.name;
+                              }
+                              return readExtractionFieldValue(
                                 key,
                                 inv,
                                 draft,
@@ -1783,16 +1790,12 @@ export function InvoiceDetailDrawer({
                                 absentFields,
                                 sourceKind
                               );
-                              if (
-                                key === "employee_name" &&
-                                (raw === "—" || !raw.trim()) &&
-                                matchedTeamEmployee?.name
-                              ) {
-                                return matchedTeamEmployee.name;
-                              }
-                              return raw;
                             })()}
-                            confidence={invoiceFieldConfidence(inv, key)}
+                            confidence={
+                              key === "employee_name" && matchedTeamEmployee
+                                ? null
+                                : invoiceFieldConfidence(inv, key)
+                            }
                             bold={key === "total"}
                             editable={Boolean(
                               draft && editing && isEditableExtractionField(key, extractionFieldKeys)
