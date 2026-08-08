@@ -71,7 +71,11 @@ import {
   glPostingApplicable,
   invoiceCanPublishToLedger,
   invoiceFieldConfidence,
+  ROUTE_TEAM,
 } from "@/lib/invoice";
+import { useEmployeeMasters } from "@/hooks/useMasterData";
+import { matchEmployeeForSender } from "@/lib/routePageAdapters";
+import type { EmployeeMaster } from "@/lib/v4RuleBookTypes";
 import { LineGlAccountCell } from "@/components/invoices/LineGlAccountCell";
 import { effectiveMatchPolicy, isTwoWayMatchMode, matchTabLabel } from "@/lib/documentPlaybookConfig";
 import { InvoiceProcessingOverridesSection } from "@/components/invoices/InvoiceProcessingOverridesSection";
@@ -148,9 +152,15 @@ function customExtractionKeysForDraft(
   inv: InvoiceDetails,
   extractionFieldKeys: string[]
 ): string[] {
-  const fromConfig = extractionFieldKeys.filter((key) => !isPresetExtractionFieldKey(key));
+  // Presets that persist in extracted_fields (not invoice scalar columns).
+  const extractedOnlyPresets = new Set(["employee_name"]);
+  const fromConfig = extractionFieldKeys.filter(
+    (key) => !isPresetExtractionFieldKey(key) || extractedOnlyPresets.has(key)
+  );
   if (fromConfig.length) return fromConfig;
-  return Object.keys(inv.extracted_fields ?? {}).filter((key) => !isPresetExtractionFieldKey(key));
+  return Object.keys(inv.extracted_fields ?? {}).filter(
+    (key) => !isPresetExtractionFieldKey(key) || extractedOnlyPresets.has(key)
+  );
 }
 
 function invoiceScalarValue(inv: InvoiceDetails, key: string): string | null {
@@ -215,6 +225,9 @@ function readExtractionFieldValue(
     return direct || "—";
   }
   if (editing && draft && isEditableExtractionField(key, extractionFieldKeys)) {
+    if (key === "employee_name" && key in draft.extractedFields) {
+      return draft.extractedFields[key];
+    }
     if (isPresetExtractionFieldKey(key)) {
       const draftValue = draft[key as keyof InvoiceEditDraft];
       if (typeof draftValue === "string") {
@@ -268,6 +281,11 @@ function updateDraftExtractionField(
       return { ...draft, currency: value.trim().toUpperCase() };
     case "email_sender":
       return { ...draft, email_sender: value };
+    case "employee_name":
+      return {
+        ...draft,
+        extractedFields: { ...draft.extractedFields, employee_name: value },
+      };
     default:
       if (!isPresetExtractionFieldKey(key)) {
         return {
@@ -664,6 +682,44 @@ function payloadFromDraft(draft: InvoiceEditDraft, inv?: InvoiceDetails): Invoic
   return payload;
 }
 
+function TeamEmployeeOrgSection({ employee }: { employee: EmployeeMaster }) {
+  const rows: Array<{ label: string; value: string }> = [
+    { label: "Employee ID", value: employee.id },
+    { label: "Date of joining", value: employee.dateOfJoining ?? "" },
+    { label: "Department", value: employee.department ?? "" },
+    { label: "Designation", value: employee.role },
+    { label: "Location", value: employee.location ?? "" },
+    { label: "Division", value: employee.division ?? "" },
+    { label: "Supervisor 1", value: employee.supervisor1 ?? "" },
+    { label: "Supervisor 2", value: employee.supervisor2 ?? "" },
+  ];
+  return (
+    <div
+      className="rounded-md border border-border bg-muted/20 p-3 space-y-2"
+      data-testid="team-employee-org-section"
+    >
+      <div className="flex items-baseline justify-between gap-2">
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Organisation
+        </h4>
+        <span className="text-xs text-muted-foreground truncate">
+          From employee master · {employee.name}
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+        {rows.map((row) => (
+          <div key={row.label} className="min-w-0">
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              {row.label}
+            </div>
+            <div className="text-xs truncate">{row.value.trim() || "—"}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function FieldRow({
   label,
   value,
@@ -798,6 +854,8 @@ export function InvoiceDetailDrawer({
   const [tab, setTab] = useState<Tab>(initialTab);
   const { data: ruleBook } = useRuleBookConfig(open);
   const [inv, setInv] = useState<InvoiceDetails | null>(null);
+  const isTeamExpenseRoute = (inv?.route_target || "").trim() === ROUTE_TEAM;
+  const { data: employees = [] } = useEmployeeMasters(open && isTeamExpenseRoute);
   const [loading, setLoading] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [sheetState, setSheetState] = useState<"open" | "closed">("closed");
@@ -1097,15 +1155,27 @@ export function InvoiceDetailDrawer({
         : ruleBook && resolvedDocumentTypeCode
           ? extractionFieldsForDocumentType(ruleBook.documentTypes, resolvedDocumentTypeCode)
           : [];
-    // Team Expenses identity comes from the capture channel sender; keep it visible for review.
-    if (
-      (inv.route_target || "").trim() === "Team Expenses" &&
-      !keys.includes("email_sender")
-    ) {
-      keys = ["email_sender", ...keys];
+    // Team Expenses identity: capture-channel sender + resolved employee name.
+    if ((inv.route_target || "").trim() === ROUTE_TEAM) {
+      if (!keys.includes("email_sender")) {
+        keys = ["email_sender", ...keys];
+      }
+      if (!keys.includes("employee_name")) {
+        const senderIdx = keys.indexOf("email_sender");
+        keys = [
+          ...keys.slice(0, senderIdx + 1),
+          "employee_name",
+          ...keys.slice(senderIdx + 1),
+        ];
+      }
     }
     return keys;
   }, [inv, ruleBook, resolvedDocumentTypeCode]);
+
+  const matchedTeamEmployee = useMemo((): EmployeeMaster | undefined => {
+    if (!inv || (inv.route_target || "").trim() !== ROUTE_TEAM) return undefined;
+    return matchEmployeeForSender(inv.email_sender, employees, inv.employee_email);
+  }, [inv, employees]);
 
   const extraExtractedFieldKeys = useMemo(() => {
     if (!inv) return [];
@@ -1694,21 +1764,34 @@ export function InvoiceDetailDrawer({
                             onChange={(value) => void handleCurrencySelect(value)}
                           />
                         )}
+                        {matchedTeamEmployee ? (
+                          <TeamEmployeeOrgSection employee={matchedTeamEmployee} />
+                        ) : null}
                         {extractionFieldKeys.map((key) =>
                           key === "currency" ? null : (
                         <div key={key}>
                           <FieldRow
                             label={extractionFieldDisplayLabel(key, inv, tax)}
-                            value={readExtractionFieldValue(
-                              key,
-                              inv,
-                              draft,
-                              Boolean(draft && editing),
-                              fmt,
-                              extractionFieldKeys,
-                              absentFields,
-                              sourceKind
-                            )}
+                            value={(() => {
+                              const raw = readExtractionFieldValue(
+                                key,
+                                inv,
+                                draft,
+                                Boolean(draft && editing),
+                                fmt,
+                                extractionFieldKeys,
+                                absentFields,
+                                sourceKind
+                              );
+                              if (
+                                key === "employee_name" &&
+                                (raw === "—" || !raw.trim()) &&
+                                matchedTeamEmployee?.name
+                              ) {
+                                return matchedTeamEmployee.name;
+                              }
+                              return raw;
+                            })()}
                             confidence={invoiceFieldConfidence(inv, key)}
                             bold={key === "total"}
                             editable={Boolean(

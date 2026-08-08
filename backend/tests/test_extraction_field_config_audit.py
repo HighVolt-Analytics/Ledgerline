@@ -51,7 +51,7 @@ def test_employee_claim_recommends_claimant_and_total() -> None:
         )
     )
     joined = " ".join(warnings)
-    assert "email_sender" in joined or "invoice_no" in joined or "vendor" in joined
+    assert "email_sender" in joined or "invoice_no" in joined or "employee_name" in joined
 
 
 def test_log_warnings_dedupes_identical_sets(caplog) -> None:

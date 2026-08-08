@@ -216,7 +216,8 @@ ROUTE_DEFAULT_FIELD_KEYS: dict[ExtractionRoute, tuple[str, ...]] = {
         "line_items",
     ),
     ExtractionRoute.EXPENSE_CLAIM: (
-        "vendor",
+        "email_sender",
+        "employee_name",
         "invoice_no",
         "invoice_date",
         "total",

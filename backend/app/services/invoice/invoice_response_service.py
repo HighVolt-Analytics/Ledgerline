@@ -285,6 +285,7 @@ def invoice_to_response(
         file_hash=inv.file_hash,
         raw_file_path=inv.raw_file_path,
         email_sender=inv.email_sender,
+        employee_email=getattr(inv, "employee_email", None),
         capture_source=inv.capture_source,
         connected_mailbox_id=inv.connected_mailbox_id,
         storage_vendor_slug=inv.storage_vendor_slug,

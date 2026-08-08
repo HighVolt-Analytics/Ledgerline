@@ -37,6 +37,7 @@ POSTING_CRITICAL_FIELD_KEYS: frozenset[str] = frozenset(
 CANONICAL_EXTRACTION_FIELD_KEYS: frozenset[str] = frozenset(
     {
         "vendor",
+        "employee_name",
         "invoice_no",
         "po_reference",
         "so_reference",

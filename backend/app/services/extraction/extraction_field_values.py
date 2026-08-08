@@ -47,6 +47,7 @@ INVOICE_SCALAR_ATTRS: frozenset[str] = frozenset(
 # Canonical keys persisted in invoice.extracted_fields (not top-level InvoiceData attrs).
 EXTRACTED_ONLY_ATTRS: frozenset[str] = frozenset(
     {
+        "employee_name",
         "seller_name",
         "seller_tax_id",
         "seller_address",
@@ -377,6 +378,7 @@ def custom_extraction_field_keys_for_dt(
 
 _PRESET_EXTRACTION_LABELS: dict[str, str] = {
     "vendor": "Vendor",
+    "employee_name": "Employee name",
     "abn": "Tax ID / ABN",
     "invoice_no": "Invoice number",
     "invoice_date": "Invoice date",
@@ -402,6 +404,7 @@ _PRESET_EXTRACTION_LABELS: dict[str, str] = {
     "buyer_tax_id": "Buyer tax ID",
     "buyer_address": "Buyer address",
     "email_subject": "Email subject",
+    "email_sender": "Sender (email or mobile)",
     "account_code": "Account code",
     "account_name": "Account name",
 }
@@ -446,6 +449,7 @@ def custom_extraction_fields_prompt_lines(descriptors: list[dict[str, str]]) -> 
 
 _FIELD_HINT_PATTERNS: dict[str, str] = {
     "vendor": "Vendor, Supplier, From, Seller, Bill From",
+    "employee_name": "Employee Name, Claimant, Staff Name, Submitted By, Employee",
     "abn": "ABN, GST, VAT, Tax ID, Company Reg",
     "invoice_no": "Invoice No, Invoice Number, Inv #, Tax Invoice",
     "invoice_date": "Invoice Date, Date, Tax Invoice Date",
@@ -619,6 +623,10 @@ _FINANCE_FIELD_DEFS: dict[str, dict[str, str]] = {
     "vendor": {
         "finance_role": "Creditor / supplier issuing the invoice (seller on a purchase invoice)",
         "do_not_use": "CustomerName, Bill To, buyer name",
+    },
+    "employee_name": {
+        "finance_role": "Employee / claimant submitting a team expense (not the merchant)",
+        "do_not_use": "Vendor, Supplier, merchant name on the receipt",
     },
     "abn": {
         "finance_role": "Supplier tax ID (ABN, GST, VAT of the vendor)",

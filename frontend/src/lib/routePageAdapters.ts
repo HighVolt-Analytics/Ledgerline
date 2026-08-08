@@ -127,6 +127,8 @@ export function teamExpenseChannelsFromRules(rules: TeamExpenseRule[]): TeamExpe
 }
 
 function inferSubmitter(inv: Invoice): string {
+  const employeeName = inv.extracted_fields?.employee_name?.trim();
+  if (employeeName) return employeeName;
   const sender = inv.email_sender?.trim();
   if (sender?.includes("@")) {
     const local = sender.split("@")[0] ?? sender;
@@ -264,7 +266,7 @@ export function invoiceToTeamClaim(
 ): ExpenseClaim {
   const amount = parseAmount(inv.total);
   const gst = parseAmount(inv.gst);
-  const matched = matchEmployeeForSender(inv.email_sender, employees);
+  const matched = matchEmployeeForSender(inv.email_sender, employees, inv.employee_email);
   return {
     id: String(inv.id),
     documentRef: documentDisplayRef(inv),
@@ -311,10 +313,16 @@ function normalizePhone(value: string): string {
   return value.replace(/\D/g, "");
 }
 
-function matchEmployeeForSender(
+export function matchEmployeeForSender(
   sender: string | null | undefined,
-  employees: EmployeeMaster[]
+  employees: EmployeeMaster[],
+  employeeEmail?: string | null
 ): EmployeeMaster | undefined {
+  const stamped = (employeeEmail ?? "").trim().toLowerCase();
+  if (stamped) {
+    const byEmail = employees.find((emp) => (emp.email ?? "").trim().toLowerCase() === stamped);
+    if (byEmail) return byEmail;
+  }
   if (!sender?.trim()) return undefined;
   let key = sender.trim().toLowerCase();
   const angle = key.match(/<([^>]+)>/);
@@ -323,7 +331,7 @@ function matchEmployeeForSender(
   for (const emp of employees) {
     const email = (emp.email ?? "").trim().toLowerCase();
     if (email && email === key) return emp;
-    for (const field of [emp.whatsappNumber, emp.viberNumber ?? ""]) {
+    for (const field of [emp.whatsappNumber, emp.whatsappNumber2 ?? "", emp.viberNumber ?? ""]) {
       const digits = normalizePhone(field);
       if (digits && phone && digits === phone) return emp;
     }
@@ -377,7 +385,7 @@ export function invoiceToRecentClaimValidation(
   inv: Invoice,
   employees: EmployeeMaster[] = []
 ): RecentClaimValidation {
-  const matched = matchEmployeeForSender(inv.email_sender, employees);
+  const matched = matchEmployeeForSender(inv.email_sender, employees, inv.employee_email);
   const claim = invoiceToTeamClaim(inv);
   return {
     id: String(inv.id),

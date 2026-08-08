@@ -24,9 +24,9 @@ RECOMMENDED_FIELDS_BY_PLAYBOOK: dict[str, tuple[str, ...]] = {
     "import_dossier": ("invoice_no", "invoice_date"),
     "employee_claim": (
         "email_sender",
+        "employee_name",
         "invoice_date",
         "total",
-        "vendor",
         "invoice_no",
         "line_items",
     ),

@@ -11,6 +11,7 @@ export type ExtractionFieldOption = { key: string; label: string };
 
 export const EXTRACTION_FIELD_OPTIONS = [
   { key: "vendor", label: "Vendor" },
+  { key: "employee_name", label: "Employee name" },
   { key: "abn", label: "Tax ID / ABN" },
   { key: "invoice_no", label: "Invoice number" },
   { key: "proforma_invoice_no", label: "Proforma invoice number" },
@@ -191,7 +192,7 @@ const STANDARD_EXTRACTION_FIELDS_BY_ROUTE: Record<RouteTarget, ExtractionFieldKe
   ]),
   "Team Expenses": withLinkingStandardFields([
     "email_sender",
-    "vendor",
+    "employee_name",
     "abn",
     "invoice_no",
     "invoice_date",

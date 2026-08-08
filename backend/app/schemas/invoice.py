@@ -82,6 +82,7 @@ class InvoiceResponse(BaseModel):
     file_hash: str | None
     raw_file_path: str | None
     email_sender: str | None = None
+    employee_email: str | None = None
     capture_source: str | None = None
     connected_mailbox_id: int | None = None
     storage_vendor_slug: str | None = None

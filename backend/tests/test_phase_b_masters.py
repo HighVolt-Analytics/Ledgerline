@@ -137,7 +137,7 @@ def test_team_manual_approval_manager_gate_without_threshold_holds() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stamp_team_expense_employee_identity_fills_empty_vendor(
+async def test_stamp_team_expense_employee_identity_fills_employee_name(
     db_session: AsyncSession,
 ) -> None:
     from app.models.employee_master import EmployeeMasterRecord
@@ -168,6 +168,7 @@ async def test_stamp_team_expense_employee_identity_fills_empty_vendor(
     assert name == "vishnu"
     assert inv.vendor == "vishnu"
     assert inv.employee_email == "codevishnu321@gmail.com"
+    assert (inv.extracted_fields or {}).get("employee_name") == "vishnu"
     assert (inv.extracted_fields or {}).get("vendor") == "vishnu"
 
 

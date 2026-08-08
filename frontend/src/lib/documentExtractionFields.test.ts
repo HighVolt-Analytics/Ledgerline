@@ -96,6 +96,8 @@ describe("standardExtractionFieldsForRoute", () => {
     expect(standardExtractionFieldsForRoute("Expenses Management")).toContain("line_items");
     expect(standardExtractionFieldsForRoute("Team Expenses")).toContain("line_items");
     expect(standardExtractionFieldsForRoute("Team Expenses")).toContain("email_sender");
+    expect(standardExtractionFieldsForRoute("Team Expenses")).toContain("employee_name");
+    expect(standardExtractionFieldsForRoute("Team Expenses")).not.toContain("vendor");
   });
 
   it("always includes linking fields on every route", () => {
@@ -206,17 +208,30 @@ describe("reconcileExtractionFieldsForRoute", () => {
 
   it("keeps line_items when switching to Team Expenses", () => {
     const result = reconcileExtractionFieldsForRoute({
+      extractionFields: ["employee_name", "line_items", "total"],
+      requiredFields: ["employee_name", "line_items"],
+      nextRoute: "Team Expenses",
+    });
+    expect(result.extractionFields).toEqual(
+      expect.arrayContaining(["employee_name", "line_items", "total"])
+    );
+    expect(result.requiredFields).toEqual(
+      expect.arrayContaining(["employee_name", "line_items"])
+    );
+    expect(result.removedStandardFields).toEqual([]);
+  });
+
+  it("drops vendor (not a TE standard) when switching to Team Expenses", () => {
+    const result = reconcileExtractionFieldsForRoute({
       extractionFields: ["vendor", "line_items", "total"],
       requiredFields: ["vendor", "line_items"],
       nextRoute: "Team Expenses",
     });
     expect(result.extractionFields).toEqual(
-      expect.arrayContaining(["vendor", "line_items", "total"])
+      expect.arrayContaining(["line_items", "total"])
     );
-    expect(result.requiredFields).toEqual(
-      expect.arrayContaining(["vendor", "line_items"])
-    );
-    expect(result.removedStandardFields).toEqual([]);
+    expect(result.extractionFields).not.toContain("vendor");
+    expect(result.removedStandardFields).toEqual(["vendor"]);
   });
 });
 

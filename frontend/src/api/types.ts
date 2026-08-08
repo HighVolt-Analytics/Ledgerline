@@ -356,6 +356,8 @@ export interface Invoice {
   file_hash: string | null;
   raw_file_path: string | null;
   email_sender: string | null;
+  /** Permanent Team Expenses identity stamp (Employee Master email). */
+  employee_email?: string | null;
   capture_source: string | null;
   connected_mailbox_id: number | null;
   storage_vendor_slug: string | null;

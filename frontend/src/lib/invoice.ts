@@ -104,6 +104,7 @@ export function counterpartyName(
   const fields = inv.extracted_fields ?? {};
   const kind = counterpartyKind(inv);
   const vendor = inv.vendor?.trim() || "";
+  const employeeName = fields.employee_name?.trim() || "";
   const buyer = fields.buyer_name?.trim() || "";
   const seller = fields.seller_name?.trim() || "";
   const purchaseDoc = (inv.purchase_document_type ?? "").trim().toLowerCase();
@@ -113,6 +114,9 @@ export function counterpartyName(
     return vendor || seller || "—";
   }
 
+  if (kind === "employee") {
+    return employeeName || vendor || buyer || seller || "—";
+  }
   if (kind === "customer") {
     if (buyer) return buyer;
     if (vendor && vendor.toLowerCase() !== seller.toLowerCase()) return vendor;
@@ -141,6 +145,7 @@ export function extractionFieldLabelForInvoice(
   if (key === "gst" && tax) {
     return tax.rate != null ? `${tax.label} ${tax.rate}%` : tax.label;
   }
+  // Legacy TE configs may still list vendor; label it Employee until migrated to employee_name.
   if (key === "vendor") return counterpartyLabel(inv);
   return extractionFieldLabel(key);
 }

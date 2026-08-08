@@ -382,7 +382,7 @@
   },
   "DT-12": {
     "required_fields": [
-      "vendor",
+      "employee_name",
       "total",
       "due_date"
     ],
@@ -407,7 +407,8 @@
     "azure_di_profile": "prebuilt-invoice",
     "fallback_if_unknown_subtype": "generic_financial_document",
     "extraction_fields": [
-      "vendor",
+      "email_sender",
+      "employee_name",
       "total",
       "due_date",
       "abn",
