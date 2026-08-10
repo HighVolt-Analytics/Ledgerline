@@ -364,16 +364,26 @@ export function UploadDropZone({
                       {total}
                     </span>
                     <span className="upload-progress-hero__label"> files done</span>
-                    <span className="upload-progress-hero__pct tnum tabular-nums">
-                      {" "}
-                      · {overallPct}%
-                    </span>
                   </p>
                   <p className="upload-progress-hero__sub">
                     {completed >= total
                       ? "Wrapping up your batch…"
                       : `File ${Math.min(completed + 1, total)} is moving through now`}
                   </p>
+                </div>
+                <div className="upload-progress-ring" aria-hidden>
+                  <svg viewBox="0 0 48 48" className="upload-progress-ring__svg">
+                    <circle className="upload-progress-ring__track" cx="24" cy="24" r="20" />
+                    <circle
+                      className="upload-progress-ring__value"
+                      cx="24"
+                      cy="24"
+                      r="20"
+                      pathLength={100}
+                      strokeDasharray={`${overallPct} 100`}
+                    />
+                  </svg>
+                  <span className="upload-progress-ring__pct tnum tabular-nums">{overallPct}%</span>
                 </div>
               </div>
 
