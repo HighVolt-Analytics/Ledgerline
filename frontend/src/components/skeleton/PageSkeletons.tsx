@@ -337,18 +337,199 @@ export function KpiTabsPageSkeleton() {
   );
 }
 
+/** Matches UploadDropZone card: header strip + dashed drop area */
+export function UploadDropZoneSkeleton({ className }: { className?: string }) {
+  return (
+    <Card className={cn("overflow-hidden", className)} aria-hidden>
+      <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-border">
+        <div className="flex items-center gap-2">
+          <Skeleton circle className="h-4 w-4" />
+          <Skeleton className="h-4 w-28" />
+        </div>
+        <Skeleton className="h-3 w-40 hidden sm:block" />
+      </div>
+      <div className="p-5">
+        <div className="rounded-xl border-2 border-dashed border-border bg-muted/20 px-6 py-6 flex flex-col items-center gap-3">
+          <Skeleton circle className="h-10 w-10" />
+          <Skeleton className="h-4 w-48 max-w-full" />
+          <Skeleton className="h-3 w-64 max-w-full" />
+          <div className="flex flex-wrap justify-center gap-2 mt-1">
+            <Skeleton className="h-5 w-12 rounded-md" />
+            <Skeleton className="h-5 w-12 rounded-md" />
+            <Skeleton className="h-5 w-12 rounded-md" />
+            <Skeleton className="h-5 w-14 rounded-md" />
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+/** Matches DocumentMatrixPanel: optional KPIs, search + filter pills, stage table */
+export function MatrixPanelSkeleton({
+  showKpis = false,
+  showControls = true,
+  showTable = true,
+  rows = 6,
+}: {
+  showKpis?: boolean;
+  showControls?: boolean;
+  showTable?: boolean;
+  rows?: number;
+}) {
+  const colTemplate =
+    "minmax(5.5rem,1.1fr) minmax(3.5rem,0.7fr) minmax(7rem,1.35fr) repeat(4, minmax(2.5rem,0.55fr)) minmax(5rem,0.95fr) minmax(4.5rem,0.85fr) minmax(3rem,0.55fr)";
+
+  return (
+    <div aria-busy aria-label="Loading document matrix">
+      {showKpis ? (
+        <KpiGridSkeleton count={4} compact className="mb-5" />
+      ) : null}
+      {showControls ? (
+        <div className="flex flex-wrap items-center gap-2 mb-3 w-full">
+          <Skeleton className="h-9 flex-1 min-w-[14rem] max-w-2xl rounded-md" />
+          <div className="flex items-center gap-2 flex-wrap">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Skeleton key={i} pill className="h-7 w-20" />
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {showTable ? (
+        <Card className="overflow-hidden">
+          <div className="overflow-x-auto">
+            <div className="min-w-[52rem]">
+              <div
+                className="grid items-center gap-x-3 px-4 py-2.5 border-b border-border/60"
+                style={{ gridTemplateColumns: colTemplate }}
+              >
+                {Array.from({ length: 10 }).map((_, i) => (
+                  <Skeleton key={i} className="h-3 w-full max-w-[5rem]" />
+                ))}
+              </div>
+              <div className="divide-y divide-border/60">
+                {Array.from({ length: rows }).map((_, row) => (
+                  <div
+                    key={row}
+                    className="grid items-center gap-x-3 px-4 py-3"
+                    style={{ gridTemplateColumns: colTemplate }}
+                  >
+                    <Skeleton className="h-3.5 w-full max-w-[6rem]" />
+                    <Skeleton className="h-5 w-full max-w-[4rem] rounded-md" />
+                    <Skeleton className="h-3.5 w-full max-w-[8rem]" />
+                    {Array.from({ length: 4 }).map((_, col) => (
+                      <Skeleton key={col} circle className="h-5 w-5 justify-self-center" />
+                    ))}
+                    <Skeleton className="h-5 w-full max-w-[5rem] rounded-md" />
+                    <Skeleton className="h-5 w-full max-w-[4rem] rounded-md" />
+                    <Skeleton className="h-3.5 w-full max-w-[3rem] justify-self-end" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </Card>
+      ) : null}
+    </div>
+  );
+}
+
+/** Matches Captured documents card on Detailed tab */
+export function CapturedDocumentsSkeleton({ rows = 8 }: { rows?: number }) {
+  const colTemplate =
+    "minmax(6rem,1.2fr) minmax(5rem,1fr) minmax(7rem,1.3fr) minmax(4rem,0.8fr) minmax(5rem,1fr) minmax(4.5rem,0.9fr) minmax(4rem,0.75fr) minmax(3.5rem,0.65fr)";
+
+  return (
+    <Card className="overflow-hidden" aria-busy aria-label="Loading captured documents">
+      <div className="flex flex-col gap-3 px-3 sm:px-4 py-3 border-b border-border sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-2 shrink-0">
+          <Skeleton circle className="h-4 w-4" />
+          <Skeleton className="h-4 w-36" />
+          <Skeleton className="h-3 w-8" />
+        </div>
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:ml-auto">
+          <Skeleton className="h-8 w-full sm:w-64 rounded-md" />
+          <Skeleton className="h-8 w-full sm:w-[220px] rounded-md" />
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <div className="min-w-[48rem]">
+          <div
+            className="grid items-center gap-x-3 px-4 py-2.5 border-b border-border/60"
+            style={{ gridTemplateColumns: colTemplate }}
+          >
+            {Array.from({ length: 8 }).map((_, i) => (
+              <Skeleton key={i} className="h-3 w-full max-w-[5rem]" />
+            ))}
+          </div>
+          <div className="divide-y divide-border/60">
+            {Array.from({ length: rows }).map((_, row) => (
+              <div
+                key={row}
+                className="grid items-center gap-x-3 px-4 py-3"
+                style={{ gridTemplateColumns: colTemplate }}
+              >
+                {Array.from({ length: 8 }).map((_, col) => (
+                  <Skeleton
+                    key={col}
+                    className={cn(
+                      "h-3.5 w-full",
+                      col === 0 ? "max-w-[7rem]" : col === 7 ? "max-w-[3rem]" : "max-w-[5rem]"
+                    )}
+                  />
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="flex items-center justify-between gap-3 px-3 sm:px-4 py-3 border-t border-border">
+        <Skeleton className="h-3 w-24" />
+        <div className="flex items-center gap-1.5">
+          <Skeleton className="h-8 w-12 rounded-md" />
+          <Skeleton className="h-8 w-8 rounded-md hidden sm:block" />
+          <Skeleton className="h-8 w-12 rounded-md" />
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 export function UploadPageSkeleton() {
   return (
-    <div className="space-y-5">
-      <Card className="p-6 space-y-3">
-        <Skeleton className="h-4 w-36" />
-        <Skeleton className="h-28 w-full rounded-xl border-2 border-dashed border-border bg-muted/20" />
-      </Card>
-      <Card className="p-4 space-y-3">
-        <Skeleton className="h-4 w-32" />
-        <Skeleton className="h-10 w-full rounded-md" />
-      </Card>
-      <TableSkeleton rows={8} columns={6} />
+    <div data-testid="upload-page-skeleton" aria-busy aria-label="Loading upload">
+      <div className="page-top-sticky">
+        <div className="page-header flex flex-wrap justify-between gap-4 items-end">
+          <div className="page-header__main min-w-0 flex-1">
+            <div className="page-header__headline-tabs">
+              <div className="app-underline-tabs" role="presentation">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div
+                    key={i}
+                    className="app-underline-tabs__tab pointer-events-none"
+                    aria-hidden
+                  >
+                    <Skeleton className="h-4 w-16" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          <Skeleton pill className="h-8 w-24 shrink-0" />
+        </div>
+      </div>
+
+      <UploadDropZoneSkeleton className="mb-6" />
+
+      <div className="app-underline-tabs mb-5" role="presentation">
+        {Array.from({ length: 2 }).map((_, i) => (
+          <div key={i} className="app-underline-tabs__tab pointer-events-none" aria-hidden>
+            <Skeleton className="h-4 w-20" />
+          </div>
+        ))}
+      </div>
+
+      <MatrixPanelSkeleton showKpis={false} showControls rows={6} />
     </div>
   );
 }

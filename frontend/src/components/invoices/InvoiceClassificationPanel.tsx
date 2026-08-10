@@ -1,6 +1,6 @@
+import { useState } from "react";
 import type { InvoiceClassificationAudit } from "@/api/types";
 import {
-  autoRouteThresholdSummary,
   classificationReviewReasons,
   classificationStatusMessage,
   formatClassificationConfidence,
@@ -8,6 +8,7 @@ import {
   reviewReasonLabel,
 } from "@/lib/classificationAuditDisplay";
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
+import { cn } from "@/lib/cn";
 
 type InvoiceClassificationPanelProps = {
   audit: InvoiceClassificationAudit | null;
@@ -19,6 +20,35 @@ type InvoiceClassificationPanelProps = {
   documentTypes?: DocumentTypeDefinition[];
 };
 
+function SourceColumn({
+  label,
+  name,
+  confidence,
+  emphasize,
+}: {
+  label: string;
+  name: string;
+  confidence: string;
+  emphasize?: boolean;
+}) {
+  return (
+    <div className={cn("ai-class-source", emphasize && "ai-class-source--confirmed")}>
+      <div className="ai-class-source__label">{label}</div>
+      <div className="ai-class-source__name">{name}</div>
+      <div className="ai-class-source__conf tnum">{confidence}</div>
+    </div>
+  );
+}
+
+function RoutingRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="ai-class-routing-row">
+      <span className="ai-class-routing-row__label">{label}</span>
+      <span className="ai-class-routing-row__value tnum">{value}</span>
+    </div>
+  );
+}
+
 export function InvoiceClassificationPanel({
   audit,
   loading,
@@ -28,9 +58,12 @@ export function InvoiceClassificationPanel({
   catalogueCodes = [],
   documentTypes = [],
 }: InvoiceClassificationPanelProps) {
+  const [detailsOpen, setDetailsOpen] = useState(requiresConfirm);
+  const [explanationOpen, setExplanationOpen] = useState(false);
+
   if (loading) {
     return (
-      <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+      <div className="ai-class-panel ai-class-panel--loading" aria-busy>
         Loading classification…
       </div>
     );
@@ -43,14 +76,16 @@ export function InvoiceClassificationPanel({
   if (!audit) {
     if (!showDtPicker) return null;
     return (
-      <div className="rounded-md border border-border bg-muted/20 px-3 py-2.5 text-xs space-y-3">
-        <div className="font-medium text-foreground">Document type</div>
-        <p className="text-amber-800 dark:text-amber-300">
+      <section className="ai-class-panel" aria-label="Document type">
+        <div className="ai-class-panel__head">
+          <h3 className="ai-class-panel__title">Document type</h3>
+        </div>
+        <p className="ai-class-panel__note ai-class-panel__note--warn">
           Catalogue document type is not mapped yet. Select one to extract fields and continue.
         </p>
-        <div className="flex flex-wrap items-center gap-2 pt-1">
+        <div className="ai-class-panel__actions">
           <select
-            className="rounded-md border border-border bg-card px-2 py-1 text-[11px] text-foreground"
+            className="ai-class-select"
             defaultValue=""
             onChange={(e) => {
               const code = e.target.value;
@@ -67,98 +102,62 @@ export function InvoiceClassificationPanel({
             ))}
           </select>
         </div>
-      </div>
+      </section>
     );
   }
 
   const llmDt = audit.llm_suggested_dt ?? "";
   const policyDt = audit.policy_winner_dt ?? "";
   const confirmed = audit.confirmed_dt ?? audit.document_type_code ?? "";
+  const confirmedName = formatDtCodeWithName(documentTypes, confirmed);
+  const confirmedConf = formatClassificationConfidence(
+    audit.confirmed_confidence ?? audit.document_type_confidence
+  );
   const chips = classificationReviewReasons(audit);
   const statusMessage = classificationStatusMessage(audit);
-  const thresholdSummary = autoRouteThresholdSummary(audit);
   const showActions = showDtPicker && Boolean(onConfirmDt || onChangeDt);
+  const explanation = (audit.llm_reasoning || audit.reason || "").trim();
+  const explanationLong = explanation.length > 220;
+
+  const effectiveRoute = audit.min_route_confidence;
+  const orgRoute =
+    audit.org_auto_route_min_confidence ?? audit.auto_route_min_confidence ?? null;
+  const dtRoute = audit.dt_min_route_confidence ?? null;
+  const hasRouting =
+    (effectiveRoute != null && !Number.isNaN(effectiveRoute)) ||
+    (orgRoute != null && !Number.isNaN(orgRoute)) ||
+    (dtRoute != null && !Number.isNaN(dtRoute));
+
+  const compactStatus =
+    statusMessage ||
+    (chips.length
+      ? requiresConfirm
+        ? "Confirm or change document type to continue processing."
+        : reviewReasonLabel(chips[0])
+      : null);
 
   return (
-    <div className="rounded-md border border-border bg-muted/20 px-3 py-2.5 text-xs space-y-3">
-      <div className="font-medium text-foreground">AI classification</div>
-
-      {thresholdSummary ? (
-        <p className="text-muted-foreground">{thresholdSummary}</p>
-      ) : null}
-
-      <div className="grid gap-2 sm:grid-cols-3">
-        <div className="rounded border border-border/60 bg-background/50 p-2">
-          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">LLM suggested</div>
-          <div className="mt-1 font-medium text-foreground">
-            {formatDtCodeWithName(documentTypes, llmDt)}
-          </div>
-          <div className="text-muted-foreground tnum">{formatClassificationConfidence(audit.llm_confidence)}</div>
-        </div>
-        <div className="rounded border border-border/60 bg-background/50 p-2">
-          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Policy winner</div>
-          <div className="mt-1 font-medium text-foreground">
-            {formatDtCodeWithName(documentTypes, policyDt)}
-          </div>
-          <div className="text-muted-foreground tnum">
-            {formatClassificationConfidence(audit.policy_winner_confidence)}
-          </div>
-        </div>
-        <div className="rounded border border-border/60 bg-background/50 p-2">
-          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Confirmed</div>
-          <div className="mt-1 font-medium text-foreground">
-            {formatDtCodeWithName(documentTypes, confirmed)}
-          </div>
-          <div className="text-muted-foreground tnum">
-            {formatClassificationConfidence(audit.confirmed_confidence ?? audit.document_type_confidence)}
-          </div>
-        </div>
+    <section className="ai-class-panel" aria-label="AI classification">
+      <div className="ai-class-panel__head">
+        <h3 className="ai-class-panel__title">AI classification</h3>
       </div>
 
-      {audit.llm_reasoning ? (
-        <p className="text-muted-foreground">{audit.llm_reasoning}</p>
-      ) : audit.reason ? (
-        <p className="text-muted-foreground">{audit.reason}</p>
-      ) : null}
-
-      {chips.length ? (
-        <div className="space-y-1.5">
-          <p className="text-amber-800 dark:text-amber-300">
-            {requiresConfirm
-              ? "Confirm or change document type to continue processing."
-              : "Classification review notes:"}
-          </p>
-          <div className="flex flex-wrap gap-1">
-            {chips.map((chip) => (
-              <span
-                key={chip}
-                title={chip}
-                className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-800 dark:text-amber-300"
-              >
-                {reviewReasonLabel(chip)}
-              </span>
-            ))}
-          </div>
+      <div className="ai-class-summary">
+        <div className="ai-class-summary__main">
+          <div className="ai-class-summary__name">{confirmedName}</div>
+          {compactStatus ? (
+            <div className="ai-class-summary__status">{compactStatus}</div>
+          ) : null}
         </div>
-      ) : statusMessage ? (
-        <p className="text-emerald-700 dark:text-emerald-400">{statusMessage}</p>
-      ) : null}
-
-      {audit.citation_failed && audit.citation_failed.length > 0 ? (
-        <div className="rounded border border-rose-500/30 bg-rose-500/10 p-2 text-rose-900 dark:text-rose-200">
-          <p className="font-medium">Citation grounding failed</p>
-          <p className="mt-1 text-[11px]">
-            Fields without valid OCR citations: {audit.citation_failed.join(", ")}
-          </p>
-        </div>
-      ) : null}
+        <div className="ai-class-summary__conf tnum">{confirmedConf}</div>
+      </div>
 
       {showActions ? (
-        <div className="flex flex-wrap items-center gap-2 pt-1">
+        <div className="ai-class-panel__actions">
           {onConfirmDt && llmDt ? (
             <button
               type="button"
-              className="rounded-md border border-border bg-background px-2 py-1 text-[11px] hover:bg-muted"
+              className="ai-class-btn"
               onClick={() => onConfirmDt(llmDt)}
             >
               Confirm {formatDtCodeWithName(documentTypes, llmDt)}
@@ -166,7 +165,7 @@ export function InvoiceClassificationPanel({
           ) : null}
           {onChangeDt ? (
             <select
-              className="rounded-md border border-border bg-card px-2 py-1 text-[11px] text-foreground"
+              className="ai-class-select"
               defaultValue=""
               onChange={(e) => {
                 const code = e.target.value;
@@ -185,6 +184,135 @@ export function InvoiceClassificationPanel({
           ) : null}
         </div>
       ) : null}
-    </div>
+
+      <button
+        type="button"
+        className="ai-class-toggle"
+        aria-expanded={detailsOpen}
+        onClick={() => setDetailsOpen((open) => !open)}
+      >
+        {detailsOpen ? "Hide classification details ↑" : "View classification details ↓"}
+      </button>
+
+      {detailsOpen ? (
+        <div className="ai-class-details">
+          <div className="ai-class-block">
+            <div className="ai-class-block__label">Confirmed</div>
+            <div className="ai-class-confirmed">
+              <span className="ai-class-confirmed__name">{confirmedName}</span>
+              <span className="ai-class-confirmed__conf tnum">{confirmedConf}</span>
+            </div>
+          </div>
+
+          <div className="ai-class-block">
+            <div className="ai-class-block__label">Classification sources</div>
+            <div className="ai-class-sources">
+              <SourceColumn
+                label="LLM suggested"
+                name={formatDtCodeWithName(documentTypes, llmDt)}
+                confidence={formatClassificationConfidence(audit.llm_confidence)}
+              />
+              <SourceColumn
+                label="Policy winner"
+                name={formatDtCodeWithName(documentTypes, policyDt)}
+                confidence={formatClassificationConfidence(audit.policy_winner_confidence)}
+              />
+              <SourceColumn
+                label="Confirmed"
+                name={confirmedName}
+                confidence={confirmedConf}
+                emphasize
+              />
+            </div>
+          </div>
+
+          {hasRouting ? (
+            <div className="ai-class-block">
+              <div className="ai-class-block__label">Routing</div>
+              <div className="ai-class-routing">
+                {effectiveRoute != null && !Number.isNaN(effectiveRoute) ? (
+                  <RoutingRow
+                    label="Auto-route threshold"
+                    value={formatClassificationConfidence(effectiveRoute)}
+                  />
+                ) : null}
+                {orgRoute != null && !Number.isNaN(orgRoute) ? (
+                  <RoutingRow
+                    label="Org-wide threshold"
+                    value={formatClassificationConfidence(orgRoute)}
+                  />
+                ) : null}
+                {dtRoute != null && !Number.isNaN(dtRoute) ? (
+                  <RoutingRow
+                    label="Document-type threshold"
+                    value={formatClassificationConfidence(dtRoute)}
+                  />
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
+          {explanation ? (
+            <div className="ai-class-block">
+              <div className="ai-class-block__label">Explanation</div>
+              {explanationLong && !explanationOpen ? (
+                <>
+                  <p className="ai-class-explanation ai-class-explanation--clamp">{explanation}</p>
+                  <button
+                    type="button"
+                    className="ai-class-toggle ai-class-toggle--inline"
+                    onClick={() => setExplanationOpen(true)}
+                  >
+                    Show explanation
+                  </button>
+                </>
+              ) : (
+                <p className="ai-class-explanation">{explanation}</p>
+              )}
+              {explanationLong && explanationOpen ? (
+                <button
+                  type="button"
+                  className="ai-class-toggle ai-class-toggle--inline"
+                  onClick={() => setExplanationOpen(false)}
+                >
+                  Hide explanation
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+
+          {chips.length ? (
+            <div className="ai-class-block">
+              <div className="ai-class-block__label">Review notes</div>
+              <p className="ai-class-panel__note ai-class-panel__note--warn">
+                {requiresConfirm
+                  ? "Confirm or change document type to continue processing."
+                  : "Classification review notes:"}
+              </p>
+              <ul className="ai-class-notes">
+                {chips.map((chip) => (
+                  <li key={chip} title={chip}>
+                    {reviewReasonLabel(chip)}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : statusMessage ? (
+            <div className="ai-class-block">
+              <p className="ai-class-panel__note ai-class-panel__note--ok">{statusMessage}</p>
+            </div>
+          ) : null}
+
+          {audit.citation_failed && audit.citation_failed.length > 0 ? (
+            <div className="ai-class-block ai-class-block--alert">
+              <div className="ai-class-block__label">Citation grounding failed</div>
+              <p className="ai-class-explanation">
+                Fields without valid OCR citations: {audit.citation_failed.join(", ")}
+              </p>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
   );
 }

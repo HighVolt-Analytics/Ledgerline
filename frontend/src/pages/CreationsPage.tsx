@@ -201,7 +201,27 @@ export function CreationsPage() {
         title="Creations"
         subtitle="Manage vendors, customers, and employees."
         actions={saveStatus}
-      />
+      >
+        <PageTabs
+          value={tab}
+          onChange={setTab}
+          className="w-full"
+          data-testid="creations-tabs"
+          tabs={CREATIONS_TABS.map((t) => {
+            const Icon = t.icon;
+            return {
+              value: t.value,
+              testid: t.testid,
+              label: (
+                <>
+                  <Icon className="h-3.5 w-3.5 shrink-0" />
+                  {t.label}
+                </>
+              ),
+            };
+          })}
+        />
+      </PageHeader>
 
       {!canEdit ? (
         <Card
@@ -211,26 +231,6 @@ export function CreationsPage() {
           View-only mode — only organisation admins can edit masters and vendor detection settings.
         </Card>
       ) : null}
-
-      <PageTabs
-        value={tab}
-        onChange={setTab}
-        className="mb-5 w-full"
-        data-testid="creations-tabs"
-        tabs={CREATIONS_TABS.map((t) => {
-          const Icon = t.icon;
-          return {
-            value: t.value,
-            testid: t.testid,
-            label: (
-              <>
-                <Icon className="h-3.5 w-3.5 shrink-0" />
-                {t.label}
-              </>
-            ),
-          };
-        })}
-      />
 
       <div className={!canEdit ? "pointer-events-none opacity-90" : undefined}>
         {shellLoading ? (

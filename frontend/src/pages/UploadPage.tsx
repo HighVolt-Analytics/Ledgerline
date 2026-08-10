@@ -21,7 +21,8 @@ import { DocumentMatrixPanel } from "@/components/upload/DocumentMatrixPanel";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { InlineTableSkeleton } from "@/components/skeleton/PageSkeletons";
+import { CapturedDocumentsSkeleton, InlineTableSkeleton } from "@/components/skeleton/PageSkeletons";
+import { Skeleton } from "@/components/skeleton/Skeleton";
 import { Select } from "@/components/ui/select";
 import {
   counterpartyColumnLabel,
@@ -553,6 +554,10 @@ export function UploadPage() {
       const summary = await uploadFilesInBatch(files, {
         onProgress: (completed, total) => setUploadProgress({ completed, total }),
       });
+      setUploadProgress({ completed: files.length, total: files.length });
+      // Hold success tick in the dropzone before returning to idle.
+      await new Promise((resolve) => window.setTimeout(resolve, 1700));
+
       let notice = formatBulkUploadNotice(summary);
       if (skipped > 0) {
         notice = `${skipped} unsupported file(s) skipped. ${notice}`;
@@ -856,7 +861,7 @@ export function UploadPage() {
     ) : (
       <>
       {loading && !showCapturedChrome ? (
-        <InlineTableSkeleton rows={8} columns={6} />
+        <CapturedDocumentsSkeleton rows={8} />
       ) : !showCapturedChrome ? (
         <EmptyState
           title={emptyTitle}
@@ -926,9 +931,16 @@ export function UploadPage() {
           </div>
 
           {loading && captured.length === 0 ? (
-            <div className="px-3 sm:px-4 py-4">
-              <InlineTableSkeleton rows={6} columns={6} />
-            </div>
+            <>
+              <InlineTableSkeleton rows={6} columns={8} />
+              <div className="flex items-center justify-between gap-3 px-3 sm:px-4 py-3 border-t border-border">
+                <Skeleton className="h-3 w-24" />
+                <div className="flex items-center gap-1.5">
+                  <Skeleton className="h-8 w-12 rounded-md" />
+                  <Skeleton className="h-8 w-12 rounded-md" />
+                </div>
+              </div>
+            </>
           ) : (
             <>
           <div className="md:hidden divide-y divide-border">

@@ -244,6 +244,13 @@
   flex-shrink: 0;
 }
 
+.primary-sidebar__topic--dashboard .primary-sidebar__topic-icon {
+  width: 19px;
+  height: 19px;
+  flex-shrink: 0;
+  display: block;
+}
+
 .primary-sidebar__topic-label {
   flex: 1;
   min-width: 0;
@@ -1493,7 +1500,17 @@
 }
 
 .dark .app-workspace {
+  --page-canvas: 214 16% 8%; /* ~#11151A — darker page canvas than --card #1C2026 */
+  background-color: hsl(var(--page-canvas));
   box-shadow: 0 1px 3px hsl(0 0% 0% / 0.35);
+}
+
+.dark .app-workspace .app-workspace__main,
+.dark .app-workspace .app-workspace__header,
+.dark .app-workspace .app-workspace__footer,
+.dark .app-workspace .app-mobile-nav,
+.dark .app-workspace .page-top-sticky {
+  background-color: hsl(var(--page-canvas));
 }
 
 @media (max-width: 767px) {

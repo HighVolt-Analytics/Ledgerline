@@ -373,7 +373,7 @@ export function DossierDetailPage() {
 
   return (
 
-    <div data-testid={`page-dossier-detail-${dossier.id}`}>
+    <div className="dossier-detail-page" data-testid={`page-dossier-detail-${dossier.id}`}>
 
       <PageEyebrowHeader
 

@@ -8,7 +8,6 @@ import {
   Coins,
   CreditCard,
   FolderKanban,
-  LayoutDashboard,
   LayoutGrid,
   Link2,
   Pin,
@@ -25,6 +24,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { GlobalSearchDialog } from "@/components/GlobalSearchBar";
+import { DashboardIcon } from "@/components/icons/DashboardIcon";
 import { Logo } from "@/components/Logo";
 import { NotificationBell } from "@/components/NotificationBell";
 import { ProfileSidebarMenu } from "@/components/ProfileSidebarMenu";
@@ -67,7 +67,7 @@ type NavGroup = {
 const DASHBOARD_ITEM: NavItem = {
   to: "/",
   label: "Dashboard",
-  icon: LayoutDashboard,
+  icon: DashboardIcon,
 };
 
 const WORKSPACE_GROUPS: NavGroup[] = [
@@ -158,7 +158,7 @@ const SETTINGS_SECTION: PrimarySection = {
 const ALL_SECTIONS: PrimarySection[] = [...MAIN_PRIMARY_SECTIONS, SETTINGS_SECTION];
 
 const MOBILE_NAV: NavItem[] = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/", label: "Dashboard", icon: DashboardIcon },
   { to: "/upload", label: "Upload", icon: Upload, badge: "upload" },
   { to: "/approvals", label: "Approvals", icon: CheckCircle2, badge: "approvals" },
   { to: "/settings", label: "Settings", icon: Settings },

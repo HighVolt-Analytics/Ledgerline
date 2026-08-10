@@ -620,9 +620,9 @@ export function VendorsTab({
             {pendingQueue.map((item) => (
               <div
                 key={`pending-${item.id}`}
-                className="flex items-center justify-between gap-3 flex-wrap rounded-lg border border-border bg-background p-3"
+                className="flex items-center justify-between gap-3 flex-wrap rounded-lg border border-border bg-transparent p-3"
               >
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <div className="text-sm font-medium">{item.detectedName}</div>
                   <div className="text-xs text-muted-foreground">
                     Detected on invoice · match confidence {item.confidence}% (below threshold)
@@ -641,7 +641,7 @@ export function VendorsTab({
                     ) : null}
                   </div>
                 </div>
-                <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-2 flex-wrap shrink-0 ml-auto">
                   {activeVendors.length > 0 ? (
                     <Select
                       value={linkMasterByPendingId[item.id] ?? ""}
@@ -699,33 +699,39 @@ export function VendorsTab({
             {registrationPending.map((v) => (
               <div
                 key={v.id}
-                className="flex items-center justify-between gap-3 flex-wrap rounded-lg border border-border bg-background p-3"
+                className="flex items-center justify-between gap-3 flex-wrap rounded-lg border border-border bg-transparent p-3"
               >
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <div className="text-sm font-medium">{v.name}</div>
                   <div className="text-xs text-muted-foreground">
                     Registration in progress · match confidence {v.matchConfidence}% · complete bank
                     details
                   </div>
                 </div>
-                <Button
-                  size="sm"
-                  onClick={() => openVendor(v.id, true)}
-                  data-testid={`complete-registration-${v.id}`}
-                >
-                  <ClipboardCheck className="h-4 w-4 mr-1" />
-                  Complete Registration
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={deleteMutation.isPending}
-                  onClick={() => removeVendor(v)}
-                  data-testid={`remove-registration-vendor-${v.id}`}
-                >
-                  <Trash2 className="h-4 w-4 mr-1" />
-                  Remove
-                </Button>
+                <div className="flex items-center gap-2 flex-wrap shrink-0 ml-auto">
+                  {/* Keep Complete Registration aligned with pending rows that show "Link to existing…" */}
+                  {activeVendors.length > 0 ? (
+                    <div className="hidden sm:block w-[200px] shrink-0" aria-hidden />
+                  ) : null}
+                  <Button
+                    size="sm"
+                    onClick={() => openVendor(v.id, true)}
+                    data-testid={`complete-registration-${v.id}`}
+                  >
+                    <ClipboardCheck className="h-4 w-4 mr-1" />
+                    Complete Registration
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={deleteMutation.isPending}
+                    onClick={() => removeVendor(v)}
+                    data-testid={`remove-registration-vendor-${v.id}`}
+                  >
+                    <Trash2 className="h-4 w-4 mr-1" />
+                    Remove
+                  </Button>
+                </div>
               </div>
             ))}
           </div>

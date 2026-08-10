@@ -6,7 +6,7 @@ import {
   Coins,
   CreditCard,
   FolderKanban,
-  LayoutDashboard,
+  Gauge,
   Link2,
   Plug,
   Receipt,
@@ -35,7 +35,7 @@ export type NavGroup = {
 export const NAV_GROUPS: NavGroup[] = [
   {
     label: "Dashboard",
-    items: [{ to: "/", label: "Dashboard", icon: LayoutDashboard }],
+    items: [{ to: "/", label: "Dashboard", icon: Gauge }],
   },
   {
     label: "Workspace",
@@ -109,7 +109,7 @@ export const NAV_GROUPS: NavGroup[] = [
 ];
 
 export const MOBILE_NAV: NavItem[] = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/", label: "Dashboard", icon: Gauge },
   { to: "/upload", label: "Upload", icon: Upload, badge: "upload" },
   { to: "/approvals", label: "Approvals", icon: CheckCircle2, badge: "approvals" },
   { to: "/settings", label: "Settings", icon: Settings },

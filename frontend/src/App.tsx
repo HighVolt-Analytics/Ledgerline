@@ -257,7 +257,7 @@ export default function App() {
             <Route
               path="upload"
               element={
-                <LazyPage>
+                <LazyPage loaderVariant="upload">
                   <UploadPage />
                 </LazyPage>
               }

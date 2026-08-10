@@ -328,7 +328,7 @@ export function CustomerMastersPanel() {
             {pendingQueue.map((item) => (
               <div
                 key={`pending-${item.id}`}
-                className="flex items-center justify-between gap-3 flex-wrap rounded-lg border border-border bg-background p-3"
+                className="flex items-center justify-between gap-3 flex-wrap rounded-lg border border-border bg-transparent p-3"
               >
                 <div className="min-w-0">
                   <div className="text-sm font-medium">{item.detectedName}</div>
@@ -407,7 +407,7 @@ export function CustomerMastersPanel() {
             {registrationPending.map((customer) => (
               <div
                 key={`in-progress-${customer.id}`}
-                className="flex items-center justify-between gap-3 flex-wrap rounded-lg border border-border bg-background p-3"
+                className="flex items-center justify-between gap-3 flex-wrap rounded-lg border border-border bg-transparent p-3"
               >
                 <div className="min-w-0">
                   <div className="text-sm font-medium">{customer.name}</div>

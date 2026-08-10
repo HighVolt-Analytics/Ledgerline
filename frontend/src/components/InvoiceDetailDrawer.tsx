@@ -36,7 +36,6 @@ import { DocumentTypeChip } from "@/components/inbox/DocumentTypeChip";
 import { PipelineDebugPanel } from "@/components/invoices/PipelineDebugPanel";
 import { DossierPipelineTimeline } from "@/components/dossiers/DossierPipelineTimeline";
 import { PageTabs } from "@/components/PageTabs";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -299,18 +298,136 @@ function updateDraftExtractionField(
 
 function ConfidenceDot({ value }: { value: number | null }) {
   if (value == null || !Number.isFinite(value)) return null;
-  const color =
-    value >= 95
-      ? "bg-[hsl(var(--chart-1))]"
-      : value >= 80
-        ? "bg-[hsl(43_74%_49%)]"
-        : "bg-destructive";
+  const tone =
+    value >= 95 ? "high" : value >= 80 ? "mid" : "low";
   return (
-    <span className="inline-flex items-center gap-1.5 tnum text-xs text-muted-foreground shrink-0">
-      <span className={cn("h-2 w-2 rounded-full", color)} />
-      {value}%
+    <span
+      className={cn("invoice-drawer-confidence", `invoice-drawer-confidence--${tone}`)}
+      title={`${value}% confidence`}
+    >
+      <span className="invoice-drawer-confidence__dot" aria-hidden />
+      <span className="tnum">{value}%</span>
     </span>
   );
+}
+
+function FieldRow({
+  label,
+  value,
+  confidence,
+  bold,
+  wide,
+  editable,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  confidence: number | null;
+  bold?: boolean;
+  wide?: boolean;
+  editable?: boolean;
+  onChange?: (value: string) => void;
+}) {
+  const canEdit = Boolean(editable);
+  return (
+    <div
+      className={cn(
+        "invoice-drawer-field",
+        bold && "invoice-drawer-field--emphasis",
+        wide && "invoice-drawer-field--wide",
+        canEdit ? "invoice-drawer-field--editable" : "invoice-drawer-field--readonly"
+      )}
+    >
+      <div className="invoice-drawer-field__meta">
+        <label className="invoice-drawer-field__label">{label}</label>
+        {!canEdit && confidence != null ? <ConfidenceDot value={confidence} /> : null}
+      </div>
+      {canEdit ? (
+        <Input
+          value={value}
+          onChange={(e) => onChange?.(e.target.value)}
+          className={cn(
+            "invoice-drawer-field__input tnum",
+            bold && "invoice-drawer-field__input--emphasis"
+          )}
+        />
+      ) : (
+        <div
+          className={cn(
+            "invoice-drawer-field__value tnum",
+            bold && "invoice-drawer-field__value--emphasis",
+            !value && "invoice-drawer-field__value--empty"
+          )}
+        >
+          {value || "—"}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const DOCUMENT_DETAIL_KEYS = new Set([
+  "vendor",
+  "employee_name",
+  "abn",
+  "invoice_no",
+  "proforma_invoice_no",
+  "invoice_date",
+  "document_heading",
+  "billing_address",
+  "attachment_name",
+  "email_subject",
+  "email_sender",
+  "document_text",
+]);
+
+const REFERENCE_FIELD_KEYS = new Set([
+  "po_reference",
+  "so_reference",
+  "cost_centre",
+  "account_code",
+  "account_name",
+]);
+
+const FINANCIAL_FIELD_KEYS = new Set([
+  "currency",
+  "subtotal",
+  "gst",
+  "gst_rate",
+  "total",
+  "due_date",
+  "bank_details",
+  "line_items",
+]);
+
+const PARTY_FIELD_KEYS = new Set([
+  "seller_name",
+  "seller_tax_id",
+  "seller_address",
+  "buyer_name",
+  "buyer_tax_id",
+  "buyer_address",
+]);
+
+type FieldSection = { title: string; keys: string[] };
+
+function groupExtractionFieldKeys(keys: string[]): FieldSection[] {
+  const buckets: FieldSection[] = [
+    { title: "Document details", keys: [] },
+    { title: "References", keys: [] },
+    { title: "Financial details", keys: [] },
+    { title: "Parties", keys: [] },
+    { title: "Other fields", keys: [] },
+  ];
+  for (const key of keys) {
+    if (key === "currency") continue;
+    if (DOCUMENT_DETAIL_KEYS.has(key)) buckets[0].keys.push(key);
+    else if (REFERENCE_FIELD_KEYS.has(key)) buckets[1].keys.push(key);
+    else if (FINANCIAL_FIELD_KEYS.has(key)) buckets[2].keys.push(key);
+    else if (PARTY_FIELD_KEYS.has(key)) buckets[3].keys.push(key);
+    else buckets[4].keys.push(key);
+  }
+  return buckets.filter((section) => section.keys.length > 0);
 }
 
 function strField(v: string | number | null | undefined): string {
@@ -720,37 +837,6 @@ function TeamEmployeeOrgSection({ employee }: { employee: EmployeeMaster }) {
   );
 }
 
-function FieldRow({
-  label,
-  value,
-  confidence,
-  bold,
-  editable,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  confidence: number | null;
-  bold?: boolean;
-  editable?: boolean;
-  onChange?: (value: string) => void;
-}) {
-  return (
-    <div className="grid grid-cols-[120px_1fr] gap-3 items-center">
-      <label className="text-xs text-muted-foreground">{label}</label>
-      <div className="flex items-center gap-2 min-w-0">
-        <Input
-          value={value}
-          onChange={(e) => onChange?.(e.target.value)}
-          className={cn("h-8 text-sm tnum", bold && "font-semibold")}
-          readOnly={!editable}
-        />
-        {!editable && confidence != null && <ConfidenceDot value={confidence} />}
-      </div>
-    </div>
-  );
-}
-
 function currencySelectOptions(
   catalog: { value: string; label: string }[],
   current: string
@@ -782,35 +868,47 @@ function CurrencySelectRow({
     [currencies]
   );
   const selected = (value || "").trim().toUpperCase();
+  const isEditable = !disabled;
   return (
-    <div className="grid grid-cols-[120px_1fr] gap-3 items-center">
-      <label className="text-xs text-muted-foreground">
-        Currency{required ? " *" : ""}
-      </label>
+    <div
+      className={cn(
+        "invoice-drawer-field invoice-drawer-field--wide",
+        isEditable ? "invoice-drawer-field--editable" : "invoice-drawer-field--readonly"
+      )}
+    >
+      <div className="invoice-drawer-field__meta">
+        <label className="invoice-drawer-field__label">
+          Currency{required ? " *" : ""}
+        </label>
+      </div>
       <div className="min-w-0 space-y-1">
-        <Select
-          value={selected}
-          disabled={disabled}
-          onValueChange={onChange}
-          options={currencySelectOptions(catalogOptions, selected)}
-          searchable
-          placeholder={
-            symbolHint
-              ? `Select ISO code (amounts show as ${symbolHint})`
-              : "Select currency"
-          }
-          className={cn(
-            "w-full",
-            required && !selected && "border-destructive"
-          )}
-          data-testid="invoice-currency-select"
-        />
+        {isEditable ? (
+          <Select
+            value={selected}
+            disabled={disabled}
+            onValueChange={onChange}
+            options={currencySelectOptions(catalogOptions, selected)}
+            searchable
+            placeholder={
+              symbolHint
+                ? `Select ISO code (amounts show as ${symbolHint})`
+                : "Select currency"
+            }
+            className={cn(
+              "invoice-drawer-field__input w-full",
+              required && !selected && "border-destructive"
+            )}
+            data-testid="invoice-currency-select"
+          />
+        ) : (
+          <div className="invoice-drawer-field__value tnum">{selected || "—"}</div>
+        )}
         {required && !selected ? (
-          <p className="text-[11px] text-destructive">
+          <p className="invoice-drawer-field__hint invoice-drawer-field__hint--error">
             Currency could not be extracted — select one for this invoice.
           </p>
         ) : symbolHint && !selected ? (
-          <p className="text-[11px] text-muted-foreground">
+          <p className="invoice-drawer-field__hint">
             Detected symbol {symbolHint}; confirm the ISO currency code.
           </p>
         ) : null}
@@ -1572,16 +1670,17 @@ export function InvoiceDetailDrawer({
           </div>
         ) : (
           <>
-            <div className="flex items-center justify-between px-5 py-3.5 border-b border-border shrink-0">
-              <div className="min-w-0 pr-4">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-base font-semibold truncate">{counterpartyName(inv)}</span>
-                  <Badge variant="outline" className="tnum">
-                    {documentDisplayRef(inv)}
-                  </Badge>
-                  <Badge variant="outline" className="tnum text-[10px]">
-                    {docNumber}
-                  </Badge>
+            <div className="invoice-drawer-header">
+              <div className="invoice-drawer-header__main min-w-0 pr-4">
+                <h2 className="invoice-drawer-header__title">{counterpartyName(inv)}</h2>
+                <div className="invoice-drawer-header__secondary">
+                  <span className="invoice-drawer-header__id tnum">{documentDisplayRef(inv)}</span>
+                  <span className="invoice-drawer-header__id tnum">{docNumber}</span>
+                </div>
+                <p className="invoice-drawer-header__meta tnum">
+                  {inv.invoice_no ?? "—"} · {inv.invoice_date ?? "—"} · {fmt(inv.total)}
+                </p>
+                <div className="invoice-drawer-header__status">
                   {documentTypeBadgeLabel ? (
                     <DocumentTypeChip
                       code={resolvedDocumentTypeCode}
@@ -1598,25 +1697,22 @@ export function InvoiceDetailDrawer({
                   <DuplicateReviewBadge suggested={inv.duplicate_review_suggested} />
                 </div>
                 {(inv.evaluation_status ?? "").trim() === "line_gl_review" ? (
-                  <p className="text-xs text-destructive mt-1">
+                  <p className="text-xs text-destructive mt-1.5">
                     Assign a sub-ledger on each line under the document-type ledger, then save and
                     resume posting.
                   </p>
                 ) : null}
                 {(inv.evaluation_status ?? "").trim() === "line_items_review" ? (
-                  <p className="text-xs text-destructive mt-1">
+                  <p className="text-xs text-destructive mt-1.5">
                     Required line items are missing or unreliable — correct lines on the Lines tab,
                     then continue processing.
                   </p>
                 ) : null}
-                <p className="text-xs text-muted-foreground tnum mt-0.5">
-                  {inv.invoice_no ?? "—"} · {inv.invoice_date ?? "—"} · {fmt(inv.total)}
-                </p>
               </div>
               <button
                 type="button"
                 onClick={onClose}
-                className="rounded-sm opacity-70 hover:opacity-100"
+                className="invoice-drawer-header__close rounded-sm opacity-70 hover:opacity-100"
                 aria-label="Close"
               >
                 <X className="h-4 w-4" />
@@ -1687,7 +1783,7 @@ export function InvoiceDetailDrawer({
                 />
 
                 {tab === "fields" && inv && (
-                  <div className="mt-4 space-y-3">
+                  <div className="invoice-drawer-fields-tab">
                     <InvoiceClassificationPanel
                       audit={classificationAudit}
                       loading={classificationLoading}
@@ -1706,7 +1802,7 @@ export function InvoiceDetailDrawer({
                       }
                     />
                     {extractionFieldKeys.length === 0 ? (
-                      <div className="space-y-3">
+                      <div className="invoice-drawer-field-section">
                         {currencyNeedsSelection(inv) ? (
                           <CurrencySelectRow
                             value={
@@ -1720,142 +1816,209 @@ export function InvoiceDetailDrawer({
                             onChange={(value) => void handleCurrencySelect(value)}
                           />
                         ) : null}
-                      <p className="text-sm text-muted-foreground">
-                        {isVisionHeaderPipelineSummary(inv)
-                          ? (inv.evaluation_status ?? "").trim() === "vision_header_review"
-                            ? "Vision header needs review — complete Fields, save, then Confirm & process."
-                            : (inv.evaluation_status ?? "").trim() === "vision_vaulted"
-                              ? "Understood path complete — vaulted with header fields only (no OCR / DT extract)."
-                              : "Vision header path — open Summary for extracted header fields, or reprocess if they are empty."
-                          : classificationConfirmRequired
-                          ? "Document type needs review. Confirm or change DT above, then reprocess."
-                          : !resolvedDocumentTypeCode
-                            ? "No document type is applied yet."
-                            : !documentTypeInCatalogue
-                              ? `${resolvedDocumentTypeCode} is not in your Rule Book catalogue. Add that document type or confirm a valid DT.`
-                              : `No extraction fields configured for ${resolvedDocumentTypeCode}. Set key extraction fields on the document type in Rule Book.`}
-                      </p>
+                        <p className="text-sm text-muted-foreground">
+                          {isVisionHeaderPipelineSummary(inv)
+                            ? (inv.evaluation_status ?? "").trim() === "vision_header_review"
+                              ? "Vision header needs review — complete Fields, save, then Confirm & process."
+                              : (inv.evaluation_status ?? "").trim() === "vision_vaulted"
+                                ? "Understood path complete — vaulted with header fields only (no OCR / DT extract)."
+                                : "Vision header path — open Summary for extracted header fields, or reprocess if they are empty."
+                            : classificationConfirmRequired
+                            ? "Document type needs review. Confirm or change DT above, then reprocess."
+                            : !resolvedDocumentTypeCode
+                              ? "No document type is applied yet."
+                              : !documentTypeInCatalogue
+                                ? `${resolvedDocumentTypeCode} is not in your Rule Book catalogue. Add that document type or confirm a valid DT.`
+                                : `No extraction fields configured for ${resolvedDocumentTypeCode}. Set key extraction fields on the document type in Rule Book.`}
+                        </p>
                       </div>
                     ) : (
                       <>
                         {isVisionHeaderPipelineSummary(inv) ? (
-                          <p className="text-xs text-muted-foreground">
+                          <p className="invoice-drawer-fields-tab__note">
                             Vision path — header fields only. Empty date/total means reprocess so
                             vision extract can fill them; full OCR fields come after DT mapping.
                           </p>
                         ) : null}
-                        {(currencyNeedsSelection(inv) ||
-                          editing ||
-                          extractionFieldKeys.includes("currency")) && (
-                          <CurrencySelectRow
-                            value={
-                              editing && draft
-                                ? draft.currency
-                                : strField(inv.currency).toUpperCase()
-                            }
-                            symbolHint={currencySymbolHint}
-                            required={currencyNeedsSelection(inv)}
-                            disabled={
-                              actionBusy ||
-                              (!currencyNeedsSelection(inv) &&
-                                !canEdit(inv.status) &&
-                                !editing)
-                            }
-                            onChange={(value) => void handleCurrencySelect(value)}
-                          />
-                        )}
                         {matchedTeamEmployee ? (
                           <TeamEmployeeOrgSection employee={matchedTeamEmployee} />
                         ) : null}
-                        {extractionFieldKeys.map((key) =>
-                          key === "currency" ? null : (
-                        <div key={key}>
-                          <FieldRow
-                            label={extractionFieldDisplayLabel(key, inv, tax)}
-                            value={(() => {
-                              if (key === "employee_name" && matchedTeamEmployee?.name) {
-                                if (editing && draft && key in draft.extractedFields) {
-                                  const edited = draft.extractedFields[key]?.trim();
-                                  if (edited) return edited;
-                                }
-                                return matchedTeamEmployee.name;
-                              }
-                              return readExtractionFieldValue(
+                        {(() => {
+                          const sections = groupExtractionFieldKeys(extractionFieldKeys);
+                          const showCurrency =
+                            currencyNeedsSelection(inv) ||
+                            editing ||
+                            extractionFieldKeys.includes("currency");
+                          const hasFinancial = sections.some(
+                            (section) => section.title === "Financial details"
+                          );
+                          const renderSections =
+                            showCurrency && !hasFinancial
+                              ? [
+                                  { title: "Financial details", keys: [] as string[] },
+                                  ...sections,
+                                ]
+                              : sections;
+
+                          return renderSections.map((section) => {
+                            const includeCurrency =
+                              showCurrency && section.title === "Financial details";
+                            if (!includeCurrency && section.keys.length === 0) return null;
+                            return (
+                              <section
+                                key={section.title}
+                                className="invoice-drawer-field-section"
+                              >
+                                <h4 className="invoice-drawer-field-section__title">
+                                  {section.title}
+                                </h4>
+                                <div className="invoice-drawer-field-section__grid">
+                                  {includeCurrency ? (
+                                    <CurrencySelectRow
+                                      value={
+                                        editing && draft
+                                          ? draft.currency
+                                          : strField(inv.currency).toUpperCase()
+                                      }
+                                      symbolHint={currencySymbolHint}
+                                      required={currencyNeedsSelection(inv)}
+                                      disabled={
+                                        actionBusy ||
+                                        (!currencyNeedsSelection(inv) &&
+                                          !canEdit(inv.status) &&
+                                          !editing)
+                                      }
+                                      onChange={(value) => void handleCurrencySelect(value)}
+                                    />
+                                  ) : null}
+                                  {section.keys.map((key) => (
+                                    <div key={key} className="min-w-0">
+                                      <FieldRow
+                                        label={extractionFieldDisplayLabel(key, inv, tax)}
+                                        value={(() => {
+                                          if (
+                                            key === "employee_name" &&
+                                            matchedTeamEmployee?.name
+                                          ) {
+                                            if (
+                                              editing &&
+                                              draft &&
+                                              key in draft.extractedFields
+                                            ) {
+                                              const edited =
+                                                draft.extractedFields[key]?.trim();
+                                              if (edited) return edited;
+                                            }
+                                            return matchedTeamEmployee.name;
+                                          }
+                                          return readExtractionFieldValue(
+                                            key,
+                                            inv,
+                                            draft,
+                                            Boolean(draft && editing),
+                                            fmt,
+                                            extractionFieldKeys,
+                                            absentFields,
+                                            sourceKind
+                                          );
+                                        })()}
+                                        confidence={
+                                          key === "employee_name" && matchedTeamEmployee
+                                            ? null
+                                            : invoiceFieldConfidence(inv, key)
+                                        }
+                                        bold={key === "total"}
+                                        wide={
+                                          key === "line_items" ||
+                                          key === "billing_address" ||
+                                          key === "document_text" ||
+                                          key === "bank_details" ||
+                                          key.endsWith("_address")
+                                        }
+                                        editable={Boolean(
+                                          draft &&
+                                            editing &&
+                                            isEditableExtractionField(
+                                              key,
+                                              extractionFieldKeys
+                                            )
+                                        )}
+                                        onChange={
+                                          draft &&
+                                          editing &&
+                                          isEditableExtractionField(
+                                            key,
+                                            extractionFieldKeys
+                                          )
+                                            ? (value) =>
+                                                setDraft(
+                                                  updateDraftExtractionField(
+                                                    draft,
+                                                    key,
+                                                    value
+                                                  )
+                                                )
+                                            : undefined
+                                        }
+                                      />
+                                      {key === "line_items" && canEdit(inv.status) ? (
+                                        <button
+                                          type="button"
+                                          onClick={openLineItemsForEdit}
+                                          className="mt-1 text-xs text-[hsl(var(--nav-accent))] hover:underline"
+                                        >
+                                          {editing
+                                            ? "Edit line items →"
+                                            : "Open line items to edit →"}
+                                        </button>
+                                      ) : key === "line_items" &&
+                                        drawerLineItems.previewItems.length > 0 ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => setTab("lines")}
+                                          className="mt-1 text-xs text-[hsl(var(--nav-accent))] hover:underline"
+                                        >
+                                          View line items tab
+                                        </button>
+                                      ) : null}
+                                    </div>
+                                  ))}
+                                </div>
+                              </section>
+                            );
+                          });
+                        })()}
+                      </>
+                    )}
+                    {extraExtractedFieldKeys.length > 0 ? (
+                      <section className="invoice-drawer-field-section invoice-drawer-field-section--secondary">
+                        <h4 className="invoice-drawer-field-section__title">
+                          Additional extracted fields
+                        </h4>
+                        <p className="invoice-drawer-fields-tab__note">
+                          Present on the document but not configured on this document type —
+                          shown for review only.
+                        </p>
+                        <div className="invoice-drawer-field-section__grid">
+                          {extraExtractedFieldKeys.map((key) => (
+                            <FieldRow
+                              key={`extra-${key}`}
+                              label={extractionFieldDisplayLabel(key, inv, tax)}
+                              value={readExtractionFieldValue(
                                 key,
                                 inv,
-                                draft,
-                                Boolean(draft && editing),
+                                null,
+                                false,
                                 fmt,
                                 extractionFieldKeys,
                                 absentFields,
                                 sourceKind
-                              );
-                            })()}
-                            confidence={
-                              key === "employee_name" && matchedTeamEmployee
-                                ? null
-                                : invoiceFieldConfidence(inv, key)
-                            }
-                            bold={key === "total"}
-                            editable={Boolean(
-                              draft && editing && isEditableExtractionField(key, extractionFieldKeys)
-                            )}
-                            onChange={
-                              draft && editing && isEditableExtractionField(key, extractionFieldKeys)
-                                ? (value) =>
-                                    setDraft(updateDraftExtractionField(draft, key, value))
-                                : undefined
-                            }
-                          />
-                          {key === "line_items" && canEdit(inv.status) ? (
-                            <button
-                              type="button"
-                              onClick={openLineItemsForEdit}
-                              className="mt-1 text-xs text-primary hover:underline"
-                            >
-                              {editing ? "Edit line items →" : "Open line items to edit →"}
-                            </button>
-                          ) : key === "line_items" && drawerLineItems.previewItems.length > 0 ? (
-                            <button
-                              type="button"
-                              onClick={() => setTab("lines")}
-                              className="mt-1 text-xs text-primary hover:underline"
-                            >
-                              View line items tab
-                            </button>
-                          ) : null}
+                              )}
+                              confidence={invoiceFieldConfidence(inv, key)}
+                            />
+                          ))}
                         </div>
-                          )
-                        )}
-                      </>
-                    )}
-                    {extraExtractedFieldKeys.length > 0 ? (
-                      <div className="mt-4 space-y-2 border-t border-border pt-3">
-                        <p className="text-xs font-medium text-muted-foreground">
-                          Additional extracted fields
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          Present on the document but not configured on this document type —
-                          shown for review only.
-                        </p>
-                        {extraExtractedFieldKeys.map((key) => (
-                          <FieldRow
-                            key={`extra-${key}`}
-                            label={extractionFieldDisplayLabel(key, inv, tax)}
-                            value={readExtractionFieldValue(
-                              key,
-                              inv,
-                              null,
-                              false,
-                              fmt,
-                              extractionFieldKeys,
-                              absentFields,
-                              sourceKind
-                            )}
-                            confidence={invoiceFieldConfidence(inv, key)}
-                          />
-                        ))}
-                      </div>
+                      </section>
                     ) : null}
                   </div>
                 )}

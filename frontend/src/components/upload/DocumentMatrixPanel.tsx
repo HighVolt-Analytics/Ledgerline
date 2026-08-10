@@ -11,7 +11,7 @@ import { MatrixFlagDrawer } from "@/components/matrix/MatrixFlagDrawer";
 import { MatrixPaymentBadge } from "@/components/matrix/MatrixPaymentBadge";
 import { MatrixStageCell } from "@/components/matrix/MatrixStageCell";
 import { Button } from "@/components/ui/button";
-import { KpiGridSkeleton, TableSkeleton } from "@/components/skeleton/PageSkeletons";
+import { MatrixPanelSkeleton } from "@/components/skeleton/PageSkeletons";
 import { Card } from "@/components/ui/card";
 import { documentDisplayRef, money } from "@/lib/format";
 import { counterpartyColumnLabel, counterpartyName, invoiceMatchesCaptureChannel } from "@/lib/invoice";
@@ -451,16 +451,14 @@ export function DocumentMatrixPanel({
       )}
 
       {loading && matrixData.length === 0 ? (
-        <>
-          {showKpis ? (
-            <KpiGridSkeleton
-              count={4}
-              compact
-              className="mb-5 grid-cols-2 lg:grid-cols-4"
-            />
-          ) : null}
-          {showTable ? <TableSkeleton rows={6} columns={5} /> : null}
-        </>
+        showTable || showKpis || showControls ? (
+          <MatrixPanelSkeleton
+            showKpis={showKpis}
+            showControls={showControls && showTable}
+            showTable={showTable}
+            rows={6}
+          />
+        ) : null
       ) : matrixRows.length === 0 && showTable ? (
         <EmptyState
           title={

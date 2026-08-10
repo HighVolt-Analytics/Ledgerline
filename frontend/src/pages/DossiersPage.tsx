@@ -144,7 +144,7 @@ export function DossiersPage() {
         }
       />
 
-      <Card className="overflow-hidden">
+      <Card className="overflow-hidden dossier-list-shell">
         <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-border flex-wrap">
           <h3 className="text-sm font-semibold flex items-center gap-2">
             <FolderKanban className="h-4 w-4 text-primary" />
