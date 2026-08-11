@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.services.prompt_registry.currency_detect_default import CURRENCY_DETECT_SYSTEM_DEFAULT
+from app.services.prompt_registry.field_translate_default import FIELD_TRANSLATE_SYSTEM_DEFAULT
 from app.services.prompt_registry.sub_ledger_assign_default import (
     SUB_LEDGER_ASSIGN_SYSTEM_DEFAULT,
 )
@@ -43,8 +44,15 @@ Rules:
 - Use empty string only when the document is clearly not in the catalogue.
 - confidence is 0.0-1.0 for the document type choice.
 - Use document_heading and the first title lines of OCR as the primary classification signal.
-- Certificate of Origin, Cargo Clearance Permit, Packing List, and Bill of Lading / AWB are supporting import documents — never classify them as DT-01 or DT-02.
-- When the heading is unambiguous, suggested_dt must match the catalogue row whose short title best fits that heading.
+- When the printed heading clearly matches a catalogue row's shortTitle or title, pick that row's code.
+- Supporting / non-posting titles (import clearance, packing, transport, certificates, etc.)
+  must map to a matching supporting catalogue row when one exists — never to a transactional
+  posting invoice/PO row. If none fits, return "".
+- Prefer catalogue fields for disambiguation: shortTitle, title, llm_prompt, recognition_signals,
+  negative_hints, playbookProfile, route_target, team_expense_kind. Do not invent fixed DT codes
+  or assume shipped template names.
+- When two Team Expenses rows could fit, honor team_expense_kind and negative_hints on each row
+  rather than guessing between them.
 - perspective is purchase | sales | unknown (tenant perspective is buyer/AP unless they are the seller).
 {party_rules}
 - Do not extract invoice amounts, line items, or dates — classification only.
@@ -232,8 +240,11 @@ Rules:
 - Use empty string only when the document is clearly not in the catalogue.
 - confidence is 0.0-1.0 for the document type choice.
 - Use document_heading and the first title lines of OCR as the primary classification signal.
-- Certificate of Origin, Cargo Clearance Permit, Packing List, and Bill of Lading / AWB are supporting import documents — never classify them as DT-01 or DT-02.
-- When the heading is unambiguous, suggested_dt must match the catalogue row whose short title best fits that heading.
+- When the printed heading clearly matches a catalogue row's shortTitle or title, pick that row's code.
+- Supporting / non-posting titles must map to a matching supporting catalogue row when one exists —
+  never to a transactional posting invoice/PO row. If none fits, return "".
+- Prefer catalogue fields for disambiguation: shortTitle, title, llm_prompt, recognition_signals,
+  negative_hints, playbookProfile, route_target, team_expense_kind.
 - perspective is purchase | sales | unknown (tenant perspective is buyer/AP unless they are the seller).
 {party_rules}
 {rule_lines}
@@ -243,8 +254,12 @@ Rules:
 - When llm_suggested_dt was wrong but human_confirmed_dt was chosen, learn from the note and excerpt."""
 
 _SPARSE_HINT_DEFAULT = """
-Sparse OCR: document images may be attached. Prefer ocr.text_excerpt and layout_kv.
-Use images only to fill fields still missing from OCR — do not override OCR with invented values."""
+Sparse OCR / image-backed extract: page images are attached and are the PRIMARY source.
+Read handwritten and printed text from the images — including Burmese/Myanmar and other
+non-Latin scripts. Prefer image evidence over empty/corrupt OCR.
+For line_items.description: attempt to read handwritten item names; put English when
+confident, otherwise the original script. Never use row indexes or phone digits as the
+description. Do not invent values that are not visible on the page."""
 
 _GAP_FILL_HEADER_DEFAULT = """\
 You fill ONLY the missing_fields listed in the user payload from OCR text.
@@ -859,15 +874,23 @@ If it is absent or unclear, leave empty — never invent.
   intake_summary) to decide which party is the organisation vs the counterparty.
 - counterparty_name is the OTHER party (not the tenant). Leave empty if unclear. Never set
   the tenant as counterparty.
+- NEVER put phone / tel / fax / email / website / address-only text into counterparty_name.
+  Contact lines like "Tel: 09…" are not merchant names — leave counterparty_name empty when
+  the shop/company letterhead name is unreadable, rather than substituting a phone number.
+- On retail receipts / handwritten slips: prefer the printed shop / letterhead / store name
+  (often in the header banner). If that name is in a non-Latin script, copy it as printed.
+  Do not invent an English shop name. If only a customer/patient name appears inside the
+  item grid (not as the merchant), that is NOT counterparty_name.
 - perspective is purchase | sales | unknown from the tenant's viewpoint (buyer AP vs seller AR).
 
-- invoice_no — ONLY when clearly labeled as an invoice number. Accepted labels
+- invoice_no — ONLY when clearly labeled as an invoice / receipt number. Accepted labels
   (examples, not a closed list): Invoice No / Inv No / INV NO / Tax Invoice No /
-  Commercial Invoice No / Invoice Number. Extract on ANY document kind when such a
+  Commercial Invoice No / Invoice Number / Receipt No / Bill No / No. (when clearly the
+  receipt serial in the header). Extract on ANY document kind when such a
   label appears (even on a packing list, permit, or transport doc that references
   an invoice). NEVER put Permit No / Clearance No / Declaration No / Document No /
   Doc No / Entry No / AWB / HAWB / BL / Bill of Lading / Unique Ref / GRN / DN into
-  invoice_no — leave invoice_no empty when no Invoice/INV label exists.
+  invoice_no — leave invoice_no empty when no Invoice/INV/Receipt label exists.
   If both "INVOICE NO" and "PROFORMA INVOICE NO" exist, put the commercial number in
   invoice_no and the proforma number in proforma_invoice_no — never merge them.
   Copy the printed token as-is (leading zeros, hyphens, slashes). Empty string when
@@ -1075,11 +1098,25 @@ LINE ITEMS EXTRACTION
   "fix" a cell by arithmetic.
 - Description: primary item/SKU text only; do not paste adjacent MAKE/COO/DC footer rows
   into description unless they are clearly part of the same item cell.
+  Prefer empty description over digit-only / colon-code OCR noise (e.g. "005422: 27054"
+  or a bare row index like "209") when the item name is truly unreadable — keep
+  qty/amount if those are clear.
+- HANDWRITTEN / NON-LATIN ITEM NAMES (Burmese/Myanmar, Thai, Chinese, etc.):
+  Claude/vision MUST attempt to read the handwritten product/service text in the
+  description column. Do NOT give up early or substitute a row number / phone fragment.
+  Prefer putting a clear English meaning in description when you can read the
+  handwriting with reasonable confidence (e.g. floral/gift item → English product name).
+  If you can read the script but are unsure of the English gloss, put the original
+  script text in description (downstream translation will convert it). Never invent
+  a product that is not on the page.
 - Edge cases:
   - Wrapped/merged description spanning rows → one logical line when clearly one item.
   - Unreadable table → [] and note quality in reason (prefer empty over garbage rows).
   - Packing list with qty/weight only → [] (do not fake unit prices).
   - Dense tables → extract what is legible; never pad with guessed lines.
+  - Handwritten retail receipts: if only one paid amount is clear, one line with that amount
+    and the best-effort English (or original-script) description is better than inventing
+    SKU-like digit codes. Empty description only when the item name is truly illegible.
 
 ═══════════════════════════════════════════════
 NUMBER & FORMAT NORMALIZATION
@@ -1208,6 +1245,7 @@ Before emitting JSON, verify:
 - invoice_no and proforma_invoice_no are not identical unless both were independently labeled.
 - po_reference and so_reference are not identical unless both were independently labeled.
 - counterparty_name is never equal to the tenant's own legal_name/alias.
+- counterparty_name is never a phone/tel/fax/email/website string.
 - currency is either empty or a valid ISO 4217 code, never a bare symbol.
 - reason is one short sentence and actually reflects the disambiguation path taken (which
   tie-break rule fired, or why a field was left empty).
@@ -1264,16 +1302,14 @@ HOW TO CHOOSE
 - Honor tenant.classification_hints and tenant.default_perspective when present.
 - When perspective is "sales", prefer customer / AR / outbound catalogue rows; when
   "purchase", prefer supplier / AP / inbound rows.
-- Match by meaning, not exact string equality:
-  e.g. "COMMERCIAL INVOICE" / "TAX INVOICE" / "Tax Inv" → invoice-like catalogue rows
-  with Purchase Management or Expenses Management routes;
-  "EXPENSE CLAIM" / "REIMBURSEMENT" / claim-form titles → catalogue rows whose
-  route_target is Team Expenses or playbook is employee_claim (any tenant DT code —
-  not a fixed DT-12) when the capture channel allows Team Expenses;
-  "PACKING LIST" / "Weight List" → packing/supporting rows;
-  "DESPATCH ADVICE" / "DISPATCH NOTE" / "DELIVERY NOTE" → delivery-note rows when present
-  (not goods-receipt / GRN unless the title clearly says receipt/POD/GRN);
-  transport titles (AWB, HAWB, B/L) → transport rows when present.
+- Title-first: if document_heading (or canonical_document_type) clearly matches one
+  catalogue row's shortTitle or title, pick that row's code.
+- If the title is missing or ambiguous, use document_summary + each row's title,
+  llm_prompt, recognition_signals, playbookProfile, route_target, and team_expense_kind.
+- Do not assume fixed shipped DT codes or fixed English form names. Only the provided
+  catalogue decides which codes exist and what they mean.
+- When two Team Expenses rows could fit, honor team_expense_kind and negative_hints
+  on each row rather than guessing.
 - Team Expenses routing is decided by capture channel + employee registry (email /
   WhatsApp / Viber), not by this map alone. Manual upload must not map to Team
   Expenses catalogue rows. On email/WhatsApp/Viber, a known employee sender forces
@@ -1282,16 +1318,15 @@ HOW TO CHOOSE
 - Retail POS slips, shop receipts, taxi/meal receipts, and similar seller-issued
   sales receipts from an employee capture channel still map to Team Expenses claim
   catalogue rows when those rows exist — they are employee expense evidence, not AR.
-- A printed TAX INVOICE or COMMERCIAL INVOICE must NOT be mapped to a Team Expenses
-  catalogue row unless the title/summary clearly indicates employee expense claim or
-  reimbursement (employee identity is applied later by route policy).
+- A printed vendor/customer tax or commercial invoice title must NOT be mapped to a
+  Team Expenses catalogue row unless the title/summary clearly indicates an employee
+  claim / reimbursement / advance form (employee identity is applied later by route policy).
 - Use each catalogue row's title, recognition_signals / recognition_rules / llm_prompt /
   classification_hints / negative_hints when present.
 - Honor negative_hints: if the title/summary matches a negative hint for a row, do not
   pick that row.
-- Supporting / ops titles (packing list, handover, LOA, certificate of origin, clearance
-  permit) must NOT be mapped to a transactional invoice/PO DT when a better supporting
-  row exists — if none fits, return "".
+- Supporting / ops titles must NOT be mapped to a transactional invoice/PO DT when a
+  better supporting catalogue row exists — if none fits, return "".
 - When two catalogue rows fit equally well even after reading the summary, return ""
   (do not break ties by guessing).
 
@@ -1357,6 +1392,16 @@ PROMPT_CATALOG: tuple[PromptDefinition, ...] = (
             "prefer UNCERTAIN over guessing ambiguous symbols."
         ),
         default_body=CURRENCY_DETECT_SYSTEM_DEFAULT,
+    ),
+    PromptDefinition(
+        key="llm.field_translate.system",
+        label="Field Translation Agent",
+        group="Extract",
+        description=(
+            "Post-extraction: detect non-English documents and translate human-readable "
+            "field values (heading, line descriptions, free text) into English."
+        ),
+        default_body=FIELD_TRANSLATE_SYSTEM_DEFAULT,
     ),
     PromptDefinition(
         key="llm.sub_ledger.assign.system",

@@ -48,13 +48,19 @@ def _is_label_only_row(item: ParsedLineItem) -> bool:
 
 
 def _passes_minimum_product_row(item: ParsedLineItem, *, allow_qty_only: bool = False) -> bool:
+    from app.services.extraction.line_item_skip_patterns import is_ocr_noise_line_description
+
     desc = re.sub(r"\s+", " ", (item.description or "").strip())
-    if not desc:
-        return False
-    if should_skip_line_row(desc):
-        return False
     has_money = item.amount is not None or item.unit_price is not None
     has_qty = item.qty is not None
+    # Digit-code OCR noise is not a product name — keep the money, drop the text.
+    if desc and is_ocr_noise_line_description(desc):
+        return has_money
+    if not desc:
+        # Handwritten / unreadable descriptions: amount-only rows are still valid.
+        return has_money
+    if should_skip_line_row(desc):
+        return False
     if has_money:
         return True
     if has_qty and (item.amount is not None or item.unit_price is not None):
@@ -135,19 +141,33 @@ def sanitize_line_items(
     for index, item in enumerate(items):
         desc = item.description or ""
         row_key = row_key_for_item(item, index)
-        if should_skip_line_row(desc, trace=trace, row_key=row_key):
+        from app.services.extraction.line_item_skip_patterns import is_ocr_noise_line_description
+        from dataclasses import replace as dc_replace
+
+        has_money = item.amount is not None or item.unit_price is not None
+        if desc and is_ocr_noise_line_description(desc):
+            item = dc_replace(item, description=None)
+            desc = ""
+            if trace is not None:
+                trace.record(row_key, "sanitize", "blanked", "ocr_noise_description")
+        # Empty description is OK when the row still has money (handwritten / noise cleared).
+        if desc and should_skip_line_row(desc, trace=trace, row_key=row_key):
+            continue
+        if not desc and not has_money:
+            if trace is not None:
+                trace.record(row_key, "sanitize", "dropped", "empty_row")
             continue
         if _is_label_only_row(item):
             if trace is not None:
                 trace.record(row_key, "sanitize", "dropped", "label_only")
             continue
-        if _duplicates_header_value(desc, header_values):
+        if desc and _duplicates_header_value(desc, header_values):
             if trace is not None:
                 trace.record(row_key, "sanitize", "dropped", "header_duplicate")
             continue
         from app.services.extraction.line_item_noise_patterns import is_noise_line_item_row
 
-        if is_noise_line_item_row(desc, item.qty, trace=trace, row_key=row_key):
+        if desc and is_noise_line_item_row(desc, item.qty, trace=trace, row_key=row_key):
             continue
         if not _passes_minimum_product_row(item, allow_qty_only=effective_allow_qty_only):
             if trace is not None:

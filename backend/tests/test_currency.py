@@ -49,8 +49,9 @@ def test_sum_amounts_blank_currency_unknown_bucket() -> None:
     assert total == Decimal("100")
 
 
-def test_normalize_currency_maps_bare_dollar_to_usd() -> None:
-    assert normalize_currency("$") == "USD"
+def test_normalize_currency_rejects_bare_dollar_as_ambiguous() -> None:
+    """Bare $ is shared by many currencies — never invent USD."""
+    assert normalize_currency("$") is None
     assert normalize_currency("¥") is None
     assert normalize_currency("€") == "EUR"
     assert normalize_currency("£") == "GBP"
@@ -79,8 +80,8 @@ def test_detect_currency_symbol_launchdarkly_style() -> None:
     assert detect_currency_code_in_text(text) is None
     assert detect_currency_symbol_in_text(text) == "$"
     iso, symbol = resolve_currency_from_ocr(text)
-    assert iso == "USD"
-    assert symbol is None
+    assert iso == ""
+    assert symbol == "$"
 
 
 def test_rm_inside_terms_is_not_myr() -> None:
@@ -94,6 +95,24 @@ def test_rm_inside_terms_is_not_myr() -> None:
 
 def test_rm_near_amount_is_myr() -> None:
     assert detect_currency_code_in_text("Total RM 250.00") == "MYR"
+
+
+def test_ks_suffix_amount_is_mmk() -> None:
+    from app.services.shared.currency import currency_evidence_in_text
+
+    assert detect_currency_code_in_text("Total 58000Ks") == "MMK"
+    assert detect_currency_code_in_text("Amount Ks 12,500") == "MMK"
+    assert detect_currency_code_in_text("Twenty Thousand Kyats Only") == "MMK"
+    iso, symbol = resolve_currency_from_ocr("Paid\n58000Ks\nSignature")
+    assert iso == "MMK"
+    assert symbol is None
+    assert currency_evidence_in_text("MMK", "58000 Ks") is True
+    assert currency_evidence_in_text("MMK", "Twenty Thousand Kyats Only") is True
+
+
+def test_tk_and_rp_amount_abbr() -> None:
+    assert detect_currency_code_in_text("Total Tk 1500") == "BDT"
+    assert detect_currency_code_in_text("Grand total Rp 250000") == "IDR"
 
 
 def test_currency_label_resolves_iso() -> None:
@@ -143,14 +162,14 @@ def test_unambiguous_euro_symbol_maps_to_iso() -> None:
     assert symbol is None
 
 
-def test_apply_currency_ocr_fallback_sets_usd_for_bare_dollar() -> None:
+def test_apply_currency_ocr_fallback_keeps_bare_dollar_as_symbol() -> None:
     parsed = InvoiceData(total=Decimal("156"), currency="")
     updated = apply_currency_ocr_fallback(
         parsed,
         "Service Connections\n1 $156.00 $156.00\nSubtotal $156.00",
     )
-    assert updated.currency == "USD"
-    assert "currency_symbol" not in (updated.extracted_fields or {})
+    assert (updated.currency or "") == ""
+    assert (updated.extracted_fields or {}).get("currency_symbol") == "$"
 
 
 def test_apply_currency_ocr_fallback_keeps_existing_iso() -> None:
@@ -167,7 +186,8 @@ def test_currency_evidence_accepts_prefix_and_glyph() -> None:
     assert currency_evidence_in_text("USD", "Total US$37.08")
     assert currency_evidence_in_text("EUR", "Total €45.00")
     assert not currency_evidence_in_text("AUD", "Total $100.00 ABN 51824753556")
-    assert currency_evidence_in_text("USD", "Total $100.00")
+    # Bare $ is ambiguous — not evidence for USD (or AUD/SGD/…).
+    assert not currency_evidence_in_text("USD", "Total $100.00")
     assert currency_evidence_in_text("AUD", "Total AUD 100.00")
 
 

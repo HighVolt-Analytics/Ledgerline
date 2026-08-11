@@ -269,7 +269,15 @@ def move_blob(stored: str, new_blob_name: str) -> str:
     _wait_for_blob_copy(dest)
     source.delete_blob()
     new_uri = to_stored_uri(new_blob_name)
-    logger.info("blob_moved", from_blob=old_name, to_blob=new_blob_name)
+    # ASCII-safe for Windows consoles (cp1252) when blob paths include Burmese/etc.
+    def _log_path(p: str) -> str:
+        return p.encode("ascii", "backslashreplace").decode("ascii")
+
+    logger.info(
+        "blob_moved",
+        from_blob=_log_path(old_name),
+        to_blob=_log_path(new_blob_name),
+    )
     return new_uri
 
 

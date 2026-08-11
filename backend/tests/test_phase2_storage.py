@@ -38,6 +38,7 @@ def test_is_plausible_vendor_name_rejects_boilerplate() -> None:
     assert not is_plausible_vendor_name("Invoice Number :")
     assert not is_plausible_vendor_name("GRN-2026-0001")
     assert not is_plausible_vendor_name("PO-TEST-2026-001")
+    assert not is_plausible_vendor_name("Tel : 09 899 994 402")
     assert is_plausible_vendor_name("Atlassian Pty Ltd")
 
 

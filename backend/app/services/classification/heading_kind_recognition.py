@@ -108,7 +108,14 @@ def _infer_playbook_profile(signals: frozenset[RecognitionSignalId]) -> str:
         return "debit_note"
     if signals & {"text_proforma", "filename_proforma"}:
         return "pre_transactional"
-    if signals & {"text_claim", "filename_claim"}:
+    if signals & {
+        "text_advance_requisition",
+        "filename_advance_requisition",
+        "text_payment_voucher",
+        "filename_payment_voucher",
+        "text_claim",
+        "filename_claim",
+    }:
         return "employee_claim"
     if signals & {"text_bank_change", "filename_bank_change"}:
         return "master_data"

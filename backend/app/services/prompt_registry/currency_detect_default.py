@@ -116,6 +116,7 @@ HR8. NEVER assume decimal/thousand separator style from currency.
 
 HR9. NEVER invent an ISO code that is not literally written on the
      document as an ISO code, a prefixed symbol (US$, A$, S$, HK$, …),
+     a known local amount abbreviation next to money (Ks, Tk, Rp, …),
      or an unambiguous glyph (€, ₹). Tax/address/bank signals may only
      corroborate — they must NEVER be the sole reason for an ISO.
 
@@ -157,10 +158,20 @@ S2. CURRENCY SYMBOLS AND THEIR AMBIGUITY (weight = 0.3 alone; 0.9
       R   → ZAR (Rand) or BRL (Brazilian Real as R$)
       Rs  → INR, PKR, LKR, NPR, MUR
       RM  → MYR
+      Ks / Kyat → MMK (amount-adjacent; e.g. 58000Ks)
+      Tk  → BDT (amount-adjacent)
+      Rp  → IDR (amount-adjacent)
       P   → PHP or BWP
       ¥   → JPY or CNY
       £   → GBP, EGP, LBP, SDG, SYP
       L   → HNL, ALL (historical)
+
+    LOCAL AMOUNT ABBREVIATIONS (weight = 0.9 when next to an amount):
+      These are literal currency markers even when ISO is not printed.
+      Ks/Kyat + amount → MMK
+      Tk + amount → BDT
+      Rp + amount → IDR
+      Treat them like prefixed symbols for evidence (HR9).
 
     PREFIXED disambiguators (weight = 0.85):
       A$, AU$, AUD$   → AUD

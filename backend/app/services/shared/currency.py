@@ -31,11 +31,10 @@ BASE_CURRENCY = COUNTRY_CURRENCY[DEFAULT_COUNTRY]
 UNKNOWN_CURRENCY = "UNKNOWN"
 
 # Symbols that map to more than one ISO code — never invent a country.
-AMBIGUOUS_CURRENCY_SYMBOLS = frozenset({"¥"})
+# Bare "$" is shared by USD/AUD/SGD/NZD/CAD/HKD/… — store the glyph only.
+AMBIGUOUS_CURRENCY_SYMBOLS = frozenset({"$", "¥"})
 # 1:1 glyph → ISO (safe to store without user confirm).
-# Bare "$" defaults to USD (common international convention for unprefixed dollar).
 UNAMBIGUOUS_SYMBOL_TO_ISO = {
-    "$": "USD",
     "€": "EUR",
     "£": "GBP",
     "₹": "INR",
@@ -59,6 +58,20 @@ _PREFIXED_SYMBOL_TO_ISO: tuple[tuple[str, str], ...] = (
     ("NT$", "TWD"),
     ("R$", "BRL"),
     ("RM", "MYR"),
+)
+
+# Local amount-adjacent abbreviations → ISO (prefix OR suffix near money).
+# These appear widely on receipts when the full ISO code is never printed.
+_AMOUNT_ABBR_TO_ISO: tuple[tuple[str, str], ...] = (
+    ("Ks", "MMK"),  # Myanmar Kyat (58000Ks / Ks 58000)
+    ("Tk", "BDT"),  # Bangladeshi Taka
+    ("Rp", "IDR"),  # Indonesian Rupiah (when next to amounts)
+)
+
+# Spelled currency names — match as words anywhere (no digit adjacency required).
+_CURRENCY_NAME_TO_ISO: tuple[tuple[str, str], ...] = (
+    ("Kyats", "MMK"),
+    ("Kyat", "MMK"),
 )
 
 # ISO 4217 codes that are also common English words — never take from prose alone.
@@ -200,6 +213,45 @@ def _prefix_hit_in_text(prefix: str, text: str) -> bool:
     )
 
 
+def _amount_abbr_hit_in_text(abbr: str, text: str) -> bool:
+    """True when local currency abbr appears before or after an amount.
+
+    Handles both ``Ks 58000`` and ``58000Ks`` / ``58000 Ks`` forms.
+    """
+    if not abbr or not text:
+        return False
+    escaped = re.escape(abbr)
+    # Prefix form: Abbr + amount
+    if re.search(
+        rf"(?<![A-Za-z0-9]){escaped}(?![A-Za-z0-9])\s*(?:{_CURRENCY_GLYPHS})?\s*\d",
+        text,
+        re.I,
+    ):
+        return True
+    # Suffix form: amount + Abbr (common on receipts)
+    return (
+        re.search(
+            rf"\d(?:[\d,]*(?:\.\d{{1,4}})?)?\s*{escaped}(?![A-Za-z0-9])",
+            text,
+            re.I,
+        )
+        is not None
+    )
+
+
+def detect_amount_abbr_currency_in_text(text: str | None) -> str | None:
+    """Return ISO from local amount-adjacent abbreviations (Ks, Tk, Rp, …)."""
+    if not text:
+        return None
+    for abbr, iso in sorted(_AMOUNT_ABBR_TO_ISO, key=lambda row: -len(row[0])):
+        if _amount_abbr_hit_in_text(abbr, text):
+            return iso
+    for name, iso in sorted(_CURRENCY_NAME_TO_ISO, key=lambda row: -len(row[0])):
+        if re.search(rf"(?<![A-Za-z0-9]){re.escape(name)}(?![A-Za-z0-9])", text, re.I):
+            return iso
+    return None
+
+
 def detect_prefixed_currency_in_text(text: str | None) -> str | None:
     """Return ISO from unambiguous prefixed symbols (S$, US$, A$, …)."""
     if not text:
@@ -216,8 +268,9 @@ def detect_currency_code_in_text(text: str | None) -> str | None:
 
     Preference:
     1. Prefixed symbols (S$ → SGD, US$ → USD)
-    2. ISO codes next to money amounts (pycountry-validated)
-    3. Explicit currency labels (Currency: USD) — never free-floating prose tokens
+    2. Local amount abbreviations (Ks → MMK, Tk → BDT, …)
+    3. ISO codes next to money amounts (pycountry-validated)
+    4. Explicit currency labels (Currency: USD) — never free-floating prose tokens
     """
     if not text:
         return None
@@ -225,6 +278,10 @@ def detect_currency_code_in_text(text: str | None) -> str | None:
     prefixed = detect_prefixed_currency_in_text(text)
     if prefixed:
         return prefixed
+
+    abbr = detect_amount_abbr_currency_in_text(text)
+    if abbr:
+        return abbr
 
     near_money: Counter[str] = Counter()
     for match in _ISO_NEAR_MONEY.finditer(text):
@@ -253,10 +310,10 @@ def currency_evidence_in_text(iso: str | None, text: str | None) -> bool:
     """True when OCR/text literally supports this ISO (code, prefix, or glyph).
 
     Requires corroboration for *this* code: near-money (with brand-ticker
-    anchors), an explicit currency label, a prefixed symbol (US$/S$), or an
-    unambiguous glyph (€/£/₹). A bare word-bounded ISO anywhere in the
-    document is not evidence — brand names like AMD processors must not
-    corroborate Armenian Dram.
+    anchors), an explicit currency label, a prefixed symbol (US$/S$), a local
+    amount abbreviation (Ks/Tk/…), or an unambiguous glyph (€/£/₹). A bare
+    word-bounded ISO anywhere in the document is not evidence — brand names
+    like AMD processors must not corroborate Armenian Dram.
     """
     code = (iso or "").strip().upper()
     if (
@@ -270,6 +327,16 @@ def currency_evidence_in_text(iso: str | None, text: str | None) -> bool:
 
     for prefix, mapped in _PREFIXED_SYMBOL_TO_ISO:
         if mapped == code and _prefix_hit_in_text(prefix, raw):
+            return True
+
+    for abbr, mapped in _AMOUNT_ABBR_TO_ISO:
+        if mapped == code and _amount_abbr_hit_in_text(abbr, raw):
+            return True
+
+    for name, mapped in _CURRENCY_NAME_TO_ISO:
+        if mapped == code and re.search(
+            rf"(?<![A-Za-z0-9]){re.escape(name)}(?![A-Za-z0-9])", raw, re.I
+        ):
             return True
 
     symbol = detect_currency_symbol_in_text(raw)

@@ -98,7 +98,8 @@ def reconcile_currency_from_text(
 ) -> tuple[str, str | None, str]:
     """Return (iso_or_empty, currency_symbol_or_none, reason).
 
-    Unambiguous OCR evidence wins over a wrong vision ISO (e.g. bare ``$`` → USD).
+    Unambiguous OCR evidence (US$, S$, €, ISO labels) wins over a wrong vision ISO.
+    Bare ``$`` / ``¥`` are ambiguous — never invent USD/JPY; leave empty for the user.
     Ungrounded ISO codes are cleared when text is rich enough to judge.
     Thin/junk text must not wipe a vision ISO that the page images actually supported.
     """
@@ -198,7 +199,17 @@ def prefer_grand_total_over_subtotal(
 
 
 def text_usable_for_header_grounding(text: str | None) -> bool:
-    return len((text or "").strip()) >= _MIN_TEXT_CHARS_FOR_GROUNDING
+    """True when page text is rich enough AND not OCR script-garbage.
+
+    Corrupted OCR (e.g. non-Latin scripts misread as Greek) is long enough to
+    pass a char-count gate but must not clear vision-extracted fields.
+    """
+    body = (text or "").strip()
+    if len(body) < _MIN_TEXT_CHARS_FOR_GROUNDING:
+        return False
+    from app.services.extraction.ocr_quality_signals import ocr_text_looks_corrupted
+
+    return not ocr_text_looks_corrupted(body)
 
 
 def resolve_header_grounding_text(path: Any) -> tuple[str, dict[str, Any]]:
@@ -462,7 +473,13 @@ def ground_vision_header_result(
         return result, detail
     if not text_usable_for_header_grounding(text):
         detail["skipped"] = True
-        detail["reason"] = "thin_or_empty_text"
+        from app.services.extraction.ocr_quality_signals import ocr_text_looks_corrupted
+
+        if ocr_text_looks_corrupted(text):
+            detail["reason"] = "ocr_text_corrupted"
+            detail["prefer_vision"] = True
+        else:
+            detail["reason"] = "thin_or_empty_text"
         return result, detail
 
     raw = text or ""
@@ -693,6 +710,28 @@ def apply_vision_header_text_reconcile(
     invoice.extracted_fields = fields
     detail["currency_after"] = iso or None
     detail["currency_symbol"] = symbol
+
+    # Never keep OCR script-garbage or phone/contact lines as vendor.
+    from app.services.extraction.ocr_quality_signals import vendor_name_looks_ocr_garbage
+    from app.services.master_data.vendor_name_utils import is_plausible_vendor_name
+
+    vendor_before = (invoice.vendor or "").strip()
+    if vendor_before and (
+        vendor_name_looks_ocr_garbage(vendor_before)
+        or not is_plausible_vendor_name(vendor_before)
+    ):
+        invoice.vendor = None
+        fields = dict(invoice.extracted_fields or {})
+        for key in ("vendor", "seller_name", "buyer_name"):
+            raw_val = str(fields.get(key) or "").strip()
+            if raw_val and (
+                vendor_name_looks_ocr_garbage(raw_val)
+                or not is_plausible_vendor_name(raw_val)
+            ):
+                fields.pop(key, None)
+        invoice.extracted_fields = fields or None
+        detail["vendor_cleared"] = True
+        detail["vendor_before"] = vendor_before[:120]
 
     money, total_reason = prefer_grand_total_over_subtotal(invoice.total, text)
     detail["total_reason"] = total_reason

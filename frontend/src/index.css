@@ -712,10 +712,21 @@ input.app-numeric-input {
   background: hsl(var(--muted) / 0.2);
 }
 
+.invoice-document-body--zoomable {
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
 @media (min-width: 768px) {
   .invoice-document-body {
     min-height: 0;
   }
+}
+
+.invoice-document-zoom-canvas {
+  position: relative;
+  display: block;
+  background: hsl(var(--background));
 }
 
 .invoice-document-frame {
@@ -742,6 +753,7 @@ input.app-numeric-input {
   min-height: 18rem;
   object-fit: contain;
   background: hsl(var(--background));
+  user-select: none;
 }
 
 @media (min-width: 768px) {

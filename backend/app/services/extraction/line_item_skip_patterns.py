@@ -34,6 +34,7 @@ __all__ = (
     "OPTIONAL_CURRENCY_MONEY_PREFIX",
     "has_trusted_line_items",
     "is_metadata_line_description",
+    "is_ocr_noise_line_description",
     "is_summary_line_description",
     "should_skip_line_row",
 )
@@ -80,6 +81,16 @@ _METADATA_LABEL_VALUE_SPACE = re.compile(
 # Phone / fax fragments (e.g. "Tel No:+91" from OCR header bleed into line tables).
 _PHONE_LINE = re.compile(
     r"^(?:tel(?:ephone)?|phone|mobile|fax)\s*(?:no\.?|number|#)?\s*:?\s*\+?\d",
+    re.I,
+)
+
+# OCR noise posing as a product description (digit codes, colon-separated IDs).
+_OCR_NOISE_LINE = re.compile(
+    r"^(?:"
+    r"\d{3,}(?:\s*[:#/\-]\s*\d+)+\s*"  # 005422: 27054
+    r"|[A-Z]{0,3}\d{4,}(?:\s*[:#/\-]\s*\d+)+\s*"
+    r"|\d+(?:\s+\d+){2,}\s*"  # bare digit runs only
+    r")$",
     re.I,
 )
 
@@ -144,6 +155,25 @@ def is_summary_line_description(desc: str | None) -> bool:
     if _SUMMARY_MONEY_FOOTER.match(text):
         return True
     if _BANK_REMITTANCE_LINE.search(text) and len(text) <= 120:
+        return True
+    return False
+
+
+def is_ocr_noise_line_description(desc: str | None) -> bool:
+    """True when description is OCR digit/code noise, not a product name."""
+    text = re.sub(r"\s+", " ", (desc or "").strip())
+    if not text:
+        return False
+    if _OCR_NOISE_LINE.match(text):
+        return True
+    letters = sum(1 for ch in text if ch.isalpha())
+    digits = sum(1 for ch in text if ch.isdigit())
+    # Table row index / fragment (e.g. "209") misread as the product description.
+    if letters == 0 and re.fullmatch(r"\d{1,4}", text):
+        return True
+    if digits >= 6 and letters <= 1 and len(text) <= 40:
+        return True
+    if digits >= 4 and letters == 0:
         return True
     return False
 

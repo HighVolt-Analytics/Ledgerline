@@ -64,6 +64,7 @@ VISION_HEADER_PROMPT_MARKERS: tuple[str, ...] = (
     "Never fill a missing amount by arithmetic",
     "PARTY TAX ID DISAMBIGUATION",
     "LINE ITEMS EXTRACTION",
+    "HANDWRITTEN / NON-LATIN ITEM NAMES",
     "Do not create a single synthetic line from Grand Total",
     "gst_rate — only when a printed rate exists",
     "MULTI-PAGE / WHOLE-PDF HANDLING",

@@ -450,7 +450,7 @@ describe("enrichLineItemsForPreview", () => {
     expect(enriched[0]?.displayAmount).toBe("500");
   });
 
-  it("derives unit price from amount ÷ qty", () => {
+  it("does not invent unit price from amount ÷ qty", () => {
     const enriched = enrichLineItemsForPreview([
       {
         id: 1,
@@ -462,7 +462,8 @@ describe("enrichLineItemsForPreview", () => {
         tax_amount: null,
       },
     ]);
-    expect(enriched[0]?.displayUnitPrice).toBe("25");
+    expect(enriched[0]?.displayUnitPrice).toBeNull();
+    expect(enriched[0]?.displayAmount).toBe("100");
   });
 });
 
@@ -659,6 +660,12 @@ describe("isNoiseLineItemRow", () => {
   it("still drops address bleed with high qty", () => {
     expect(isNoiseLineItemRow("Site Office Plot No.4", "51810")).toBe(true);
     expect(isNoiseLineItemRow("PH: 0432 423", "431")).toBe(true);
+  });
+
+  it("keeps amount-only rows with blank description", () => {
+    expect(isNoiseLineItemRow("", "3", "100000", null)).toBe(false);
+    expect(isNoiseLineItemRow(null, null, "58000", null)).toBe(false);
+    expect(isNoiseLineItemRow("", null, null, null)).toBe(true);
   });
 });
 

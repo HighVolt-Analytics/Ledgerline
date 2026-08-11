@@ -646,7 +646,10 @@ def build_structure_extract_prompts(
         if vision_images_present:
             system = (
                 f"{system}\nPage images are the primary source for this extract. "
-                "Read configured fields (including line_items when requested) from the images."
+                "Read configured fields (including line_items when requested) from the images. "
+                "For handwritten Burmese/Myanmar (or other non-Latin) line descriptions: "
+                "read the handwriting carefully; prefer English in description when confident, "
+                "otherwise keep the original script. Never use row indexes or phone digits as description."
             )
     user = build_llm_user_payload(
         ocr=ocr,
@@ -709,16 +712,18 @@ def _normalize_llm_raw(
                     continue
                 desc = str(row.get("description") or "").strip()
                 row_key = desc.lower()[:80] if desc else f"row_{index}"
-                if not desc:
-                    if trace is not None:
-                        trace.record(row_key, "llm_normalize", "dropped", "empty_description")
-                    continue
-                if should_skip_line_row(desc, trace=trace, row_key=row_key):
-                    continue
                 item = dict(row)
                 for key in ("amount", "qty", "unit_price", "tax_amount"):
                     if item.get(key) == "":
                         item[key] = None
+                has_money = item.get("amount") is not None or item.get("unit_price") is not None
+                # Handwritten / unreadable descriptions: keep amount-only rows.
+                if not desc and not has_money:
+                    if trace is not None:
+                        trace.record(row_key, "llm_normalize", "dropped", "empty_description")
+                    continue
+                if desc and should_skip_line_row(desc, trace=trace, row_key=row_key):
+                    continue
                 cleaned.append(item)
             out["line_items"] = cleaned
     harvest_keys = list(custom_keys) if custom_keys is not None else non_canonical_extraction_keys(

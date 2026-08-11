@@ -12,7 +12,6 @@ from typing import Any
 from app.schemas.document_type import DocumentTypeDefinition
 from app.schemas.rule_book_config import (
     TEAM_EXPENSE_KIND_ADVANCE,
-    TEAM_EXPENSE_KIND_CLAIM,
 )
 from app.services.classification.document_type_catalog import (
     ROUTE_TEAM,
@@ -58,7 +57,10 @@ def infer_preferred_team_expense_kind(
     invoice: Any,
     document_types: Sequence[DocumentTypeDefinition] | None = None,
 ) -> str | None:
-    """Best claim-kind hint from invoice state / heading / LLM suggestion label."""
+    """Best claim-kind hint from invoice state / catalogue title / LLM suggestion."""
+    from app.services.classification.catalogue_title_match import (
+        match_catalogue_dt_by_vision_title,
+    )
     from app.services.purchase.team_expense_kind_service import (
         document_type_team_expense_kind,
     )
@@ -67,24 +69,26 @@ def infer_preferred_team_expense_kind(
     if existing in _PINNED_ADVANCE_KINDS:
         return existing
 
-    heading = (getattr(invoice, "document_heading", None) or "").strip().lower()
-    summary = ""
-    fields = getattr(invoice, "extracted_fields", None)
-    if isinstance(fields, dict):
-        summary = str(fields.get("document_summary") or "").strip().lower()
-    blob = f"{heading} {summary}"
-    if "advance requisition" in blob or "advance request" in blob:
-        return TEAM_EXPENSE_KIND_ADVANCE
-    if "expense claim" in blob or "reimbursement" in blob:
-        return TEAM_EXPENSE_KIND_CLAIM
+    heading = (getattr(invoice, "document_heading", None) or "").strip()
+    if heading and document_types:
+        title_hit = match_catalogue_dt_by_vision_title(
+            document_heading=heading,
+            document_types=document_types,
+        )
+        if title_hit is not None:
+            pinned = document_type_team_expense_kind(title_hit[0])
+            if pinned:
+                return pinned
 
+    # Last resort: catalogue TE rows matched by title/summary phrases already on
+    # those rows (not a global English dictionary). Prefer LLM-suggested TE code.
     llm_code = (getattr(invoice, "llm_suggested_dt", None) or "").strip().upper()
     if llm_code and document_types:
         for row in document_types:
             if (row.code or "").strip().upper() != llm_code:
                 continue
             pinned = document_type_team_expense_kind(row)
-            if pinned in _PINNED_ADVANCE_KINDS:
+            if pinned in _PINNED_ADVANCE_KINDS or pinned:
                 return pinned
             break
 

@@ -650,7 +650,7 @@ function LineItemsDrawerGrid({
                   />
                 </div>
               )}
-              {showGlAccount && postingApplies && parentLedger ? (
+              {showGlAccount ? (
                 <div className="px-3 py-2 align-top">
                   <LineGlAccountCell
                     line={{
@@ -1221,7 +1221,7 @@ export function InvoiceDetailDrawer({
       startInEditAppliedRef.current = inv.id;
       setEditing(true);
       setDraft(draftFromInvoice(inv));
-      setTab("fields");
+      // Keep initialTab / current tab (do not force Fields).
     }
   }, [inv?.id, startInEditMode, open]);
 
@@ -1340,9 +1340,11 @@ export function InvoiceDetailDrawer({
         sourceKind: inv.email_sender ? "email" : "upload",
         lineItems: draftRows,
       });
+      // Edit mode always offers Qty / Unit / Total so "Add line item" is not
+      // description-only when existing OCR rows lacked those values.
       return {
         previewItems: resolved.items,
-        columns: resolved.columns,
+        columns: { showQty: true, showUnitPrice: true, showAmount: true },
       };
     }
     const resolved = resolvePreviewLineItems(inv, {
@@ -1448,9 +1450,7 @@ export function InvoiceDetailDrawer({
     if (!inv || !canEdit(inv.status)) return;
     setEditing(true);
     setDraft(draftFromInvoice(inv, extractionFieldKeys));
-    if (tab !== "overrides") {
-      setTab("fields");
-    }
+    // Stay on the current tab (e.g. Line items) so Edit doesn't jump to Fields.
   }
 
   function ensureLineItemsEditMode() {

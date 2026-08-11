@@ -1622,8 +1622,14 @@ def build_line_items_presentation_prompt(
             "LINE ITEMS — PAGE IMAGES (no OCR/DI table):",
             "- Read product/service line rows from the attached page images.",
             "- Each row: {{description, qty, unit_price, amount}} when those cells are visible.",
+            "- HANDWRITTEN / BURMESE (or other non-Latin) item names: carefully read the",
+            "  handwriting in the description column. Prefer a clear English product/service",
+            "  name in description when confident; otherwise return the original script text.",
+            "  Never put a bare row number, phone fragment, or digit code as description.",
             "- Exclude TOTAL, SUBTOTAL, tax-only rows, and header/party blocks.",
-            "- Do not invent rows that are not printed on the page.",
+            "- Do not invent rows that are not printed/written on the page.",
+            "- If qty and amount are clear but the name is truly illegible, keep the money",
+            "  row with description \"\" (empty) — do not invent SKU-like codes.",
             "- field_confidence.line_items: per-row confidence; 0.0 when line_items is [].",
         ]
     return [

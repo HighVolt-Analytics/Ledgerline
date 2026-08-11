@@ -146,7 +146,8 @@ def test_reconcile_heading_adopts_coo_dt() -> None:
     )
     assert detail is not None
     assert detail["adopted_dt"] == "DT-26"
-    assert detail["heading_kind"] == "certificate_of_origin"
+    assert detail["heading_kind"] in (None, "certificate_of_origin")
+    assert detail.get("heading_source") in ("catalogue_title", "title_line", "body_keyword")
     assert updated is not None
     assert updated.suggested_dt == "DT-26"
 
@@ -303,7 +304,7 @@ def test_title_line_commercial_invoice_still_adopts() -> None:
     )
     assert detail is not None
     assert detail["adopted_dt"] == "DT-CI"
-    assert detail.get("heading_source") == "title_line"
+    assert detail.get("heading_source") in ("catalogue_title", "title_line")
     assert updated is not None
     assert updated.suggested_dt == "DT-CI"
 
@@ -454,7 +455,10 @@ def test_tax_invoice_heading_clears_llm_grn_suggestion() -> None:
         ai_cfg=AiClassificationConfig(auto_route_min_confidence=0.65),
     )
     assert detail is not None
-    assert detail["reason"] == "heading_conflicts_with_llm_dt"
+    assert detail["reason"] in (
+        "heading_conflicts_with_llm_dt",
+        "catalogue_title_overrides_llm",
+    )
     assert updated is not None
     assert (updated.suggested_dt or "") != "DT-02"
 
@@ -496,3 +500,86 @@ def test_recognition_gate_blocks_grn_on_tax_invoice_heading() -> None:
     )
     assert result.passed is False
     assert "CLASSIFIER_RULE_MISMATCH" in result.review_reasons
+
+
+def test_advance_requisition_catalogue_title_overrides_payment_voucher_llm() -> None:
+    """LLM Payment Voucher must lose to a Rule Book title match on Advance Requisition."""
+    from app.models.invoice import Invoice, InvoiceStatus
+    from app.schemas.document_type import DocumentTypeClassifier, DocumentTypeDefinition
+    from app.schemas.llm_document import LlmDocumentResult
+    from app.schemas.ocr_artifact import OcrArtifact
+    from app.schemas.rule_book_config import AiClassificationConfig
+    from app.services.invoice.invoice_pipeline_phases import reconcile_llm_dt_with_heading
+    from app.tenant_ids import TESTING_TENANT_UUID
+
+    def _clf(**kw: object) -> DocumentTypeClassifier:
+        base: dict = {
+            "enabled": True,
+            "priority": 50,
+            "confidence": 0.88,
+            "root": {"type": "group", "operator": "AND", "children": []},
+        }
+        base.update(kw)
+        return DocumentTypeClassifier.model_validate(base)
+
+    advance = DocumentTypeDefinition(
+        code="DT-05",
+        title="Advance requisition",
+        shortTitle="Advance Requisition",
+        klass="Transactional",
+        posting="Yes",
+        recognitionMode="prompt",
+        recognitionSignals=[],
+        llmPrompt="Advance Requisition. Do not classify Payment Voucher.",
+        routeTarget="Team Expenses",
+        enabled=True,
+        playbookProfile="employee_claim",
+        teamExpenseKind="advance_requisition",
+        classifier=_clf(priority=40),
+        requiredFields=[],
+        extractionFields=["vendor", "total"],
+    )
+    voucher = DocumentTypeDefinition(
+        code="DT-06",
+        title="Payment Voucher",
+        shortTitle="Payment Voucher",
+        klass="Transactional",
+        posting="Yes",
+        recognitionMode="prompt",
+        recognitionSignals=[],
+        llmPrompt="Payment Voucher. Do not classify Advance Requisition.",
+        routeTarget="Team Expenses",
+        enabled=True,
+        playbookProfile="employee_claim",
+        teamExpenseKind="expense_claim",
+        classifier=_clf(priority=50),
+        requiredFields=[],
+        extractionFields=["vendor", "total"],
+    )
+    ocr = OcrArtifact(
+        success=True,
+        text="Advance Requisition\nName Khushi\nAmount 20000",
+        text_length=60,
+    )
+    llm = LlmDocumentResult(
+        suggested_dt="DT-06",
+        confidence=0.85,
+        reasoning="employee cash form looks like payment voucher",
+        perspective="purchase",
+        document_heading="Advance Requisition",
+    )
+    invoice = Invoice(tenant_id=TESTING_TENANT_UUID, status=InvoiceStatus.PENDING)
+    updated, detail = reconcile_llm_dt_with_heading(
+        llm,
+        invoice=invoice,
+        ocr=ocr,
+        document_types=[voucher, advance],
+        ai_cfg=AiClassificationConfig(auto_route_min_confidence=0.65),
+    )
+    assert detail is not None
+    assert detail["heading_source"] == "catalogue_title"
+    assert detail["reason"] == "catalogue_title_overrides_llm"
+    assert detail["adopted_dt"] == "DT-05"
+    assert detail["previous_dt"] == "DT-06"
+    assert updated is not None
+    assert updated.suggested_dt == "DT-05"

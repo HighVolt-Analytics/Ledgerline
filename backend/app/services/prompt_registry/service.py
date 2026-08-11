@@ -155,6 +155,19 @@ def _catalog_upgrade_markers() -> dict[str, tuple[str, ...]]:
             "PHASE 1 — SIGNAL HARVEST",
             "Prefer \"UNCERTAIN\" over a wrong answer",
         ),
+        "llm.field_translate.system": (
+            "You are a Field Translation Agent",
+            "source_language",
+            "line_descriptions",
+            "already_english",
+            "SELF-CHECK BEFORE RETURNING",
+        ),
+        "llm.extract.sparse_hint": (
+            "Sparse OCR / image-backed extract",
+            "Burmese/Myanmar",
+            "line_items.description",
+            "Never use row indexes or phone digits as the",
+        ),
         "llm.sub_ledger.assign.system": (
             "ROLE — Sub-ledger Assignment Agent",
             "Parent ledger is FIXED",

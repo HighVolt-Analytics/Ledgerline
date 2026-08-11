@@ -414,6 +414,15 @@ class Settings(BaseSettings):
             "currency is empty or only an ambiguous symbol was found."
         ),
     )
+    auto_translate_extracted_fields: bool = Field(
+        default=True,
+        validation_alias="AUTO_TRANSLATE_EXTRACTED_FIELDS",
+        description=(
+            "After extraction/grounding, run Field Translation Agent "
+            "(llm.field_translate.system) on non-English documents so human-readable "
+            "fields are stored in English (originals kept in extracted_fields)."
+        ),
+    )
     runtime_llm_min_confidence: float = Field(
         default=0.85,
         ge=0.0,

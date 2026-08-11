@@ -74,6 +74,15 @@ BARE_QTY_UOM = re.compile(
     re.I,
 )
 
+# Digit/code OCR noise posing as a product description (e.g. "005422: 27054").
+DIGIT_CODE_NOISE = re.compile(
+    r"^(?:"
+    r"\d{3,}(?:\s*[:#/\-]\s*\d+)+\s*"
+    r"|[A-Z]{0,3}\d{4,}(?:\s*[:#/\-]\s*\d+)+\s*"
+    r")$",
+    re.I,
+)
+
 
 def is_noise_line_item_row(
     description: str | None,
@@ -104,6 +113,8 @@ def is_noise_line_item_row(
         return _drop("abn_gstin")
     if PHONE_FRAGMENT.match(desc):
         return _drop("phone_fragment")
+    if DIGIT_CODE_NOISE.match(desc):
+        return _drop("digit_code_noise")
     if BANK_CONTACT.search(desc) and len(desc.split()) <= 14:
         return _drop("bank_contact")
     if ADDRESS_LIKE.search(desc) and POSTAL_RUN.search(desc):

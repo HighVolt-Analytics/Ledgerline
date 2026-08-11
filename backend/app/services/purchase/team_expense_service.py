@@ -29,24 +29,29 @@ async def stamp_team_expense_employee_identity(
     session: AsyncSession,
     invoice: Invoice,
 ) -> str | None:
-    """Stamp permanent employee_email (+ employee_name) once TE employee is matched.
+    """Stamp permanent employee_email (+ employee_name) from Employee Master.
 
+    Employee name/email come from the Employee Master row matched to the mail
+    sender (or stamped ``employee_email``) — never from receipt OCR/LLM.
     After ``employee_email`` is set, later TE logic must use that field — never
     re-guess from ``email_sender``.
     """
-    if (invoice.route_target or "").strip() != ROUTE_TEAM:
-        return None
-
     employees = await list_employee_masters(session, invoice.tenant_id)
     employee = resolve_team_expense_employee(
         employees,
         employee_email=getattr(invoice, "employee_email", None),
         email_sender=invoice.email_sender,
     )
+    is_team = (invoice.route_target or "").strip() == ROUTE_TEAM
     if employee is None:
+        # Do not leave OCR "customer name" sitting in employee_name.
         fields = getattr(invoice, "extracted_fields", None) or {}
-        existing = (fields.get("employee_name") or "").strip() if isinstance(fields, dict) else ""
-        return existing or (invoice.vendor or "").strip() or None
+        if isinstance(fields, dict) and fields.get("employee_name"):
+            cleaned = {k: v for k, v in fields.items() if k != "employee_name"}
+            invoice.extracted_fields = cleaned or None
+        if not is_team:
+            return None
+        return (invoice.vendor or "").strip() or None
 
     canonical = normalize_employee_email(employee.email)
     if canonical and not (invoice.employee_email or "").strip():
@@ -70,12 +75,12 @@ async def stamp_team_expense_employee_identity(
         merge_invoice_extracted_fields(invoice, {"employee_name": name})
         # Back-compat: older TE UIs used vendor as the employee display name.
         # Only fill when empty so merchant OCR on the receipt is preserved.
-        if not (invoice.vendor or "").strip():
+        if is_team and not (invoice.vendor or "").strip():
             invoice.vendor = name
             merge_invoice_extracted_fields(invoice, {"vendor": name})
     fields = getattr(invoice, "extracted_fields", None) or {}
     stamped = (fields.get("employee_name") or "").strip() if isinstance(fields, dict) else ""
-    return stamped or (invoice.vendor or "").strip() or name or None
+    return stamped or name or ((invoice.vendor or "").strip() if is_team else None) or None
 
 
 async def record_team_expense_processed(

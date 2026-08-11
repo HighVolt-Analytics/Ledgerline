@@ -255,7 +255,34 @@ async def phase_vision_header_extract(
                     result, text, date_order=date_order
                 )
                 result, consistency_detail = apply_vision_header_amount_consistency(result)
+                from app.services.extraction.field_translation_service import (
+                    apply_field_translation_to_vision_header,
+                )
+
+                translation_detail: dict[str, object] = {}
+                translation_patch: dict[str, str] = {}
+                result, translation_detail, translation_patch = (
+                    await apply_field_translation_to_vision_header(
+                        result,
+                        context_text=text or "",
+                    )
+                )
                 persist_vision_header_to_invoice(invoice, result)
+                if translation_patch:
+                    from app.services.extraction.extraction_field_values import (
+                        merge_invoice_extracted_fields,
+                    )
+
+                    merge_invoice_extracted_fields(invoice, translation_patch)
+                if translation_detail.get("field_translation_attempted") or translation_detail.get(
+                    "field_translation_applied"
+                ):
+                    await log_event(
+                        session,
+                        "field_translation",
+                        invoice_id=invoice.id,
+                        detail=translation_detail,
+                    )
                 await _persist_lines(result)
                 # Text grounding — fix ₹→INR / S$→SGD, clear bare-$, upgrade totals.
                 reconcile_detail = apply_vision_header_text_reconcile(invoice, text)
@@ -628,6 +655,12 @@ def evaluate_ocr_quality_confirm(
     if quality_hint in {"low", "poor", "unreadable"}:
         reasons.append(ReviewReason.IMAGE_QUALITY_LOW.value)
 
+    from app.services.extraction.ocr_quality_signals import ocr_text_looks_corrupted
+
+    if ocr_text_looks_corrupted(ocr.text):
+        # Prefer vision / human review over trusting misread script OCR.
+        reasons.append(ReviewReason.OCR_SPARSE.value)
+
     seen: set[str] = set()
     deduped = [r for r in reasons if not (r in seen or seen.add(r))]
 
@@ -758,6 +791,9 @@ def reconcile_llm_dt_with_heading(
     ai_cfg: AiClassificationConfig,
 ) -> tuple[LlmDocumentResult | None, dict[str, object] | None]:
     """Adopt a heading-aligned DT when LLM omits or contradicts OCR document title."""
+    from app.services.classification.catalogue_title_match import (
+        match_catalogue_dt_by_vision_title,
+    )
     from app.services.classification.segment_heading_classification import (
         classify_from_segment_heading,
         heading_conflicts_with_definition,
@@ -765,7 +801,61 @@ def reconcile_llm_dt_with_heading(
     )
 
     document_text = ocr.text or ""
-    heading_text = (llm.document_heading if llm is not None else "") or ""
+    heading_text = (
+        (llm.document_heading if llm is not None else "")
+        or (getattr(invoice, "document_heading", None) or "")
+        or ""
+    ).strip()
+    previous_dt = (llm.suggested_dt if llm is not None else "") or ""
+    previous_dt = previous_dt.strip().upper()
+
+    # Title-first against Rule Book titles (tenant catalogue — no hardcoded names).
+    if heading_text:
+        title_hit = match_catalogue_dt_by_vision_title(
+            document_heading=heading_text,
+            document_types=document_types,
+        )
+        if title_hit is not None:
+            best_def, best_score, _runner_code, _runner_score = title_hit
+            adopted_code = (best_def.code or "").strip().upper()
+            route_min = max(
+                ai_cfg.auto_route_min_confidence,
+                min_route_confidence_for_document_type(adopted_code, document_types),
+            )
+            if adopted_code and best_score >= route_min:
+                if not previous_dt or previous_dt != adopted_code:
+                    adopted = (llm or LlmDocumentResult()).model_copy(
+                        update={
+                            "suggested_dt": adopted_code,
+                            "confidence": float(best_score),
+                            "reasoning": (
+                                f"Catalogue title match for {heading_text!r} → {adopted_code}"
+                                + (f" (was {previous_dt})" if previous_dt else "")
+                            ),
+                            "document_heading": heading_text,
+                        }
+                    )
+                    return adopted, {
+                        "heading_kind": None,
+                        "heading_source": "catalogue_title",
+                        "previous_dt": previous_dt or None,
+                        "adopted_dt": adopted_code,
+                        "heading_confidence": float(best_score),
+                        "reason": (
+                            "catalogue_title_overrides_llm"
+                            if previous_dt and previous_dt != adopted_code
+                            else "catalogue_title_fill"
+                        ),
+                    }
+                return llm, {
+                    "heading_kind": None,
+                    "heading_source": "catalogue_title",
+                    "previous_dt": previous_dt,
+                    "adopted_dt": adopted_code,
+                    "heading_confidence": float(best_score),
+                    "reason": "catalogue_title_confirms_llm",
+                }
+
     inferred = resolve_segment_heading_with_source(
         document_text=f"{heading_text}\n{document_text}".strip(),
     )
@@ -781,8 +871,6 @@ def reconcile_llm_dt_with_heading(
         document_text=document_text,
         document_heading=heading_text.strip(),
     )
-    previous_dt = (llm.suggested_dt if llm is not None else "") or ""
-    previous_dt = previous_dt.strip().upper()
     llm_defn = (
         get_document_type_definition(previous_dt, document_types=document_types)
         if previous_dt

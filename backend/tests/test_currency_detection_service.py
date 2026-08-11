@@ -111,8 +111,8 @@ def test_apply_sets_currency_and_audit() -> None:
     assert (updated.raw_fields or {}).get("currency_detection", {}).get("applied") is True
 
 
-def test_apply_rejects_ungrounded_jurisdiction_guess_but_falls_back_to_usd() -> None:
-    """ABN + bare $ must not store invented AUD from the currency agent; use USD."""
+def test_apply_rejects_ungrounded_jurisdiction_guess_leaves_bare_dollar_empty() -> None:
+    """ABN + bare $ must not store invented AUD or USD — leave ISO empty, keep glyph."""
     ocr = "TAX INVOICE\nABN 51824753556\nTotal: $100.00"
     parsed = InvoiceData(currency="", document_text=ocr)
     detection = parse_currency_detection_result(
@@ -132,9 +132,9 @@ def test_apply_rejects_ungrounded_jurisdiction_guess_but_falls_back_to_usd() -> 
         }
     )
     updated = apply_currency_detection_to_parsed(parsed, detection, ocr_text=ocr)
-    assert updated.currency == "USD"
+    assert (updated.currency or "") == ""
     audit = (updated.raw_fields or {}).get("currency_detection") or {}
     assert audit.get("applied") is False
     assert audit.get("grounding_rejected") is True
-    assert audit.get("fallback_iso") == "USD"
-    assert "currency_symbol" not in (updated.extracted_fields or {})
+    assert not audit.get("fallback_iso")
+    assert (updated.extracted_fields or {}).get("currency_symbol") == "$"

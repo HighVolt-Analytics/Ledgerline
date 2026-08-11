@@ -6,7 +6,7 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.department_budget import DepartmentBudget
@@ -193,11 +193,13 @@ async def _upsert_gl_budget_row(
     mode = (enforcement or "soft").strip().lower()
     if mode not in {"soft", "hard"}:
         mode = "soft"
+    # Match case-insensitively so COA canonical casing does not spawn duplicates
+    # of legacy / differently-cased rows for the same wallet + period.
     row = (
         await session.execute(
             select(DepartmentBudget).where(
                 DepartmentBudget.tenant_id == tenant_id,
-                DepartmentBudget.gl_ledger == gl,
+                func.lower(DepartmentBudget.gl_ledger) == gl.lower(),
                 DepartmentBudget.period_kind == period_kind,
                 DepartmentBudget.period_key == period_key,
             )
@@ -216,6 +218,7 @@ async def _upsert_gl_budget_row(
         )
         session.add(row)
     else:
+        row.gl_ledger = gl  # normalize to COA canonical casing
         row.allocated = allocated
         row.enforcement = mode
         if notes is not None:
@@ -345,7 +348,9 @@ async def delete_parent_gl_budget_tree(
                 DepartmentBudget.tenant_id == tid,
                 DepartmentBudget.period_kind == period_kind,
                 DepartmentBudget.period_key == period_key,
-                DepartmentBudget.gl_ledger.in_(sorted(names)),
+                func.lower(DepartmentBudget.gl_ledger).in_(
+                    sorted({n.lower() for n in names})
+                ),
             )
         )
     ).scalars().all()
@@ -355,19 +360,6 @@ async def delete_parent_gl_budget_tree(
         await session.delete(row)
     await session.flush()
     return len(rows)
-    tid = _tenant_id(tenant_id)
-    row = (
-        await session.execute(
-            select(DepartmentBudget).where(
-                DepartmentBudget.tenant_id == tid,
-                DepartmentBudget.id == budget_id,
-            )
-        )
-    ).scalar_one_or_none()
-    if row is None:
-        raise LookupError(f"GL account budget {budget_id} not found")
-    await session.delete(row)
-    await session.flush()
 
 
 def _remaining(cap: float, spent: float) -> float | None:

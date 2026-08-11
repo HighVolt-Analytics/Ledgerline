@@ -1106,3 +1106,78 @@ async def test_upload_does_not_force_team_expense_channel(
     )
     assert result.code is None
     assert result.method != "te_employee_channel"
+
+def test_advance_requisition_catalogue_title_beats_payment_voucher_on_upload() -> None:
+    """Staging-style mix-up: vision title matches Rule Book Advance row, not Payment Voucher."""
+    from app.models.invoice import Invoice, InvoiceStatus
+    from app.services.invoice.vision_document_type_map import map_vision_label_to_document_type
+    from app.tenant_ids import TESTING_TENANT_UUID
+
+    catalogue = [
+        DocumentTypeDefinition(
+            code="DT-06",
+            title="Payment Voucher",
+            shortTitle="Payment Voucher",
+            klass="Transactional",
+            posting="Yes",
+            recognitionMode="prompt",
+            recognitionSignals=[],
+            llmPrompt=(
+                "Payment Voucher for settled employee or vendor payments. "
+                "Cash / bank payment evidence with approver signatures. "
+                "Do not classify Advance Requisition or Advance Request."
+            ),
+            routeTarget="Team Expenses",
+            enabled=True,
+            playbookProfile="employee_claim",
+            teamExpenseKind="expense_claim",
+        ),
+        DocumentTypeDefinition(
+            code="DT-05",
+            title="Advance requisition",
+            shortTitle="Advance Requisition",
+            klass="Transactional",
+            posting="Yes",
+            recognitionMode="prompt",
+            recognitionSignals=[],
+            llmPrompt=(
+                "Advance Requisition / Advance Request for employee cash advances. "
+                "Headings include Advance Requisition. Do not classify Payment Voucher."
+            ),
+            routeTarget="Team Expenses",
+            enabled=True,
+            playbookProfile="employee_claim",
+            teamExpenseKind="advance_requisition",
+        ),
+    ]
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PARSING,
+        document_heading="Advance Requisition",
+        capture_source="upload",
+    )
+    result = map_vision_label_to_document_type(
+        document_heading="Advance Requisition",
+        canonical_document_type="",
+        document_types=catalogue,
+        invoice=inv,
+    )
+    assert result.heading_kind is None
+    assert result.code == "DT-05"
+    assert result.method == "catalogue_title_match"
+    assert result.confidence >= 0.92
+
+
+def test_proforma_signal_does_not_match_advance_request() -> None:
+    from app.services.classification.recognition_signal_registry import SIGNAL_CONDITIONS
+
+    import re
+
+    text_pat = re.compile(str(SIGNAL_CONDITIONS["text_proforma"]["value"]))
+    assert text_pat.search("PROFORMA INVOICE")
+    assert not text_pat.search("Advance request for travel")
+    assert not text_pat.search("Advance Requisition\nAmount 20000")
+
+    adv_pat = re.compile(str(SIGNAL_CONDITIONS["text_advance_requisition"]["value"]))
+    assert adv_pat.search("Advance Requisition")
+    assert adv_pat.search("staff advance request")

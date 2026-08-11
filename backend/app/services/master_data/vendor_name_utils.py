@@ -13,6 +13,16 @@ _VENDOR_REJECT_RE = re.compile(
     re.I,
 )
 
+# Phone / fax / email contact lines — never a merchant/vendor name.
+_PHONE_OR_CONTACT_VENDOR = re.compile(
+    r"^(?:"
+    r"(?:tel|telephone|phone|mobile|mob|fax|whatsapp|wa|email|e-mail|www)\b"
+    r"|(?:tel|telephone|phone|mobile|fax)\s*(?:no\.?|number|#)?\s*:?\s*\+?\d"
+    r"|\+?\d[\d\s().-]{6,}\d"
+    r")",
+    re.I,
+)
+
 _HEADER_VENDOR_STOP = re.compile(
     r"^(?:TAX\s+INVOICE|INVOICE|BILL\s+TO|SHIP\s+TO|ABN\b|GSTIN\b|PURCHASE\s+ORDER|"
     r"GOODS\s+RECEIPT|DESCRIPTION\b|CURRENCY\b|VENDOR\b|SUPPLIER\b|DETAILS\b|RECEIVED\b)",
@@ -149,6 +159,20 @@ def is_plausible_vendor_name(value: str | None) -> bool:
     if not text:
         return False
     if len(text) < 3 or len(text) > 80:
+        return False
+    from app.services.extraction.ocr_quality_signals import vendor_name_looks_ocr_garbage
+
+    if vendor_name_looks_ocr_garbage(text):
+        return False
+    if _PHONE_OR_CONTACT_VENDOR.match(text):
+        return False
+    # Contact bleed: "Tel : 09…" / "Phone 123…" anywhere as the whole candidate.
+    if re.match(r"^(?:tel|telephone|phone|mobile|fax)\s*[:#.\-]?\s*", text, re.I) and re.search(
+        r"\d{6,}", text
+    ):
+        return False
+    # Bare numeric tokens (dates, phone fragments, invoice fragments) are not vendors.
+    if re.fullmatch(r"\d{3,}", text):
         return False
     if _VENDOR_REJECT_RE.search(text):
         return False

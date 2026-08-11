@@ -77,6 +77,12 @@ export function DepartmentBudgetsPanel({ currency }: { currency: string }) {
   const [enforcement, setEnforcement] = useState<"soft" | "hard">("soft");
   const [error, setError] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  /** When set, Save updates this tree (and migrates if parent/period changed). */
+  const [editingTree, setEditingTree] = useState<{
+    parentGl: string;
+    periodKind: (typeof PERIOD_KINDS)[number];
+    periodKey: string;
+  } | null>(null);
   /** Keys of parent rows whose Sub-GLs are expanded in the table. */
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => new Set());
 
@@ -231,17 +237,37 @@ export function DepartmentBudgetsPanel({ currency }: { currency: string }) {
     const k = (PERIOD_KINDS.includes(kind as (typeof PERIOD_KINDS)[number])
       ? kind
       : "monthly") as (typeof PERIOD_KINDS)[number];
-    setPeriodKind(k);
-    setPeriodKey(currentPeriodKey(k));
+    // Only auto-fill period key when the kind actually changes — re-selecting
+    // the same kind (common while editing) must not jump to the current calendar period.
+    if (k !== periodKind) {
+      setPeriodKind(k);
+      setPeriodKey(currentPeriodKey(k));
+    }
+  };
+
+  const resetForm = () => {
+    setNotes("");
+    setEnforcement("soft");
+    setParentBudget(0);
+    setSubBudgets({});
+    setParentGl("");
+    setEditingTree(null);
+    setError(null);
   };
 
   const loadTreeIntoForm = (group: BudgetTreeGroup) => {
-    setParentGl(group.parentGl);
-    setPeriodKind(
-      (PERIOD_KINDS.includes(group.periodKind as (typeof PERIOD_KINDS)[number])
+    const kind = (
+      PERIOD_KINDS.includes(group.periodKind as (typeof PERIOD_KINDS)[number])
         ? group.periodKind
-        : "monthly") as (typeof PERIOD_KINDS)[number]
-    );
+        : "monthly"
+    ) as (typeof PERIOD_KINDS)[number];
+    setEditingTree({
+      parentGl: group.parentGl,
+      periodKind: kind,
+      periodKey: group.periodKey,
+    });
+    setParentGl(group.parentGl);
+    setPeriodKind(kind);
     setPeriodKey(group.periodKey);
     setParentBudget(group.parentRow ? Number(group.parentRow.allocated) : 0);
     const next: Record<string, number | null> = {};
@@ -272,7 +298,27 @@ export function DepartmentBudgetsPanel({ currency }: { currency: string }) {
       );
       return;
     }
+    const nextKey = {
+      parentGl: parent,
+      periodKind,
+      periodKey: periodKey.trim(),
+    };
+    const keyChanged =
+      editingTree != null &&
+      (editingTree.parentGl.trim().toLowerCase() !== nextKey.parentGl.toLowerCase() ||
+        editingTree.periodKind !== nextKey.periodKind ||
+        editingTree.periodKey !== nextKey.periodKey);
+
     try {
+      // If parent/period identity changed while editing, remove the old tree first
+      // so we don't leave a duplicate row behind.
+      if (keyChanged && editingTree) {
+        await deleteTreeMut.mutateAsync({
+          parent_gl: editingTree.parentGl,
+          period_kind: editingTree.periodKind,
+          period_key: editingTree.periodKey,
+        });
+      }
       await upsertMut.mutateAsync({
         parent_gl: parent,
         period_kind: periodKind,
@@ -285,11 +331,7 @@ export function DepartmentBudgetsPanel({ currency }: { currency: string }) {
         enforcement,
         notes: notes.trim() || null,
       });
-      setNotes("");
-      setEnforcement("soft");
-      setParentBudget(0);
-      setSubBudgets({});
-      setParentGl("");
+      resetForm();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save GL budget tree");
     }
@@ -442,15 +484,33 @@ export function DepartmentBudgetsPanel({ currency }: { currency: string }) {
         ) : null}
 
         {error ? <p className="text-xs text-destructive">{error}</p> : null}
-        <Button
-          type="button"
-          size="sm"
-          onClick={() => void onSave()}
-          disabled={upsertMut.isPending || (catalogSubs.length > 0 && !sumMatches)}
-        >
-          <Plus className="h-3.5 w-3.5 mr-1" />
-          Save parent + Sub-GL budgets
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => void onSave()}
+            disabled={
+              upsertMut.isPending ||
+              deleteTreeMut.isPending ||
+              (catalogSubs.length > 0 && !sumMatches)
+            }
+            data-testid="te-gl-budget-save"
+          >
+            <Plus className="h-3.5 w-3.5 mr-1" />
+            {editingTree ? "Update parent + Sub-GL budgets" : "Save parent + Sub-GL budgets"}
+          </Button>
+          {editingTree ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={resetForm}
+              disabled={upsertMut.isPending || deleteTreeMut.isPending}
+            >
+              Cancel edit
+            </Button>
+          ) : null}
+        </div>
       </Card>
 
       {isLoading ? (

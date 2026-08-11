@@ -59,23 +59,25 @@ def normalize_currency(value: Any) -> str | None:
     raw = str(value).strip()
     if not raw:
         return None
-    # Ambiguous symbols must not invent an ISO code (JPY vs CNY for ¥).
-    if raw == "¥":
-        return None
+    # Ambiguous symbols must not invent an ISO code ($ → USD/AUD/SGD…, ¥ → JPY/CNY).
     import re
 
     from app.services.shared.currency import (
+        AMBIGUOUS_CURRENCY_SYMBOLS,
         _ENGLISH_FALSE_POSITIVE_ISO,
         detect_prefixed_currency_in_text,
     )
     from app.services.shared.iso4217_catalog import is_iso4217_currency
 
+    if raw in AMBIGUOUS_CURRENCY_SYMBOLS:
+        return None
+
     def _acceptable_iso(code: str) -> bool:
         # Prose-word ISO codes are never a valid bare currency field value.
         return is_iso4217_currency(code) and code not in _ENGLISH_FALSE_POSITIVE_ISO
 
-    # Unambiguous symbols → ISO
-    symbol_map = {"$": "USD", "£": "GBP", "€": "EUR", "₹": "INR"}
+    # Unambiguous symbols → ISO (never bare "$")
+    symbol_map = {"£": "GBP", "€": "EUR", "₹": "INR"}
     if raw in symbol_map:
         return symbol_map[raw]
 

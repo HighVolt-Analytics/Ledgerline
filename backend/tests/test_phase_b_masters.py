@@ -209,6 +209,44 @@ async def test_stamp_team_expense_employee_identity_overwrites_ocr_employee_name
 
 
 @pytest.mark.asyncio
+async def test_stamp_employee_identity_from_sender_without_te_route(
+    db_session: AsyncSession,
+) -> None:
+    """Mail sender → Employee Master even when route is not yet Team Expenses."""
+    from app.models.employee_master import EmployeeMasterRecord
+    from app.services.purchase.team_expense_service import stamp_team_expense_employee_identity
+
+    db_session.add(
+        EmployeeMasterRecord(
+            tenant_id=TESTING_TENANT_UUID,
+            master_id="em-stamp-3",
+            name="vishnu",
+            email="codevishnu321@gmail.com",
+            status="Active",
+        )
+    )
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        route_target="Sales Receipt",
+        email_sender="codevishnu321@gmail.com",
+        vendor="32025",
+        status=InvoiceStatus.MAPPING,
+        currency="MMK",
+        file_hash="te-stamp-pre-route",
+        extracted_fields={"employee_name": "Dr. Sai Kyaw Tayca"},
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    name = await stamp_team_expense_employee_identity(db_session, inv)
+    assert name == "vishnu"
+    assert (inv.extracted_fields or {}).get("employee_name") == "vishnu"
+    assert inv.employee_email == "codevishnu321@gmail.com"
+    # Non-TE: do not overwrite merchant/OCR vendor with employee name.
+    assert inv.vendor == "32025"
+
+
+@pytest.mark.asyncio
 async def test_has_manager_approval_with_duplicate_audit_rows(db_session: AsyncSession) -> None:
     inv = Invoice(
         tenant_id=TESTING_TENANT_UUID,

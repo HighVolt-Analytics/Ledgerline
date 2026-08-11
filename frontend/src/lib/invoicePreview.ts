@@ -566,10 +566,15 @@ export function isSummaryLineDescription(description: string | null | undefined)
 /** Keep in sync with backend is_noise_line_item_row. */
 export function isNoiseLineItemRow(
   description: string | null | undefined,
-  qty?: string | number | null
+  qty?: string | number | null,
+  amount?: string | number | null,
+  unitPrice?: string | number | null
 ): boolean {
   const desc = String(description ?? "").trim();
-  if (!desc) return true;
+  const hasMoney =
+    parseNumeric(amount) != null || parseNumeric(unitPrice) != null;
+  // Amount-only rows (handwritten / OCR-cleared descriptions) are valid.
+  if (!desc) return !hasMoney;
   if (/\b(?:DOCUMENTARY\s+CREDIT|CERTIFICATE|REFERENCE\s+NO|CONTRACT\s+NO|IRC\s+NO|TIN\b|BIN\s+NO)\b/i.test(desc)) {
     return true;
   }
@@ -682,7 +687,11 @@ export function filterLineItemsForPreview(
 ): LineItem[] {
   const filtered = items.filter((line) => {
     if (isSummaryLineDescription(line.description)) return false;
-    if (isNoiseLineItemRow(line.description, line.qty)) return false;
+    if (
+      isNoiseLineItemRow(line.description, line.qty, line.amount, line.unit_price)
+    ) {
+      return false;
+    }
     if (headerValues && duplicatesHeaderLineDescription(line.description, headerValues)) {
       return false;
     }
@@ -971,20 +980,17 @@ export function enrichLineItemsForPreview(
     const unitPrice = parseNumeric(line.unit_price);
     let amount = parseNumeric(line.amount);
 
+    // Only fill amount when qty × unit were both printed. Never invent unit from
+    // amount÷qty — blank rate columns must stay blank (grounded-only).
     if (amount == null && qty != null && unitPrice != null) {
       amount = qty * unitPrice;
-    }
-
-    let derivedUnitPrice = unitPrice;
-    if (derivedUnitPrice == null && amount != null && qty != null && qty > 0) {
-      derivedUnitPrice = amount / qty;
     }
 
     return {
       ...line,
       displayQty: qty != null ? formatNumericForDisplay(qty, 4) : null,
       displayUnitPrice:
-        derivedUnitPrice != null ? formatNumericForDisplay(derivedUnitPrice, 4) : null,
+        unitPrice != null ? formatNumericForDisplay(unitPrice, 4) : null,
       displayAmount: amount != null ? formatNumericForDisplay(amount, 2) : null,
     };
   });

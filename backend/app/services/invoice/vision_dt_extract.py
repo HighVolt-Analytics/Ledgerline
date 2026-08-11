@@ -180,6 +180,9 @@ async def evaluate_vision_dt_extract(
                 ocr_payload = dict(getattr(ocr, "payload_json", None) or {})
                 if not ocr_payload.get("provider"):
                     ocr_payload["provider"] = "vision_dt_scoped"
+                # Header total may sit on invoice when LLM left scalar empty.
+                if parsed.total is None and getattr(invoice, "total", None) is not None:
+                    parsed.total = invoice.total
                 parsed, line_items_fallback = apply_line_items_fallback(
                     parsed,
                     ocr_text=ocr_blob,
@@ -191,6 +194,35 @@ async def evaluate_vision_dt_extract(
                         tenant_id=invoice.tenant_id,
                     ),
                     pdf_path=path,
+                    require_lines=True,
+                )
+
+            # Understood DT-scoped path previously skipped Field Translation —
+            # Burmese/other non-English headings stayed untranslated. Run here
+            # before persist so English lands in columns + extracted_fields.
+            from app.services.audit.audit_service import log_event
+            from app.services.extraction.field_translation_service import (
+                apply_field_translation,
+            )
+
+            translation_ctx = (
+                (parsed.document_text or "").strip()
+                or str((parsed.extracted_fields or {}).get("document_summary") or "").strip()
+                or (parsed.document_heading or "")
+            )
+            parsed, translation_detail = await apply_field_translation(
+                parsed,
+                context_text=translation_ctx,
+                path="understood_dt",
+            )
+            if translation_detail.get("field_translation_attempted") or translation_detail.get(
+                "field_translation_applied"
+            ):
+                await log_event(
+                    session,
+                    "field_translation",
+                    invoice_id=invoice.id,
+                    detail=translation_detail,
                 )
 
             from app.schemas.rule_book_config import RuleBookConfigPayload
@@ -215,10 +247,48 @@ async def evaluate_vision_dt_extract(
                 org=org,
             )
             line_items_count = len(parsed.line_items or [])
+            # Safety net: DT requires lines + printed total, but every tier left
+            # the grid empty (common on handwritten non-Latin receipts).
+            if wants_line_items and line_items_count == 0:
+                from dataclasses import replace as dc_replace
+
+                from app.services.extraction.line_items_fallback_service import (
+                    FALLBACK_HEADER,
+                )
+                from app.services.invoice.invoice_data import ParsedLineItem
+                from app.services.invoice.pipeline import _replace_line_items
+                from app.services.shared.amount_sanity import plausible_money
+
+                rescue_total = plausible_money(parsed.total) or plausible_money(
+                    getattr(invoice, "total", None)
+                )
+                if rescue_total is not None and rescue_total > 0:
+                    heading = (
+                        (parsed.document_heading or "").strip()
+                        or (invoice.document_heading or "").strip()
+                        or None
+                    )
+                    rescue_rows = [
+                        ParsedLineItem(
+                            description=heading[:200] if heading else None,
+                            amount=rescue_total,
+                            source=FALLBACK_HEADER,
+                        )
+                    ]
+                    parsed = dc_replace(parsed, line_items=rescue_rows)
+                    await _replace_line_items(session, invoice, rescue_rows)
+                    line_items_count = 1
+                    line_items_fallback = FALLBACK_HEADER
             # Ensure column due_date is set even if scalar apply skipped empties oddly.
             from app.services.invoice.due_date_defaults import apply_due_on_receipt_to_invoice
 
             apply_due_on_receipt_to_invoice(invoice, dt_defn)
+            # Employee name comes from Employee Master via mail sender — not OCR/LLM.
+            from app.services.purchase.team_expense_service import (
+                stamp_team_expense_employee_identity,
+            )
+
+            await stamp_team_expense_employee_identity(session, invoice)
     except Exception as exc:
         logger.warning("vision_dt_extract_failed", error=str(exc), dt=dt_token)
         return VisionDtExtractResult(
@@ -265,12 +335,23 @@ async def evaluate_vision_dt_extract(
             "vision_bundle_custom_field",
             "llm_perspective",
             "field_confidence",
+            # Field Translation Agent originals / audit (must survive DT filter).
+            "original_document_heading",
+            "line_item_description_originals",
+            "translation_source_language",
+            "translation_applied",
+            "translation_confidence",
+            "translation_skip_reason",
         }
     )
     fields = {
         k: v
         for k, v in fields.items()
-        if str(k).strip().lower() in allowed
+        if (
+            str(k).strip().lower() in allowed
+            or str(k).strip().lower().startswith("original_")
+            or str(k).strip().lower().startswith("translation_")
+        )
     }
     invoice.extracted_fields = fields or None
 

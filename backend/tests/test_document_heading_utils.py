@@ -246,3 +246,12 @@ def test_not_a_tax_invoice_disclaimer_is_not_tax_invoice_kind() -> None:
         "End of document.\n"
     )
     assert infer_page_document_kind(disclaimer_only) is None
+
+
+def test_advance_requisition_not_a_hardcoded_heading_kind() -> None:
+    """TE form titles are catalogue-matched, not a fixed HeadingKind."""
+    from app.services.extraction.document_heading_utils import infer_page_document_kind
+
+    assert infer_page_document_kind("Advance Requisition\nName: Khushi") is None
+    assert infer_page_document_kind("ADVANCE REQUEST FORM\nAmount 20000") is None
+    assert infer_page_document_kind("Payment Voucher\nPaid to vendor") is None

@@ -2,12 +2,15 @@
 
 Hybrid resolve order:
 1) Human lock (reviewer confirmed DT on this invoice)
-2) Known employee on email/WhatsApp/Viber → catalogue Team Expenses DT
+2) Catalogue title match — vision printed title vs Rule Book shortTitle/title
+   (no hardcoded document-type names)
+3) Known employee on email/WhatsApp/Viber → catalogue Team Expenses DT
    (expense claim vs advance requisition; any receipt/invoice shape)
-3) Deterministic heading-kind scoring (same scorer as PDF segment classify)
-4) Tenant heading learning (exact normalized title → prior human_confirmed_dt)
-5) Configured classifiers (recognition / playbook identity signals)
-6) Text-LLM catalogue fallback — may pick ONLY a catalogue DT-xx, or leave empty
+4) Deterministic heading-kind scoring (same scorer as PDF segment classify)
+5) Tenant heading learning (exact normalized title → prior human_confirmed_dt)
+6) Configured classifiers (recognition / playbook identity signals)
+7) Text-LLM catalogue fallback using description/summary — may pick ONLY a
+   catalogue DT-xx, or leave empty
 """
 
 from __future__ import annotations
@@ -33,6 +36,7 @@ logger = get_logger(__name__)
 _MATCH_THRESHOLD = 0.82
 _AMBIGUITY_MARGIN = 0.05
 _METHOD_RULES = "heading_kind_score"
+_METHOD_CATALOGUE_TITLE = "catalogue_title_match"
 _METHOD_LEARNING = "tenant_heading_learning"
 _METHOD_CLASSIFIER = "config_classifier"
 _METHOD_LLM = "llm_catalogue_fallback"
@@ -94,6 +98,36 @@ def map_vision_label_to_document_type(
             reason="empty_catalogue",
             method=_METHOD_RULES,
         )
+
+    # Title-first: match vision printed title to Rule Book titles (tenant catalogue).
+    from app.services.classification.catalogue_title_match import (
+        match_catalogue_dt_by_vision_title,
+    )
+
+    title_heading = (document_heading or "").strip() or (
+        derive_canonical_document_type(
+            document_heading=document_heading or "",
+            canonical_document_type=canonical_document_type or "",
+        )
+        or ""
+    ).strip()
+    title_hit = match_catalogue_dt_by_vision_title(
+        document_heading=title_heading,
+        document_types=enabled,
+    )
+    if title_hit is not None:
+        best_def, best_score, runner_up_code, runner_up_score = title_hit
+        code = (best_def.code or "").strip().upper() or None
+        if code:
+            return VisionDocumentTypeMapResult(
+                code=code,
+                confidence=round(float(best_score), 4),
+                heading_kind=None,
+                reason="catalogue_title_matched",
+                method=_METHOD_CATALOGUE_TITLE,
+                runner_up_code=runner_up_code,
+                runner_up_score=runner_up_score,
+            )
 
     canonical = derive_canonical_document_type(
         document_heading=document_heading or "",

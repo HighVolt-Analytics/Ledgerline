@@ -1107,12 +1107,16 @@ def merge_extracted_fields_with_authority(
     ocr_text: str | None,
 ) -> dict[str, str]:
     """Merge extracted_fields giving DI-trusted scalars authority over LLM guesses."""
-    merged = dict(base)
+    merged = {
+        k: v for k, v in dict(base).items() if k not in CHANNEL_IDENTITY_ATTRS
+    }
     llm_map = llm_extracted or {}
     keys = list(selected_keys or ())
     for key, value in llm_map.items():
         token = str(key or "").strip().lower()
         if not token or not str(value or "").strip():
+            continue
+        if token in CHANNEL_IDENTITY_ATTRS or token in INFRASTRUCTURE_ATTRS:
             continue
         if field_di_authoritative(payload, token, ocr_text=ocr_text, selected_keys=keys):
             continue
@@ -1450,6 +1454,9 @@ def apply_parsed_extraction_fields(invoice: Invoice, parsed: InvoiceData) -> Non
         parsed.document_heading = heading
     invoice.document_heading = heading or None
     custom = merge_extracted_field_maps(extracted_fields_from_parsed(parsed))
+    # Preserve Employee Master / mailbox channel identity — never overwrite from OCR/LLM.
+    for key in CHANNEL_IDENTITY_ATTRS:
+        custom.pop(key, None)
     if heading:
         custom["document_heading"] = heading
     existing = dict(invoice.extracted_fields or {})
@@ -1504,7 +1511,11 @@ def harvest_configured_fields_from_llm_raw(
         return {}
     nested = raw.get("extracted_fields")
     nested_map = normalize_extracted_fields_map(nested) if isinstance(nested, dict) else {}
-    out: dict[str, str] = dict(nested_map)
+    # Channel identity (employee_name / email_sender) is never filled from OCR/LLM —
+    # even when the model puts them under extracted_fields.
+    out: dict[str, str] = {
+        k: v for k, v in nested_map.items() if k not in CHANNEL_IDENTITY_ATTRS
+    }
     selected = {str(k).strip().lower() for k in selected_keys if str(k or "").strip()}
 
     for token in selected:
@@ -1542,9 +1553,13 @@ def harvest_custom_fields_from_llm_raw(
     configured = harvest_configured_fields_from_llm_raw(raw, selected_keys=selected_keys or ())
     extracted = normalize_extracted_fields_map(raw.get("extracted_fields"))
     extracted = merge_extracted_field_maps(extracted, configured)
+    for key in CHANNEL_IDENTITY_ATTRS:
+        extracted.pop(key, None)
     for key in custom_keys or []:
         token = key.strip().lower()
         if not token or token in extracted:
+            continue
+        if token in CHANNEL_IDENTITY_ATTRS or token in INFRASTRUCTURE_ATTRS:
             continue
         nested = raw.get("extracted_fields")
         if isinstance(nested, dict) and nested.get(token):
@@ -1569,6 +1584,8 @@ def harvest_custom_fields_from_llm_raw(
             extracted[token] = text
     if selected:
         extracted = {k: v for k, v in extracted.items() if k in selected}
+    for key in CHANNEL_IDENTITY_ATTRS:
+        extracted.pop(key, None)
     return extracted
 
 

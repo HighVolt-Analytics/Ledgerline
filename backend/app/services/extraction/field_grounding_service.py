@@ -628,11 +628,21 @@ def ground_invoice_scalars(
         if not (str(resolved_currency or "")).strip():
             from app.services.shared.currency import resolve_currency_from_ocr
 
-            iso, _symbol = resolve_currency_from_ocr(ocr_text, existing_currency=None)
+            iso, symbol = resolve_currency_from_ocr(ocr_text, existing_currency=None)
             if iso:
                 updates["currency"] = iso
                 if grounding_debug is not None:
                     grounding_debug["currency"] = "ocr_symbol_fallback"
+            elif symbol:
+                extracted = dict(
+                    updates.get("extracted_fields")
+                    if isinstance(updates.get("extracted_fields"), dict)
+                    else (working.extracted_fields or {})
+                )
+                extracted["currency_symbol"] = symbol
+                updates["extracted_fields"] = extracted
+                if grounding_debug is not None:
+                    grounding_debug["currency"] = "ambiguous_symbol_only"
 
     # Multi-currency dual-column: bind total to the grounded currency (and vice versa).
     if "total" not in skip or "currency" not in skip:

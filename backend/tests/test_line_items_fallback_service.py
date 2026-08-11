@@ -3,18 +3,31 @@ from types import SimpleNamespace
 
 from app.services.extraction.line_items_fallback_service import (
     FALLBACK_GRN_QTY,
+    FALLBACK_HEADER,
     FALLBACK_PDF_TABLES,
     apply_line_items_fallback,
 )
 from app.services.invoice.invoice_data import InvoiceData, ParsedLineItem
 
 
-def _dt(role: str = "") -> SimpleNamespace:
-    return SimpleNamespace(purchase_bundle_role=role)
+def _dt(role: str = "", *, extraction_fields: list[str] | None = None) -> SimpleNamespace:
+    return SimpleNamespace(
+        purchase_bundle_role=role,
+        extraction_fields=extraction_fields or [],
+        required_fields=extraction_fields or [],
+        compulsory_fields=[],
+        playbook_required_fields=[],
+        playbook_profile=None,
+        matrix_template_code=None,
+        code="DT-TEST",
+        name="Test",
+        enabled=True,
+        route_target=None,
+    )
 
 
 def test_header_lump_sum_fallback_does_not_invent_line() -> None:
-    """Grounded-only: header totals must not invent qty=1 / unit_price lines."""
+    """Grounded-only: rich OCR must not invent qty=1 / unit_price from header totals."""
     parsed = InvoiceData(
         vendor="Cloud Services Inc",
         subtotal=Decimal("499"),
@@ -25,6 +38,28 @@ def test_header_lump_sum_fallback_does_not_invent_line() -> None:
     updated, tier = apply_line_items_fallback(parsed, dt_definition=_dt())
     assert tier is None
     assert updated.line_items == []
+
+
+def test_sparse_vision_header_total_becomes_amount_only_line() -> None:
+    """Handwritten / vision-stub receipts: grounded total becomes one expense line."""
+    parsed = InvoiceData(
+        total=Decimal("58000"),
+        currency="MMK",
+        document_heading="သင်္ဘော ပိုးကည်တိုက်",
+    )
+    updated, tier = apply_line_items_fallback(
+        parsed,
+        ocr_text="",
+        ocr_payload={"provider": "vision_dt_scoped", "page_count": 1},
+        dt_definition=_dt(extraction_fields=["total", "line_items", "employee_name"]),
+    )
+    assert tier == FALLBACK_HEADER
+    assert len(updated.line_items) == 1
+    assert updated.line_items[0].amount == Decimal("58000")
+    assert updated.line_items[0].qty is None
+    assert updated.line_items[0].unit_price is None
+    assert updated.line_items[0].description == "သင်္ဘော ပိုးကည်တိုက်"
+    assert (updated.raw_fields or {}).get("_line_items_fallback") == FALLBACK_HEADER
 
 
 def test_no_fallback_when_lines_already_present() -> None:

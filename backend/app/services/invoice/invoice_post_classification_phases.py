@@ -415,6 +415,23 @@ async def reextract_fields_for_corrected_dt(
         dt_definition=dt_definition,
     )
 
+    from app.services.extraction.field_translation_service import apply_field_translation
+
+    parsed, translation_detail = await apply_field_translation(
+        parsed,
+        context_text=ocr_out.text or parsed.document_text or "",
+        path="not_understood",
+    )
+    if translation_detail.get("field_translation_attempted") or translation_detail.get(
+        "field_translation_applied"
+    ):
+        await log_event(
+            session,
+            "field_translation",
+            invoice_id=invoice.id,
+            detail=translation_detail,
+        )
+
     # Replace prior extraction rather than merging stale keys.
     loaded.extracted_fields = None
     invoice.extracted_fields = None

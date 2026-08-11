@@ -160,14 +160,37 @@ def _grn_qty_fallback(parsed: InvoiceData, text: str) -> list[ParsedLineItem]:
     return _usable_rows(tagged, parsed=parsed, allow_qty_only=True)
 
 
-def _header_lump_sum_fallback(parsed: InvoiceData) -> list[ParsedLineItem]:
-    """Disabled under grounded-only policy.
+def _header_lump_sum_fallback(
+    parsed: InvoiceData,
+    *,
+    sparse_ocr: bool,
+    requires_lines: bool,
+) -> list[ParsedLineItem]:
+    """Last resort when no other tier produced rows but a printed total exists.
 
-    Synthesizing qty=1 and unit_price=amount from header totals invents line
-    fields that were not printed as line items. Leave line_items empty instead.
+    Copies the grounded header ``total`` into one amount-only line. Does **not**
+    invent qty or unit_price. Used when the DT requires line items — including
+    vision extracts whose OCR provider looks "rich" but yields no usable rows.
     """
-    _ = parsed
-    return []
+    _ = sparse_ocr
+    if not requires_lines:
+        return []
+    if parsed.total is None:
+        return []
+    from app.services.shared.amount_sanity import plausible_money
+
+    amount = plausible_money(parsed.total)
+    if amount is None or amount <= 0:
+        return []
+    heading = (parsed.document_heading or "").strip()
+    description = heading[:200] if heading else None
+    return [
+        ParsedLineItem(
+            description=description,
+            amount=amount,
+            source=FALLBACK_HEADER,
+        )
+    ]
 
 
 def _bundle_role(dt_definition: object | None) -> str:
@@ -200,6 +223,7 @@ def apply_line_items_fallback(
     ocr_payload: dict[str, object] | None = None,
     dt_definition: object | None = None,
     pdf_path: str | object | None = None,
+    require_lines: bool | None = None,
 ) -> tuple[InvoiceData, str | None]:
     """Fill line_items when primary extraction left the list empty.
 
@@ -208,7 +232,9 @@ def apply_line_items_fallback(
     2. Native PDF tables (especially when OCR is sparse / vision stub)
     3. OCR/document_text money-bearing structured parse
     4. GRN qty-only when DT bundle role is grn
-    Never invent header lump-sum lines; never accept address/phone qty bleed on money docs.
+    5. Sparse vision + required lines: amount-only row from grounded header total
+       (no invented qty/unit_price; never used when OCR text is rich enough)
+    Never accept address/phone qty bleed on money docs.
     """
     if parsed.line_items:
         return parsed, None
@@ -221,8 +247,21 @@ def apply_line_items_fallback(
         dt_definition=dt_definition,
         parsed=parsed,
     )
-    sparse = is_sparse_ocr_payload(payload)
+    # Empty OCR text on vision stubs must count as sparse even if provider is odd.
+    sparse = is_sparse_ocr_payload(payload) or not text
     bundle_role = _bundle_role(dt_definition)
+    from app.services.extraction.line_item_extraction_policy import (
+        document_requires_line_items,
+        team_expense_hard_requires_line_items,
+    )
+
+    if require_lines is not None:
+        requires_lines = bool(require_lines)
+    else:
+        try:
+            requires_lines = bool(team_expense_hard_requires_line_items(dt_definition))
+        except Exception:
+            requires_lines = document_requires_line_items(dt_definition)
 
     candidates: list[tuple[str, list[ParsedLineItem], int]] = []
 
@@ -253,7 +292,11 @@ def apply_line_items_fallback(
             if grn_rows:
                 candidates.append((FALLBACK_GRN_QTY, grn_rows, PRIORITY_GRN_QTY))
 
-    header_rows = _header_lump_sum_fallback(parsed)
+    header_rows = _header_lump_sum_fallback(
+        parsed,
+        sparse_ocr=sparse,
+        requires_lines=requires_lines,
+    )
     if header_rows:
         candidates.append((FALLBACK_HEADER, header_rows, 99))
 

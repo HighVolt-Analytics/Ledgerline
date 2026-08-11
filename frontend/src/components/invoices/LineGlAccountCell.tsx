@@ -3,8 +3,13 @@ import { Sparkles } from "lucide-react";
 
 import type { LineItem } from "@/api/types";
 import { SubLedgerField } from "@/components/rule-book/SubLedgerField";
+import { Select } from "@/components/ui/select";
 import { useChartOfAccounts } from "@/hooks/useChartOfAccounts";
-import { ledgerHasSubLedgerCatalog } from "@/lib/coaAccountOptions";
+import {
+  coaAccountsToSelectOptions,
+  ledgerHasSubLedgerCatalog,
+  mergeCoaOptionsWithSavedValue,
+} from "@/lib/coaAccountOptions";
 import { cn } from "@/lib/cn";
 import {
   effectiveLineLedger,
@@ -41,9 +46,102 @@ export function LineGlAccountCell({
     setSubLedger(line.sub_ledger?.trim() ?? suggested);
   }, [line.sub_ledger, line.id, suggested]);
 
+  const parentOptions = useMemo(
+    () =>
+      mergeCoaOptionsWithSavedValue(
+        coaAccountsToSelectOptions(accounts, {
+          includeEmpty: true,
+          emptyLabel: required ? "— Select GL —" : "— Optional —",
+        }),
+        subLedger
+      ),
+    [accounts, required, subLedger]
+  );
+
   if (!postingApplies) {
     return (
       <span className="text-xs text-muted-foreground">Not posted — reference document</span>
+    );
+  }
+
+  const reason = lineGlMappingReason(line, parentLedger, hasCatalog);
+  const displayLedger = effectiveLineLedger(line, parentLedger);
+
+  // Editable: always offer a GL picker (sub-ledger under parent, or any COA account).
+  if (editable && onSubLedgerChange) {
+    if (!parentLedger.trim()) {
+      return (
+        <div className="space-y-1">
+          <Select
+            value={subLedger}
+            onValueChange={(value) => {
+              setSubLedger(value);
+              onSubLedgerChange(value);
+            }}
+            options={parentOptions}
+            className="invoice-drawer-gl-select w-full"
+            data-testid="invoice-gl-select"
+            size="sm"
+          />
+          <p className="text-[10px] text-muted-foreground">
+            Pick a GL account for this line
+          </p>
+        </div>
+      );
+    }
+
+    if (hasCatalog) {
+      return (
+        <div className={cn(required && "rounded-md ring-1 ring-destructive/40 p-1")}>
+          <p className="text-[10px] text-muted-foreground mb-1 truncate" title={parentLedger}>
+            {parentLedger}
+          </p>
+          <SubLedgerField
+            ledger={parentLedger}
+            value={subLedger}
+            onChange={(value) => {
+              setSubLedger(value);
+              onSubLedgerChange(value);
+            }}
+            accounts={accounts}
+            className="invoice-drawer-gl-select w-full"
+            data-testid="invoice-gl-select"
+            includeEmpty
+            emptyLabel={required ? "— Select sub-ledger —" : "— Optional —"}
+            size="sm"
+          />
+          <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground min-w-0">
+            <Sparkles className="h-3 w-3 text-primary shrink-0" />
+            <span className="truncate">
+              {required ? "Pick a sub-ledger under the document-type ledger to post" : reason}
+            </span>
+          </div>
+        </div>
+      );
+    }
+
+    // Parent ledger has no Sub-GLs — let the user pick any COA account for this line.
+    return (
+      <div className="space-y-1">
+        <p className="text-[10px] text-muted-foreground truncate" title={parentLedger}>
+          {parentLedger}
+        </p>
+        <Select
+          value={subLedger || parentLedger}
+          onValueChange={(value) => {
+            setSubLedger(value);
+            onSubLedgerChange(value);
+          }}
+          options={parentOptions}
+          className="invoice-drawer-gl-select w-full"
+          data-testid="invoice-gl-select"
+          size="sm"
+        />
+        <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground min-w-0">
+          <Sparkles className="h-3 w-3 text-primary shrink-0" />
+          <span className="truncate">GL for this line</span>
+        </div>
+      </div>
     );
   }
 
@@ -52,9 +150,6 @@ export function LineGlAccountCell({
       <span className="text-xs text-muted-foreground">Configure document type Post to ledger</span>
     );
   }
-
-  const reason = lineGlMappingReason(line, parentLedger, hasCatalog);
-  const displayLedger = effectiveLineLedger(line, parentLedger);
 
   if (!hasCatalog) {
     return (
@@ -75,30 +170,14 @@ export function LineGlAccountCell({
       <p className="text-[10px] text-muted-foreground mb-1 truncate" title={parentLedger}>
         {parentLedger}
       </p>
-      {editable && onSubLedgerChange ? (
-        <SubLedgerField
-          ledger={parentLedger}
-          value={subLedger}
-          onChange={(value) => {
-            setSubLedger(value);
-            onSubLedgerChange(value);
-          }}
-          accounts={accounts}
-          className="invoice-drawer-gl-select w-full"
-          data-testid="invoice-gl-select"
-          includeEmpty
-          emptyLabel={required ? "— Select sub-ledger —" : "— Optional —"}
-        />
-      ) : (
-        <span
-          className={cn(
-            "text-xs block",
-            required ? "text-destructive font-medium" : "text-foreground"
-          )}
-        >
-          {subLedger || (required ? "— Required —" : "— Optional —")}
-        </span>
-      )}
+      <span
+        className={cn(
+          "text-xs block",
+          required ? "text-destructive font-medium" : "text-foreground"
+        )}
+      >
+        {subLedger || (required ? "— Required —" : "— Optional —")}
+      </span>
       <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground min-w-0">
         <Sparkles className="h-3 w-3 text-primary shrink-0" />
         <span className="truncate">

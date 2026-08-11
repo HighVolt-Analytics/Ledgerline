@@ -21,7 +21,7 @@ export const DOCUMENT_TYPE_DEFAULT_PROMPTS: Record<string, string> = {
     "Debit note — either buyer-issued claim adjustment or vendor-issued additional charge. Adjusts payable up or documents a recovery; not a standard goods invoice or credit note. May reference shortages, quality claims, demurrage, or price escalation.",
 
   "DT-06":
-    "Proforma invoice or advance/down-payment request before goods or services are delivered. Requests prepayment against PO or contract terms — not a valid tax invoice and must not be posted as final payable. Often says proforma or advance payment.",
+    "Proforma invoice or vendor advance/down-payment request before goods or services are delivered. Requests prepayment against PO or contract terms — not a valid tax invoice and must not be posted as final payable. Often says proforma. Not an employee cash-advance or payment-voucher Team Expenses form.",
 
   "DT-07":
     "Recurring or contract-based invoice: rent, lease, subscription, retainer, or periodic service billing. Shows service/billing period and contracted recurring amount. Not a one-off PO goods invoice, utility bill, or proforma advance request.",

@@ -3786,6 +3786,24 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     invoice.route_target = loaded.route_target
 
     parsed = ensure_extraction_baseline(loaded, parsed, ocr=ocr)
+
+    from app.services.extraction.field_translation_service import apply_field_translation
+
+    parsed, translation_detail = await apply_field_translation(
+        parsed,
+        context_text=ocr.text or parsed.document_text or "",
+        path="not_understood",
+    )
+    if translation_detail.get("field_translation_attempted") or translation_detail.get(
+        "field_translation_applied"
+    ):
+        await log_event(
+            session,
+            "field_translation",
+            invoice_id=invoice.id,
+            detail=translation_detail,
+        )
+
     apply_parsed_extraction_fields(loaded, parsed)
     invoice.extracted_fields = loaded.extracted_fields
     invoice.so_reference = loaded.so_reference

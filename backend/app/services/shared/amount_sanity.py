@@ -86,6 +86,14 @@ def sanitize_parsed_line_item(
 
     Grounded-only: never invent missing unit_price/amount from qty×price math.
     """
+    from app.services.extraction.line_item_skip_patterns import is_ocr_noise_line_description
+
+    description = item.description
+    if description and is_ocr_noise_line_description(description):
+        description = None
+        if trace is not None and row_key:
+            trace.record(row_key, "amount_sanity", "blanked", "ocr_noise_description")
+
     qty = plausible_qty(item.qty)
     # unit_price shares NUMERIC(12,4) with qty — do not clamp via money (2dp) semantics.
     unit_price = plausible_qty(item.unit_price)
@@ -129,8 +137,28 @@ def sanitize_parsed_line_item(
         unit_price = None
         if trace is not None and row_key:
             trace.record(row_key, "amount_sanity", "adjusted", "cleared_mismatched_unit_price")
+    # Grounded-only: drop unit prices that look invented via amount÷qty
+    # (long fractional tails like 33333.3333 when rate was blank on the form).
+    if (
+        qty is not None
+        and qty != 0
+        and unit_price is not None
+        and amount is not None
+    ):
+        derived = amount / qty
+        if (unit_price - derived).copy_abs() <= Decimal("0.0002"):
+            exp = unit_price.as_tuple().exponent
+            if isinstance(exp, int) and exp < -2:
+                unit_price = None
+                if trace is not None and row_key:
+                    trace.record(
+                        row_key,
+                        "amount_sanity",
+                        "adjusted",
+                        "cleared_derived_unit_price",
+                    )
     return ParsedLineItem(
-        description=item.description,
+        description=description,
         qty=qty,
         unit_price=unit_price,
         amount=amount,

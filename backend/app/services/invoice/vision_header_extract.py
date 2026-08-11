@@ -327,6 +327,7 @@ def _parse_header_line_items(
     from app.services.extraction.field_validators import normalize_amount
     from app.services.shared.amount_sanity import sanitize_parsed_line_item
 
+    _ = total  # header total used by callers; single-line amount==total rows are kept
     payload = _raw_field(raw, "line_items")
     if payload is None:
         payload = raw.get("line_items")
@@ -345,6 +346,11 @@ def _parse_header_line_items(
         # Tax / summary / metadata rows belong in header gst/total — not expense lines.
         if description and should_skip_line_row(description):
             continue
+        from app.services.extraction.line_item_skip_patterns import is_ocr_noise_line_description
+
+        # Keep money rows; blank digit-code OCR noise posing as a description.
+        if description and is_ocr_noise_line_description(description):
+            description = ""
         qty = normalize_amount(row.get("qty") if "qty" in row else row.get("quantity"))
         unit_price = normalize_amount(
             row.get("unit_price") if "unit_price" in row else row.get("unitPrice")
@@ -353,15 +359,10 @@ def _parse_header_line_items(
         tax_amount = normalize_amount(
             row.get("tax_amount") if "tax_amount" in row else row.get("taxAmount")
         )
-        # Reject junk / synthetic grand-total-as-line rows.
+        # Reject empty junk rows. Amount-only rows are valid (handwritten /
+        # OCR-noise description cleared); a single-line receipt often has
+        # line amount == header total — keep those.
         if not description and qty is None and amount is None and unit_price is None:
-            continue
-        if (
-            not description
-            and amount is not None
-            and total is not None
-            and (amount - total).copy_abs() <= Decimal("0.01")
-        ):
             continue
         cleaned = sanitize_parsed_line_item(
             ParsedLineItem(
@@ -411,11 +412,16 @@ def parse_vision_header_raw(
     total = _parse_header_money(raw, "total")
     line_items = _parse_header_line_items(raw, total=total)
     invoice_date_raw = str(_raw_field(raw, "invoice_date") or "").strip()
+    from app.services.master_data.vendor_name_utils import is_plausible_vendor_name
+
+    counterparty = _str_field(raw, "counterparty_name")[:500]
+    if counterparty and not is_plausible_vendor_name(counterparty):
+        counterparty = ""
     return VisionHeaderExtractResult(
         success=True,
         document_heading=document_heading,
         canonical_document_type=canonical,
-        counterparty_name=_str_field(raw, "counterparty_name")[:500],
+        counterparty_name=counterparty,
         perspective=_normalize_perspective(_str_field(raw, "perspective")),
         invoice_no=_str_field(raw, "invoice_no")[:128],
         proforma_invoice_no=_str_field(raw, "proforma_invoice_no")[:128],
@@ -465,8 +471,12 @@ def persist_vision_header_to_invoice(
     from app.services.sales.so_reference import sanitize_cross_book_linkage_references
 
     sanitize_cross_book_linkage_references(invoice)
-    if result.counterparty_name:
+    from app.services.master_data.vendor_name_utils import is_plausible_vendor_name
+
+    if result.counterparty_name and is_plausible_vendor_name(result.counterparty_name):
         invoice.vendor = result.counterparty_name
+    elif (invoice.vendor or "").strip() and not is_plausible_vendor_name(invoice.vendor):
+        invoice.vendor = None
     if result.invoice_date is not None:
         invoice.invoice_date = result.invoice_date
 

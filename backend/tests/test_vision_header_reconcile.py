@@ -29,7 +29,7 @@ def test_rupee_overrides_wrong_aud() -> None:
     assert "override" in reason
 
 
-def test_bare_dollar_overrides_uncorroborated_aud_with_usd() -> None:
+def test_bare_dollar_clears_uncorroborated_aud() -> None:
     iso, symbol, reason = reconcile_currency_from_text(
         current_currency="AUD",
         text=(
@@ -39,9 +39,9 @@ def test_bare_dollar_overrides_uncorroborated_aud_with_usd() -> None:
             "Enough body text so grounding length threshold is satisfied for currency checks."
         ),
     )
-    assert iso == "USD"
-    assert symbol is None
-    assert "override" in reason
+    assert iso == ""
+    assert symbol == "$"
+    assert "cleared" in reason or "ambiguous" in reason
 
 
 def test_amd_processor_brand_clears_invented_armenian_dram() -> None:
@@ -71,14 +71,14 @@ def test_thin_text_keeps_vision_iso() -> None:
     assert "thin_text" in reason
 
 
-def test_bare_dollar_empty_fills_usd() -> None:
+def test_bare_dollar_empty_keeps_symbol_not_usd() -> None:
     iso, symbol, reason = reconcile_currency_from_text(
         current_currency="",
         text="Invoice\nTotal $100.00",
     )
-    assert iso == "USD"
-    assert symbol is None
-    assert "fill" in reason or "ocr" in reason
+    assert iso == ""
+    assert symbol == "$"
+    assert "ambiguous" in reason
 
 
 def test_us_prefix_keeps_usd() -> None:
