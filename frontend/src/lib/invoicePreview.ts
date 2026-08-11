@@ -473,10 +473,10 @@ function pushReference(
   refs.push({ key, label: referenceLabel(key), value: text });
 }
 
-function parseNumeric(value: string | null | undefined): number | null {
+function parseNumeric(value: string | number | null | undefined): number | null {
   if (value == null || value === "") return null;
-  const n = parseFloat(String(value).replace(/,/g, ""));
-  return Number.isNaN(n) ? null : n;
+  const n = typeof value === "number" ? value : parseFloat(String(value).replace(/,/g, ""));
+  return Number.isFinite(n) ? n : null;
 }
 
 function formatNumericForDisplay(value: number, maxDecimals = 4): string {
