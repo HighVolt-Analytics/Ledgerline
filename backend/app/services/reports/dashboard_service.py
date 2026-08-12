@@ -19,6 +19,7 @@ from app.services.dossier.document_ref_service import dossier_public_id
 from app.services.ingest.graph_client import is_graph_enabled
 from app.models.journal import JournalEntry
 from app.services.shared.currency import BASE_CURRENCY, convert_to_base, sum_amounts_by_currency
+from app.tenant_settings import tenant_labor_rate_per_hour, tenant_timezone
 from app.services.invoice.invoice_evaluation_service import (
     EVAL_AWAITING_CLASSIFICATION,
     EVAL_NEEDS_REVIEW,
@@ -1533,14 +1534,8 @@ async def build_overview(
         month_end=month_end,
         today=today,
     )
-    prev_end = month_start - timedelta(days=1)
-    prev_start = prev_end.replace(day=1)
-    prior_avg_seconds = await _avg_processing_seconds(
-        db,
-        tenant_id=tenant_id,
-        month_start=prev_start,
-        month_end=prev_end,
-    )
+    tenant = await db.get(Tenant, tenant_id)
+    labor_rate = tenant_labor_rate_per_hour(tenant)
     panels = await build_dashboard_panels(
         db,
         tenant_id=tenant_id,
@@ -1548,11 +1543,9 @@ async def build_overview(
         month_end=month_end,
         today=today,
         pending_approval=stats.pending_approval,
-        avg_processing_seconds=stats.avg_processing_seconds,
-        prior_avg_processing_seconds=prior_avg_seconds,
-        invoice_volume_sparkline=kpi_sparklines.invoice_volume,
-        avg_processing_sparkline=kpi_sparklines.avg_processing_seconds,
         base_currency=stats.base_currency or BASE_CURRENCY,
+        labor_rate_per_hour=labor_rate,
+        timezone_name=tenant_timezone(tenant),
     )
     return DashboardOverview(
         period=period,

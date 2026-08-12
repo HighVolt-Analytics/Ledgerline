@@ -47,6 +47,7 @@ export function SettingsPage() {
   const [currency, setCurrency] = useState("SGD");
   const [currencyTouched, setCurrencyTouched] = useState(false);
   const [initialCurrency, setInitialCurrency] = useState("SGD");
+  const [laborRatePerHour, setLaborRatePerHour] = useState("45");
   const { countries, currencies } = useSetupCatalogs();
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
@@ -67,6 +68,7 @@ export function SettingsPage() {
     setCurrency("SGD");
     setCurrencyTouched(false);
     setInitialCurrency("SGD");
+    setLaborRatePerHour("45");
     setPhone("");
     setTimezone("");
     setLocale("");
@@ -110,6 +112,13 @@ export function SettingsPage() {
         setCurrencyTouched(false);
         setTimezone(institution.timezone);
         setLocale(institution.locale || "");
+        setLaborRatePerHour(
+          String(
+            institution.labor_rate_per_hour != null && institution.labor_rate_per_hour > 0
+              ? institution.labor_rate_per_hour
+              : 45
+          )
+        );
         setProfileLoading(false);
         return;
       }
@@ -190,12 +199,18 @@ export function SettingsPage() {
     const countryMatch = catalogForCountry(country);
     const nextTimezone = countryMatch?.timeZone || timezone || undefined;
     const nextLocale = countryMatch?.locale || locale || undefined;
+    const parsedLabor = Number.parseFloat(laborRatePerHour);
+    if (!Number.isFinite(parsedLabor) || parsedLabor <= 0) {
+      toast({ title: "Labor cost per hour must be a positive number", variant: "destructive" });
+      return;
+    }
     setProfileSaving(true);
     try {
       const inst = await api.updateInstitutionSettings({
         name: trimmedName,
         country,
         currency,
+        labor_rate_per_hour: parsedLabor,
         ...(nextTimezone ? { timezone: nextTimezone } : {}),
         ...(nextLocale ? { locale: nextLocale } : {}),
       });
@@ -207,6 +222,13 @@ export function SettingsPage() {
       setCurrencyTouched(false);
       setTimezone(inst.timezone);
       setLocale(inst.locale || "");
+      setLaborRatePerHour(
+        String(
+          inst.labor_rate_per_hour != null && inst.labor_rate_per_hour > 0
+            ? inst.labor_rate_per_hour
+            : parsedLabor
+        )
+      );
       if (onboarding.industry) setIndustry(onboarding.industry);
       await queryClient.invalidateQueries({ queryKey: queryKeys.institutionSettings() });
       await refreshUser();
@@ -339,6 +361,25 @@ export function SettingsPage() {
                 {currencyMeta.symbol ? ` ${currencyMeta.symbol}` : ""} · {countryMeta.taxLabel}
                 {countryMeta.taxRate != null ? ` ${countryMeta.taxRate}%` : ""}
                 {displayTimezone ? ` · ${displayTimezone}` : null}
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <label htmlFor="input-settings-labor-rate" className="text-sm font-medium">
+                Labor cost / hour
+              </label>
+              <Input
+                id="input-settings-labor-rate"
+                data-testid="input-settings-labor-rate"
+                className="tnum"
+                type="number"
+                min={0.01}
+                step="0.01"
+                value={laborRatePerHour}
+                onChange={(e) => setLaborRatePerHour(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Used for dashboard estimated cost saved ({currencyMeta.code}
+                {currencyMeta.symbol ? ` ${currencyMeta.symbol}` : ""}).
               </p>
             </div>
             <div className="space-y-1.5">

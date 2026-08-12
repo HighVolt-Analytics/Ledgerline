@@ -17,6 +17,8 @@ class InstitutionSettingsResponse(BaseModel):
     field_labels: dict[str, str] = Field(default_factory=dict)
     # Last-resort vision soft-bundle key (extracted_fields name). Empty = skip.
     custom_bundle_field_key: str = ""
+    # Fully-loaded labour cost / hour in books currency (dashboard cost-saved KPIs).
+    labor_rate_per_hour: float = 45.0
     has_ledger_activity: bool = False
 
 
@@ -27,3 +29,4 @@ class UpdateInstitutionSettingsRequest(BaseModel):
     timezone: str | None = Field(default=None, min_length=3, max_length=64)
     locale: str | None = Field(default=None, min_length=2, max_length=16)
     custom_bundle_field_key: str | None = Field(default=None, max_length=64)
+    labor_rate_per_hour: float | None = Field(default=None, gt=0, le=1_000_000)

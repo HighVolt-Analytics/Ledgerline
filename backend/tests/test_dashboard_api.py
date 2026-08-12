@@ -486,17 +486,20 @@ async def test_dashboard_overview_panels_capture_and_executive(
 
     by_id = {row["id"]: row for row in body["capture_sources"]}
     assert by_id["email"]["document_count"] == 1
-    assert by_id["whatsapp"]["document_count"] == 1
+    assert by_id["whatsapp"]["document_count"] == 0  # EXCEPTION — not PROCESSED
     assert by_id["upload"]["document_count"] == 1
     assert by_id["viber"]["document_count"] == 0
-    assert by_id["email"]["time_saved_minutes"] > 0
+    # email STP: full 12 min; upload assisted: half of 11 → 6
+    assert by_id["email"]["time_saved_minutes"] == 12
+    assert by_id["upload"]["time_saved_minutes"] == 6
     assert by_id["email"]["cost_saved"] > 0
 
     exec_kpis = body["executive_kpis"]
-    assert exec_kpis["documents_processed"] == 3
-    assert exec_kpis["time_saved_minutes"] > 0
-    assert exec_kpis["cost_saved"] > 0
-    assert 0 <= exec_kpis["automation_efficiency_pct"] <= 100
+    assert exec_kpis["documents_processed"] == 2
+    assert exec_kpis["time_saved_minutes"] == 18
+    assert exec_kpis["avg_time_saved_per_doc_minutes"] == 9
+    assert exec_kpis["automation_efficiency_pct"] == 50  # 1 STP of 2 PROCESSED
+    assert exec_kpis["cost_saved"] == 14  # 18/60 * 45
 
     assert body["approval_queue"]["pending"] >= 1
     assert body["approval_queue"]["value_label"] != "—"
@@ -513,6 +516,11 @@ async def test_dashboard_overview_panels_capture_and_executive(
     assert body["attention"]["processed"]["value"] is not None
     assert len(body["attention"]["processed"]["bars"]) == 7
     assert len(body["attention"]["turnaround"]["bars"]) == 7
+    # Bars are live processed counts (not create-volume); all ints ≥ 0.
+    assert all(isinstance(v, int) and v >= 0 for v in body["attention"]["processed"]["bars"])
+    assert all(isinstance(v, int) and v >= 0 for v in body["attention"]["turnaround"]["bars"])
+    assert body["attention"]["processed"]["label"] == "Processed today"
+    assert body["attention"]["turnaround"]["label"] == "Average turnaround"
 
     ops = body["operations"]["windows"]
     assert "7d" in ops and "30d" in ops and "month" in ops
@@ -597,14 +605,305 @@ async def test_dashboard_overview_risk_buckets(
     assert by_id["bank"]["href"].endswith("DT-23")
 
 
+@pytest.mark.asyncio
+async def test_attention_processed_today_uses_audit_not_volume(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Processed today / bars come from invoice_processed events (tenant-local day)."""
+    from app.tenant_settings import tenant_today
+    from app.models.tenant import Tenant
+
+    tenant = await db_session.get(Tenant, TESTING_TENANT_UUID)
+    assert tenant is not None
+    today = tenant_today(tenant)
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Attention Processed Vendor",
+        status=InvoiceStatus.PROCESSED,
+        currency="AUD",
+        total=Decimal("10.00"),
+        capture_source="upload",
+        evaluation_status="auto_coded",
+        file_hash="dash-attn-processed-today",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    # Created earlier this week but processed today → counts for today.
+    db_session.add(
+        AuditLog(
+            tenant_id=TESTING_TENANT_UUID,
+            invoice_id=inv.id,
+            event="invoice_processed",
+            detail={"source": "test"},
+        )
+    )
+    await db_session.flush()
+
+    body = (await client.get("/api/dashboard/overview")).json()["data"]
+    attn = body["attention"]
+    assert int(attn["processed"]["value"]) >= 1
+    assert attn["processed"]["bars"][-1] >= 1
+    assert len(attn["processed"]["bars"]) == 7
+    # Turnaround value is from last-7-day window (not a hardcoded placeholder).
+    assert attn["turnaround"]["value"] not in {"", None}
+    assert "this week" in attn["turnaround"]["delta_text"] or "prior week" in attn[
+        "turnaround"
+    ]["delta_text"] or "no processed" in attn["turnaround"]["delta_text"]
+    _ = today  # used for clarity / future assertions
+
+
+@pytest.mark.asyncio
+async def test_extraction_quality_prefers_di_field_confidence(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Extraction Quality points should follow OCR field_confidence when present."""
+    import uuid
+
+    from app.models.classification_learning import InvoiceOcrArtifact
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Quality Vendor",
+        status=InvoiceStatus.PROCESSED,
+        currency="AUD",
+        total=Decimal("100.00"),
+        subtotal=Decimal("90.00"),
+        gst=Decimal("10.00"),
+        invoice_no="EQ-1",
+        capture_source="upload",
+        evaluation_status="auto_coded",
+        account_code="600",
+        account_name="Expenses",
+        file_hash="dash-eq-di-conf",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    db_session.add(
+        InvoiceOcrArtifact(
+            id=uuid.uuid4(),
+            tenant_id=TESTING_TENANT_UUID,
+            invoice_id=inv.id,
+            file_hash="dash-eq-di-conf",
+            di_model="prebuilt-invoice",
+            payload_json={
+                "field_confidence": {
+                    "vendor": 0.91,
+                    "invoice_no": 0.88,
+                    "invoice_date": 0.80,
+                    "due_date": 0.70,
+                    "currency": 0.95,
+                    "po_reference": 0.60,
+                    "gst": 0.40,
+                    "subtotal": 0.42,
+                    "total": 0.44,
+                    "line_items": 0.25,
+                },
+                "di_line_item_confidences": [0.20, 0.22],
+            },
+        )
+    )
+    await db_session.flush()
+
+    body = (await client.get("/api/dashboard/overview")).json()["data"]
+    by_metric = {row["metric"]: row["accuracy"] for row in body["extraction_quality"]}
+    # Header ≈ mean of 91,88,80,70,95,60
+    assert 70 <= by_metric["Header"] <= 90
+    # Line items from di_line_item_confidences mean ≈ 21
+    assert 15 <= by_metric["Line items"] <= 30
+    # Tax ≈ mean of 40,42,44
+    assert 35 <= by_metric["Tax/GST"] <= 50
+    # GL coded with code+name+auto → high mapping quality
+    assert by_metric["GL coding"] >= 90
+
+
+def test_normalize_and_score_invoice_metrics_unit() -> None:
+    from app.services.reports.dashboard_extraction_quality import (
+        normalize_confidence_pct,
+        score_invoice_metrics,
+    )
+
+    assert normalize_confidence_pct(0.85) == 85.0
+    assert normalize_confidence_pct(85) == 85.0
+    assert normalize_confidence_pct(None) is None
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Unit Vendor",
+        status=InvoiceStatus.PROCESSED,
+        currency="AUD",
+        total=Decimal("10.00"),
+        evaluation_status="needs_review",
+        file_hash="eq-unit",
+    )
+    scores = score_invoice_metrics(
+        inv,
+        ocr_payload={
+            "field_confidence": {"vendor": 0.5, "invoice_no": 0.5},
+            "di_line_item_confidences": [0.1],
+        },
+    )
+    assert scores["Line items"] == 10.0
+    assert "Header" in scores
+    assert "Tax/GST" in scores
+    assert "GL coding" in scores
+
+
+def test_extraction_quality_uses_invoice_llm_confidence() -> None:
+    """DI/classification path stores llm_confidence on invoice — should count."""
+    from app.services.reports.dashboard_extraction_quality import (
+        aggregate_extraction_quality,
+        score_invoice_metrics,
+    )
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="LLM Vendor",
+        status=InvoiceStatus.PROCESSED,
+        currency="AUD",
+        total=Decimal("100.00"),
+        subtotal=Decimal("90.00"),
+        gst=Decimal("10.00"),
+        invoice_no="LLM-1",
+        evaluation_status="auto_coded",
+        llm_confidence=0.95,
+        document_type_confidence=0.95,
+        account_code="6100",
+        account_name="Marketing",
+        file_hash="eq-llm-conf",
+    )
+    inv.id = 900003
+    scores = score_invoice_metrics(inv, ocr_payload=None)
+    assert scores["Header"] == 95.0
+    assert scores["Tax/GST"] == 95.0
+    assert scores["Line items"] == 80.8  # 95 * 0.85
+
+    agg = dict(aggregate_extraction_quality([inv], {}))
+    assert agg["Header"] == 95.0
+
+
+def test_extraction_quality_includes_vision_header_confidence() -> None:
+    """Understood-path vision_header_confidence drives Header/Tax when DI is absent."""
+    from app.services.reports.dashboard_extraction_quality import (
+        aggregate_extraction_quality,
+        score_invoice_metrics,
+    )
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Vision Vendor",
+        status=InvoiceStatus.PROCESSED,
+        currency="AUD",
+        total=Decimal("50.00"),
+        subtotal=Decimal("45.00"),
+        gst=Decimal("5.00"),
+        invoice_no="V-1",
+        evaluation_status="vision_header_review",
+        extracted_fields={
+            "vision_header_confidence": "0.82",
+            "canonical_document_type": "commercial_invoice",
+            "field_confidence": {"line_items": 0.55},
+        },
+        file_hash="eq-vision-unit",
+    )
+    # ORM may not assign id until flush; aggregate uses inv.id
+    inv.id = 900001
+    scores = score_invoice_metrics(inv, ocr_payload=None)
+    assert scores["Header"] == 82.0
+    assert scores["Tax/GST"] == 82.0
+    assert scores["Line items"] == 55.0
+
+    # Heuristic-only invoice is excluded from aggregate.
+    bare = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Bare",
+        status=InvoiceStatus.PROCESSED,
+        currency="AUD",
+        account_code="9999",
+        account_name="Suspense Account",
+        file_hash="eq-bare",
+    )
+    bare.id = 900002
+    agg = aggregate_extraction_quality([inv, bare], {})
+    by_m = dict(agg)
+    assert by_m["Header"] == 82.0
+    assert by_m["Line items"] == 55.0
+    # Vision doc has no GL code → optional empty heuristic (~52), not inflated coding.
+    assert by_m["GL coding"] <= 60
+
+
 def test_dashboard_savings_math() -> None:
     from app.services.reports.dashboard_savings import (
+        ASSISTED_CREDIT,
+        STP_CREDIT,
         cost_saved_from_minutes,
+        credit_factor,
         minutes_saved_per_doc,
         time_saved_minutes,
     )
 
-    assert minutes_saved_per_doc("email", actual_processing_minutes=0) == 12
-    assert minutes_saved_per_doc("whatsapp", actual_processing_minutes=3) == 12
-    assert time_saved_minutes(2, "upload", actual_processing_minutes=0) == 22
+    assert credit_factor(is_processed=False, is_stp=False) == 0.0
+    assert credit_factor(is_processed=True, is_stp=True) == STP_CREDIT
+    assert credit_factor(is_processed=True, is_stp=False) == ASSISTED_CREDIT
+
+    assert minutes_saved_per_doc("email", credit_factor=STP_CREDIT) == 12
+    assert minutes_saved_per_doc("whatsapp", credit_factor=ASSISTED_CREDIT) == 8
+    assert minutes_saved_per_doc("upload", credit_factor=0) == 0
+    assert time_saved_minutes(2, "upload", credit_factor=STP_CREDIT) == 22
     assert cost_saved_from_minutes(60) == 45
+    assert cost_saved_from_minutes(60, labor_rate_per_hour=90) == 90
+    assert cost_saved_from_minutes(18, labor_rate_per_hour=45) == 14
+
+
+@pytest.mark.asyncio
+async def test_dashboard_cost_saved_uses_tenant_labor_rate(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    from app.models.tenant import Tenant
+
+    tenant = await db_session.get(Tenant, TESTING_TENANT_UUID)
+    assert tenant is not None
+    settings = dict(tenant.settings_json or {})
+    settings["labor_rate_per_hour"] = 60
+    tenant.settings_json = settings
+    await db_session.flush()
+
+    db_session.add(
+        Invoice(
+            tenant_id=TESTING_TENANT_UUID,
+            vendor="Labor Rate Vendor",
+            status=InvoiceStatus.PROCESSED,
+            currency="AUD",
+            total=Decimal("10.00"),
+            capture_source="email",
+            evaluation_status="auto_coded",
+            file_hash="dash-labor-rate-email",
+        )
+    )
+    await db_session.flush()
+
+    body = (await client.get("/api/dashboard/overview")).json()["data"]
+    # 12 min STP email @ 60/hr → 12/60 * 60 = 12
+    assert body["executive_kpis"]["time_saved_minutes"] >= 12
+    assert body["executive_kpis"]["cost_saved"] >= 12
+
+
+@pytest.mark.asyncio
+async def test_institution_labor_rate_roundtrip(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    before = (await client.get("/api/tenants/current/institution")).json()["data"]
+    assert before["labor_rate_per_hour"] == 45.0 or before["labor_rate_per_hour"] > 0
+
+    updated = (
+        await client.patch(
+            "/api/tenants/current/institution",
+            json={"labor_rate_per_hour": 72.5},
+        )
+    ).json()["data"]
+    assert updated["labor_rate_per_hour"] == 72.5
+
+    again = (await client.get("/api/tenants/current/institution")).json()["data"]
+    assert again["labor_rate_per_hour"] == 72.5

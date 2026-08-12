@@ -18,6 +18,14 @@ export type ExtractionQualityPoint = {
   accuracy: number;
 };
 
+/** Short X-axis labels; full metric name stays in tooltip via `metric`. */
+const AXIS_LABEL: Record<string, string> = {
+  Header: "Header",
+  "Line items": "Lines",
+  "Tax/GST": "Tax",
+  "GL coding": "GL",
+};
+
 export type ApprovalQueueStats = {
   pending: number;
   valueLabel: string;
@@ -53,10 +61,15 @@ export function ExtractionQualityCard({
 }) {
   const { theme } = useTheme();
   const lineColor = theme === "dark" ? FILL_DARK : FILL_LIGHT;
+  const chartData = points.map((p) => ({
+    ...p,
+    axisLabel: AXIS_LABEL[p.metric] ?? p.metric,
+  }));
   const avg =
     points.length > 0
       ? points.reduce((sum, p) => sum + p.accuracy, 0) / points.length
       : 0;
+  const hasModelSignal = points.some((p) => p.accuracy > 0);
 
   return (
     <Card
@@ -70,10 +83,19 @@ export function ExtractionQualityCard({
         </h3>
         <p className="text-xs text-muted-foreground tnum tabular-nums">
           Avg{" "}
-          <span className="font-semibold text-foreground">{avg.toFixed(1)}%</span>
+          <span className="font-semibold text-foreground">
+            {hasModelSignal ? `${avg.toFixed(1)}%` : "—"}
+          </span>
         </p>
       </div>
 
+      {!hasModelSignal ? (
+        <p className="text-sm text-muted-foreground flex-1 flex items-center" data-testid="extraction-quality-empty">
+          No AI confidence scores stored for documents in this period yet. Includes
+          processed and in-review docs — confidence comes from Document Intelligence,
+          vision extraction, or classification (not status alone).
+        </p>
+      ) : (
       <div
         className="w-full"
         style={{ width: "100%", height: CHART_HEIGHT, minHeight: CHART_HEIGHT }}
@@ -85,14 +107,14 @@ export function ExtractionQualityCard({
           minWidth={180}
           minHeight={CHART_HEIGHT}
         >
-          <LineChart data={points} margin={CHART_MARGIN}>
+          <LineChart data={chartData} margin={CHART_MARGIN}>
             <CartesianGrid
               stroke="hsl(var(--border))"
               strokeDasharray="3 3"
               vertical={false}
             />
             <XAxis
-              dataKey="metric"
+              dataKey="axisLabel"
               tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
               stroke="hsl(var(--muted-foreground))"
               tickLine={false}
@@ -109,14 +131,19 @@ export function ExtractionQualityCard({
               width={42}
             />
             <Tooltip
-              content={({ active, payload, label }) => (
-                <ChartTooltip
-                  active={active}
-                  payload={payload}
-                  label={label}
-                  valueFormatter={(v) => `${Number(v).toFixed(1)}%`}
-                />
-              )}
+              content={({ active, payload }) => {
+                const row = payload?.[0]?.payload as
+                  | (ExtractionQualityPoint & { axisLabel?: string })
+                  | undefined;
+                return (
+                  <ChartTooltip
+                    active={active}
+                    payload={payload}
+                    label={row?.metric ?? row?.axisLabel}
+                    valueFormatter={(v) => `${Number(v).toFixed(1)}%`}
+                  />
+                );
+              }}
             />
             <Line
               type="monotone"
@@ -132,6 +159,7 @@ export function ExtractionQualityCard({
           </LineChart>
         </ResponsiveContainer>
       </div>
+      )}
     </Card>
   );
 }

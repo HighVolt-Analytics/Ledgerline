@@ -102,6 +102,8 @@ export interface InstitutionSettings {
   field_labels: Record<string, string>;
   /** Last-resort vision soft-bundle extracted_fields key; empty skips that step. */
   custom_bundle_field_key?: string;
+  /** Fully-loaded labour cost / hour in books currency (dashboard cost-saved). */
+  labor_rate_per_hour?: number;
   /** True when the tenant has invoices (currency change is an accounting event). */
   has_ledger_activity?: boolean;
 }

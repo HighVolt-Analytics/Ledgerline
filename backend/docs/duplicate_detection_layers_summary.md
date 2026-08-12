@@ -17,7 +17,7 @@
 
 **Page fingerprints (T3):** single-page uploads still match on one page; multi-page uploads require ≥2 overlapping pages (or a majority) so a shared cover/Ts&Cs page cannot mark unrelated same-type files as duplicates.
 
-**Allow with review (T4):** filename-only noise, or when ≥3 of 4 signal families are unavailable — never auto-skip. Visible in Upload as filter **Possible duplicates** (`duplicate_review_suggested`), separate from evaluation **Needs review only**.
+**Allow with review (T4):** filename-only noise, or when ≥3 of 4 signal families are unavailable — never auto-skip. Visible in Upload as filter **Possible duplicates** (`duplicate_review_suggested`), separate from evaluation **Needs review only**. Ingest OCRs fingerprintable non-PDFs (JPG/PNG/DOCX) via DI before applying T4; pipeline OCR can clear the flag once signals are sufficient.
 
 **Channel adapters:** WhatsApp/Viber replies, email Rule Book capture, and Graph folder moves stay outside the canonical core.
 

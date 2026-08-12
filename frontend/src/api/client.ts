@@ -662,6 +662,7 @@ export const api = {
     timezone?: string;
     locale?: string;
     custom_bundle_field_key?: string;
+    labor_rate_per_hour?: number;
   }) =>
     request<InstitutionSettings>("/api/tenants/current/institution", {
       method: "PATCH",

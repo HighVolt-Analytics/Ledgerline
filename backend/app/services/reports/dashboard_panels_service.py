@@ -7,10 +7,12 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from statistics import median
 from typing import Any, Iterable, Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import JournalEntry
 from app.models.user import User
@@ -31,9 +33,6 @@ from app.schemas.dashboard import (
     UserLayerMetric,
     UserLayerStages,
 )
-from app.services.extraction.field_extraction_confidence import (
-    compute_extraction_field_confidence,
-)
 from app.services.invoice.invoice_evaluation_service import (
     EVAL_AUTO_CODED,
     EVAL_AWAITING_CLASSIFICATION,
@@ -42,12 +41,16 @@ from app.services.invoice.invoice_evaluation_service import (
     EVAL_PENDING_VENDOR,
     EVAL_UNMATCHED_EXPENSE_VENDOR,
 )
+from app.services.reports.dashboard_extraction_quality import (
+    aggregate_extraction_quality,
+    load_latest_ocr_payloads,
+)
 from app.services.reports.dashboard_savings import (
     cost_saved_from_minutes,
+    credit_factor as effort_credit_factor,
     hours_label,
     manual_minutes as channel_manual_minutes,
     minutes_saved_per_doc,
-    time_saved_minutes as channel_time_saved,
 )
 from app.services.shared.currency import sum_amounts_by_currency
 
@@ -92,18 +95,6 @@ _POSTING_STATUSES = frozenset(
         InvoiceStatus.RECONCILING,
     }
 )
-
-_HEADER_FIELDS = (
-    "vendor",
-    "invoice_no",
-    "invoice_date",
-    "due_date",
-    "currency",
-    "po_reference",
-)
-_TAX_FIELDS = ("gst", "subtotal", "total")
-_LINE_FIELDS = ("line_items",)
-_GL_FIELDS = ("account_code", "account_name")
 
 _EXTRACTION_SAMPLE_LIMIT = 80
 
@@ -353,24 +344,48 @@ def _channel_counts(invoices: list[Invoice]) -> dict[CaptureId, int]:
     return counts
 
 
+def _is_processed(inv: Invoice) -> bool:
+    return inv.status == InvoiceStatus.PROCESSED
+
+
+def _is_stp(inv: Invoice) -> bool:
+    """True STP: finished processing with AI auto_coded (no human review path)."""
+    if not _is_processed(inv):
+        return False
+    eval_status = (inv.evaluation_status or "").strip()
+    if eval_status in _REVIEW_EVAL | _APPROVAL_EVAL:
+        return False
+    return eval_status == EVAL_AUTO_CODED
+
+
+def _doc_effort_minutes(inv: Invoice) -> int:
+    factor = effort_credit_factor(is_processed=_is_processed(inv), is_stp=_is_stp(inv))
+    return minutes_saved_per_doc(_normalize_channel(inv), credit_factor=factor)
+
+
 def build_capture_sources(
     invoices: list[Invoice],
     *,
-    actual_processing_minutes: float | None,
+    labor_rate_per_hour: float,
 ) -> list[CaptureSourceRow]:
-    counts = _channel_counts(invoices)
+    processed = [inv for inv in invoices if _is_processed(inv)]
+    counts = _channel_counts(processed)
+    saved_by_channel: dict[CaptureId, int] = {
+        "email": 0,
+        "whatsapp": 0,
+        "viber": 0,
+        "upload": 0,
+    }
+    for inv in processed:
+        ch = _normalize_channel(inv)
+        saved_by_channel[ch] += _doc_effort_minutes(inv)
+
     rows: list[CaptureSourceRow] = []
     for channel_id, label, href in _CAPTURE_META:
         docs = counts[channel_id]
-        saved = channel_time_saved(
-            docs,
-            channel_id,
-            actual_processing_minutes=actual_processing_minutes,
-        )
+        saved = saved_by_channel[channel_id]
         manual = channel_manual_minutes(docs, channel_id)
-        avg = minutes_saved_per_doc(
-            channel_id, actual_processing_minutes=actual_processing_minutes
-        )
+        avg = round(saved / docs) if docs else 0
         rows.append(
             CaptureSourceRow(
                 id=channel_id,
@@ -379,7 +394,9 @@ def build_capture_sources(
                 avg_time_saved_minutes=avg,
                 time_saved_minutes=saved,
                 manual_minutes=manual,
-                cost_saved=cost_saved_from_minutes(saved),
+                cost_saved=cost_saved_from_minutes(
+                    saved, labor_rate_per_hour=labor_rate_per_hour
+                ),
                 href=href,
             )
         )
@@ -390,41 +407,18 @@ def build_executive_kpis(
     *,
     current_invoices: list[Invoice],
     prior_invoices: list[Invoice],
-    actual_processing_minutes: float | None,
-    prior_actual_processing_minutes: float | None,
+    labor_rate_per_hour: float,
 ) -> ExecutiveKpis:
-    docs = len(current_invoices)
-    prior_docs = len(prior_invoices)
-    auto = sum(
-        1
-        for inv in current_invoices
-        if (inv.evaluation_status or "").strip() == EVAL_AUTO_CODED
-        or (
-            inv.status == InvoiceStatus.PROCESSED
-            and (inv.evaluation_status or "").strip()
-            not in _REVIEW_EVAL | _APPROVAL_EVAL
-        )
-    )
-    prior_auto = sum(
-        1
-        for inv in prior_invoices
-        if (inv.evaluation_status or "").strip() == EVAL_AUTO_CODED
-        or (
-            inv.status == InvoiceStatus.PROCESSED
-            and (inv.evaluation_status or "").strip()
-            not in _REVIEW_EVAL | _APPROVAL_EVAL
-        )
-    )
-    auto_pct = round((auto / docs) * 100) if docs else 0
-    prior_auto_pct = round((prior_auto / prior_docs) * 100) if prior_docs else 0
+    current_processed = [inv for inv in current_invoices if _is_processed(inv)]
+    prior_processed = [inv for inv in prior_invoices if _is_processed(inv)]
+    docs = len(current_processed)
+    prior_docs = len(prior_processed)
+    stp = sum(1 for inv in current_processed if _is_stp(inv))
+    prior_stp = sum(1 for inv in prior_processed if _is_stp(inv))
+    auto_pct = round((stp / docs) * 100) if docs else 0
+    prior_auto_pct = round((prior_stp / prior_docs) * 100) if prior_docs else 0
 
-    # Weighted time saved across channels.
-    total_saved = 0
-    for inv in current_invoices:
-        total_saved += minutes_saved_per_doc(
-            _normalize_channel(inv),
-            actual_processing_minutes=actual_processing_minutes,
-        )
+    total_saved = sum(_doc_effort_minutes(inv) for inv in current_processed)
     avg_saved = round(total_saved / docs) if docs else 0
     docs_delta = _delta_from_pct(_pct_change(docs, prior_docs), higher_is_better=True)
     auto_delta = _delta_from_pct(
@@ -451,7 +445,9 @@ def build_executive_kpis(
         avg_time_saved_per_doc_minutes=avg_saved,
         automation_efficiency_pct=auto_pct,
         automation_delta=auto_delta,
-        cost_saved=cost_saved_from_minutes(total_saved),
+        cost_saved=cost_saved_from_minutes(
+            total_saved, labor_rate_per_hour=labor_rate_per_hour
+        ),
     )
 
 
@@ -645,7 +641,7 @@ def build_attention_panel(
         proc_delta = f"{abs(proc_pct):.0f}% vs. yesterday"
         proc_good = proc_pct >= 0
 
-    turn_delta_text = "vs. last week"
+    turn_delta_text = "vs. prior week"
     turn_down = False
     turn_good = True
     if (
@@ -663,6 +659,8 @@ def build_attention_panel(
             turn_delta_text = (
                 f"{abs_delta // 60}m {'faster' if turn_down else 'slower'} this week"
             )
+    elif avg_turnaround_seconds is None:
+        turn_delta_text = "no processed docs this week"
 
     bars_proc = processed_bars[-7:] if processed_bars else [0] * 7
     while len(bars_proc) < 7:
@@ -695,7 +693,6 @@ def _build_member_snapshots(
     invoices: list[Invoice],
     *,
     journaled_ids: set[int],
-    actual_processing_minutes: float | None,
     tenant_users: list[tuple[str, str]],
 ) -> list[OpsMemberSnapshot]:
     # member_id -> doc_type -> status -> count
@@ -739,39 +736,21 @@ def _build_member_snapshots(
                     counts=OpsStatusCounts(**counts),
                 )
             )
-        processed = sum(
-            1 for inv in docs if inv.status == InvoiceStatus.PROCESSED
-        )
-        auto = sum(
-            1
-            for inv in docs
-            if (inv.evaluation_status or "").strip() == EVAL_AUTO_CODED
-            or (
-                inv.status == InvoiceStatus.PROCESSED
-                and (inv.evaluation_status or "").strip()
-                not in _REVIEW_EVAL | _APPROVAL_EVAL
-            )
-        )
+        processed_docs = [inv for inv in docs if _is_processed(inv)]
+        processed = len(processed_docs)
+        stp = sum(1 for inv in processed_docs if _is_stp(inv))
         pending = sum(
             (by_type.get(dt) or {}).get("review_pending", 0)
             + (by_type.get(dt) or {}).get("approvals_pending", 0)
             for dt in ("invoice", "advance", "claim")
         )
-        saved = sum(
-            minutes_saved_per_doc(
-                _normalize_channel(inv),
-                actual_processing_minutes=actual_processing_minutes,
-            )
-            for inv in docs
-        )
+        saved = sum(_doc_effort_minutes(inv) for inv in processed_docs)
         return OpsMemberSnapshot(
             id=member_id,
             label=labels.get(member_id, member_id),
-            documents_processed=processed if member_id != "all" else sum(
-                1 for inv in docs if inv.status == InvoiceStatus.PROCESSED
-            ),
+            documents_processed=processed,
             time_saved_minutes=saved,
-            automation_rate_pct=round((auto / len(docs)) * 100) if docs else 0,
+            automation_rate_pct=round((stp / processed) * 100) if processed else 0,
             pending_actions=pending,
             accuracy_pct=0,
             by_doc_type=doc_rows,
@@ -791,7 +770,6 @@ async def build_operations_panel(
     month_start: date,
     month_end: date,
     today: date,
-    actual_processing_minutes: float | None,
 ) -> OperationsPanel:
     users = (
         await db.execute(
@@ -820,7 +798,6 @@ async def build_operations_panel(
         windows[key] = _build_member_snapshots(
             invoices,
             journaled_ids=journaled,
-            actual_processing_minutes=actual_processing_minutes,
             tenant_users=tenant_users,
         )
     return OperationsPanel(windows=windows)
@@ -851,32 +828,18 @@ async def build_extraction_quality(
     ).scalars().all()
     if not invoices:
         return [
-            ExtractionQualityPoint(metric="Header", accuracy=0.0),
-            ExtractionQualityPoint(metric="Line items", accuracy=0.0),
-            ExtractionQualityPoint(metric="Tax/GST", accuracy=0.0),
-            ExtractionQualityPoint(metric="GL coding", accuracy=0.0),
+            ExtractionQualityPoint(metric=metric, accuracy=0.0)
+            for metric in ("Header", "Line items", "Tax/GST", "GL coding")
         ]
 
-    groups = {
-        "Header": _HEADER_FIELDS,
-        "Line items": _LINE_FIELDS,
-        "Tax/GST": _TAX_FIELDS,
-        "GL coding": _GL_FIELDS,
-    }
-    totals: dict[str, list[float]] = {k: [] for k in groups}
-    for inv in invoices:
-        scores = compute_extraction_field_confidence(inv)
-        for metric, fields in groups.items():
-            vals = [scores[f] for f in fields if f in scores]
-            if vals:
-                totals[metric].append(sum(vals) / len(vals))
-
+    ocr_by_invoice = await load_latest_ocr_payloads(
+        db,
+        tenant_id=tenant_id,
+        invoice_ids=(inv.id for inv in invoices),
+    )
     return [
-        ExtractionQualityPoint(
-            metric=metric,
-            accuracy=round(sum(vals) / len(vals), 1) if vals else 0.0,
-        )
-        for metric, vals in totals.items()
+        ExtractionQualityPoint(metric=metric, accuracy=accuracy)
+        for metric, accuracy in aggregate_extraction_quality(invoices, ocr_by_invoice)
     ]
 
 
@@ -1021,11 +984,10 @@ async def count_processed_on_day(
     *,
     tenant_id: Any,
     day: date,
+    timezone_name: str | None = None,
 ) -> int:
-    from app.models.audit import AuditLog
-
-    start = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
-    end = start + timedelta(days=1)
+    """Count distinct invoices that reached invoice_processed on ``day`` (tenant local)."""
+    start, end = _day_bounds_utc(day, timezone_name)
     return (
         await db.execute(
             select(func.count(func.distinct(AuditLog.invoice_id)))
@@ -1041,6 +1003,235 @@ async def count_processed_on_day(
     ).scalar() or 0
 
 
+def _day_bounds_utc(day: date, timezone_name: str | None) -> tuple[datetime, datetime]:
+    try:
+        tz = ZoneInfo(timezone_name) if timezone_name else timezone.utc
+    except (ZoneInfoNotFoundError, ValueError, TypeError):
+        tz = timezone.utc
+    start_local = datetime(day.year, day.month, day.day, tzinfo=tz)
+    end_local = start_local + timedelta(days=1)
+    return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
+
+
+def _last_n_days(today: date, n: int = 7) -> list[date]:
+    return [today - timedelta(days=n - 1 - i) for i in range(n)]
+
+
+async def _processed_counts_by_day(
+    db: AsyncSession,
+    *,
+    tenant_id: Any,
+    days: list[date],
+    timezone_name: str | None,
+) -> dict[date, int]:
+    if not days:
+        return {}
+    start, _ = _day_bounds_utc(days[0], timezone_name)
+    _, end = _day_bounds_utc(days[-1], timezone_name)
+    rows = (
+        await db.execute(
+            select(AuditLog.invoice_id, AuditLog.created_at)
+            .join(Invoice, Invoice.id == AuditLog.invoice_id)
+            .where(
+                Invoice.tenant_id == tenant_id,
+                AuditLog.event == "invoice_processed",
+                AuditLog.invoice_id.isnot(None),
+                AuditLog.created_at >= start,
+                AuditLog.created_at < end,
+            )
+        )
+    ).all()
+    try:
+        tz = ZoneInfo(timezone_name) if timezone_name else timezone.utc
+    except (ZoneInfoNotFoundError, ValueError, TypeError):
+        tz = timezone.utc
+
+    # First processed event per invoice, then bucket by local calendar day.
+    first_by_invoice: dict[int, datetime] = {}
+    for invoice_id, created_at in rows:
+        if invoice_id is None or created_at is None:
+            continue
+        iid = int(invoice_id)
+        ts = created_at if created_at.tzinfo else created_at.replace(tzinfo=timezone.utc)
+        prev = first_by_invoice.get(iid)
+        if prev is None or ts < prev:
+            first_by_invoice[iid] = ts
+
+    counts: dict[date, int] = {d: 0 for d in days}
+    for ts in first_by_invoice.values():
+        local_day = ts.astimezone(tz).date()
+        if local_day in counts:
+            counts[local_day] += 1
+    return counts
+
+
+async def _avg_turnaround_seconds_between(
+    db: AsyncSession,
+    *,
+    tenant_id: Any,
+    start: datetime,
+    end: datetime,
+) -> float | None:
+    """Mean create→invoice_processed seconds for docs first-processed in [start, end)."""
+    processed_log = (
+        select(
+            AuditLog.invoice_id,
+            func.min(AuditLog.created_at).label("processed_at"),
+        )
+        .join(Invoice, Invoice.id == AuditLog.invoice_id)
+        .where(
+            AuditLog.invoice_id.isnot(None),
+            AuditLog.event == "invoice_processed",
+            Invoice.tenant_id == tenant_id,
+        )
+        .group_by(AuditLog.invoice_id)
+        .subquery()
+    )
+    stmt = (
+        select(
+            func.avg(
+                func.extract(
+                    "epoch",
+                    processed_log.c.processed_at - Invoice.created_at,
+                )
+            )
+        )
+        .select_from(Invoice)
+        .join(processed_log, processed_log.c.invoice_id == Invoice.id)
+        .where(
+            Invoice.tenant_id == tenant_id,
+            processed_log.c.processed_at >= start,
+            processed_log.c.processed_at < end,
+        )
+    )
+    result = (await db.execute(stmt)).scalar()
+    if result is None:
+        return None
+    return max(0.0, float(result))
+
+
+async def _daily_turnaround_seconds_by_day(
+    db: AsyncSession,
+    *,
+    tenant_id: Any,
+    days: list[date],
+    timezone_name: str | None,
+) -> dict[date, int]:
+    """Per-day mean turnaround (seconds) for invoices first-processed that local day."""
+    if not days:
+        return {}
+    start, _ = _day_bounds_utc(days[0], timezone_name)
+    _, end = _day_bounds_utc(days[-1], timezone_name)
+    processed_log = (
+        select(
+            AuditLog.invoice_id,
+            func.min(AuditLog.created_at).label("processed_at"),
+        )
+        .join(Invoice, Invoice.id == AuditLog.invoice_id)
+        .where(
+            AuditLog.invoice_id.isnot(None),
+            AuditLog.event == "invoice_processed",
+            Invoice.tenant_id == tenant_id,
+        )
+        .group_by(AuditLog.invoice_id)
+        .subquery()
+    )
+    rows = (
+        await db.execute(
+            select(
+                processed_log.c.processed_at,
+                func.extract(
+                    "epoch",
+                    processed_log.c.processed_at - Invoice.created_at,
+                ),
+            )
+            .select_from(Invoice)
+            .join(processed_log, processed_log.c.invoice_id == Invoice.id)
+            .where(
+                Invoice.tenant_id == tenant_id,
+                processed_log.c.processed_at >= start,
+                processed_log.c.processed_at < end,
+            )
+        )
+    ).all()
+    try:
+        tz = ZoneInfo(timezone_name) if timezone_name else timezone.utc
+    except (ZoneInfoNotFoundError, ValueError, TypeError):
+        tz = timezone.utc
+
+    buckets: dict[date, list[float]] = {d: [] for d in days}
+    for processed_at, secs in rows:
+        if processed_at is None or secs is None:
+            continue
+        ts = (
+            processed_at
+            if processed_at.tzinfo
+            else processed_at.replace(tzinfo=timezone.utc)
+        )
+        local_day = ts.astimezone(tz).date()
+        if local_day in buckets:
+            buckets[local_day].append(max(0.0, float(secs)))
+    return {
+        d: int(round(sum(vals) / len(vals))) if vals else 0
+        for d, vals in buckets.items()
+    }
+
+
+async def build_attention_ops_series(
+    db: AsyncSession,
+    *,
+    tenant_id: Any,
+    today: date,
+    timezone_name: str | None,
+) -> tuple[int, int, list[int], list[int], float | None, float | None]:
+    """Live ops series for attention strip (last 7 local days vs prior 7).
+
+    Returns:
+        processed_today, processed_yesterday, processed_bars,
+        turnaround_bars_seconds, avg_turnaround_seconds, prior_avg_turnaround_seconds
+    """
+    current_days = _last_n_days(today, 7)
+    prior_days = _last_n_days(today - timedelta(days=7), 7)
+
+    counts = await _processed_counts_by_day(
+        db,
+        tenant_id=tenant_id,
+        days=current_days,
+        timezone_name=timezone_name,
+    )
+    processed_bars = [counts.get(d, 0) for d in current_days]
+    processed_today = counts.get(today, 0)
+    processed_yesterday = counts.get(today - timedelta(days=1), 0)
+
+    turnaround_by_day = await _daily_turnaround_seconds_by_day(
+        db,
+        tenant_id=tenant_id,
+        days=current_days,
+        timezone_name=timezone_name,
+    )
+    turnaround_bars = [turnaround_by_day.get(d, 0) for d in current_days]
+
+    cur_start, _ = _day_bounds_utc(current_days[0], timezone_name)
+    _, cur_end = _day_bounds_utc(current_days[-1], timezone_name)
+    prior_start, _ = _day_bounds_utc(prior_days[0], timezone_name)
+    _, prior_end = _day_bounds_utc(prior_days[-1], timezone_name)
+
+    avg_turnaround = await _avg_turnaround_seconds_between(
+        db, tenant_id=tenant_id, start=cur_start, end=cur_end
+    )
+    prior_avg = await _avg_turnaround_seconds_between(
+        db, tenant_id=tenant_id, start=prior_start, end=prior_end
+    )
+    return (
+        processed_today,
+        processed_yesterday,
+        processed_bars,
+        turnaround_bars,
+        avg_turnaround,
+        prior_avg,
+    )
+
+
 async def build_dashboard_panels(
     db: AsyncSession,
     *,
@@ -1049,11 +1240,9 @@ async def build_dashboard_panels(
     month_end: date,
     today: date,
     pending_approval: int,
-    avg_processing_seconds: float | None,
-    prior_avg_processing_seconds: float | None,
-    invoice_volume_sparkline: list[int],
-    avg_processing_sparkline: list[int],
     base_currency: str,
+    labor_rate_per_hour: float,
+    timezone_name: str | None = None,
 ) -> dict[str, Any]:
     """Build all new overview panel payloads."""
     prev_end = month_start - timedelta(days=1)
@@ -1066,25 +1255,13 @@ async def build_dashboard_panels(
         db, tenant_id=tenant_id, start=prev_start, end=prev_end
     )
 
-    actual_min = (
-        None
-        if avg_processing_seconds is None
-        else max(0.0, avg_processing_seconds / 60.0)
-    )
-    prior_actual_min = (
-        None
-        if prior_avg_processing_seconds is None
-        else max(0.0, prior_avg_processing_seconds / 60.0)
-    )
-
     capture_sources = build_capture_sources(
-        current, actual_processing_minutes=actual_min
+        current, labor_rate_per_hour=labor_rate_per_hour
     )
     executive_kpis = build_executive_kpis(
         current_invoices=current,
         prior_invoices=prior,
-        actual_processing_minutes=actual_min,
-        prior_actual_processing_minutes=prior_actual_min,
+        labor_rate_per_hour=labor_rate_per_hour,
     )
     risk_compliance = await build_risk_compliance(
         db,
@@ -1094,27 +1271,29 @@ async def build_dashboard_panels(
         invoices=current,
     )
 
-    processed_today = await count_processed_on_day(
-        db, tenant_id=tenant_id, day=today
+    (
+        processed_today,
+        processed_yesterday,
+        processed_bars,
+        turnaround_bars,
+        attn_avg_turnaround,
+        attn_prior_avg_turnaround,
+    ) = await build_attention_ops_series(
+        db,
+        tenant_id=tenant_id,
+        today=today,
+        timezone_name=timezone_name,
     )
-    processed_yesterday = await count_processed_on_day(
-        db, tenant_id=tenant_id, day=today - timedelta(days=1)
-    )
-    # Prefer real processed-per-day bars when sparkline is volume-based; still usable.
-    processed_bars = list(invoice_volume_sparkline[-7:] or [0] * 7)
-    while len(processed_bars) < 7:
-        processed_bars = [0, *processed_bars]
-    processed_bars = [*processed_bars[:-1], processed_today]
 
     attention = build_attention_panel(
         risk_rows=risk_compliance,
         pending_approval=pending_approval,
         processed_bars=processed_bars,
-        turnaround_bars=list(avg_processing_sparkline or [0] * 7),
+        turnaround_bars=turnaround_bars,
         processed_today=processed_today,
         processed_yesterday=processed_yesterday,
-        avg_turnaround_seconds=avg_processing_seconds,
-        prior_avg_turnaround_seconds=prior_avg_processing_seconds,
+        avg_turnaround_seconds=attn_avg_turnaround,
+        prior_avg_turnaround_seconds=attn_prior_avg_turnaround,
     )
 
     operations = await build_operations_panel(
@@ -1123,7 +1302,6 @@ async def build_dashboard_panels(
         month_start=month_start,
         month_end=month_end,
         today=today,
-        actual_processing_minutes=actual_min,
     )
     extraction_quality = await build_extraction_quality(
         db,

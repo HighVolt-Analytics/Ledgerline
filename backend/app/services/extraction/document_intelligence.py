@@ -374,10 +374,33 @@ def parse_with_document_intelligence(
     return data
 
 
-def read_pdf_page_texts_via_di(file_path: str | Path) -> list[tuple[int, str]] | None:
-    """
-    OCR each page with Azure prebuilt-read when local PDF text is empty.
+def content_type_for_di_read(path: Path) -> str:
+    """MIME type Azure DI prebuilt-read accepts for this file suffix."""
+    suffix = path.suffix.lower()
+    if suffix in {".jpg", ".jpeg"}:
+        return "image/jpeg"
+    if suffix == ".png":
+        return "image/png"
+    if suffix == ".bmp":
+        return "image/bmp"
+    if suffix in {".tif", ".tiff"}:
+        return "image/tiff"
+    if suffix in {".heif", ".heic"}:
+        return "image/heif"
+    if suffix == ".docx":
+        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    return "application/pdf"
 
+
+def read_pdf_page_texts_via_di(
+    file_path: str | Path,
+    *,
+    content_type: str | None = None,
+) -> list[tuple[int, str]] | None:
+    """
+    OCR each page with Azure prebuilt-read when local extract is empty/unavailable.
+
+    ``content_type`` defaults from the file suffix (PDF, JPEG, PNG, DOCX, …).
     Returns list of (page_index, text) or None when DI is unavailable.
     """
     if not is_di_enabled():
@@ -388,6 +411,7 @@ def read_pdf_page_texts_via_di(file_path: str | Path) -> list[tuple[int, str]] |
     if not path.is_file():
         return None
 
+    resolved_type = (content_type or "").strip() or content_type_for_di_read(path)
     model_id = (settings.azure_di_read_model_id or "prebuilt-read").strip()
     try:
         from azure.ai.documentintelligence import DocumentIntelligenceClient
@@ -405,11 +429,17 @@ def read_pdf_page_texts_via_di(file_path: str | Path) -> list[tuple[int, str]] |
             poller = client.begin_analyze_document(
                 model_id,
                 body=document,
-                content_type="application/pdf",
+                content_type=resolved_type,
             )
         result = poller.result()
     except Exception as exc:
-        logger.warning("di_read_failed", path=str(path), model_id=model_id, error=str(exc))
+        logger.warning(
+            "di_read_failed",
+            path=str(path),
+            model_id=model_id,
+            content_type=resolved_type,
+            error=str(exc),
+        )
         return None
 
     pages_out: list[tuple[int, str]] = []
@@ -418,8 +448,19 @@ def read_pdf_page_texts_via_di(file_path: str | Path) -> list[tuple[int, str]] |
         pages_out.append((index, "\n".join(lines)))
 
     if not pages_out:
-        logger.warning("di_read_no_pages", path=str(path))
-        return None
+        # Some image/DOCX results expose content without per-page lines.
+        blob = (getattr(result, "content", None) or "").strip()
+        if blob:
+            pages_out.append((0, blob))
+        else:
+            logger.warning("di_read_no_pages", path=str(path), content_type=resolved_type)
+            return None
 
-    logger.info("di_read_ok", path=str(path), model_id=model_id, pages=len(pages_out))
+    logger.info(
+        "di_read_ok",
+        path=str(path),
+        model_id=model_id,
+        content_type=resolved_type,
+        pages=len(pages_out),
+    )
     return pages_out

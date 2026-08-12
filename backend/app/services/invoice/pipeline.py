@@ -3012,6 +3012,20 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             send_notification(invoice, InvoiceStatus.EXCEPTION)
             return
 
+    from app.services.dossier.document_duplicate_service import (
+        refresh_duplicate_review_after_ocr,
+    )
+    from app.services.extraction.document_identity_service import (
+        identity_field_keys_from_catalogue,
+    )
+
+    await refresh_duplicate_review_after_ocr(
+        session,
+        invoice,
+        ocr_text=ocr.text,
+        custom_field_keys=identity_field_keys_from_catalogue(config.document_types),
+    )
+
     from app.services.invoice.invoice_reset import reset_invoice_for_reprocess
     from app.services.invoice.processing_override_catalog import consume_deferred_full_reset
 

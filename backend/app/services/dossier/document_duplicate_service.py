@@ -710,6 +710,126 @@ def signals_are_sparse(
     return families_present <= 1
 
 
+async def refresh_duplicate_review_after_ocr(
+    session: AsyncSession,
+    invoice: Invoice,
+    *,
+    ocr_text: str | None,
+    custom_field_keys: list[str] | None = None,
+) -> bool:
+    """
+    After pipeline OCR, backfill fingerprints and clear T4 when signals are no longer sparse.
+
+    Used when ingest skipped OCR (images) or DI returned thin text that later OCR recovers.
+    Does not invent fingerprints from empty OCR. Skips unique fingerprint writes that would
+    collide with another invoice (those stay review-suggested as true possible duplicates).
+    """
+    if not getattr(invoice, "duplicate_review_suggested", False):
+        return False
+    text = (ocr_text or "").strip()
+    if not text:
+        return False
+
+    from app.services.extraction.document_heading_utils import infer_document_role_from_pages
+    from app.services.extraction.document_identity_service import (
+        compute_business_fingerprint,
+        extract_identity_fields_from_pages,
+    )
+    from app.services.extraction.pdf_content_fingerprint import (
+        compute_pdf_content_fingerprint_from_pages,
+    )
+    from app.services.extraction.pdf_page_text_service import PdfPageText
+    from app.services.ingest.page_fingerprint_service import (
+        collect_page_fingerprints,
+        persist_invoice_page_fingerprints,
+    )
+
+    pages = [PdfPageText(page_index=0, text=text)]
+    content_fp = compute_pdf_content_fingerprint_from_pages(pages)
+    identity_fields = extract_identity_fields_from_pages(
+        pages,
+        custom_field_keys=custom_field_keys,
+    )
+    inferred_role = infer_document_role_from_pages(pages)
+    if inferred_role:
+        identity_fields = {**identity_fields, "document_role": inferred_role}
+    business_fp = compute_business_fingerprint(identity_fields)
+    page_pairs = collect_page_fingerprints(pages)
+    page_fps = [fp for _, fp in page_pairs]
+
+    if signals_are_sparse(
+        content_fingerprint=content_fp or invoice.content_fingerprint,
+        business_fingerprint=business_fp or invoice.business_fingerprint,
+        identity_fields=identity_fields or None,
+        page_fingerprints=page_fps or None,
+    ):
+        return False
+
+    tenant_id = invoice.tenant_id
+    content_conflict = False
+    business_conflict = False
+
+    if content_fp and not invoice.content_fingerprint:
+        existing = await find_invoice_by_content_fingerprint_for_ingest(
+            session,
+            content_fp,
+            tenant_id=tenant_id,  # type: ignore[arg-type]
+        )
+        if existing is not None and existing.id != invoice.id:
+            content_conflict = True
+        else:
+            invoice.content_fingerprint = content_fp
+
+    if business_fp and not invoice.business_fingerprint:
+        existing_biz = await find_invoice_by_business_fingerprint_for_ingest(
+            session,
+            business_fp,
+            tenant_id=tenant_id,  # type: ignore[arg-type]
+        )
+        if existing_biz is not None and existing_biz.id != invoice.id:
+            business_conflict = True
+        else:
+            invoice.business_fingerprint = business_fp
+
+    if page_pairs:
+        await persist_invoice_page_fingerprints(
+            session,
+            tenant_id=tenant_id,  # type: ignore[arg-type]
+            invoice_id=invoice.id,
+            pages=pages,
+        )
+
+    if content_conflict or business_conflict:
+        # Strong OCR text matches another row — keep review flag (real duplicate risk).
+        await log_event(
+            session,
+            "duplicate_review_fingerprint_conflict",
+            invoice_id=invoice.id,
+            detail={
+                "content_conflict": content_conflict,
+                "business_conflict": business_conflict,
+                "content_fingerprint": content_fp,
+                "business_fingerprint": business_fp,
+            },
+        )
+        return False
+
+    invoice.duplicate_review_suggested = False
+    await log_event(
+        session,
+        "duplicate_review_cleared",
+        invoice_id=invoice.id,
+        detail={
+            "reason": "ocr_signals_sufficient",
+            "content_fingerprint": invoice.content_fingerprint,
+            "business_fingerprint": invoice.business_fingerprint,
+            "page_fingerprint_count": len(page_pairs),
+            "identity_field_count": len(identity_fields or {}),
+        },
+    )
+    return True
+
+
 async def find_existing_ingest_duplicate_match(
     session: AsyncSession,
     *,

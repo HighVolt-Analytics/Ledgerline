@@ -38,6 +38,7 @@ from app.tenant_settings import (
     set_setup_checklist_complete,
     tenant_currency,
     tenant_industry,
+    tenant_labor_rate_per_hour,
     tenant_onboarding_completed,
     UnsupportedCurrencyError,
 )
@@ -107,6 +108,7 @@ def _institution_response(tenant: Tenant, *, has_ledger_activity: bool = False) 
         name=tenant.name,
         **view,
         **juris,
+        labor_rate_per_hour=tenant_labor_rate_per_hour(tenant),
         has_ledger_activity=has_ledger_activity,
     )
 
@@ -267,6 +269,7 @@ async def update_institution_settings(
         and body.timezone is None
         and body.locale is None
         and body.custom_bundle_field_key is None
+        and body.labor_rate_per_hour is None
     ):
         raise HTTPException(400, "No settings to update")
 
@@ -289,6 +292,7 @@ async def update_institution_settings(
             locale=body.locale,
             custom_bundle_field_key=body.custom_bundle_field_key,
             currency=body.currency,
+            labor_rate_per_hour=body.labor_rate_per_hour,
         )
         if body.currency is not None and str(body.currency).strip():
             from app.services.shared.currency_catalog_service import ensure_currency_row

@@ -171,6 +171,25 @@ def tenant_custom_bundle_field_key(tenant: Tenant | None) -> str | None:
     return None
 
 
+DEFAULT_LABOR_RATE_PER_HOUR = 45.0
+
+
+def tenant_labor_rate_per_hour(tenant: Tenant | None) -> float:
+    """Fully-loaded labour cost per hour in tenant books currency.
+
+    Used by dashboard cost-saved KPIs. Invalid / missing → default 45.
+    """
+    settings = _settings(tenant)
+    raw = settings.get("labor_rate_per_hour")
+    try:
+        rate = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return DEFAULT_LABOR_RATE_PER_HOUR
+    if rate <= 0:
+        return DEFAULT_LABOR_RATE_PER_HOUR
+    return rate
+
+
 def institution_settings_view(tenant: Tenant | None) -> dict[str, str]:
     custom = tenant_custom_bundle_field_key(tenant)
     return {
@@ -268,6 +287,7 @@ def merge_institution_settings(
     locale: str | None = None,
     custom_bundle_field_key: str | None = None,
     currency: str | None = None,
+    labor_rate_per_hour: float | int | None = None,
 ) -> dict[str, Any]:
     """Apply institution profile updates to settings_json.
 
@@ -298,6 +318,12 @@ def merge_institution_settings(
             out["custom_bundle_field_key"] = token
         else:
             out.pop("custom_bundle_field_key", None)
+    if labor_rate_per_hour is not None:
+        rate = float(labor_rate_per_hour)
+        if rate <= 0:
+            out.pop("labor_rate_per_hour", None)
+        else:
+            out["labor_rate_per_hour"] = rate
 
     return out
 

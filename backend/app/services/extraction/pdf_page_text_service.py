@@ -10,13 +10,21 @@ from app.services.extraction.document_heading_utils import (
     infer_page_document_kind,
     is_continuation_page,
 )
-from app.services.extraction.document_intelligence import read_pdf_page_texts_via_di
+from app.services.extraction.document_intelligence import (
+    content_type_for_di_read,
+    read_pdf_page_texts_via_di,
+)
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 _THIN_PAGE_CHAR_THRESHOLD = 80
 _NO_KIND_DI_CHAR_THRESHOLD = 250
+
+# Formats Azure DI can OCR for ingest fingerprints (not WEBP — unsupported by DI).
+FINGERPRINTABLE_NON_PDF_SUFFIXES: frozenset[str] = frozenset(
+    {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".heif", ".heic", ".docx"}
+)
 
 
 @dataclass(frozen=True)
@@ -159,6 +167,44 @@ def extract_pdf_page_texts_via_full_di(path: Path) -> PdfPageTextExtraction | No
         page.page_index for page in di_pages if _page_needs_di_upgrade(page.text or "")
     )
     logger.info("pdf_page_text_full_di_fallback", path=str(path), pages=len(di_pages))
+    return PdfPageTextExtraction(pages=di_pages, incomplete_ocr_indices=incomplete)
+
+
+def is_fingerprintable_non_pdf(filename_or_suffix: str) -> bool:
+    """True when ingest should OCR this non-PDF via DI for duplicate fingerprints."""
+    raw = (filename_or_suffix or "").strip().lower()
+    if not raw:
+        return False
+    suffix = raw if raw.startswith(".") else Path(raw).suffix.lower()
+    return suffix in FINGERPRINTABLE_NON_PDF_SUFFIXES
+
+
+def extract_non_pdf_page_texts_via_di(path: Path) -> PdfPageTextExtraction | None:
+    """
+    OCR a raster image or DOCX via Azure DI for ingest fingerprints.
+
+    Mirrors the PDF full-DI fallback: empty after DI stays empty (T4 weak path).
+    """
+    if not path.is_file():
+        return None
+    if not is_fingerprintable_non_pdf(path.name):
+        return None
+    ocr_pages = read_pdf_page_texts_via_di(
+        path,
+        content_type=content_type_for_di_read(path),
+    )
+    if not ocr_pages:
+        return None
+    di_pages = [PdfPageText(page_index=index, text=text) for index, text in ocr_pages]
+    incomplete = tuple(
+        page.page_index for page in di_pages if _page_needs_di_upgrade(page.text or "")
+    )
+    logger.info(
+        "non_pdf_page_text_via_di",
+        path=str(path),
+        suffix=path.suffix.lower(),
+        pages=len(di_pages),
+    )
     return PdfPageTextExtraction(pages=di_pages, incomplete_ocr_indices=incomplete)
 
 

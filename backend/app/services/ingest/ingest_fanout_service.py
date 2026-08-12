@@ -53,8 +53,10 @@ from app.services.invoice.invoice_evaluation_service import load_config_for_tena
 from app.services.extraction.pdf_page_text_service import (
     PdfPageText,
     PdfPageTextExtraction,
+    extract_non_pdf_page_texts_via_di,
     extract_pdf_page_texts,
     extract_pdf_page_texts_via_full_di,
+    is_fingerprintable_non_pdf,
 )
 from app.services.extraction.pdf_segment_service import (
     purchase_document_type_from_heading,
@@ -69,6 +71,59 @@ from app.utils.hashing import compute_sha256_bytes
 class DuplicateUploadError(Exception):
     """Raised when a duplicate cannot be handled gracefully (legacy upload path)."""
 
+
+def _fingerprints_from_pages(
+    pages: list[PdfPageText] | None,
+    *,
+    custom_field_keys: list[str],
+) -> tuple[str | None, str | None, dict[str, str] | None]:
+    """Derive content / identity / business fingerprints from page text."""
+    if not pages:
+        return None, None, None
+    content_fingerprint = compute_pdf_content_fingerprint_from_pages(pages)
+    identity_fields = extract_identity_fields_from_pages(
+        pages,
+        custom_field_keys=custom_field_keys,
+    )
+    inferred_role = infer_document_role_from_pages(pages)
+    if inferred_role:
+        identity_fields = {**identity_fields, "document_role": inferred_role}
+    business_fingerprint = compute_business_fingerprint(identity_fields)
+    return content_fingerprint, business_fingerprint, identity_fields or None
+
+
+async def _load_identity_catalogue_keys(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> tuple[list, list[str], list]:
+    config = await load_config_for_tenant(session, tenant_id)
+    document_types = list(config.document_types)
+    custom_field_keys = identity_field_keys_from_catalogue(document_types)
+    catalogue_matchers = build_catalogue_page_matchers(document_types)
+    return document_types, custom_field_keys, catalogue_matchers
+
+
+async def _prepare_non_pdf_fingerprint_pages(
+    *,
+    filename: str,
+    data: bytes,
+) -> list[PdfPageText] | None:
+    """OCR raster/DOCX bytes via DI for ingest fingerprints (None when unavailable)."""
+    if not is_fingerprintable_non_pdf(filename):
+        return None
+    suffix = Path(filename).suffix.lower() or ".bin"
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as handle:
+            handle.write(data)
+            tmp_path = Path(handle.name)
+        extraction = await asyncio.to_thread(extract_non_pdf_page_texts_via_di, tmp_path)
+        if extraction is None or not extraction.pages:
+            return None
+        return list(extraction.pages)
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
 
 @dataclass(frozen=True)
 class IngestUploadResult:
@@ -693,12 +748,12 @@ async def _ingest_file_with_fanout_core(
     custom_field_keys: list[str] = []
     catalogue_matchers = []
     pages_for_fp: list[PdfPageText] | None = None
+    needs_catalogue = lower_name.endswith(".pdf") or is_fingerprintable_non_pdf(lower_name)
 
-    if lower_name.endswith(".pdf"):
-        config = await load_config_for_tenant(session, tenant_id)
-        document_types = list(config.document_types)
-        custom_field_keys = identity_field_keys_from_catalogue(document_types)
-        catalogue_matchers = build_catalogue_page_matchers(document_types)
+    if needs_catalogue:
+        document_types, custom_field_keys, catalogue_matchers = await _load_identity_catalogue_keys(
+            session, tenant_id
+        )
 
     if not lower_name.endswith(".pdf") or not settings.pdf_multi_document_split:
         if lower_name.endswith(".pdf"):
@@ -715,23 +770,10 @@ async def _ingest_file_with_fanout_core(
                     tmp_fp_path,
                     extraction.pages,
                 )
-                if pages_for_fp:
-                    content_fingerprint = compute_pdf_content_fingerprint_from_pages(
-                        pages_for_fp
-                    )
-                    identity_fields = extract_identity_fields_from_pages(
-                        pages_for_fp,
-                        custom_field_keys=custom_field_keys,
-                    )
-                    inferred_role = infer_document_role_from_pages(pages_for_fp)
-                    if inferred_role:
-                        identity_fields = {
-                            **identity_fields,
-                            "document_role": inferred_role,
-                        }
-                    business_fingerprint = compute_business_fingerprint(
-                        identity_fields
-                    )
+                content_fingerprint, business_fingerprint, identity_fields = _fingerprints_from_pages(
+                    pages_for_fp,
+                    custom_field_keys=custom_field_keys,
+                )
             finally:
                 if tmp_fp_path is not None:
                     tmp_fp_path.unlink(missing_ok=True)
@@ -753,6 +795,15 @@ async def _ingest_file_with_fanout_core(
                     parent_file_hash=parent_hash,
                     segment_count=1,
                 )
+        elif is_fingerprintable_non_pdf(lower_name):
+            pages_for_fp = await _prepare_non_pdf_fingerprint_pages(
+                filename=filename,
+                data=data,
+            )
+            content_fingerprint, business_fingerprint, identity_fields = _fingerprints_from_pages(
+                pages_for_fp,
+                custom_field_keys=custom_field_keys,
+            )
 
         return await _single_file_ingest(
             session,
