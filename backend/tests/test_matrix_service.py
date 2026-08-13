@@ -111,6 +111,7 @@ def test_derive_matrix_flag_vault_needs_review_is_clean() -> None:
 
 
 def test_exception_hold_reason_prefers_currency_over_suspense() -> None:
+    from app.schemas.document_type import DocumentTypeDefinition
     from app.services.invoice.pipeline_stages import exception_hold_reason
 
     inv = Invoice(
@@ -125,7 +126,21 @@ def test_exception_hold_reason_prefers_currency_over_suspense() -> None:
         currency="",
         total=None,
     )
-    reason = exception_hold_reason(inv)
+    dt = DocumentTypeDefinition(
+        code="DT-11",
+        title="Tax invoice",
+        shortTitle="Invoice",
+        klass="Transactional",
+        posting="Yes",
+        recognitionMode="signals",
+        recognitionSignals=["heading_invoice"],
+        llmPrompt="",
+        routeTarget="Purchase Management",
+        enabled=True,
+        requiredFields=["vendor", "total", "currency"],
+        extractionFields=["vendor", "total", "currency"],
+    )
+    reason = exception_hold_reason(inv, document_types=[dt])
     assert "currency" in reason.lower() or "financial fields" in reason.lower()
     assert "suspense" not in reason.lower()
 
@@ -164,7 +179,9 @@ def test_derive_resolution_hint_fields_over_generic_drawer() -> None:
         currency="",
         total=None,
     )
-    hint = derive_resolution_hint(inv, [])
+    hint = derive_resolution_hint(
+        inv, [], configured_keys=["currency", "total", "vendor"]
+    )
     assert hint is not None
     assert "fields" in hint.lower()
     assert "currency" in hint.lower() or "total" in hint.lower()

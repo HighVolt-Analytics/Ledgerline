@@ -834,6 +834,70 @@ def test_extraction_quality_includes_vision_header_confidence() -> None:
     assert by_m["GL coding"] <= 60
 
 
+@pytest.mark.asyncio
+async def test_extraction_quality_skips_unloaded_extracted_fields(
+    db_session: AsyncSession,
+) -> None:
+    """List-style defer of extracted_fields must not MissingGreenlet the dashboard."""
+    from sqlalchemy import select
+
+    from app.services.invoice.invoice_response_service import invoice_list_load_options
+    from app.services.reports.dashboard_extraction_quality import aggregate_extraction_quality
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Deferred Vision",
+        status=InvoiceStatus.PROCESSED,
+        currency="AUD",
+        total=Decimal("50.00"),
+        extracted_fields={
+            "vision_header_confidence": "0.82",
+            "canonical_document_type": "Cash Receipt",
+        },
+        file_hash="eq-defer-greenlet",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+    invoice_id = inv.id
+    db_session.expire_all()
+
+    deferred = (
+        await db_session.execute(
+            select(Invoice)
+            .options(*invoice_list_load_options())
+            .where(Invoice.id == invoice_id)
+        )
+    ).scalar_one()
+    agg = dict(aggregate_extraction_quality([deferred], {}))
+    assert "Header" in agg
+
+
+@pytest.mark.asyncio
+async def test_dashboard_overview_loads_when_extracted_fields_exist(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Overview Vision",
+        status=InvoiceStatus.PROCESSED,
+        currency="AUD",
+        total=Decimal("80.00"),
+        extracted_fields={
+            "vision_header_confidence": "0.9",
+            "canonical_document_type": "Cash Receipt",
+            "field_confidence": {"vendor": 0.9},
+        },
+        file_hash="eq-overview-vision",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    res = await client.get("/api/dashboard/overview?activity_limit=10&month=2026-08")
+    assert res.status_code == 200
+    body = res.json()["data"]
+    assert "extraction_quality" in body
+
+
 def test_dashboard_savings_math() -> None:
     from app.services.reports.dashboard_savings import (
         ASSISTED_CREDIT,

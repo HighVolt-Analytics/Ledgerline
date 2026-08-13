@@ -58,7 +58,9 @@ def _first_validation_failure(inv: Invoice) -> str | None:
     return None
 
 
-def derive_matrix_flag(inv: Invoice) -> tuple[str, str | None]:
+def derive_matrix_flag(
+    inv: Invoice, document_types: list | None = None
+) -> tuple[str, str | None]:
     """Return matrix flag label and optional human-readable reason."""
     if inv.status == InvoiceStatus.DUPLICATE_SKIPPED:
         return "Duplicate Suspected", _first_validation_failure(inv) or "Duplicate document skipped"
@@ -76,9 +78,9 @@ def derive_matrix_flag(inv: Invoice) -> tuple[str, str | None]:
         if eval_status == "vision_header_review":
             return (
                 "Anomaly Detected",
-                "Header fields incomplete — complete Fields, then Confirm & process",
+                exception_hold_reason(inv, document_types=document_types),
             )
-        return "Anomaly Detected", exception_hold_reason(inv)
+        return "Anomaly Detected", exception_hold_reason(inv, document_types=document_types)
     if inv.evaluation_status == "needs_rescan":
         return "Anomaly Detected", "Poor image quality — rescan required"
     if inv.evaluation_status == "awaiting_classification":
@@ -573,9 +575,14 @@ async def fetch_document_matrix(
     )
     document_count = (await db.execute(unfiltered_count_stmt)).scalar() or 0
 
+    from app.services.invoice.invoice_evaluation_service import load_config_for_tenant
+
+    config = await load_config_for_tenant(db, tenant_id)
+    document_types = list(config.document_types or [])
+
     rows: list[MatrixRowResponse] = []
     for inv in invoices:
-        flag, flag_reason = derive_matrix_flag(inv)
+        flag, flag_reason = derive_matrix_flag(inv, document_types=document_types)
         payment = payments_by_id.get(inv.id)
         conflict_with, conflict_detail = conflicts.get(inv.id, (None, []))
         paid_date = None

@@ -816,7 +816,6 @@ async def build_extraction_quality(
     invoices = (
         await db.execute(
             select(Invoice)
-            .options(*invoice_list_load_options())
             .where(
                 Invoice.tenant_id == tenant_id,
                 lo,

@@ -170,6 +170,22 @@ def exception_hold_reason(inv: Invoice, document_types: list | None = None) -> s
     if eval_status == "awaiting_classification":
         return "Document type not classified — confirm on Fields"
     if eval_status == "vision_header_review":
+        from app.services.classification.document_type_catalog import (
+            get_document_type_definition,
+        )
+        from app.services.invoice.vision_posting_continue import vision_header_gaps
+
+        defn = (
+            get_document_type_definition(dt, document_types=document_types)
+            if document_types
+            else None
+        )
+        gaps = vision_header_gaps(inv, defn)
+        if gaps:
+            return (
+                f"Still missing on Fields: {', '.join(gaps)} — "
+                "complete, then Confirm & process"
+            )
         field_reason = blocker_hold_reason(
             detect_invoice_blockers(inv, configured_keys=configured)
         )

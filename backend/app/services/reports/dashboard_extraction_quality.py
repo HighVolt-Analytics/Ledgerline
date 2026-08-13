@@ -23,6 +23,7 @@ from app.services.extraction.field_extraction_confidence import (
     compute_extraction_field_confidence,
 )
 from app.services.invoice.invoice_evaluation_service import EVAL_AUTO_CODED
+from app.services.invoice.invoice_response_service import _extracted_fields_if_loaded
 
 HEADER_FIELDS: tuple[str, ...] = (
     "vendor",
@@ -130,7 +131,7 @@ def _line_item_confidences(payload: dict[str, Any] | None) -> list[float]:
 
 def _vision_signals(invoice: Invoice) -> tuple[dict[str, float], float | None]:
     """Per-field vision/LLM confidences + overall vision_header_confidence."""
-    fields = invoice.extracted_fields if isinstance(invoice.extracted_fields, dict) else {}
+    fields = _extracted_fields_if_loaded(invoice)
     per_field = _parse_confidence_map(fields.get("field_confidence"))
     overall = normalize_confidence_pct(fields.get("vision_header_confidence"))
     return per_field, overall
@@ -153,7 +154,7 @@ def _invoice_overall_confidence(invoice: Invoice) -> float | None:
 
 
 def _is_understood_path(invoice: Invoice) -> bool:
-    fields = invoice.extracted_fields if isinstance(invoice.extracted_fields, dict) else {}
+    fields = _extracted_fields_if_loaded(invoice)
     if fields.get("vision_header_confidence"):
         return True
     if str(fields.get("canonical_document_type") or "").strip():

@@ -94,10 +94,14 @@ def resolve_invoice_amounts(invoice: Invoice) -> tuple[Decimal, Decimal, Decimal
 
 def backfill_invoice_amounts_from_sources(invoice: Invoice) -> None:
     """Persist inferred header amounts when extraction left totals empty."""
+    if invoice.total is None and invoice.subtotal is None:
+        return
     subtotal, gst, total = resolve_invoice_amounts(invoice)
     if invoice.subtotal is None:
         invoice.subtotal = plausible_money(subtotal)
-    if invoice.gst is None and gst != Decimal("0"):
+    if invoice.gst is None:
+        # Persist 0 when the print has a total but no tax line — otherwise DT
+        # required gst/subtotal stay "missing" forever.
         invoice.gst = plausible_money(gst)
     if invoice.total is None:
         invoice.total = plausible_money(total)

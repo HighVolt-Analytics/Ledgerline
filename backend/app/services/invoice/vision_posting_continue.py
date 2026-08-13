@@ -204,7 +204,9 @@ def vision_header_ok_from_invoice(
     """
     from app.services.approval.approval_service import _assert_invoice_ready_for_approval
     from app.services.invoice.due_date_defaults import apply_due_on_receipt_to_invoice
+    from app.services.invoice.invoice_amounts import backfill_invoice_amounts_from_sources
 
+    backfill_invoice_amounts_from_sources(invoice)
     # Only when DT playbook marks due_date compulsory and the print omitted it.
     apply_due_on_receipt_to_invoice(invoice, definition)
     if vision_header_gaps(invoice, definition):

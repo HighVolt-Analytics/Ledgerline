@@ -264,6 +264,47 @@ def test_header_gaps_include_vendor_only_when_dt_requires_it() -> None:
     assert "total" not in gaps
 
 
+def test_expense_claim_header_ok_when_total_only_and_invoice_date() -> None:
+    """Cash receipt with one total: persist gst=0 / subtotal, default due_date."""
+    from datetime import date
+    from decimal import Decimal
+
+    from app.services.invoice.vision_posting_continue import vision_header_ok_from_invoice
+
+    defn = DocumentTypeDefinition(
+        code="DT-04",
+        title="Employee expense claim",
+        shortTitle="Expense claim",
+        klass="Transactional",
+        posting="Yes",
+        recognitionMode="signals",
+        recognitionSignals=["heading_receipt"],
+        llmPrompt="",
+        routeTarget="Team Expenses",
+        teamExpenseKind="expense_claim",
+        enabled=True,
+        requiredFields=["vendor", "total", "due_date", "email_sender", "subtotal", "gst"],
+        extractionFields=["vendor", "total", "due_date", "email_sender", "subtotal", "gst"],
+    )
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.EXCEPTION,
+        document_type_code="DT-04",
+        vendor="Bolos",
+        total=Decimal("6000"),
+        currency="MMK",
+        email_sender="ka@example.com",
+        invoice_date=date(2026, 5, 18),
+        due_date=None,
+        subtotal=None,
+        gst=None,
+    )
+    assert vision_header_ok_from_invoice(inv, defn) is True
+    assert inv.gst == Decimal("0")
+    assert inv.subtotal == Decimal("6000")
+    assert inv.due_date == date(2026, 5, 18)
+
+
 def test_vision_header_ok_from_invoice_requires_payable_fields_incomplete_vendor() -> None:
     from decimal import Decimal
 

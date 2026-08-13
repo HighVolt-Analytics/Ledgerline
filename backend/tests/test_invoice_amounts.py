@@ -149,3 +149,18 @@ def test_resolve_prefers_line_sum_when_header_subtotal_disagrees() -> None:
     mapping = AccountMapping(account_code="6100", account_name="Operating Expenses")
     lines = generate_entries(inv, mapping)
     assert is_balanced(lines)
+
+
+def test_backfill_total_only_persists_zero_gst_and_subtotal() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        total=Decimal("6000"),
+        subtotal=None,
+        gst=None,
+        status=InvoiceStatus.EXCEPTION,
+        currency="MMK",
+    )
+    backfill_invoice_amounts_from_sources(inv)
+    assert inv.gst == Decimal("0")
+    assert inv.subtotal == Decimal("6000")
+    assert inv.total == Decimal("6000")
