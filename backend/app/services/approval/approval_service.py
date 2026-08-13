@@ -296,7 +296,7 @@ async def approve_invoice_for_reprocess(
         document_types=config.document_types,
     )
     _assert_invoice_ready_for_approval(loaded, definition=definition)
-    if payable_fields_complete(loaded):
+    if payable_fields_complete(loaded, definition):
         apply_human_approval_processing_defaults(loaded)
     previous_status = inv.status.value
     await repair_invoice_stored_path(session, inv)

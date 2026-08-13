@@ -242,7 +242,7 @@ async def _approve_team_expense_for_posting(
     config = await load_config_for_tenant(db, loaded.tenant_id)
     definition = resolve_vision_posting_definition(loaded, config)
     _assert_invoice_ready_for_approval(loaded, definition=definition)
-    if payable_fields_complete(loaded):
+    if payable_fields_complete(loaded, definition):
         apply_human_approval_processing_defaults(loaded)
 
     previous_status = loaded.status.value
@@ -307,7 +307,7 @@ async def _approve_vision_header_review_for_posting(
         )
 
     _assert_invoice_ready_for_approval(loaded, definition=definition)
-    if payable_fields_complete(loaded):
+    if payable_fields_complete(loaded, definition):
         apply_human_approval_processing_defaults(loaded)
 
     previous_status = loaded.status.value
@@ -331,9 +331,9 @@ async def _approve_vision_header_review_for_posting(
     org = org_context_from_config(config, tenant_row)
     assert definition is not None
 
-    # Do NOT re-run vision DT extract on Confirm when clerk fields are already
-    # complete — re-extract overwrites saved vendor/total/dates and falsely
-    # re-raises "Complete header fields…".
+    # Do NOT re-run vision DT extract on Confirm when DT-required fields are already
+    # complete — re-extract overwrites saved header values and falsely re-raises
+    # "Complete header fields…".
     from app.config import get_settings
     from app.services.invoice.invoice_edit_service import invoice_has_manual_field_edits
 
@@ -346,7 +346,7 @@ async def _approve_vision_header_review_for_posting(
         and (loaded.document_type_code or "").strip()
         and not header_already_ok
         and not manual_edits
-        and not payable_fields_complete(loaded)
+        and not payable_fields_complete(loaded, definition)
     )
     if should_reextract:
         from app.services.extraction.document_ai_provider import DocumentAiProvider

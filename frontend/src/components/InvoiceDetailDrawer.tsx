@@ -1872,7 +1872,7 @@ export function InvoiceDetailDrawer({
                         <p className="text-sm text-muted-foreground">
                           {isVisionHeaderPipelineSummary(inv)
                             ? (inv.evaluation_status ?? "").trim() === "vision_header_review"
-                              ? "Header review — if vendor, total, currency, and dates look correct, Save (if editing) then Confirm & process. Saved values are kept."
+                              ? "Header review — if the required fields look correct, Save (if editing) then Confirm & process. Saved values are kept."
                               : (inv.evaluation_status ?? "").trim() === "vision_vaulted"
                                 ? "Understood path complete — vaulted with header fields only (no OCR / DT extract)."
                                 : "Vision header path — open Summary for extracted header fields, or reprocess if they are empty."
@@ -1889,7 +1889,7 @@ export function InvoiceDetailDrawer({
                       <>
                         {isVisionHeaderPipelineSummary(inv) ? (
                           <p className="invoice-drawer-fields-tab__note">
-                            Vision path — header fields only. Empty date/total means reprocess so
+                            Vision path — header fields only. Empty required fields mean reprocess so
                             vision extract can fill them; full OCR fields come after DT mapping.
                           </p>
                         ) : null}

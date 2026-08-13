@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from decimal import Decimal
 from typing import Literal
 
 from app.models.invoice import Invoice
 
 InvoiceBlockerKey = Literal["currency", "total", "vendor"]
+
+_TRIAD: tuple[InvoiceBlockerKey, ...] = ("currency", "total", "vendor")
 
 
 def is_invoice_currency_set(currency: str | None) -> bool:
@@ -25,14 +28,24 @@ def is_total_present(inv: Invoice) -> bool:
         return False
 
 
-def detect_invoice_blockers(inv: Invoice) -> list[InvoiceBlockerKey]:
-    """Missing Fields blockers from invoice columns (list-safe)."""
+def detect_invoice_blockers(
+    inv: Invoice,
+    *,
+    configured_keys: Sequence[str] | None = None,
+) -> list[InvoiceBlockerKey]:
+    """Missing Fields blockers from invoice columns (list-safe).
+
+    Only vendor/total/currency keys that the DT actually lists are checked.
+    ``None`` or empty means the DT did not configure those keys — do not invent them.
+    """
+    wanted = {str(k).strip().lower() for k in (configured_keys or []) if str(k).strip()}
+    check = {key for key in _TRIAD if key in wanted}
     blockers: list[InvoiceBlockerKey] = []
-    if not is_invoice_currency_set(inv.currency):
+    if "currency" in check and not is_invoice_currency_set(inv.currency):
         blockers.append("currency")
-    if not is_total_present(inv):
+    if "total" in check and not is_total_present(inv):
         blockers.append("total")
-    if not (inv.vendor or "").strip():
+    if "vendor" in check and not (inv.vendor or "").strip():
         blockers.append("vendor")
     return blockers
 

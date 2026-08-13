@@ -33,6 +33,8 @@ def _dt(
         "llmPrompt": "",
         "routeTarget": route,
         "enabled": True,
+        "requiredFields": ["vendor", "total"],
+        "extractionFields": ["vendor", "total", "currency", "invoice_date"],
     }
     if approval_mode is not None:
         kwargs["approvalPolicy"] = {"mode": approval_mode}
@@ -199,6 +201,67 @@ def test_vision_posting_skip_message_lists_missing_fields() -> None:
     assert "total" in msg.lower()
     assert "fields tab" in msg.lower()
     assert "vendor, amounts, dates" not in msg.lower()
+
+
+def test_header_ok_follows_dt_required_fields_not_hardcoded_vendor() -> None:
+    """Advance Requisition (no vendor on the DT) must not block on vendor."""
+    from datetime import date
+    from decimal import Decimal
+
+    from app.services.invoice.vision_posting_continue import (
+        vision_header_gaps,
+        vision_header_ok_from_invoice,
+    )
+
+    defn = DocumentTypeDefinition(
+        code="DT-05",
+        title="Advance Requisition",
+        shortTitle="Advance",
+        klass="Transactional",
+        posting="Yes",
+        recognitionMode="signals",
+        recognitionSignals=["heading_advance"],
+        llmPrompt="",
+        routeTarget="Team Expenses",
+        teamExpenseKind="advance_requisition",
+        enabled=True,
+        requiredFields=["total", "currency", "invoice_date"],
+        extractionFields=[
+            "total",
+            "currency",
+            "invoice_date",
+            "line_items",
+            "employee_name",
+        ],
+    )
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.EXCEPTION,
+        document_type_code="DT-05",
+        vendor=None,
+        total=Decimal("340000"),
+        currency="MMK",
+        invoice_date=date(2026, 12, 8),
+    )
+    assert vision_header_gaps(inv, defn) == []
+    assert vision_header_ok_from_invoice(inv, defn) is True
+
+
+def test_header_gaps_include_vendor_only_when_dt_requires_it() -> None:
+    from decimal import Decimal
+
+    from app.services.invoice.vision_posting_continue import vision_header_gaps
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.EXCEPTION,
+        document_type_code="DT-07",
+        total=Decimal("100"),
+        currency="AUD",
+    )
+    gaps = vision_header_gaps(inv, _dt())
+    assert "vendor" in gaps
+    assert "total" not in gaps
 
 
 def test_vision_header_ok_from_invoice_requires_payable_fields_incomplete_vendor() -> None:

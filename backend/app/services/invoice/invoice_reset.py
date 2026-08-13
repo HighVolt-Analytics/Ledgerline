@@ -211,7 +211,10 @@ async def should_preserve_extracted_on_requeue(
     """Keep clerk-corrected header fields when re-queuing from the review queue."""
     if inv.status != InvoiceStatus.EXCEPTION:
         return False
-    from app.services.approval.approval_pipeline_service import payable_fields_complete
+    from app.services.approval.approval_pipeline_service import (
+        document_type_definition_for_invoice,
+        payable_fields_complete,
+    )
     from app.services.invoice.invoice_edit_service import invoice_has_manual_field_edits
 
     if manual_edits is None:
@@ -220,7 +223,8 @@ async def should_preserve_extracted_on_requeue(
             inv.id,
             tenant_id=inv.tenant_id,
         )
-    return manual_edits or payable_fields_complete(inv)
+    definition = await document_type_definition_for_invoice(session, inv)
+    return manual_edits or payable_fields_complete(inv, definition)
 
 
 def _column_empty(value: object) -> bool:

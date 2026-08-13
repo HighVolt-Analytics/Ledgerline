@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from datetime import date
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, inspect as sa_inspect, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -612,6 +612,31 @@ async def _hold_for_missing_line_sub_ledgers(
     )
     send_notification(invoice, InvoiceStatus.EXCEPTION)
     return True
+
+
+async def _invoice_has_persisted_line_items(
+    session: AsyncSession,
+    invoice: Invoice,
+) -> bool:
+    """True when line_item rows exist — never lazy-load the collection.
+
+    After ``clear_stale_not_understood_for_understood_path`` the relationship is
+    expired. Touching ``invoice.line_items`` in async raises MissingGreenlet and
+    poisons the session (PendingRollbackError on the next flush).
+    """
+    try:
+        if "line_items" not in sa_inspect(invoice).unloaded:
+            return bool(invoice.line_items)
+    except Exception:
+        pass
+    count = (
+        await session.execute(
+            select(func.count())
+            .select_from(LineItem)
+            .where(*line_items_for_invoice(invoice.tenant_id, invoice.id))
+        )
+    ).scalar_one()
+    return int(count or 0) > 0
 
 
 async def _replace_line_items(
@@ -1495,8 +1520,10 @@ async def _apply_parsed_to_invoice(
             from app.services.extraction.document_text import cap_document_text
 
             invoice.document_text = cap_document_text(parsed.document_text)
-        if not loaded.line_items:
+        if not await _invoice_has_persisted_line_items(session, loaded):
             await _replace_line_items(session, loaded, parsed.line_items, trace=trace)
+        elif "line_items" in sa_inspect(loaded).unloaded:
+            await session.refresh(loaded, attribute_names=["line_items"])
 
         from app.services.extraction.extraction_field_values import apply_parsed_extraction_fields
 

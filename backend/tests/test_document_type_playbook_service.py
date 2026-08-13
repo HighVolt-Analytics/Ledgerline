@@ -85,6 +85,15 @@ def test_effective_required_fields_honors_explicit_empty() -> None:
     assert effective_optional_extraction_fields(definition) == ["vendor", "total"]
 
 
+def test_effective_required_fields_does_not_invent_due_date_for_po_goods() -> None:
+    definition = _definition(
+        playbookProfile="po_goods",
+        requiredFields=["vendor", "total"],
+        extractionFields=["vendor", "total", "due_date"],
+    )
+    assert effective_required_fields(definition) == ["vendor", "total"]
+
+
 def test_confidence_gate_fields_respects_required_and_absent() -> None:
     definition = _definition(
         playbookProfile="supporting",
@@ -96,7 +105,7 @@ def test_confidence_gate_fields_respects_required_and_absent() -> None:
 
 
 def test_confidence_gate_fields_fallback_when_no_definition() -> None:
-    assert confidence_gate_fields(None) == ["vendor", "total"]
+    assert confidence_gate_fields(None) == []
 
 
 def test_playbook_required_fields_skip_infrastructure_and_soft_customs() -> None:

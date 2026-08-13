@@ -253,11 +253,20 @@ def invoice_to_response(
         else has_stored_path(inv.raw_file_path)
     )
     logs = list(audit_logs or [])
+    if document_type_extraction_fields is None and document_types:
+        from app.services.classification.document_type_catalog import (
+            get_document_type_definition,
+        )
+
+        code = (inv.document_type_code or "").strip().upper()
+        defn = get_document_type_definition(code, document_types=list(document_types))
+        if defn is not None:
+            document_type_extraction_fields = list(defn.extraction_fields or [])
     if current_stage is None or current_stage_state is None:
         if logs and not for_list:
             stage_label, stage_state = derive_current_stage(inv, logs)
         elif for_list:
-            stage_label, stage_state = derive_list_stage(inv)
+            stage_label, stage_state = derive_list_stage(inv, document_types)
         else:
             stage_label, stage_state = derive_current_stage(inv, [])
         current_stage = current_stage or stage_label
@@ -268,7 +277,9 @@ def invoice_to_response(
         document_types=document_types,
         validation_items=validation_items,
     )
-    resolution_hint = derive_resolution_hint(inv, logs)
+    resolution_hint = derive_resolution_hint(
+        inv, logs, configured_keys=document_type_extraction_fields
+    )
     if (
         inv.status == InvoiceStatus.EXCEPTION
         and evaluation_status == EvaluationStatus.NEEDS_REVIEW
@@ -276,8 +287,12 @@ def invoice_to_response(
     ):
         from app.services.invoice.invoice_blockers import blocker_fix_hint, detect_invoice_blockers
 
-        resolution_hint = blocker_fix_hint(detect_invoice_blockers(inv)) or (
-            "Fields tab — confirm document type, route, or amounts"
+        resolution_hint = blocker_fix_hint(
+            detect_invoice_blockers(
+                inv, configured_keys=document_type_extraction_fields
+            )
+        ) or (
+            "Fields tab — confirm document type or route"
         )
     from app.services.classification.document_type_playbook_profile_service import (
         gl_posting_applicable_for_invoice,
@@ -358,9 +373,7 @@ def invoice_to_response(
             else normalise_processing_overrides(getattr(inv, "processing_overrides", None))
         ),
         approval_chain=None if for_list else (getattr(inv, "approval_chain", None) or None),
-        document_type_extraction_fields=(
-            document_type_extraction_fields if not for_list else None
-        ),
+        document_type_extraction_fields=document_type_extraction_fields,
     )
 
 

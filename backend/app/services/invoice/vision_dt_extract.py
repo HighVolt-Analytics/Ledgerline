@@ -239,8 +239,8 @@ async def evaluate_vision_dt_extract(
             config = RuleBookConfigPayload(document_types=list(document_types))
             from app.services.approval.approval_pipeline_service import payable_fields_complete
 
-            # Never overwrite clerk-completed vendor/total/dates with a weaker re-extract.
-            preserve = payable_fields_complete(invoice)
+            # Never overwrite clerk-completed DT-required fields with a weaker re-extract.
+            preserve = payable_fields_complete(invoice, dt_defn)
             await _apply_parsed_to_invoice(
                 session,
                 invoice=invoice,
@@ -295,6 +295,22 @@ async def evaluate_vision_dt_extract(
             await stamp_team_expense_employee_identity(session, invoice)
     except Exception as exc:
         logger.warning("vision_dt_extract_failed", error=str(exc), dt=dt_token)
+        # Flush/lazy-load failures leave the session in PendingRollbackError.
+        # Roll back so the caller can still audit extract-failed without
+        # aborting the whole pipeline as a poisoned-session error.
+        from sqlalchemy.exc import MissingGreenlet, PendingRollbackError
+
+        if isinstance(exc, (MissingGreenlet, PendingRollbackError)) or isinstance(
+            getattr(exc, "__cause__", None), (MissingGreenlet, PendingRollbackError)
+        ):
+            try:
+                await session.rollback()
+            except Exception:
+                pass
+            try:
+                await session.refresh(invoice)
+            except Exception:
+                pass
         return VisionDtExtractResult(
             success=False,
             selected_keys=tuple(merged_keys),

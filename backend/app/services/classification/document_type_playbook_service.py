@@ -247,15 +247,8 @@ def effective_document_type_code(
 def effective_required_fields(definition: DocumentTypeDefinition) -> list[str]:
     """Compulsory field keys — explicit subset of extraction_fields (empty = none compulsory)."""
     from app.services.classification.document_type_field_keys import normalize_extraction_field_keys
-    from app.services.classification.document_type_playbook_profile_service import (
-        effective_playbook_profile,
-    )
 
-    keys = normalize_extraction_field_keys(list(definition.required_fields or []))
-    profile = effective_playbook_profile(definition)
-    if profile in {"po_goods", "ar_goods", "ar_goods_2way"} and "due_date" not in keys:
-        keys.append("due_date")
-    return keys
+    return normalize_extraction_field_keys(list(definition.required_fields or []))
 
 
 def approval_enforced_required_fields(definition: DocumentTypeDefinition | None) -> list[str]:
@@ -310,7 +303,7 @@ def effective_absent_fields(definition: DocumentTypeDefinition) -> list[str]:
 def confidence_gate_fields(definition: DocumentTypeDefinition | None) -> list[str]:
     """Per-DT fields monitored by the post-extract LLM confidence gate."""
     if definition is None:
-        return ["vendor", "total"]
+        return []
     required = set(effective_playbook_required_fields(definition))
     absent = {str(f).strip().lower() for f in (definition.absent_fields or []) if str(f).strip()}
     return sorted(required - absent)

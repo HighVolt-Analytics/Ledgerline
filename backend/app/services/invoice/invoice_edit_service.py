@@ -230,7 +230,7 @@ async def update_invoice_fields(
 
     await session.flush()
 
-    # After clerk fills vendor/total/compulsory fields, drop sticky vision needs_review
+    # After clerk fills DT-required fields, drop sticky vision needs_review
     # so Confirm & process is not blocked by a stale extract flag.
     from app.services.classification.document_type_catalog import get_document_type_definition
     from app.services.invoice.invoice_evaluation_service import (

@@ -23,6 +23,21 @@ from app.services.audit.audit_service import log_event
 
 @pytest.mark.asyncio
 async def test_payable_fields_complete() -> None:
+    from app.schemas.document_type import DocumentTypeDefinition
+
+    definition = DocumentTypeDefinition(
+        code="DT-08",
+        title="Direct expense",
+        shortTitle="Direct",
+        klass="Transactional",
+        posting="Yes",
+        recognition_mode="signals",
+        recognition_signals=["heading_invoice"],
+        llm_prompt="",
+        routeTarget="Expenses Management",
+        extractionFields=["vendor", "total"],
+        requiredFields=["vendor", "total"],
+    )
     complete = Invoice(
         tenant_id=TESTING_TENANT_UUID,
         vendor="ram",
@@ -31,9 +46,11 @@ async def test_payable_fields_complete() -> None:
         file_hash="x",
     )
     incomplete = Invoice(tenant_id=TESTING_TENANT_UUID, vendor="ram", currency="AUD", file_hash="y")
-    assert payable_fields_complete(complete) is True
-    assert payable_fields_complete(incomplete) is False
-    # Due date is optional for the payable identity gate.
+    assert payable_fields_complete(complete, definition) is True
+    assert payable_fields_complete(incomplete, definition) is False
+    # No DT: do not invent vendor/total as required.
+    assert payable_fields_complete(incomplete) is True
+    # Due date is optional unless the DT lists it.
     with_due = Invoice(
         tenant_id=TESTING_TENANT_UUID,
         vendor="ram",
@@ -42,7 +59,34 @@ async def test_payable_fields_complete() -> None:
         currency="AUD",
         file_hash="z",
     )
-    assert payable_fields_complete(with_due) is True
+    assert payable_fields_complete(with_due, definition) is True
+
+
+def test_payable_fields_complete_follows_dt_without_inventing_vendor() -> None:
+    from app.schemas.document_type import DocumentTypeDefinition
+
+    definition = DocumentTypeDefinition(
+        code="DT-05",
+        title="Advance Requisition",
+        shortTitle="Advance",
+        klass="Transactional",
+        posting="Yes",
+        recognition_mode="signals",
+        recognition_signals=["heading_advance"],
+        llm_prompt="",
+        routeTarget="Team Expenses",
+        extractionFields=["total", "currency", "invoice_date", "employee_name"],
+        requiredFields=["total", "currency", "invoice_date"],
+    )
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor=None,
+        total=Decimal("340000"),
+        currency="MMK",
+        invoice_date=date(2026, 12, 8),
+        file_hash="advance-1",
+    )
+    assert payable_fields_complete(inv, definition) is True
 
 
 @pytest.mark.asyncio

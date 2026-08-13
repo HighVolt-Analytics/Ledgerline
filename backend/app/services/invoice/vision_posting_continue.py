@@ -143,16 +143,26 @@ def _clear_extracted_needs_review(invoice: Invoice) -> None:
     invoice.extracted_fields = updated or None
 
 
+def _dt_header_required_keys(definition: DocumentTypeDefinition | None) -> list[str]:
+    """Compulsory keys from the DT — never invent vendor/total/currency."""
+    if definition is None:
+        return []
+    from app.services.classification.document_type_field_keys import (
+        playbook_blockable_field_keys,
+    )
+    from app.services.classification.document_type_playbook_service import (
+        effective_required_fields,
+    )
+
+    return playbook_blockable_field_keys(effective_required_fields(definition))
+
+
 def vision_header_gaps(
     invoice: Invoice,
     definition: DocumentTypeDefinition | None,
 ) -> list[str]:
-    """Human-readable list of missing header items blocking confirm/process."""
-    from app.services.approval.approval_pipeline_service import payable_fields_complete
+    """Missing header items from the DT required-fields list only."""
     from app.services.classification.document_type_field_checks import field_is_present
-    from app.services.classification.document_type_playbook_service import (
-        approval_enforced_required_fields,
-    )
     from app.services.classification.document_type_rule_engine import (
         build_document_classifier_context,
     )
@@ -160,51 +170,45 @@ def vision_header_gaps(
     from app.services.invoice.invoice_data import invoice_data_from_invoice
 
     apply_due_on_receipt_to_invoice(invoice, definition)
+    compulsory = _dt_header_required_keys(definition)
+    if not compulsory:
+        return []
+    parsed = invoice_data_from_invoice(invoice)
+    ctx = build_document_classifier_context(invoice=invoice, parsed=parsed)
     gaps: list[str] = []
-    if not (invoice.vendor or "").strip():
-        gaps.append("vendor")
-    if not payable_fields_complete(invoice):
-        # payable_fields_complete is vendor + positive total; avoid duplicate vendor.
-        from decimal import Decimal
-
-        if invoice.total is None or invoice.total <= Decimal("0"):
-            if "total" not in gaps:
-                gaps.append("total")
-    code = (invoice.currency or "").strip().upper()
-    if not (code and len(code) == 3 and code.isalpha()):
-        gaps.append("currency")
-
-    compulsory = approval_enforced_required_fields(definition)
-    if compulsory:
-        parsed = invoice_data_from_invoice(invoice)
-        ctx = build_document_classifier_context(invoice=invoice, parsed=parsed)
-        for key in compulsory:
-            if field_is_present(key, invoice=invoice, parsed=parsed, ctx=ctx):
-                continue
-            label = key.replace("_", " ")
-            if label not in gaps:
-                gaps.append(label)
+    for key in compulsory:
+        if field_is_present(key, invoice=invoice, parsed=parsed, ctx=ctx):
+            continue
+        label = key.replace("_", " ")
+        if label not in gaps:
+            gaps.append(label)
     return gaps
+
+
+def header_fields_complete(
+    invoice: Invoice,
+    definition: DocumentTypeDefinition | None,
+) -> bool:
+    """True when every DT-required header field is present (none invented)."""
+    return not vision_header_gaps(invoice, definition)
 
 
 def vision_header_ok_from_invoice(
     invoice: Invoice,
     definition: DocumentTypeDefinition | None,
 ) -> bool:
-    """Derive header_ok from persisted invoice state (for Approvals resume).
+    """Derive header_ok from DT required fields (for Approvals resume).
 
-    Clerk-filled vendor/total/compulsory fields win over a stale vision
+    Clerk-filled compulsory fields win over a stale vision
     ``extracted_fields.needs_review`` flag from an earlier weak extract.
     """
-    from app.services.approval.approval_pipeline_service import payable_fields_complete
     from app.services.approval.approval_service import _assert_invoice_ready_for_approval
     from app.services.invoice.due_date_defaults import apply_due_on_receipt_to_invoice
 
     # Only when DT playbook marks due_date compulsory and the print omitted it.
     apply_due_on_receipt_to_invoice(invoice, definition)
-    if definition is not None and allows_posting_pipeline(definition):
-        if not payable_fields_complete(invoice):
-            return False
+    if vision_header_gaps(invoice, definition):
+        return False
     try:
         _assert_invoice_ready_for_approval(invoice, definition=definition)
     except ValueError:
@@ -221,7 +225,7 @@ _VISION_POSTING_SKIP_MESSAGES: dict[str, str] = {
         "for this document type."
     ),
     "header_not_ok": (
-        "Complete header fields in the Fields tab (vendor, amounts, dates), save, "
+        "Complete the document type's required fields on the Fields tab, save, "
         "then confirm again."
     ),
     "no_document_type": "Confirm document type in the Fields tab before approving.",

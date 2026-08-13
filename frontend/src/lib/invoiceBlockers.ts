@@ -16,15 +16,23 @@ function isTotalPresent(total: string | null | undefined): boolean {
 
 /**
  * Detect missing Fields blockers from list-level invoice fields.
+ * When the DT lists extraction fields, only those keys can block (no hardcoded vendor).
  * Suspense GL is intentionally not a blocker here — call sites check it after fields.
  */
 export function detectInvoiceBlockers(
-  inv: Pick<Invoice, "currency" | "total" | "vendor" | "evaluation_status">
+  inv: Pick<
+    Invoice,
+    "currency" | "total" | "vendor" | "evaluation_status" | "document_type_extraction_fields"
+  >
 ): InvoiceBlockerKey[] {
+  const configured = (inv.document_type_extraction_fields ?? [])
+    .map((key) => key.trim().toLowerCase())
+    .filter(Boolean);
+  const inScope = (key: InvoiceBlockerKey) => configured.includes(key);
   const blockers: InvoiceBlockerKey[] = [];
-  if (!isInvoiceCurrencySet(inv.currency)) blockers.push("currency");
-  if (!isTotalPresent(inv.total)) blockers.push("total");
-  if (!(inv.vendor ?? "").trim()) blockers.push("vendor");
+  if (inScope("currency") && !isInvoiceCurrencySet(inv.currency)) blockers.push("currency");
+  if (inScope("total") && !isTotalPresent(inv.total)) blockers.push("total");
+  if (inScope("vendor") && !(inv.vendor ?? "").trim()) blockers.push("vendor");
   return blockers;
 }
 

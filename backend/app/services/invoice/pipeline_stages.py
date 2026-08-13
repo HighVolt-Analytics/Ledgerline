@@ -130,7 +130,19 @@ def _is_after(entry: AuditLog | None, pivot: AuditLog | None) -> bool:
     return entry.created_at >= pivot.created_at
 
 
-def exception_hold_reason(inv: Invoice) -> str:
+def _configured_blocker_keys(dt: str, document_types: list | None) -> list[str] | None:
+    """DT extraction keys for field blockers — None when the catalogue is unknown."""
+    if not document_types:
+        return None
+    from app.services.classification.document_type_catalog import get_document_type_definition
+
+    defn = get_document_type_definition(dt, document_types=document_types)
+    if defn is None:
+        return None
+    return list(defn.extraction_fields or [])
+
+
+def exception_hold_reason(inv: Invoice, document_types: list | None = None) -> str:
     """Concrete reason for an exception hold — never a vague 'Routed to review'."""
     from app.services.invoice.invoice_blockers import (
         blocker_hold_reason,
@@ -153,11 +165,14 @@ def exception_hold_reason(inv: Invoice) -> str:
     route = (inv.route_target or "").strip()
     is_sales = route == "Sales Management"
     dt = (inv.document_type_code or "").strip()
+    configured = _configured_blocker_keys(dt, document_types)
 
     if eval_status == "awaiting_classification":
         return "Document type not classified — confirm on Fields"
     if eval_status == "vision_header_review":
-        field_reason = blocker_hold_reason(detect_invoice_blockers(inv))
+        field_reason = blocker_hold_reason(
+            detect_invoice_blockers(inv, configured_keys=configured)
+        )
         return field_reason or "Header fields incomplete — complete Fields, then Confirm & process"
     if eval_status == "pending_vendor":
         return (
@@ -180,8 +195,10 @@ def exception_hold_reason(inv: Invoice) -> str:
     if eval_status == "line_items_review":
         return "Line items incomplete — add or correct product lines"
 
-    # Missing currency / total / vendor beat default Suspense GL fallback.
-    field_reason = blocker_hold_reason(detect_invoice_blockers(inv))
+    # Missing DT-listed currency / total / vendor beat default Suspense GL fallback.
+    field_reason = blocker_hold_reason(
+        detect_invoice_blockers(inv, configured_keys=configured)
+    )
     if field_reason:
         return field_reason
 
@@ -952,6 +969,7 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
 
     awaiting_reparse = (
         inv.status == InvoiceStatus.PENDING
+        and not (inv.document_type_code or "").strip()
         and not (inv.vendor or inv.invoice_no)
         and parsed_log is not None
         and parsed_log.event != "parsing_failed"
@@ -1319,7 +1337,9 @@ def _extracted_fields_if_loaded(inv: Invoice) -> dict:
     return fields if isinstance(fields, dict) else {}
 
 
-def derive_list_stage(inv: Invoice) -> tuple[str, StageState]:
+def derive_list_stage(
+    inv: Invoice, document_types: list | None = None
+) -> tuple[str, StageState]:
     """Fast inbox list label from persisted invoice fields — no audit log scan."""
     status = inv.status
     if status == InvoiceStatus.REJECTED:
@@ -1399,6 +1419,8 @@ _RESOLUTION_HINT_AUDIT_EVENTS: tuple[tuple[str, str], ...] = (
 def derive_resolution_hint(
     inv: Invoice,
     logs: list[AuditLog] | None = None,
+    *,
+    configured_keys: list[str] | None = None,
 ) -> str | None:
     """Actionable next step for Upload / inbox when a document is blocked."""
     from app.services.invoice.invoice_blockers import blocker_fix_hint, detect_invoice_blockers
@@ -1417,7 +1439,9 @@ def derive_resolution_hint(
             return None
 
     eval_status = (inv.evaluation_status or "").strip().lower()
-    field_hint = blocker_fix_hint(detect_invoice_blockers(inv))
+    field_hint = blocker_fix_hint(
+        detect_invoice_blockers(inv, configured_keys=configured_keys)
+    )
 
     # Specific eval statuses that are not about missing currency/total.
     eval_overrides = {
@@ -1431,6 +1455,7 @@ def derive_resolution_hint(
         "line_gl_review",
         "line_items_review",
         "vision_vaulted",
+        "vision_header_review",
     }
     if eval_status in eval_overrides and eval_status in _RESOLUTION_HINT_BY_EVAL:
         hint = _RESOLUTION_HINT_BY_EVAL[eval_status]
@@ -1485,7 +1510,7 @@ def derive_resolution_hint(
         account = f"{inv.account_name or ''} {inv.account_code or ''}".lower()
         if "suspense" in account or "unmapped" in account:
             return "Lines tab — assign a GL account or clear suspense mapping"
-        return "Fields tab — confirm document type, route, or amounts"
+        return "Fields tab — confirm document type or route"
 
     if status == InvoiceStatus.EXCEPTION:
         return exception_hold_reason(inv)

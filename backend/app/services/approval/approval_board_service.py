@@ -51,7 +51,9 @@ def is_pending_approval(inv: Invoice) -> bool:
 
 
 def _has_vision_bundle_snapshot(inv: Invoice) -> bool:
-    fields = inv.extracted_fields if isinstance(inv.extracted_fields, dict) else {}
+    from app.services.invoice.invoice_response_service import _extracted_fields_if_loaded
+
+    fields = _extracted_fields_if_loaded(inv)
     return bool(fields.get("vision_bundle_kind") or fields.get("vision_bundle_key"))
 
 

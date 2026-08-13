@@ -121,6 +121,7 @@ describe("clarifyMatrixIssueTitle", () => {
           total: null,
           vendor: "Acme",
           gl_posting_applicable: true,
+          document_type_extraction_fields: ["vendor", "total", "currency"],
         })
       )
     ).toMatch(/currency|financial fields incomplete/i);
@@ -196,6 +197,7 @@ describe("matrixIssueFixHint", () => {
       total: null,
       vendor: "Acme",
       gl_posting_applicable: true,
+      document_type_extraction_fields: ["vendor", "total", "currency"],
       resolution_hint: "Open document drawer — check Fields, Audit, or Lines",
     });
     const issue = matrixIssueSummary(cells, "Suspense / unmapped GL — assign account on Lines", invoice);

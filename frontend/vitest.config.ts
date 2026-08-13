@@ -36,6 +36,7 @@ export default defineConfig({
       "src/lib/aggregateCurrencyCallSites.test.ts",
       "src/lib/reconciliation.currency.test.ts",
       "src/lib/matrixIssue.test.ts",
+      "src/lib/invoiceBlockers.test.ts",
       "src/lib/processingOverrides.test.ts",
       "src/lib/teamExpensePosting.test.ts",
       "src/lib/teamExpenseKind.test.ts",

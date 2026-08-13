@@ -2,33 +2,47 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice
 from app.services.classification.document_type_approval_service import has_document_approval
 
+if TYPE_CHECKING:
+    from app.schemas.document_type import DocumentTypeDefinition
 
-def payable_fields_complete(invoice: Invoice) -> bool:
-    """Core payable identity for posting/approval gates.
 
-    Vendor + positive total are required. Due date is *not* hard-coded here —
-    many invoices (export LUT, due-on-receipt) omit it. Payment scheduling still
-    checks due_date separately; DT playbook / VR03 enforce it only when configured.
+def payable_fields_complete(
+    invoice: Invoice,
+    definition: DocumentTypeDefinition | None = None,
+) -> bool:
+    """True when the document type's required header fields are present.
+
+    Does not invent vendor/total. Completeness is the DT required-fields list.
     """
-    if not (invoice.vendor or "").strip():
-        return False
-    if invoice.total is None or invoice.total <= Decimal("0"):
-        return False
-    return True
+    from app.services.invoice.vision_posting_continue import header_fields_complete
+
+    return header_fields_complete(invoice, definition)
+
+
+async def document_type_definition_for_invoice(session: AsyncSession, invoice: Invoice):
+    from app.services.classification.document_type_catalog import get_document_type_definition
+    from app.services.invoice.invoice_evaluation_service import load_config_for_tenant
+
+    config = await load_config_for_tenant(session, invoice.tenant_id)
+    return get_document_type_definition(
+        invoice.document_type_code,
+        document_types=config.document_types,
+    )
 
 
 async def human_approved_payable_bypass(session: AsyncSession, invoice: Invoice) -> bool:
-    """True when a user approved from the queue and core payable fields are present."""
+    """True when a user approved from the queue and DT-required fields are present."""
     if not await has_document_approval(session, invoice.id):
         return False
-    return payable_fields_complete(invoice)
+    definition = await document_type_definition_for_invoice(session, invoice)
+    return payable_fields_complete(invoice, definition)
 
 
 def apply_human_approval_processing_defaults(invoice: Invoice) -> None:
