@@ -58,6 +58,8 @@ def build_blob_name(
     document_type_short_title: str | None = None,
     document_type_title: str | None = None,
     document_type_folder: str | None = None,
+    unique_timestamp: bool = False,
+    timestamp_ms: str | None = None,
     day=None,
 ) -> str:
     """Build tenant-scoped vault blob path."""
@@ -79,6 +81,8 @@ def build_blob_name(
         document_type_short_title=document_type_short_title,
         document_type_title=document_type_title,
         document_type_folder=document_type_folder,
+        unique_timestamp=unique_timestamp,
+        timestamp_ms=timestamp_ms,
     )
 
 
@@ -174,7 +178,16 @@ def _blob_name_matches_invoice(blob_name: str, invoice_id: int) -> bool:
     if filename.startswith(f"{marker}_") or filename.startswith(f"{marker}."):
         return True
     stem = filename.rsplit(".", 1)[0] if "." in filename else filename
-    return stem.endswith(f"_id{invoice_id}")
+    id_token = f"_id{invoice_id}"
+    if stem.endswith(id_token):
+        return True
+    prefix, sep, maybe_ts = stem.rpartition("_")
+    return bool(
+        sep
+        and maybe_ts.isdigit()
+        and len(maybe_ts) == 13
+        and prefix.endswith(id_token)
+    )
 
 
 def _search_prefix_for_invoice(

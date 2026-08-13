@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 import uuid
 from datetime import date, datetime
 from pathlib import Path
@@ -302,6 +303,20 @@ def _purchase_doc_key(
     return vault_doc_number(invoice_no, invoice_id)
 
 
+_UPLOAD_TIMESTAMP_RE = re.compile(r"_(\d{13})$")
+
+
+def upload_timestamp_ms() -> str:
+    """Current UTC time as milliseconds since epoch for unique stored filenames."""
+    return str(time.time_ns() // 1_000_000)
+
+
+def extract_upload_timestamp_ms(filename: str) -> str | None:
+    """Return a trailing 13-digit millisecond timestamp from a stored filename."""
+    match = _UPLOAD_TIMESTAMP_RE.search(Path(filename).stem)
+    return match.group(1) if match else None
+
+
 def vault_file_name(
     invoice_no: str | None,
     invoice_id: int,
@@ -310,6 +325,8 @@ def vault_file_name(
     *,
     purchase_document_type: str | None = None,
     po_reference: str | None = None,
+    unique_timestamp: bool = False,
+    timestamp_ms: str | None = None,
 ) -> str:
     if purchase_document_type in ("po", "grn", "invoice"):
         doc_no = _purchase_doc_key(po_reference, invoice_no, invoice_id)
@@ -331,8 +348,15 @@ def vault_file_name(
         prefix = "GRN_"
     elif purchase_document_type == "invoice":
         prefix = "INV_"
+    if timestamp_ms is None:
+        if unique_timestamp:
+            timestamp_ms = upload_timestamp_ms()
+        else:
+            timestamp_ms = extract_upload_timestamp_ms(original_filename)
+    ts_part = f"_{timestamp_ms}" if timestamp_ms else ""
     # invoice_id keeps split dossier members unique when they share invoice_no / PO ref.
-    return f"{prefix}{doc_no}_{date_part}_id{invoice_id}{suffix}"
+    # millisecond timestamp makes every upload a unique blob even for the same invoice_no.
+    return f"{prefix}{doc_no}_{date_part}_id{invoice_id}{ts_part}{suffix}"
 
 
 def build_vault_blob_name(
@@ -353,6 +377,8 @@ def build_vault_blob_name(
     document_type_short_title: str | None = None,
     document_type_title: str | None = None,
     document_type_folder: str | None = None,
+    unique_timestamp: bool = False,
+    timestamp_ms: str | None = None,
 ) -> str:
     """Azure blob path: invoice/{book}/[{dt}/]{vendor}/{year}/{month}/{file}."""
     dt_folder = document_type_folder
@@ -378,6 +404,8 @@ def build_vault_blob_name(
         po_reference=po_reference,
         purchase_document_type=purchase_document_type,
         document_type_folder=dt_folder,
+        unique_timestamp=unique_timestamp,
+        timestamp_ms=timestamp_ms,
     )
 
 
@@ -397,6 +425,8 @@ def build_rejected_blob_name(
     document_type_short_title: str | None = None,
     document_type_title: str | None = None,
     document_type_folder: str | None = None,
+    unique_timestamp: bool = False,
+    timestamp_ms: str | None = None,
 ) -> str:
     """Azure blob path: rejected/{book}/[{dt}/]{vendor}/{year}/{month}/{file}."""
     dt_folder = document_type_folder
@@ -420,6 +450,8 @@ def build_rejected_blob_name(
         invoice_date=invoice_date,
         original_filename=original_filename,
         document_type_folder=dt_folder,
+        unique_timestamp=unique_timestamp,
+        timestamp_ms=timestamp_ms,
     )
 
 
@@ -439,6 +471,8 @@ def _build_storage_blob_name(
     po_reference: str | None = None,
     purchase_document_type: str | None = None,
     document_type_folder: str | None = None,
+    unique_timestamp: bool = False,
+    timestamp_ms: str | None = None,
 ) -> str:
     book = vault_book_folder(route_target)
     vendor = vault_vendor_folder(vendor_name, storage_vendor_slug)
@@ -451,6 +485,8 @@ def _build_storage_blob_name(
         original_filename,
         purchase_document_type=purchase_document_type,
         po_reference=po_reference,
+        unique_timestamp=unique_timestamp,
+        timestamp_ms=timestamp_ms,
     )
     segments = [root, book]
     if document_type_folder:
@@ -478,6 +514,8 @@ def build_virtual_path(
     document_type_short_title: str | None = None,
     document_type_title: str | None = None,
     document_type_folder: str | None = None,
+    unique_timestamp: bool = False,
+    timestamp_ms: str | None = None,
 ) -> str:
     return build_vault_blob_name(
         tenant_id,
@@ -496,6 +534,8 @@ def build_virtual_path(
         document_type_short_title=document_type_short_title,
         document_type_title=document_type_title,
         document_type_folder=document_type_folder,
+        unique_timestamp=unique_timestamp,
+        timestamp_ms=timestamp_ms,
     )
 
 

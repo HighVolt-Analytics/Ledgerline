@@ -10,6 +10,7 @@ from app.services.ingest.email_ingestion import (
     RawEmail,
     build_recent_inbox_filter,
     poll_inbox,
+    save_attachment,
 )
 
 
@@ -317,3 +318,20 @@ def test_unread_filter_does_not_require_attachments() -> None:
 
     assert build_unread_inbox_filter() == "isRead eq false"
     assert "hasAttachments" not in build_unread_inbox_filter()
+
+
+def test_save_attachment_appends_millisecond_timestamp(tmp_path) -> None:
+    first = save_attachment(
+        EmailAttachment(filename="invoice.pdf", content_type="application/pdf", data=b"a"),
+        tmp_path,
+    )
+    second = save_attachment(
+        EmailAttachment(filename="invoice.pdf", content_type="application/pdf", data=b"b"),
+        tmp_path,
+    )
+    assert first != second
+    assert first.name.startswith("invoice_")
+    assert first.suffix == ".pdf"
+    ts = first.stem.rsplit("_", 1)[-1]
+    assert ts.isdigit() and len(ts) == 13
+    assert {p.name for p in tmp_path.iterdir()} == {first.name, second.name}

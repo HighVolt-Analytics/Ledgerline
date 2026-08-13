@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import time as time_module
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
@@ -637,10 +638,13 @@ def mark_message_read(
 
 def save_attachment(attachment: EmailAttachment, upload_dir: Path) -> Path:
     upload_dir.mkdir(parents=True, exist_ok=True)
-    dest = upload_dir / Path(attachment.filename).name
+    original = Path(attachment.filename)
+    stem = original.stem or "attachment"
+    suffix = original.suffix
+    dest = upload_dir / f"{stem}_{time_module.time_ns() // 1_000_000}{suffix}"
     n = 0
     while dest.exists():
         n += 1
-        dest = upload_dir / f"{dest.stem}_{n}{dest.suffix}"
+        dest = upload_dir / f"{stem}_{time_module.time_ns() // 1_000_000}_{n}{suffix}"
     dest.write_bytes(attachment.data)
     return dest

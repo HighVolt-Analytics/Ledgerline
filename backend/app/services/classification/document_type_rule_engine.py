@@ -18,7 +18,7 @@ from app.services.extraction.extraction_field_values import (
     merge_extracted_field_maps,
 )
 from app.services.classification.heading_kind_recognition import NON_INVOICE_NUMBER_KINDS
-from app.services.invoice.invoice_data import InvoiceData
+from app.services.invoice.invoice_data import InvoiceData, _attr_if_loaded
 from app.services.purchase.po_reference import is_plausible_po_reference
 from app.services.purchase.purchase_document_service import (
     _attachment_suggests_commercial_invoice,
@@ -105,8 +105,9 @@ def _attachment_extension(name: str) -> str:
 def _resolved_document_text(*, invoice: Invoice, parsed: InvoiceData) -> str:
     if parsed.document_text:
         return parsed.document_text
-    if invoice.document_text:
-        return invoice.document_text
+    body = _attr_if_loaded(invoice, "document_text")
+    if body:
+        return body
     raw = parsed.raw_fields.get("document_text")
     return raw if isinstance(raw, str) else ""
 

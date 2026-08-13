@@ -62,6 +62,23 @@ class ParseResult:
     layout: DocumentLayoutResult | None = None
 
 
+def _attr_if_loaded(obj: object, name: str, default: Any = None) -> Any:
+    """Return a column value only when already in the instance dict.
+
+    List/matrix queries defer OCR/JSON columns. Touching an unloaded deferred
+    column under async SQLAlchemy raises MissingGreenlet — never trigger that load.
+    """
+    try:
+        from sqlalchemy import inspect as sa_inspect
+
+        state = sa_inspect(obj)
+        if name not in state.dict:
+            return default
+    except Exception:
+        pass
+    return getattr(obj, name, default)
+
+
 def _line_items_from_invoice(invoice: object) -> list[ParsedLineItem]:
     """Read line items only when the relationship is already loaded (async-safe)."""
     try:
@@ -117,9 +134,9 @@ def invoice_data_from_invoice(invoice: object) -> InvoiceData:
         po_reference=getattr(invoice, "po_reference", None),
         cost_centre=getattr(invoice, "cost_centre", None),
         line_items=_line_items_from_invoice(invoice),
-        document_text=getattr(invoice, "document_text", None),
+        document_text=_attr_if_loaded(invoice, "document_text"),
         document_heading=_resolved_document_heading(invoice=invoice, parsed=None),
-        extracted_fields=dict(getattr(invoice, "extracted_fields", None) or {}),
+        extracted_fields=dict(_attr_if_loaded(invoice, "extracted_fields") or {}),
     )
 
 
@@ -138,7 +155,7 @@ def _resolved_document_heading(
     if parsed is not None and parsed.document_text:
         text = parsed.document_text
     elif invoice is not None:
-        text = getattr(invoice, "document_text", None)
+        text = _attr_if_loaded(invoice, "document_text")
     if text:
         from app.services.extraction.document_heading_utils import extract_document_heading_signals
 

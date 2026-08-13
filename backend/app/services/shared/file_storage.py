@@ -148,6 +148,7 @@ def store_invoice_pdf(
         document_type_short_title=document_type_short_title,
         document_type_title=document_type_title,
         document_type_folder=document_type_folder,
+        unique_timestamp=True,
     )
 
     if blob_storage.is_blob_enabled():

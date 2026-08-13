@@ -170,6 +170,33 @@ def test_build_blob_name() -> None:
     )
 
 
+def test_build_blob_name_appends_upload_timestamp() -> None:
+    from datetime import date
+
+    from app.services.tenant.tenant_storage_paths import tenant_root
+
+    name = blob_storage.build_blob_name(
+        _TID,
+        "hv-org",
+        "atlassian",
+        42,
+        "abc123def456",
+        "invoice.pdf",
+        tenant_name="High Volt Analytics",
+        vendor_name="Atlassian Pty Ltd",
+        invoice_no="INV-042",
+        invoice_date=date(2026, 5, 4),
+        route_target="Expenses Management",
+        unique_timestamp=True,
+        timestamp_ms="1712345678901",
+    )
+    prefix = f"{tenant_root(_TID)}/"
+    assert (
+        name
+        == f"{prefix}invoice/Expenses Management/Atlassian Pty Ltd/2026/May/INV-042_2026-05-04_id42_1712345678901.pdf"
+    )
+
+
 def test_stored_uri_roundtrip() -> None:
     uri = blob_storage.to_stored_uri(
         "invoice/Expenses Management/Atlassian Pty Ltd/2026/May/INV-042_2026-05-04_id42.pdf"

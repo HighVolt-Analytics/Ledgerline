@@ -1386,7 +1386,9 @@ def merge_extracted_field_maps(*maps: dict[str, str] | None) -> dict[str, str]:
 
 
 def extracted_fields_from_invoice(invoice: object) -> dict[str, str]:
-    raw = getattr(invoice, "extracted_fields", None)
+    from app.services.invoice.invoice_data import _attr_if_loaded
+
+    raw = _attr_if_loaded(invoice, "extracted_fields")
     return normalize_extracted_fields_map(raw)
 
 

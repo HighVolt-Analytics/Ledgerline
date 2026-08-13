@@ -5,6 +5,9 @@ from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 from datetime import date
 from decimal import Decimal
 
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.payment import Payment, PaymentStatus
 from app.services.reports.matrix_service import derive_matrix_flag, derive_matrix_payment_status
@@ -240,3 +243,42 @@ def test_derive_resolution_hint_journal_control_staff_advance() -> None:
     assert "chart of accounts" in hint.lower()
     assert "advance parent" in hint.lower()
     assert "staff advance" not in hint.lower()
+
+
+@pytest.mark.asyncio
+async def test_derive_matrix_flag_skips_deferred_ocr_blobs(
+    db_session: AsyncSession,
+) -> None:
+    """Matrix list defers document_text/extracted_fields — must not MissingGreenlet."""
+    from sqlalchemy import select
+
+    from app.services.invoice.invoice_response_service import invoice_list_load_options
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Deferred Matrix",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="vision_header_review",
+        document_type_code="DT-11",
+        currency="AUD",
+        total=Decimal("50.00"),
+        document_text="large ocr body that must stay deferred " * 200,
+        extracted_fields={"vision_header_confidence": "0.9"},
+        file_hash="matrix-defer-greenlet",
+        capture_source="upload",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+    invoice_id = inv.id
+    db_session.expire_all()
+
+    deferred = (
+        await db_session.execute(
+            select(Invoice)
+            .options(*invoice_list_load_options())
+            .where(Invoice.id == invoice_id)
+        )
+    ).scalar_one()
+    flag, reason = derive_matrix_flag(deferred)
+    assert flag == "Anomaly Detected"
+    assert reason is not None

@@ -9,6 +9,7 @@ from app.services.vault.vault_paths import (
     ROUTE_UNROUTED,
     build_vault_blob_name,
     build_vault_tree,
+    extract_upload_timestamp_ms,
     filename_from_stored,
     insert_org_segment_into_blob_path,
     strip_org_segment_from_blob_path,
@@ -150,6 +151,73 @@ def test_vault_file_name_unique_for_shared_invoice_no() -> None:
     assert a != b
     assert a.endswith("_id21.pdf")
     assert b.endswith("_id22.pdf")
+
+
+def test_extract_upload_timestamp_ms() -> None:
+    assert extract_upload_timestamp_ms("INV-007_2026-05-12_id7_1712345678901.pdf") == (
+        "1712345678901"
+    )
+    assert extract_upload_timestamp_ms("scan.pdf") is None
+    assert extract_upload_timestamp_ms("INV-007_2026-05-12_id7.pdf") is None
+
+
+def test_vault_file_name_appends_millisecond_timestamp_on_upload() -> None:
+    name = vault_file_name(
+        "INV-007",
+        7,
+        date(2026, 5, 12),
+        "scan.pdf",
+        unique_timestamp=True,
+        timestamp_ms="1712345678901",
+    )
+    assert name == "INV-007_2026-05-12_id7_1712345678901.pdf"
+
+
+def test_vault_file_name_same_file_uploaded_twice_gets_unique_names(
+    monkeypatch,
+) -> None:
+    stamps = iter(["1712345678901", "1712345678999"])
+    monkeypatch.setattr(
+        "app.services.vault.vault_paths.upload_timestamp_ms",
+        lambda: next(stamps),
+    )
+    first = vault_file_name(
+        "INV-007", 11, date(2026, 5, 12), "scan.pdf", unique_timestamp=True
+    )
+    second = vault_file_name(
+        "INV-007", 12, date(2026, 5, 12), "scan.pdf", unique_timestamp=True
+    )
+    assert first == "INV-007_2026-05-12_id11_1712345678901.pdf"
+    assert second == "INV-007_2026-05-12_id12_1712345678999.pdf"
+    assert first != second
+
+
+def test_vault_file_name_preserves_timestamp_when_relocating() -> None:
+    stored = "INV-007_2026-05-12_id7_1712345678901.pdf"
+    assert (
+        vault_file_name("INV-007", 7, date(2026, 5, 12), stored)
+        == stored
+    )
+
+
+def test_build_vault_blob_name_unique_timestamp_on_upload() -> None:
+    path = build_vault_blob_name(
+        _TID,
+        "hv-org",
+        tenant_name="HV Org",
+        route_target=ROUTE_PURCHASE,
+        vendor_name="James Patel Consulting",
+        storage_vendor_slug="james-patel",
+        invoice_id=7,
+        invoice_no="INV-007",
+        invoice_date=date(2026, 5, 12),
+        original_filename="scan.pdf",
+        unique_timestamp=True,
+        timestamp_ms="1712345678901",
+    )
+    assert path.endswith(
+        "INV-007_2026-05-12_id7_1712345678901.pdf"
+    )
 
 
 def test_strip_org_segment_from_blob_path() -> None:

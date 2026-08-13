@@ -23,12 +23,20 @@ def test_blob_name_matches_invoice_marker() -> None:
         "invoice/HvOrg/Vault/DT-07 · coo/Vendor/2026/June/260671582_2026-06-05_id21.pdf",
         21,
     )
+    assert _blob_name_matches_invoice(
+        "invoice/HvOrg/Vault/DT-07 · coo/Vendor/2026/June/260671582_2026-06-05_id21_1712345678901.pdf",
+        21,
+    )
     assert not _blob_name_matches_invoice(
         "invoice/HvOrg/Purchase Management/Vendor/2026/May/INV-1040_2026-05-16.pdf",
         104,
     )
     assert not _blob_name_matches_invoice(
         "invoice/HvOrg/Vault/DT-07 · coo/Vendor/2026/June/260671582_2026-06-05_id22.pdf",
+        21,
+    )
+    assert not _blob_name_matches_invoice(
+        "invoice/HvOrg/Vault/DT-07 · coo/Vendor/2026/June/260671582_2026-06-05_id22_1712345678901.pdf",
         21,
     )
 
