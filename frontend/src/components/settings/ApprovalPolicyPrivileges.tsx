@@ -5,22 +5,22 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { usePermissions } from "@/hooks/usePermissions";
 import {
   APPROVAL_ACTIONS,
+  APPROVAL_MODULE_ROLES,
   APPROVAL_MATRIX_MODULE_LABELS,
   APPROVAL_MATRIX_MODULES,
-  APPROVAL_QUORUM_MODE_OPTIONS,
   APPROVAL_ROLES,
   DEFAULT_APPROVAL_MATRIX,
   DEFAULT_APPROVAL_MATRIX_BY_MODULE,
+  DEFAULT_APPROVER_ROLES_BY_MODULE,
   DEFAULT_APPROVAL_RULES,
   normalizeApprovalMatrixConfig,
   type ApprovalAction,
   type ApprovalMatrixModule,
-  type ApprovalQuorumMode,
+  type ApprovalModuleRole,
   type ApprovalRole,
   type LocalApprovalPolicy,
 } from "@/lib/approvalPolicy";
@@ -133,7 +133,15 @@ export function ApprovalPolicyPrivileges() {
     locked: false,
     rules: DEFAULT_APPROVAL_RULES,
     matrix: DEFAULT_APPROVAL_MATRIX,
-    approval_matrix: { by_module: { ...DEFAULT_APPROVAL_MATRIX_BY_MODULE } },
+    approval_matrix: {
+      by_module: { ...DEFAULT_APPROVAL_MATRIX_BY_MODULE },
+      approver_roles_by_module: Object.fromEntries(
+        APPROVAL_MATRIX_MODULES.map((module) => [
+          module,
+          { ...DEFAULT_APPROVER_ROLES_BY_MODULE[module] },
+        ])
+      ) as typeof DEFAULT_APPROVER_ROLES_BY_MODULE,
+    },
   });
   const [unlockOpen, setUnlockOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -173,14 +181,30 @@ export function ApprovalPolicyPrivileges() {
     void persistPolicy(next);
   };
 
-  const setModuleMode = (module: ApprovalMatrixModule, mode: ApprovalQuorumMode) => {
+  const toggleModuleApproverRole = (
+    module: ApprovalMatrixModule,
+    role: ApprovalModuleRole
+  ) => {
     if (policy.locked) return;
+    const currentRoles = policy.approval_matrix.approver_roles_by_module[module];
+    const nextRoles = { ...currentRoles, [role]: !currentRoles[role] };
+    const enabledCount = APPROVAL_MODULE_ROLES.reduce(
+      (acc, roleKey) => acc + (nextRoles[roleKey] ? 1 : 0),
+      0
+    );
+    // Keep at least one approver role enabled for every module.
+    if (enabledCount === 0) return;
+    const mode = enabledCount === 1 ? "one_way" : enabledCount === 2 ? "two_way" : "three_way";
     const next: LocalApprovalPolicy = {
       ...policy,
       approval_matrix: {
         by_module: {
           ...policy.approval_matrix.by_module,
           [module]: mode,
+        },
+        approver_roles_by_module: {
+          ...policy.approval_matrix.approver_roles_by_module,
+          [module]: nextRoles,
         },
       },
     };
@@ -269,8 +293,8 @@ export function ApprovalPolicyPrivileges() {
         <div className="mb-3">
           <h3 className="text-sm font-semibold">Approval matrix</h3>
           <p className="text-xs text-muted-foreground mt-0.5">
-            How many distinct approvals are required per module. Approvals must come from
-            Admin, Functional manager, Functional supervisor, or Finance head.
+            Toggle which approver roles are required per module. The number of enabled
+            roles maps to 1-way, 2-way, or 3-way approval automatically.
           </p>
         </div>
         <div className="overflow-x-auto">
@@ -278,7 +302,14 @@ export function ApprovalPolicyPrivileges() {
             <thead>
               <tr className="text-xs text-muted-foreground border-b border-border">
                 <th className="px-3 py-2.5 text-left font-medium">Module</th>
-                <th className="px-3 py-2.5 text-left font-medium">Mode</th>
+                {APPROVAL_MODULE_ROLES.map((role) => (
+                  <th
+                    key={role}
+                    className="px-2 py-2.5 text-center font-medium whitespace-nowrap min-w-[120px]"
+                  >
+                    {role}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -287,18 +318,18 @@ export function ApprovalPolicyPrivileges() {
                   <td className="px-3 py-2.5 font-medium">
                     {APPROVAL_MATRIX_MODULE_LABELS[module]}
                   </td>
-                  <td className="px-3 py-2.5">
-                    <Select
-                      value={policy.approval_matrix.by_module[module]}
-                      onValueChange={(v) =>
-                        setModuleMode(module, v as ApprovalQuorumMode)
-                      }
-                      options={APPROVAL_QUORUM_MODE_OPTIONS}
-                      disabled={policy.locked}
-                      className="w-full max-w-xs"
-                      data-testid={`approval-mode-${module}`}
-                    />
-                  </td>
+                  {APPROVAL_MODULE_ROLES.map((role) => (
+                    <td key={role} className="px-2 py-2.5">
+                      <div className="flex justify-center">
+                        <Switch
+                          checked={policy.approval_matrix.approver_roles_by_module[module][role]}
+                          disabled={policy.locked}
+                          onCheckedChange={() => toggleModuleApproverRole(module, role)}
+                          data-testid={`approval-module-${module}-${role.replace(/\s+/g, "-")}`}
+                        />
+                      </div>
+                    </td>
+                  ))}
                 </tr>
               ))}
             </tbody>

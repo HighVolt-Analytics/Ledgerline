@@ -11,7 +11,7 @@ import {
 import { api } from "@/api/client";
 import type { DocumentSetRule, Invoice, VaultApiFile } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
-import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
+import { LazyInvoiceDetailDrawer } from "@/components/LazyInvoiceDetailDrawer";
 import { ListSearchInput } from "@/components/ListSearchInput";
 import { PageHeader } from "@/components/PageHeader";
 import { PageTabs } from "@/components/PageTabs";
@@ -31,7 +31,10 @@ import {
 } from "@/lib/tenantSession";
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
-import { invoiceDocumentTypeDisplayLabel } from "@/lib/documentTypeResolve";
+import {
+  MappedDocumentTypeBadge,
+  VisionHeadingBadge,
+} from "@/components/inbox/DocumentTypeDisplay";
 import { invoiceMatchesDocSet } from "@/lib/documentSets";
 import { ruleBookConfigFromApi } from "@/lib/ruleBookConfigApi";
 import type { DocumentSetRule as ConfigDocumentSet } from "@/lib/v4RuleBookTypes";
@@ -41,7 +44,6 @@ import {
 } from "@/lib/invoice";
 import {
   accordionExpandedIds,
-  fetchAllInvoices,
   filterVaultApiFiles,
   findVaultFileByInvoiceId,
   selectionBreadcrumb,
@@ -67,14 +69,6 @@ function SourceBadge({ source }: { source: ReturnType<typeof invoiceSourceKind> 
       className="text-[10px] font-normal border-border text-muted-foreground shrink-0"
     >
       {invoiceSourceLabel(source)}
-    </Badge>
-  );
-}
-
-function DocTypeBadge({ label }: { label: string }) {
-  return (
-    <Badge className="bg-accent text-accent-foreground border-0 text-[10px] shrink-0 font-normal">
-      {label}
     </Badge>
   );
 }
@@ -231,7 +225,7 @@ export function VaultPage() {
 
     const [vaultResult, invoicesResult, configResult] = await Promise.allSettled([
       api.getVaultTree({ fresh }),
-      fetchAllInvoices(fresh),
+      api.listInvoicesWithMeta({ page: "1", page_size: "100", route_target: "Vault" }),
       api.getRuleBookConfig(),
     ]);
 
@@ -264,7 +258,7 @@ export function VaultPage() {
     }
 
     if (invoicesResult.status === "fulfilled") {
-      setRows(invoicesResult.value);
+      setRows(invoicesResult.value.data);
     } else if (!options?.silent && !isTenantFetchAbortError(invoicesResult.reason)) {
       setRows([]);
       setWarning(
@@ -564,8 +558,10 @@ export function VaultPage() {
                           </div>
                         </div>
                         <SourceBadge source={invoiceSourceKind(doc)} />
-                        <DocTypeBadge
-                          label={invoiceDocumentTypeDisplayLabel(doc, ruleBook?.documentTypes)}
+                        <VisionHeadingBadge inv={doc} empty="" />
+                        <MappedDocumentTypeBadge
+                          inv={doc}
+                          documentTypes={ruleBook?.documentTypes}
                         />
                         <span className="tnum text-sm font-medium shrink-0">
                           {money(doc.total, doc.currency)}
@@ -656,9 +652,11 @@ export function VaultPage() {
                       {doc && (
                         <>
                           <SourceBadge source={invoiceSourceKind(doc)} />
-                          <DocTypeBadge
-                          label={invoiceDocumentTypeDisplayLabel(doc, ruleBook?.documentTypes)}
-                        />
+                          <VisionHeadingBadge inv={doc} empty="" />
+                          <MappedDocumentTypeBadge
+                            inv={doc}
+                            documentTypes={ruleBook?.documentTypes}
+                          />
                           <span className="tnum text-sm font-medium shrink-0">
                             {money(doc.total, doc.currency)}
                           </span>
@@ -673,7 +671,7 @@ export function VaultPage() {
         </div>
       )}
 
-      <InvoiceDetailDrawer
+      <LazyInvoiceDetailDrawer
         invoiceId={drawerId}
         open={drawerOpen}
         initialTab={drawerInitialTab}

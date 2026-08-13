@@ -6,7 +6,7 @@ import re
 
 from app.services.extraction.extraction_field_values import _FIELD_HINT_PATTERNS
 from app.services.extraction.line_item_skip_patterns import OPTIONAL_CURRENCY_MONEY_PREFIX
-from app.services.extraction.locale_vocab import optional_currency_code_group
+from app.services.extraction.locale_vocab import currency_alternation_regex, optional_currency_code_group
 
 MONEY_SCALAR_KEYS: tuple[str, ...] = ("subtotal", "gst", "gst_rate", "total")
 
@@ -78,21 +78,33 @@ def label_matches_field(text: str, key: str) -> bool:
 
 
 def build_money_label_regex(key: str, *, inline: bool = True) -> re.Pattern[str]:
-    """Regex: label followed by money on same line."""
+    """Regex: label followed by money on same line.
+
+    Also handles the POS-receipt pattern where the currency code is glued
+    directly onto the label word with no separator, e.g. ``SubtotalMMK 100,000``
+    or ``TOTALMMK 100,000`` (monospaced thermal-receipt layout).
+    """
     alt = _terms_regex_alternation(finance_label_terms(key))
+    # Optional currency code that may be glued onto the label or follow it.
+    _GLUED_CCY = rf"(?:{currency_alternation_regex()})?"
     if inline:
         return re.compile(
-            rf"(?i)(?:{alt})\s*[:\-]?\s*{_MONEY_CAPTURE}",
+            rf"(?i)(?:{alt}){_GLUED_CCY}\s*[:\-]?\s*{_MONEY_CAPTURE}",
             re.I,
         )
-    return re.compile(rf"(?i)^(?:{alt})\s*[:\-]?\s*$", re.I | re.M)
+    return re.compile(rf"(?i)^(?:{alt}){_GLUED_CCY}\s*[:\-]?\s*$", re.I | re.M)
 
 
 def build_money_multiline_regex(key: str) -> re.Pattern[str]:
-    """Regex: label line then amount on next 1–2 lines."""
+    """Regex: label line then amount on next 1–2 lines.
+
+    Handles glued-currency label lines such as ``SubtotalMMK`` on one line
+    followed by the amount on the next.
+    """
     alt = _terms_regex_alternation(finance_label_terms(key))
+    _GLUED_CCY = rf"(?:{currency_alternation_regex()})?"
     return re.compile(
-        rf"(?i)^(?:{alt})\s*[:\-]?\s*$\s*{_MONEY_CAPTURE}",
+        rf"(?i)^(?:{alt}){_GLUED_CCY}\s*[:\-]?\s*$\s*{_MONEY_CAPTURE}",
         re.I | re.M,
     )
 

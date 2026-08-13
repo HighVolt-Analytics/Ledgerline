@@ -1,37 +1,30 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Ban, Check, Clock, Minus, RefreshCw } from "lucide-react";
 import type { Invoice, MatrixRow } from "@/api/types";
-import { api } from "@/api/client";
 import { EmptyState } from "@/components/EmptyState";
 import { KpiCard } from "@/components/KpiCard";
 import { ListSearchInput } from "@/components/ListSearchInput";
-import { MatrixFlagBadge } from "@/components/matrix/MatrixFlagBadge";
-import { MatrixFlagDrawer } from "@/components/matrix/MatrixFlagDrawer";
+import { MatrixIssueCell } from "@/components/matrix/MatrixIssueCell";
 import { MatrixPaymentBadge } from "@/components/matrix/MatrixPaymentBadge";
 import { MatrixStageCell } from "@/components/matrix/MatrixStageCell";
 import { Button } from "@/components/ui/button";
 import { MatrixPanelSkeleton } from "@/components/skeleton/PageSkeletons";
 import { Card } from "@/components/ui/card";
 import { documentDisplayRef, money } from "@/lib/format";
-import { counterpartyColumnLabel, counterpartyName, invoiceMatchesCaptureChannel } from "@/lib/invoice";
-import { DocumentTypeChip } from "@/components/inbox/DocumentTypeChip";
-import { invoiceDocumentTypeDisplayLabel } from "@/lib/documentTypeResolve";
+import { counterpartyColumnLabel, counterpartyName } from "@/lib/invoice";
+import {
+  VisionHeadingBadge,
+} from "@/components/inbox/DocumentTypeDisplay";
 import { CounterpartyColumnHeaderLink } from "@/components/upload/CounterpartyCreationsLink";
 import { MATRIX_STAGES, matrixStageSettled, type MatrixCellState, type MatrixStage } from "@/lib/matrix";
-import { fetchAllMatrixRows, sortMatrixRowsNewestFirst, stagesToCells } from "@/lib/matrixApi";
+import { fetchMatrixPage, MATRIX_PAGE_SIZE, sortMatrixRowsNewestFirst, stagesToCells } from "@/lib/matrixApi";
 import type { MatrixFlagType, MatrixPaymentStatus } from "@/lib/v4MatrixMockData";
-import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
 import { cn } from "@/lib/cn";
-import { invoiceMatchesListSearch } from "@/lib/listSearch";
-import { approveAndProcess, validateInvoiceReadyForApproval } from "@/lib/invoiceActions";
 import { isInvoicePipelineActive } from "@/lib/uploadColumnState";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
-import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useAuth } from "@/context/AuthContext";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import { StatusPill, pillTones } from "@/components/StatusPill";
-import { queryKeys, tenantQueryKey } from "@/lib/queryClient";
 import {
   API_PORT_HINT,
   captureTenantFetchScope,
@@ -48,9 +41,7 @@ const InvoiceDetailDrawer = lazy(() =>
 
 const MATRIX_POLL_MS = 15_000;
 const MATRIX_POLL_FAST_MS = 4_000;
-const PAGE_SIZE = 10;
-
-const QUEUE_STATUSES = new Set(["exception", "duplicate_skipped", "rejected"]);
+const PAGE_SIZE = MATRIX_PAGE_SIZE;
 
 type MatrixFilter = "all" | "anomalies" | "awaiting" | "paid" | "pending" | "failed";
 
@@ -74,31 +65,8 @@ type MatrixTableRow = {
   conflictDetail?: import("@/lib/v4MatrixMockData").MatrixConflictRow[];
 };
 
-function isPaidThisMonth(paidDate: string | null | undefined): boolean {
-  if (!paidDate) return false;
-  const paid = new Date(paidDate);
-  if (Number.isNaN(paid.getTime())) return false;
-  const now = new Date();
-  return paid.getFullYear() === now.getFullYear() && paid.getMonth() === now.getMonth();
-}
-
 function stageBlocked(flag: MatrixFlagType, cellState: MatrixCellState | undefined): boolean {
   return matrixFlagNeedsReview(flag) && cellState === "pending";
-}
-
-function rowHasPendingStage(row: MatrixTableRow): boolean {
-  return MATRIX_STAGES.some((stage) => row.cells[stage as MatrixStage]?.state === "pending");
-}
-
-function rowHasFailedStage(row: MatrixTableRow): boolean {
-  return MATRIX_STAGES.some((stage) => {
-    const cell = row.cells[stage as MatrixStage];
-    if (cell?.state === "fail") return true;
-    return (
-      (stage === "Approved" || stage === "Posted") &&
-      stageBlocked(row.flag, cell?.state)
-    );
-  });
 }
 
 function toFlagType(value: string): MatrixFlagType {
@@ -144,24 +112,6 @@ function rowFromApi(row: MatrixRow): MatrixTableRow {
   };
 }
 
-function matrixDocumentTypeChip(
-  inv: Invoice,
-  documentTypes?: DocumentTypeDefinition[] | null
-) {
-  const code = (inv.document_type_code ?? "").trim();
-  const typeLabel = invoiceDocumentTypeDisplayLabel(inv, documentTypes);
-  return (
-    <DocumentTypeChip
-      code={code}
-      label={typeLabel}
-      display={typeLabel}
-      title={typeLabel}
-      purchaseKind={inv.purchase_document_type}
-      documentTypes={documentTypes}
-    />
-  );
-}
-
 export function DocumentMatrixPanel({
   embedded = false,
   showKpis = true,
@@ -185,32 +135,24 @@ export function DocumentMatrixPanel({
   refreshRef?: MutableRefObject<(() => void) | null>;
 }) {
   const { user } = useAuth();
-  const { data: ruleBook } = useRuleBookConfig();
-  const documentTypes = ruleBook?.documentTypes;
-  const queryClient = useQueryClient();
-
-  const invalidateManagementCaches = useCallback(async () => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: queryKeys.purchases() }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.purchasesTwoWay() }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.sales() }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.salesTwoWay() }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.navBadges() }),
-      queryClient.invalidateQueries({ queryKey: tenantQueryKey(["invoices"]) }),
-    ]);
-  }, [queryClient]);
   const tenantScope = user?.tenant_id ?? null;
   const loadSeq = useRef(0);
   const loadInFlightRef = useRef(false);
   const [matrixData, setMatrixData] = useState<MatrixRow[]>([]);
+  const [summary, setSummary] = useState({
+    documentCount: 0,
+    flagged: 0,
+    duplicates: 0,
+    awaiting: 0,
+    paidThisMonth: 0,
+  });
+  const [totalPages, setTotalPages] = useState(1);
+  const [filteredTotal, setFilteredTotal] = useState(0);
   const [filter, setFilter] = useState<MatrixFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
-  const [flagDrawerId, setFlagDrawerId] = useState<number | null>(null);
-  const [resolveBusy, setResolveBusy] = useState(false);
   const [drawerInvoiceId, setDrawerInvoiceId] = useState<number | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -219,7 +161,6 @@ export function DocumentMatrixPanel({
     setMatrixData([]);
     setPage(1);
     setError(null);
-    setFlagDrawerId(null);
     setDrawerInvoiceId(null);
     setDrawerOpen(false);
     setLoading(true);
@@ -229,6 +170,14 @@ export function DocumentMatrixPanel({
     setDrawerInvoiceId(invoiceId);
     setDrawerOpen(true);
   }
+
+  const matrixQueryParams = useMemo(() => {
+    const params: Record<string, string> = {};
+    if (captureSource) params.capture_source = captureSource;
+    if (filter !== "all") params.matrix_filter = filter;
+    if (searchQuery.trim()) params.q = searchQuery.trim();
+    return params;
+  }, [captureSource, filter, searchQuery]);
 
   const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
     if (options?.silent && loadInFlightRef.current) return null;
@@ -242,9 +191,12 @@ export function DocumentMatrixPanel({
     }
     const fresh = options?.fresh ?? !options?.silent;
     try {
-      const data = await fetchAllMatrixRows(fresh);
+      const result = await fetchMatrixPage(page, matrixQueryParams, fresh);
       if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
-      setMatrixData(data);
+      setMatrixData(result.rows);
+      setTotalPages(result.pages);
+      setFilteredTotal(result.total);
+      setSummary(result.summary);
     } catch (e) {
       if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
       if (
@@ -268,11 +220,15 @@ export function DocumentMatrixPanel({
         setLoading(false);
       }
     }
-  }, [tenantScope]);
+  }, [tenantScope, page, matrixQueryParams]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [captureSource, filter, searchQuery]);
 
   useEffect(() => {
     if (!refreshRef) return;
@@ -284,22 +240,10 @@ export function DocumentMatrixPanel({
     };
   }, [load, refreshRef]);
 
-  useEffect(() => {
-    if (!toast) return;
-    const t = setTimeout(() => setToast(null), 3000);
-    return () => clearTimeout(t);
-  }, [toast]);
-
-  const matrixRows = useMemo<MatrixTableRow[]>(() => {
-    const scoped = captureSource
-      ? matrixData.filter((row) => invoiceMatchesCaptureChannel(row.invoice, captureSource))
-      : matrixData;
-    return sortMatrixRowsNewestFirst(scoped).map(rowFromApi);
-  }, [matrixData, captureSource]);
-
-  useEffect(() => {
-    setPage(1);
-  }, [captureSource]);
+  const matrixRows = useMemo<MatrixTableRow[]>(
+    () => sortMatrixRowsNewestFirst(matrixData).map(rowFromApi),
+    [matrixData]
+  );
 
   const hasActiveProcessing = useMemo(
     () => matrixRows.some((row) => isInvoicePipelineActive(row.inv)),
@@ -312,40 +256,7 @@ export function DocumentMatrixPanel({
     void load({ silent: true, fresh: hasActiveProcessing });
   }, matrixPollMs);
 
-  const filteredRows = useMemo(
-    () =>
-      matrixRows.filter((row) => {
-        if (!invoiceMatchesListSearch(row.inv, searchQuery)) return false;
-        if (filter === "anomalies") {
-          return matrixFlagNeedsReview(row.flag);
-        }
-        if (filter === "awaiting") {
-          return row.payment === "Awaiting Payment" || row.payment === "Payment Approved";
-        }
-        if (filter === "paid") {
-          return row.payment === "Paid" && isPaidThisMonth(row.paidDate);
-        }
-        if (filter === "pending") {
-          return rowHasPendingStage(row);
-        }
-        if (filter === "failed") {
-          return rowHasFailedStage(row);
-        }
-        return true;
-      }),
-    [matrixRows, filter, searchQuery]
-  );
-
-  const totalPages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
-
-  const pagedRows = useMemo(() => {
-    const start = (page - 1) * PAGE_SIZE;
-    return filteredRows.slice(start, start + PAGE_SIZE);
-  }, [filteredRows, page]);
-
-  useEffect(() => {
-    setPage(1);
-  }, [filter, searchQuery]);
+  const pagedRows = matrixRows;
 
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
@@ -353,71 +264,17 @@ export function DocumentMatrixPanel({
 
   const kpis = useMemo(
     () => ({
-      flagged: matrixRows.filter((r) => matrixFlagNeedsReview(r.flag)).length,
-      duplicates: matrixRows.filter((r) => r.flag === "Duplicate Suspected").length,
-      awaiting: matrixRows.filter(
-        (r) => r.payment === "Awaiting Payment" || r.payment === "Payment Approved"
-      ).length,
-      paid: matrixRows.filter(
-        (r) => r.payment === "Paid" && isPaidThisMonth(r.paidDate)
-      ).length,
+      flagged: summary.flagged,
+      duplicates: summary.duplicates,
+      awaiting: summary.awaiting,
+      paid: summary.paidThisMonth,
     }),
-    [matrixRows]
+    [summary]
   );
 
   useEffect(() => {
     onFlaggedCount?.(kpis.flagged);
   }, [kpis.flagged, onFlaggedCount]);
-
-  const flagDrawerRow = useMemo(
-    () => matrixRows.find((r) => r.inv.id === flagDrawerId) ?? null,
-    [matrixRows, flagDrawerId]
-  );
-
-  async function resolveFlag(inv: Invoice, action: "unique" | "duplicate" | "approval") {
-    setResolveBusy(true);
-    try {
-      if (action === "unique") {
-        if (QUEUE_STATUSES.has(inv.status)) {
-          if (!inv.has_stored_file) {
-            setToast("Upload a document file before approving.");
-            return;
-          }
-          const fieldCheck = validateInvoiceReadyForApproval(inv, ruleBook?.documentTypes);
-          if (!fieldCheck.ok) {
-            setToast(fieldCheck.message);
-            return;
-          }
-          await approveAndProcess(inv.id, async () => {
-            await load({ silent: true, fresh: true });
-          });
-          setToast(`${documentDisplayRef(inv)} approved and processed`);
-        } else {
-          setToast(`${documentDisplayRef(inv)} — open the document to resolve routing or mapping`);
-          setFlagDrawerId(null);
-          openInvoiceDrawer(inv.id);
-        }
-      } else if (action === "duplicate") {
-        if (inv.status === "duplicate_skipped" || inv.status === "rejected") {
-          await api.deleteApprovalPermanently(inv.id);
-          setToast(`${documentDisplayRef(inv)} permanently removed`);
-        } else {
-          await api.reject(inv.id);
-          setToast(`${documentDisplayRef(inv)} rejected as duplicate`);
-        }
-        await invalidateManagementCaches();
-      } else {
-        await api.requestApproval(inv.id);
-        setToast(`${documentDisplayRef(inv)} sent to approvals`);
-      }
-      setFlagDrawerId(null);
-      await load({ silent: true, fresh: true });
-    } catch (e) {
-      setToast(e instanceof Error ? e.message : "Could not update document");
-    } finally {
-      setResolveBusy(false);
-    }
-  }
 
   if (error) {
     return (
@@ -429,12 +286,6 @@ export function DocumentMatrixPanel({
 
   return (
     <div>
-      {toast && (
-        <div className="fixed bottom-4 right-4 z-50 rounded-md border border-border bg-popover px-4 py-2 text-sm shadow-md max-w-sm">
-          {toast}
-        </div>
-      )}
-
       {!embedded && (
         <div className="flex justify-end mb-4">
           <Button
@@ -489,7 +340,7 @@ export function DocumentMatrixPanel({
         <>
           {showKpis ? (
             <div className="grid gap-3 grid-cols-2 lg:grid-cols-4 mb-5">
-              <KpiCard label="Documents" value={matrixRows.length} testid="kpi-matrix-docs" />
+              <KpiCard label="Documents" value={summary.documentCount} testid="kpi-matrix-docs" />
               <KpiCard
                 label="Flagged for review"
                 value={kpis.flagged}
@@ -537,8 +388,8 @@ export function DocumentMatrixPanel({
                 ))}
               </div>
               <span className="text-xs text-muted-foreground shrink-0 hidden sm:inline ml-auto">
-                {filteredRows.length} of {matrixRows.length} documents
-                {filteredRows.length > PAGE_SIZE ? ` · page ${page} of ${totalPages}` : ""}
+                {filteredTotal} documents
+                {filteredTotal > PAGE_SIZE ? ` · page ${page} of ${totalPages}` : ""}
               </span>
             </div>
           ) : null}
@@ -550,9 +401,8 @@ export function DocumentMatrixPanel({
                   No documents match your search.
                 </div>
               )}
-              {pagedRows.map(({ inv, cells, flag, payment }) => {
+              {pagedRows.map(({ inv, cells, flag, payment, reason }) => {
                 const docRef = documentDisplayRef(inv);
-                const flagged = flag !== "Clean";
                 const completedStages = MATRIX_STAGES.filter((stage) =>
                   matrixStageSettled(cells[stage as MatrixStage]?.state ?? "pending")
                 ).length;
@@ -574,7 +424,9 @@ export function DocumentMatrixPanel({
                     <div className="flex items-start justify-between gap-3 min-w-0">
                       <div className="min-w-0 flex-1">
                         <div className="font-medium tnum">{docRef}</div>
-                        <div className="mt-1">{matrixDocumentTypeChip(inv, documentTypes)}</div>
+                        <div className="mt-1">
+                          <VisionHeadingBadge inv={inv} />
+                        </div>
                         <div className="text-xs text-muted-foreground truncate mt-1">
                           {inv.invoice_no ?? "—"} · {counterpartyName(inv)}
                         </div>
@@ -589,21 +441,13 @@ export function DocumentMatrixPanel({
                       </div>
                     </div>
                     <div className="flex flex-wrap items-center gap-1.5 mt-2">
-                      {flagged ? (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setFlagDrawerId(inv.id);
-                          }}
-                          data-testid={`matrix-flag-${docRef}`}
-                          className="text-left"
-                        >
-                          <MatrixFlagBadge flag={flag} />
-                        </button>
-                      ) : (
-                        <MatrixFlagBadge flag={flag} />
-                      )}
+                      <MatrixIssueCell
+                        inv={inv}
+                        cells={cells}
+                        flagged={flag !== "Clean"}
+                        flagReason={reason}
+                        testId={`matrix-flag-${docRef}`}
+                      />
                       <MatrixPaymentBadge status={payment} />
                     </div>
                   </div>
@@ -629,8 +473,8 @@ export function DocumentMatrixPanel({
                         {stage}
                       </th>
                     ))}
-                    <th className="px-3 py-2.5 text-left font-medium border-l border-border">
-                      Anomaly / Duplicate
+                    <th className="px-3 py-2.5 text-left font-medium border-l border-border w-20 whitespace-nowrap">
+                      Issue
                     </th>
                     <th className="px-3 py-2.5 text-left font-medium">Payment Status</th>
                     <th className="px-4 py-2.5 text-right font-medium">Total</th>
@@ -647,9 +491,8 @@ export function DocumentMatrixPanel({
                       </td>
                     </tr>
                   )}
-                  {pagedRows.map(({ inv, cells, flag, payment }) => {
+                  {pagedRows.map(({ inv, cells, flag, payment, reason }) => {
                     const docRef = documentDisplayRef(inv);
-                    const flagged = flag !== "Clean";
                     return (
                       <tr
                         key={inv.id}
@@ -664,7 +507,7 @@ export function DocumentMatrixPanel({
                           </div>
                         </td>
                         <td className="px-3 py-2 whitespace-nowrap">
-                          {matrixDocumentTypeChip(inv, documentTypes)}
+                          <VisionHeadingBadge inv={inv} />
                         </td>
                         <td className="px-3 py-2 max-w-[150px] truncate text-muted-foreground">
                           {counterpartyName(inv)}
@@ -685,22 +528,14 @@ export function DocumentMatrixPanel({
                             </td>
                           );
                         })}
-                        <td className="px-3 py-2 border-l border-border">
-                          {flagged ? (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setFlagDrawerId(inv.id);
-                              }}
-                              data-testid={`matrix-flag-${docRef}`}
-                              className="text-left"
-                            >
-                              <MatrixFlagBadge flag={flag} />
-                            </button>
-                          ) : (
-                            <MatrixFlagBadge flag={flag} />
-                          )}
+                        <td className="px-3 py-2 border-l border-border w-20">
+                          <MatrixIssueCell
+                            inv={inv}
+                            cells={cells}
+                            flagged={flag !== "Clean"}
+                            flagReason={reason}
+                            testId={`matrix-flag-${docRef}`}
+                          />
                         </td>
                         <td className="px-3 py-2">
                           <MatrixPaymentBadge status={payment} />
@@ -776,7 +611,7 @@ export function DocumentMatrixPanel({
               </StatusPill>
               <StatusPill className={pillTones.amber}>
                 <AlertTriangle className="h-3 w-3 ds-warning-icon" />
-                Anomaly routes through approval before payment
+                Issue — hover for details
               </StatusPill>
             </div>
           ) : null}
@@ -784,41 +619,17 @@ export function DocumentMatrixPanel({
       )}
 
       {showTable ? (
-        <>
-          <MatrixFlagDrawer
-            row={
-              flagDrawerRow
-                ? {
-                    inv: flagDrawerRow.inv,
-                    flag: flagDrawerRow.flag,
-                    reason: flagDrawerRow.reason,
-                    conflictWith: flagDrawerRow.conflictWith,
-                    conflictDetail: flagDrawerRow.conflictDetail,
-                    cells: flagDrawerRow.cells,
-                  }
-                : null
-            }
-            open={flagDrawerId !== null}
-            onClose={() => setFlagDrawerId(null)}
-            busy={resolveBusy}
-            onResolve={(_docId, action) => {
-              const inv = flagDrawerRow?.inv;
-              if (inv) void resolveFlag(inv, action);
+        <Suspense fallback={null}>
+          <InvoiceDetailDrawer
+            invoiceId={drawerInvoiceId}
+            open={drawerOpen}
+            onClose={() => {
+              setDrawerOpen(false);
+              setDrawerInvoiceId(null);
             }}
+            onUpdated={() => void load({ silent: true, fresh: true })}
           />
-
-          <Suspense fallback={null}>
-            <InvoiceDetailDrawer
-              invoiceId={drawerInvoiceId}
-              open={drawerOpen}
-              onClose={() => {
-                setDrawerOpen(false);
-                setDrawerInvoiceId(null);
-              }}
-              onUpdated={() => void load({ silent: true, fresh: true })}
-            />
-          </Suspense>
-        </>
+        </Suspense>
       ) : null}
     </div>
   );

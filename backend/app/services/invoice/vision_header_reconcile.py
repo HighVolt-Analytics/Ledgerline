@@ -402,6 +402,10 @@ def enrich_vision_header_refs_from_text(
         detail["filled"].append("invoice_no")
 
     other = _normalize_other_reference(result.other_reference)
+    if other and inv and _norm_id_token(other) == _norm_id_token(inv):
+        updates["other_reference"] = ""
+        detail["filled"].append("other_reference_cleared_duplicate_invoice_no")
+        other = ""
     unique_match = _UNIQUE_REF_LINE.search(text or "")
     unique_ref = _normalize_other_reference(unique_match.group(1) if unique_match else "")
 

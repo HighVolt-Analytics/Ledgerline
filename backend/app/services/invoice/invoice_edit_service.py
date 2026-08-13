@@ -229,6 +229,24 @@ async def update_invoice_fields(
         return False
 
     await session.flush()
+
+    # After clerk fills vendor/total/compulsory fields, drop sticky vision needs_review
+    # so Confirm & process is not blocked by a stale extract flag.
+    from app.services.classification.document_type_catalog import get_document_type_definition
+    from app.services.invoice.invoice_evaluation_service import (
+        EVAL_VISION_HEADER_REVIEW,
+        load_config_for_tenant,
+    )
+    from app.services.invoice.vision_posting_continue import vision_header_ok_from_invoice
+
+    if (inv.evaluation_status or "").strip() == EVAL_VISION_HEADER_REVIEW:
+        config = await load_config_for_tenant(session, inv.tenant_id)
+        definition = get_document_type_definition(
+            inv.document_type_code,
+            document_types=config.document_types,
+        )
+        vision_header_ok_from_invoice(inv, definition)
+
     await log_event(
         session,
         "invoice_fields_updated",

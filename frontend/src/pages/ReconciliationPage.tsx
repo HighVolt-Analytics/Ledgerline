@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { CheckCircle2, ChevronDown, ChevronRight, Eye, Scale } from "lucide-react";
 import { api } from "@/api/client";
 import { EmptyState } from "@/components/EmptyState";
-import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
+import { LazyInvoiceDetailDrawer } from "@/components/LazyInvoiceDetailDrawer";
 import { PageHeader } from "@/components/PageHeader";
 import { PageLoader } from "@/components/PageLoader";
 import { ReconciliationDetailDrawer } from "@/components/ReconciliationDetailDrawer";
@@ -462,7 +462,7 @@ export function ReconciliationPage() {
         currency={baseCurrency}
       />
 
-      <InvoiceDetailDrawer
+      <LazyInvoiceDetailDrawer
         invoiceId={drawerInvoiceId}
         open={drawerInvoiceId != null}
         onClose={() => setDrawerInvoiceId(null)}

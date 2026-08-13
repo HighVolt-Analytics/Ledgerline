@@ -43,6 +43,7 @@ from app.services.invoice.invoice_evaluation_service import (
 )
 from app.services.invoice.invoice_reset import reset_invoice_for_approval
 from app.services.invoice.invoice_response_service import (
+    invoice_list_load_options,
     response_for_invoice,
     responses_for_approval_board,
     responses_for_invoices,
@@ -111,6 +112,7 @@ async def list_approvals_board(
     active_rows = (
         await db.execute(
             select(Invoice)
+            .options(*invoice_list_load_options())
             .where(
                 Invoice.tenant_id == tenant_id,
                 Invoice.status.in_(active_statuses),
@@ -121,6 +123,7 @@ async def list_approvals_board(
     processed_rows = (
         await db.execute(
             select(Invoice)
+            .options(*invoice_list_load_options())
             .where(
                 Invoice.tenant_id == tenant_id,
                 Invoice.status == InvoiceStatus.PROCESSED,
@@ -155,6 +158,7 @@ async def list_approvals_queue(
 ) -> ApprovalListResult:
     stmt = (
         select(Invoice)
+        .options(*invoice_list_load_options())
         .where(
             Invoice.tenant_id == tenant_id,
             Invoice.status.in_(_QUEUE_STATUSES),
@@ -175,7 +179,9 @@ async def list_approvals_queue(
     ).scalars().all()
 
     return ApprovalListResult(
-        rows=await responses_for_invoices(db, list(rows), tenant_id=tenant_id),
+        rows=await responses_for_invoices(
+            db, list(rows), tenant_id=tenant_id, for_list=True
+        ),
         meta=ResponseMeta(page=params.page, total=total, pages=pages),
     )
 
@@ -325,9 +331,24 @@ async def _approve_vision_header_review_for_posting(
     org = org_context_from_config(config, tenant_row)
     assert definition is not None
 
+    # Do NOT re-run vision DT extract on Confirm when clerk fields are already
+    # complete — re-extract overwrites saved vendor/total/dates and falsely
+    # re-raises "Complete header fields…".
     from app.config import get_settings
+    from app.services.invoice.invoice_edit_service import invoice_has_manual_field_edits
 
-    if get_settings().vision_dt_scoped_extract and (loaded.document_type_code or "").strip():
+    header_already_ok = vision_header_ok_from_invoice(loaded, definition)
+    manual_edits = await invoice_has_manual_field_edits(
+        db, loaded.id, tenant_id=loaded.tenant_id
+    )
+    should_reextract = (
+        get_settings().vision_dt_scoped_extract
+        and (loaded.document_type_code or "").strip()
+        and not header_already_ok
+        and not manual_edits
+        and not payable_fields_complete(loaded)
+    )
+    if should_reextract:
         from app.services.extraction.document_ai_provider import DocumentAiProvider
         from app.services.invoice.invoice_pipeline_phases import phase_vision_dt_extract
 

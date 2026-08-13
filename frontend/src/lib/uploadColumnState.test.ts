@@ -74,7 +74,7 @@ describe("columnHasDisplayValue", () => {
     );
   });
 
-  it("detects document type from printed document_heading", () => {
+  it("detects type from printed document_heading (vision)", () => {
     expect(
       columnHasDisplayValue(
         inv(1, "exception", { document_heading: "TAX INVOICE" }),
@@ -83,7 +83,18 @@ describe("columnHasDisplayValue", () => {
     ).toBe(true);
   });
 
-  it("does not treat purchase_document_type alone as document type value", () => {
+  it("detects type from canonical_document_type (vision)", () => {
+    expect(
+      columnHasDisplayValue(
+        inv(1, "exception", {
+          extracted_fields: { canonical_document_type: "Goods Receipt Note" },
+        }),
+        "documentType"
+      )
+    ).toBe(true);
+  });
+
+  it("does not treat purchase_document_type alone as type value", () => {
     expect(
       columnHasDisplayValue(
         inv(1, "pending", { purchase_document_type: "invoice" }),
@@ -92,7 +103,19 @@ describe("columnHasDisplayValue", () => {
     ).toBe(false);
   });
 
-  it("detects route from vault folder canonical_document_type", () => {
+  it("does not treat catalogue DT alone as type value", () => {
+    expect(
+      columnHasDisplayValue(inv(1, "exception", { document_type_code: "DT-02" }), "documentType")
+    ).toBe(false);
+  });
+
+  it("detects route from stored document_type_code", () => {
+    expect(
+      columnHasDisplayValue(inv(1, "exception", { document_type_code: "DT-28" }), "route")
+    ).toBe(true);
+  });
+
+  it("does not treat vision heading alone as route value", () => {
     expect(
       columnHasDisplayValue(
         inv(1, "exception", {
@@ -100,7 +123,7 @@ describe("columnHasDisplayValue", () => {
         }),
         "route"
       )
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("detects gl account when posting not applicable", () => {

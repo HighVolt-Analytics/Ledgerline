@@ -1,22 +1,23 @@
 import type { Invoice } from "@/api/types";
 import { InboxConfidenceBadge } from "@/components/inbox/InboxConfidenceBadge";
-import { DocumentTypeChip } from "@/components/inbox/DocumentTypeChip";
+import {
+  MappedDocumentTypeBadge,
+  VisionHeadingBadge,
+} from "@/components/inbox/DocumentTypeDisplay";
 import {
   DuplicateReviewBadge,
   EvaluationStatusBadge,
-  RouteTargetBadge,
 } from "@/components/inbox/EvaluationStatusBadge";
 import { InboxGlAccountBadge } from "@/components/inbox/InboxGlAccountBadge";
 import { invoiceStageBadgeProps, StageBadge } from "@/components/StageBadge";
 import { UploadColumnCell } from "@/components/upload/UploadColumnCell";
 import { documentDisplayRef, money } from "@/lib/format";
-import { invoiceDocumentTypeDisplayLabel } from "@/lib/documentTypeResolve";
+import { storedDocumentTypeCode } from "@/lib/documentTypeResolve";
 import {
   counterpartyMatchLabel,
   counterpartyName,
   invoiceCounterpartyConfidence,
   invoiceValidationConfidence,
-  invoiceVaultFolderLabel,
   vendorMatchApplicable,
 } from "@/lib/invoice";
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
@@ -32,6 +33,8 @@ export type UploadInvoiceRowProps = {
   documentTypes?: DocumentTypeDefinition[] | null;
   processingIds?: ReadonlySet<number>;
   onOpen: () => void;
+  /** Open drawer on Fields / DT classification (Route "Not classified" chip). */
+  onOpenClassification?: () => void;
   receivedLabel: string;
 };
 
@@ -68,29 +71,49 @@ function DocumentMetaLine({
   );
 }
 
-function DocumentTypeLine({
+/** Type column: printed / AI vision heading only — never catalogue DT title. */
+function VisionHeadingLine({
+  inv,
+  mode,
+}: {
+  inv: Invoice;
+  mode: ColumnDisplayMode;
+}) {
+  return (
+    <UploadColumnCell mode={mode}>
+      <VisionHeadingBadge inv={inv} empty="" />
+    </UploadColumnCell>
+  );
+}
+
+/** Route column: mapped Rule Book DT, or a clickable "Not classified" signal. */
+function RouteDocumentTypeLine({
   inv,
   documentTypes,
   mode,
+  onOpenClassification,
 }: {
   inv: Invoice;
   documentTypes?: DocumentTypeDefinition[] | null;
   mode: ColumnDisplayMode;
+  onOpenClassification?: () => void;
 }) {
-  // Chip code = stored DT only. Invented purchase-kind codes make early rows look classified.
-  const code = (inv.document_type_code ?? "").trim();
-  const typeLabel = invoiceDocumentTypeDisplayLabel(inv, documentTypes);
-
+  const code = storedDocumentTypeCode(inv);
   return (
-    <UploadColumnCell mode={mode}>
-      <DocumentTypeChip
-        code={code}
-        label={typeLabel}
-        display={typeLabel}
-        title={typeLabel}
-        purchaseKind={inv.purchase_document_type}
-        documentTypes={documentTypes}
-      />
+    <UploadColumnCell
+      mode={mode}
+      emptyFallback={
+        <MappedDocumentTypeBadge
+          inv={inv}
+          documentTypes={documentTypes}
+          onOpenClassification={onOpenClassification}
+          testId="upload-route-not-classified"
+        />
+      }
+    >
+      {code ? (
+        <MappedDocumentTypeBadge inv={inv} documentTypes={documentTypes} />
+      ) : null}
     </UploadColumnCell>
   );
 }
@@ -100,6 +123,7 @@ export function UploadInvoiceMobileRow({
   documentTypes,
   processingIds,
   onOpen,
+  onOpenClassification,
   receivedLabel,
 }: UploadInvoiceRowProps) {
   const modes = rowColumnModes(inv, documentTypes, processingIds);
@@ -109,20 +133,27 @@ export function UploadInvoiceMobileRow({
   const showMatch =
     matchLabel != null || vendorMatchApplicable(inv, documentTypes);
   const stageTitle = (inv.resolution_hint ?? "").trim() || undefined;
+  const openRow = () => {
+    if (!storedDocumentTypeCode(inv) && onOpenClassification) {
+      onOpenClassification();
+      return;
+    }
+    onOpen();
+  };
 
   return (
     <button
       type="button"
       data-testid={`row-invoice-${inv.id}`}
       className="w-full text-left px-3 py-3 hover-elevate active:bg-muted/40 transition-colors"
-      onClick={onOpen}
+      onClick={openRow}
     >
       <div className="flex items-start justify-between gap-3 min-w-0">
         <div className="min-w-0 flex-1">
           <div className="font-medium tnum">{documentDisplayRef(inv)}</div>
           <DocumentMetaLine inv={inv} mode={modes.documentMeta} />
           <div className="mt-1">
-            <DocumentTypeLine inv={inv} documentTypes={documentTypes} mode={modes.documentType} />
+            <VisionHeadingLine inv={inv} mode={modes.documentType} />
           </div>
           <UploadColumnCell mode={modes.counterparty} className="text-sm truncate mt-0.5 block">
             {counterpartyName(inv)}
@@ -140,9 +171,7 @@ export function UploadInvoiceMobileRow({
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-1.5 mt-2">
-        <UploadColumnCell mode={modes.route}>
-          <RouteTargetBadge route={invoiceVaultFolderLabel(inv) || null} />
-        </UploadColumnCell>
+        <RouteDocumentTypeLine inv={inv} documentTypes={documentTypes} mode={modes.route} />
         <UploadColumnCell mode={modes.glAccount}>
           <InboxGlAccountBadge
             account={inv.account_name}
@@ -186,12 +215,12 @@ export function UploadInvoiceTableRow({
   documentTypes,
   processingIds,
   onOpen,
+  onOpenClassification,
   receivedLabel,
 }: UploadInvoiceRowProps) {
   const modes = rowColumnModes(inv, documentTypes, processingIds);
   const stageProps = invoiceStageBadgeProps(inv);
   const stageProcessing = isStageColumnProcessing(inv, processingIds);
-  const vaultFolder = invoiceVaultFolderLabel(inv);
   const stageTitle = (inv.resolution_hint ?? "").trim() || undefined;
 
   return (
@@ -205,15 +234,18 @@ export function UploadInvoiceTableRow({
         <DocumentMetaLine inv={inv} mode={modes.documentMeta} />
       </td>
       <td className="px-3 py-2.5 whitespace-nowrap">
-        <DocumentTypeLine inv={inv} documentTypes={documentTypes} mode={modes.documentType} />
+        <VisionHeadingLine inv={inv} mode={modes.documentType} />
       </td>
       <td className="px-3 py-2.5 max-w-[160px] truncate">
         <UploadColumnCell mode={modes.counterparty}>{counterpartyName(inv)}</UploadColumnCell>
       </td>
       <td className="px-3 py-2.5">
-        <UploadColumnCell mode={modes.route}>
-          <RouteTargetBadge route={vaultFolder || null} />
-        </UploadColumnCell>
+        <RouteDocumentTypeLine
+          inv={inv}
+          documentTypes={documentTypes}
+          mode={modes.route}
+          onOpenClassification={onOpenClassification}
+        />
       </td>
       <td className="px-3 py-2.5">
         <UploadColumnCell mode={modes.glAccount}>

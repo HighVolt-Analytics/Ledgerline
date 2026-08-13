@@ -759,11 +759,15 @@ function orgContextToApi(org: OrgContextConfig | undefined): RuleBookRulesPayloa
   };
 }
 
+export function documentTypesFromRuleBookApi(api: Pick<RuleBookConfig, "document_types">) {
+  return (api.document_types ?? []).map((row) =>
+    mapDocumentType(row as unknown as Record<string, unknown>)
+  );
+}
+
 export function ruleBookConfigFromApi(api: RuleBookConfig): RuleBookConfigState {
   return {
-    documentTypes: (api.document_types ?? []).map((row) =>
-      mapDocumentType(row as unknown as Record<string, unknown>)
-    ),
+    documentTypes: documentTypesFromRuleBookApi(api),
     documentClassification: {
       unclassifiedDocumentTypeCode:
         api.document_classification?.unclassified_document_type_code ?? "",

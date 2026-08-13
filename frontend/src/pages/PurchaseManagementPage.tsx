@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
+import { LazyInvoiceDetailDrawer } from "@/components/LazyInvoiceDetailDrawer";
 import { KpiCard } from "@/components/KpiCard";
 import { PageHeader } from "@/components/PageHeader";
 import { MatchStatusBadge } from "@/components/purchases/MatchStatusBadge";
@@ -246,7 +246,7 @@ export function PurchaseManagementPage() {
         )}
       </PurchaseDetailSheet>
 
-      <InvoiceDetailDrawer
+      <LazyInvoiceDetailDrawer
         invoiceId={drawerInvoiceId}
         open={drawerInvoiceId != null}
         onClose={() => setDrawerInvoiceId(null)}

@@ -250,6 +250,35 @@ def test_control_account_gate_flags_empty_staff_advance() -> None:
     assert unresolved == ["staff_advance_account"]
 
 
+def test_control_account_gate_accepts_mapped_employee_advance_ledger() -> None:
+    config = _config()
+    config.team_expense_posting.default_advance_parent_ledger = ""
+    inv = _invoice("advance_requisition")
+    inv.account_code = "EM-NEW-EMPLOYEE-FAD7"
+    inv.account_name = "vishnu"
+    unresolved = get_unresolved_control_accounts(invoice=inv, config=config)
+    assert "staff_advance_account" not in unresolved
+
+
+def test_advance_requisition_journals_debit_mapped_employee_when_parent_missing() -> None:
+    config = _config()
+    config.team_expense_posting.default_advance_parent_ledger = ""
+    inv = _invoice("advance_requisition")
+    inv.account_code = "EM-NEW-EMPLOYEE-FAD7"
+    inv.account_name = "vishnu"
+    lines = generate_entries(
+        inv,
+        AccountMapping("EM-NEW-EMPLOYEE-FAD7", "vishnu"),
+        config=config,
+        control_mapping=AccountMapping("9999", "Suspense Account"),
+    )
+    assert is_balanced(lines)
+    debit = next(ln for ln in lines if ln.debit > 0)
+    assert debit.account_code == "EM-NEW-EMPLOYEE-FAD7"
+    assert debit.account_name == "vishnu"
+    assert get_unresolved_control_accounts(invoice=inv, config=config) == []
+
+
 def test_team_expense_posting_defaults_are_empty_until_configured() -> None:
     posting = PostingDefaults(bank_account="Operating Bank")
     seeded = TeamExpensePostingDefaults.for_posting_defaults(posting)

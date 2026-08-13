@@ -98,6 +98,7 @@ import type {
   OnboardingStatus,
   UserPermissions,
   Vendor,
+  VendorActivity,
   VendorPayoutMethod,
   VendorPayoutMethodCreate,
   VendorPayoutMethodUpdate,
@@ -1446,6 +1447,11 @@ export const api = {
     if (options?.fresh) bustGetCache(path);
     return request<Vendor[]>(path);
   },
+  listVendorActivity: (options?: FreshRequestOptions) => {
+    const path = "/api/vendors/activity";
+    if (options?.fresh) bustGetCache(path);
+    return request<VendorActivity[]>(path);
+  },
   createVendor: (body: Omit<Vendor, "id">) =>
     request<Vendor>("/api/vendors", {
       method: "POST",
@@ -1665,7 +1671,10 @@ export const api = {
     }),
   dismissPendingCustomer: (pendingId: number) =>
     request<void>(`/api/pending-customers/${pendingId}/dismiss`, { method: "POST" }),
-  getRuleBookConfig: () => request<RuleBookConfig>("/api/rule-book/config"),
+  getRuleBookConfig: (params?: { fields?: string }) => {
+    const q = params?.fields ? `?fields=${encodeURIComponent(params.fields)}` : "";
+    return request<RuleBookConfig>(`/api/rule-book/config${q}`);
+  },
   getAiProviders: () =>
     request<import("@/api/types").AiProvidersResponse>("/api/rule-book/ai-providers"),
   getRecognitionSignalCatalog: () =>

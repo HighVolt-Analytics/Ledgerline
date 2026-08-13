@@ -33,7 +33,6 @@ export function useVisibilityPolling(
       }, waitMs);
     };
 
-    tick();
     schedule();
     return () => {
       cancelled = true;

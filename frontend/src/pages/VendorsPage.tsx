@@ -10,7 +10,7 @@ import {
 } from "@/lib/tenantSession";
 import { Building2, ClipboardCheck, Pencil, Plus, RefreshCw, Search, Trash2, AlertTriangle } from "lucide-react";
 import { api } from "@/api/client";
-import type { Invoice, Vendor } from "@/api/types";
+import type { Vendor, VendorActivity } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { VendorFormDialog } from "@/components/VendorFormDialog";
@@ -23,10 +23,9 @@ import { Input } from "@/components/ui/input";
 import { usePendingVendors, usePromotePendingVendor } from "@/hooks/useMasterData";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { cn } from "@/lib/cn";
-import { formatMoneyByCurrencyMap, formatTaxId, toNumber } from "@/lib/format";
+import { formatMoneyByCurrencyMap, formatTaxId } from "@/lib/format";
 
 const VENDORS_POLL_MS = 30_000;
-import { fetchAllInvoices } from "@/lib/invoices";
 
 type VendorInvoiceStats = {
   amount: number;
@@ -43,13 +42,37 @@ type TopVendorSpendRow = {
   invoice_count: number;
 };
 
-function addAmountByCurrency(
-  map: Record<string, number>,
-  currency: string | null | undefined,
-  amount: number
-): void {
-  const code = (currency || "").trim().toUpperCase();
-  map[code] = (map[code] ?? 0) + amount;
+function activityToStatsMap(
+  activity: VendorActivity[]
+): Map<string, VendorInvoiceStats> {
+  const map = new Map<string, VendorInvoiceStats>();
+  for (const row of activity) {
+    const key = normalizeVendorKey(row.vendor);
+    if (!key) continue;
+    const amount = Object.values(row.by_currency).reduce((sum, n) => sum + n, 0);
+    map.set(key, {
+      amount,
+      byCurrency: row.by_currency,
+      count: row.invoice_count,
+      email: row.email,
+      defaultAccount: row.default_account ?? "Suspense Account",
+      netDays: row.net_days,
+    });
+  }
+  return map;
+}
+
+function topVendorsFromActivity(activity: VendorActivity[], limit = 5): TopVendorSpendRow[] {
+  return [...activity]
+    .map((row) => ({
+      vendor: row.vendor,
+      byCurrency: row.by_currency,
+      invoice_count: row.invoice_count,
+      sortTotal: Object.values(row.by_currency).reduce((sum, n) => sum + n, 0),
+    }))
+    .sort((a, b) => b.sortTotal - a.sortTotal)
+    .slice(0, limit)
+    .map(({ vendor, byCurrency, invoice_count }) => ({ vendor, byCurrency, invoice_count }));
 }
 
 function normalizeVendorKey(name: string | null | undefined): string {
@@ -62,46 +85,6 @@ function vendorMatchesInvoice(vendor: Vendor, invoiceVendor: string | null): boo
   const name = normalizeVendorKey(vendor.vendor_name);
   const slug = vendor.vendor_slug.replace(/-/g, " ");
   return key === name || key.includes(name) || name.includes(key) || key.includes(slug);
-}
-
-function inferNetDays(inv: Invoice): number | null {
-  if (!inv.invoice_date || !inv.due_date) return null;
-  const start = new Date(inv.invoice_date);
-  const end = new Date(inv.due_date);
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
-  const days = Math.round((end.getTime() - start.getTime()) / 86_400_000);
-  return days >= 0 ? days : null;
-}
-
-function buildInvoiceStats(invoices: Invoice[]): Map<string, VendorInvoiceStats> {
-  const map = new Map<string, VendorInvoiceStats>();
-
-  for (const inv of invoices) {
-    const key = normalizeVendorKey(inv.vendor);
-    if (!key) continue;
-
-    const entry = map.get(key) ?? {
-      amount: 0,
-      byCurrency: {},
-      count: 0,
-      email: null,
-      defaultAccount: "Suspense Account",
-      netDays: null,
-    };
-
-    const amount = toNumber(inv.total);
-    entry.amount += amount;
-    addAmountByCurrency(entry.byCurrency, inv.currency, amount);
-    entry.count += 1;
-    if (inv.email_sender) entry.email = inv.email_sender;
-    if (inv.account_name) entry.defaultAccount = inv.account_name;
-    const days = inferNetDays(inv);
-    if (days != null) entry.netDays = days;
-
-    map.set(key, entry);
-  }
-
-  return map;
 }
 
 function lookupVendorStats(
@@ -119,29 +102,6 @@ function lookupVendorStats(
     defaultAccount: "Suspense Account",
     netDays: null,
   };
-}
-
-function topVendorsBySpend(invoices: Invoice[], limit = 5): TopVendorSpendRow[] {
-  const totals = new Map<string, { byCurrency: Record<string, number>; count: number }>();
-
-  for (const inv of invoices) {
-    const name = (inv.vendor ?? "Unknown").trim() || "Unknown";
-    const entry = totals.get(name) ?? { byCurrency: {}, count: 0 };
-    addAmountByCurrency(entry.byCurrency, inv.currency, toNumber(inv.total));
-    entry.count += 1;
-    totals.set(name, entry);
-  }
-
-  return [...totals.entries()]
-    .map(([vendor, { byCurrency, count }]) => ({
-      vendor,
-      byCurrency,
-      invoice_count: count,
-      sortTotal: Object.values(byCurrency).reduce((sum, n) => sum + n, 0),
-    }))
-    .sort((a, b) => b.sortTotal - a.sortTotal)
-    .slice(0, limit)
-    .map(({ vendor, byCurrency, invoice_count }) => ({ vendor, byCurrency, invoice_count }));
 }
 
 function vendorDisplayEmail(vendor: Vendor, stats: VendorInvoiceStats): string {
@@ -171,7 +131,7 @@ export function VendorsPage() {
   const { data: pendingQueue = [] } = usePendingVendors(Boolean(user));
   const promoteMutation = usePromotePendingVendor();
   const [rows, setRows] = useState<Vendor[]>([]);
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [activity, setActivity] = useState<VendorActivity[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -180,7 +140,7 @@ export function VendorsPage() {
 
   useResetOnTenantChange(() => {
     setRows([]);
-    setInvoices([]);
+    setActivity([]);
     setLoading(true);
     setError(null);
     setSearch("");
@@ -196,13 +156,13 @@ export function VendorsPage() {
     }
     try {
       const fresh = options?.fresh ?? !options?.silent;
-      const [vendors, invoiceRows] = await Promise.all([
+      const [vendors, activityRows] = await Promise.all([
         api.listVendors({ fresh }),
-        fetchAllInvoices(fresh),
+        api.listVendorActivity({ fresh }),
       ]);
       if (!isTenantFetchScopeCurrent(scope)) return;
       setRows(vendors);
-      setInvoices(invoiceRows);
+      setActivity(activityRows);
     } catch (e) {
       if (!isTenantFetchScopeCurrent(scope)) return;
       if (
@@ -217,7 +177,7 @@ export function VendorsPage() {
       if (!options?.silent) {
         setError(e instanceof Error ? e.message : "Failed to load vendors");
         setRows([]);
-        setInvoices([]);
+        setActivity([]);
       }
     } finally {
       if (isTenantFetchScopeCurrent(scope) && !options?.silent) setLoading(false);
@@ -232,15 +192,17 @@ export function VendorsPage() {
     void load({ silent: true, fresh: true });
   }, VENDORS_POLL_MS);
 
-  const statsByVendor = useMemo(() => buildInvoiceStats(invoices), [invoices]);
-  const topVendors = useMemo(() => topVendorsBySpend(invoices, 5), [invoices]);
+  const statsByVendor = useMemo(() => activityToStatsMap(activity), [activity]);
+  const topVendors = useMemo(() => topVendorsFromActivity(activity, 5), [activity]);
   const totalSpendByCurrency = useMemo(() => {
     const totals: Record<string, number> = {};
-    for (const inv of invoices) {
-      addAmountByCurrency(totals, inv.currency, toNumber(inv.total));
+    for (const row of activity) {
+      for (const [code, amount] of Object.entries(row.by_currency)) {
+        totals[code] = (totals[code] ?? 0) + amount;
+      }
     }
     return totals;
-  }, [invoices]);
+  }, [activity]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();

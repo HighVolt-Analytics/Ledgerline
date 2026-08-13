@@ -97,6 +97,22 @@ def test_derive_matrix_flag_awaiting_classification() -> None:
     assert "classified" in reason.lower()
 
 
+def test_matrix_cells_exception_validated_detail_is_concrete() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="awaiting_classification",
+        currency="AUD",
+    )
+    cells = build_matrix_cells(inv, [])
+    by_stage = {cell["stage"]: cell for cell in cells}
+    assert by_stage["Validated"]["state"] == "fail"
+    detail = by_stage["Validated"]["detail"].lower()
+    assert "document type" in detail
+    assert "routed to review" not in detail
+
+
 def test_derive_matrix_payment_on_hold_for_needs_rescan() -> None:
     inv = Invoice(
         tenant_id=TESTING_TENANT_UUID,

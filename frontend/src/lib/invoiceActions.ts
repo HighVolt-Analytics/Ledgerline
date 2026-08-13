@@ -229,7 +229,7 @@ export function validateInvoiceReadyForApproval(
   return validateInvoiceFieldsForApproval(fields, compulsory.length ? compulsory : undefined);
 }
 
-function approvalFailureMessage(inv: InvoiceDetails): string {
+export function approvalFailureMessage(inv: InvoiceDetails): string {
   if (inv.status === "exception") {
     if (inv.evaluation_status === "awaiting_po") {
       return "Approval blocked: a matching purchase order is required for this document.";
@@ -237,11 +237,24 @@ function approvalFailureMessage(inv: InvoiceDetails): string {
     if (inv.evaluation_status === "pending_vendor") {
       return "Approval blocked: register the vendor in Vendors → Pending vendor registration, then approve again.";
     }
-    if (inv.evaluation_status === "needs_review") {
-      return "Approval blocked: document still requires review after processing.";
-    }
     if (inv.evaluation_status === "pending_approval") {
       return "Waiting for approver — use Approve when policy checks are satisfied.";
+    }
+    const hint = (inv.resolution_hint ?? "").trim();
+    if (hint && !/open document( drawer)?/i.test(hint)) {
+      return `Processing stopped: ${hint}`;
+    }
+    const stage = (inv.current_stage ?? "").trim();
+    if (inv.current_stage_state === "fail") {
+      if (/posted|control account/i.test(stage)) {
+        return "Processing stopped: a posting ledger is not selected in the chart of accounts. Open Rule Book → Posting → Team expense posting, pick the advance parent and settlement ledgers from COA, then Confirm & process again.";
+      }
+      if (stage) {
+        return `Processing stopped at ${stage}. Check the Audit tab for the blocker.`;
+      }
+    }
+    if (inv.evaluation_status === "needs_review") {
+      return "Approval blocked: document still requires review after processing.";
     }
     const failed = inv.validation_results?.find((row) => !row.passed && !row.skipped);
     if (failed?.message) {

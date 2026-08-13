@@ -134,17 +134,72 @@ def _extracted_needs_review(invoice: Invoice) -> bool:
     return False
 
 
+def _clear_extracted_needs_review(invoice: Invoice) -> None:
+    fields = invoice.extracted_fields if isinstance(invoice.extracted_fields, dict) else {}
+    if "needs_review" not in fields:
+        return
+    updated = dict(fields)
+    updated.pop("needs_review", None)
+    invoice.extracted_fields = updated or None
+
+
+def vision_header_gaps(
+    invoice: Invoice,
+    definition: DocumentTypeDefinition | None,
+) -> list[str]:
+    """Human-readable list of missing header items blocking confirm/process."""
+    from app.services.approval.approval_pipeline_service import payable_fields_complete
+    from app.services.classification.document_type_field_checks import field_is_present
+    from app.services.classification.document_type_playbook_service import (
+        approval_enforced_required_fields,
+    )
+    from app.services.classification.document_type_rule_engine import (
+        build_document_classifier_context,
+    )
+    from app.services.invoice.due_date_defaults import apply_due_on_receipt_to_invoice
+    from app.services.invoice.invoice_data import invoice_data_from_invoice
+
+    apply_due_on_receipt_to_invoice(invoice, definition)
+    gaps: list[str] = []
+    if not (invoice.vendor or "").strip():
+        gaps.append("vendor")
+    if not payable_fields_complete(invoice):
+        # payable_fields_complete is vendor + positive total; avoid duplicate vendor.
+        from decimal import Decimal
+
+        if invoice.total is None or invoice.total <= Decimal("0"):
+            if "total" not in gaps:
+                gaps.append("total")
+    code = (invoice.currency or "").strip().upper()
+    if not (code and len(code) == 3 and code.isalpha()):
+        gaps.append("currency")
+
+    compulsory = approval_enforced_required_fields(definition)
+    if compulsory:
+        parsed = invoice_data_from_invoice(invoice)
+        ctx = build_document_classifier_context(invoice=invoice, parsed=parsed)
+        for key in compulsory:
+            if field_is_present(key, invoice=invoice, parsed=parsed, ctx=ctx):
+                continue
+            label = key.replace("_", " ")
+            if label not in gaps:
+                gaps.append(label)
+    return gaps
+
+
 def vision_header_ok_from_invoice(
     invoice: Invoice,
     definition: DocumentTypeDefinition | None,
 ) -> bool:
-    """Derive header_ok from persisted invoice state (for Approvals resume)."""
+    """Derive header_ok from persisted invoice state (for Approvals resume).
+
+    Clerk-filled vendor/total/compulsory fields win over a stale vision
+    ``extracted_fields.needs_review`` flag from an earlier weak extract.
+    """
     from app.services.approval.approval_pipeline_service import payable_fields_complete
     from app.services.approval.approval_service import _assert_invoice_ready_for_approval
     from app.services.invoice.due_date_defaults import apply_due_on_receipt_to_invoice
 
-    if _extracted_needs_review(invoice):
-        return False
     # Only when DT playbook marks due_date compulsory and the print omitted it.
     apply_due_on_receipt_to_invoice(invoice, definition)
     if definition is not None and allows_posting_pipeline(definition):
@@ -154,6 +209,9 @@ def vision_header_ok_from_invoice(
         _assert_invoice_ready_for_approval(invoice, definition=definition)
     except ValueError:
         return False
+    # Columns are complete — clear sticky extract flag so Confirm & process can proceed.
+    if _extracted_needs_review(invoice):
+        _clear_extracted_needs_review(invoice)
     return True
 
 
@@ -178,6 +236,14 @@ def vision_posting_skip_user_message(
     header_ok: bool,
 ) -> str:
     reason = vision_posting_skip_reason(invoice, definition, header_ok=header_ok)
+    if reason == "header_not_ok":
+        gaps = vision_header_gaps(invoice, definition)
+        if gaps:
+            joined = ", ".join(gaps)
+            return (
+                f"Still missing on Fields tab: {joined}. "
+                "Save changes, then Confirm & process again."
+            )
     return _VISION_POSTING_SKIP_MESSAGES.get(
         reason,
         "Cannot confirm this document into the posting pipeline yet.",

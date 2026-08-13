@@ -7,5 +7,6 @@ export function useDashboardOverview(month: string, activityLimit = 10) {
     queryKey: queryKeys.dashboardOverview(month, activityLimit),
     queryFn: () => api.getDashboardOverview(activityLimit, month),
     enabled: Boolean(month),
+    placeholderData: (previousData) => previousData,
   });
 }

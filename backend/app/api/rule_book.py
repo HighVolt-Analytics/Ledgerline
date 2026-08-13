@@ -105,12 +105,32 @@ async def _load_rule_book_response_dict(
     )
 
 
+async def _load_rule_book_document_types_only(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> dict[str, Any]:
+    buffered = get_buffered_rule_book_raw(tenant_id)
+    if buffered is not None:
+        data = buffered
+    else:
+        try:
+            data = await load_rule_book_config_dict(db, tenant_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except json.JSONDecodeError as exc:
+            raise HTTPException(400, f"Invalid rule book config JSON: {exc}") from exc
+    return {"document_types": data.get("document_types") or []}
+
+
 @router.get("/config", response_model=ApiEnvelope[dict[str, Any]])
 async def get_rule_book_config(
+    fields: str | None = Query(None, description="Optional slice, e.g. document_types"),
     ctx: AuthContext = Depends(get_auth_context),
     db: AsyncSession = Depends(get_db),
 ) -> ApiEnvelope[dict[str, Any]]:
     """Return the rule book config for the current organisation."""
+    if fields and fields.strip() == "document_types":
+        return ApiEnvelope(data=await _load_rule_book_document_types_only(db, ctx.tenant_id))
     return ApiEnvelope(data=await _load_rule_book_response_dict(db, ctx.tenant_id))
 
 

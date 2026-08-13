@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import type { InvoiceDetails } from "@/api/types";
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
 import {
+  approvalFailureMessage,
   compulsoryFieldsForInvoice,
   postApprovalSettlement,
   settlementApprovalHint,
@@ -197,5 +199,31 @@ describe("settlementApprovalHint", () => {
         gl_posting_applicable: true,
       })
     ).toContain("payments queue");
+  });
+});
+
+describe("approvalFailureMessage", () => {
+  it("prefers a control-account hint over the generic needs-review toast", () => {
+    expect(
+      approvalFailureMessage({
+        status: "exception",
+        evaluation_status: "needs_review",
+        resolution_hint:
+          "Rule Book → Posting → Team expense posting — select the advance parent ledger from the chart of accounts, then reprocess",
+      } as InvoiceDetails)
+    ).toContain("chart of accounts");
+  });
+
+  it("uses Posted stage when the hint is the generic drawer line", () => {
+    expect(
+      approvalFailureMessage({
+        status: "exception",
+        evaluation_status: "needs_review",
+        resolution_hint:
+          "Needs manual review — open document and check Fields, Audit, or Lines",
+        current_stage: "Posted",
+        current_stage_state: "fail",
+      } as InvoiceDetails)
+    ).toContain("chart of accounts");
   });
 });

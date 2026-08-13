@@ -18,7 +18,7 @@ import { DossierOutcomeBadge, DossierTypeBadge } from "@/components/dossiers/Dos
 
 import { DossierSummaryStrip } from "@/components/dossiers/DossierSummaryStrip";
 
-import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
+import { LazyInvoiceDetailDrawer } from "@/components/LazyInvoiceDetailDrawer";
 
 import { DossierDetailPageSkeleton } from "@/components/skeleton/PageSkeletons";
 
@@ -463,7 +463,7 @@ export function DossierDetailPage() {
 
       </div>
 
-      <InvoiceDetailDrawer
+      <LazyInvoiceDetailDrawer
 
         invoiceId={drawerId}
 

@@ -137,6 +137,20 @@ def test_link_and_dup_tokens_include_both() -> None:
     assert "295837465" in dup
 
 
+def test_extract_ref_serial_from_retail_receipt() -> None:
+    """Retail POS receipt: 'Ref: #6931' (sole serial) must resolve to invoice_no '6931'."""
+    text = (
+        "FAMILY FLORAL GIFT SHOP\n"
+        "TAX INVOICE\n"
+        "Date   2006-05-25\n"
+        "Ref    #6931\n"
+        "SubtotalMMK 100,000\n"
+        "GST    MMK 0\n"
+        "TOTALMMK 100,000\n"
+    )
+    assert extract_invoice_no_from_text(text) == "6931"
+
+
 def test_grounding_sets_secondary_extracted_field() -> None:
     ocr = "Invoice No: 203946589/295837465\nTotal 100.00"
     parsed = InvoiceData(invoice_no="203946589/295837465")

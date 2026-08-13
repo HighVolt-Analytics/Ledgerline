@@ -1,12 +1,13 @@
 import type { Invoice } from "@/api/types";
+import { api } from "@/api/client";
 import { useTenantQuery } from "@/hooks/useTenantQuery";
-import { fetchAllInvoices } from "@/lib/invoices";
+import { fetchRoutedInvoices } from "@/lib/routedInvoices";
 import { queryKeys } from "@/lib/queryClient";
 
 export function useRoutedInvoices(routeTarget: string, enabled = true) {
   return useTenantQuery({
     queryKey: queryKeys.routedInvoices(routeTarget),
-    queryFn: () => fetchAllInvoices(true, { route_target: routeTarget }),
+    queryFn: () => fetchRoutedInvoices(routeTarget),
     enabled: enabled && Boolean(routeTarget),
   });
 }
@@ -25,7 +26,25 @@ export function usePayablesQueue(enabled = true) {
   return useTenantQuery({
     queryKey: queryKeys.payablesQueue(),
     queryFn: async () => {
-      const rows = await fetchAllInvoices(true, { status: "processed" });
+      const first = await api.listInvoicesWithMeta({
+        page: "1",
+        page_size: "100",
+        status: "processed",
+      });
+      const pages = Math.min(first.meta?.pages ?? 1, 5);
+      let rows = first.data;
+      if (pages > 1) {
+        const rest = await Promise.all(
+          Array.from({ length: pages - 1 }, (_, i) =>
+            api.listInvoicesWithMeta({
+              page: String(i + 2),
+              page_size: "100",
+              status: "processed",
+            })
+          )
+        );
+        rows = [...rows, ...rest.flatMap((r) => r.data)];
+      }
       return filterPayables(rows);
     },
     enabled,

@@ -23,6 +23,11 @@ class ResponseMeta(BaseModel):
     quorum_recorded: int | None = None
     quorum_remaining: int | None = None
     quorum_met: bool | None = None
+    matrix_document_count: int | None = None
+    matrix_flagged: int | None = None
+    matrix_duplicates: int | None = None
+    matrix_awaiting: int | None = None
+    matrix_paid_this_month: int | None = None
 
 
 class ApiEnvelope(BaseModel, Generic[T]):

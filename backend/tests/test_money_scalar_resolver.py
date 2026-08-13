@@ -81,6 +81,21 @@ def test_extract_money_from_payload_table_grids() -> None:
     assert found.get("total") == Decimal("55.00")
 
 
+def test_extract_money_glued_currency_label() -> None:
+    """Thermal POS receipt: 'SubtotalMMK 100,000' (no separator) must parse correctly."""
+    text = (
+        "FAMILY FLORAL GIFT SHOP\n"
+        "TAX INVOICE\n"
+        "Ref    #6931\n"
+        "SubtotalMMK 100,000\n"
+        "GST    MMK 0\n"
+        "TOTALMMK 100,000\n"
+    )
+    found = extract_money_scalars_from_text(text)
+    assert found.get("subtotal") == Decimal("100000")
+    assert found.get("total") == Decimal("100000")
+
+
 def test_merge_extraction_sources_fills_total_from_text() -> None:
     text = "Vendor: Acme\nInvoice No: INV-1\nBalance due\n500.00"
     ocr = OcrArtifact(success=True, text=text, text_length=len(text))

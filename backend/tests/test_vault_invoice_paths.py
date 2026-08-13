@@ -116,6 +116,6 @@ def test_header_extract_prompt_includes_canonical_and_edge_cases() -> None:
     assert "MULTI-PAGE / WHOLE-PDF HANDLING" in body
     assert "Merge evidence across ALL pages" in body
     assert "EVERY finance document kind" in body
-    assert "invoice_no — ONLY when clearly labeled as an invoice number" in body
+    assert "invoice_no — ONLY when clearly labeled as an invoice / receipt number" in body
     assert "Supporting / ops / legal titles still get a canonical_document_type" in body
     assert "SELF-CHECK BEFORE RETURNING OUTPUT" in body

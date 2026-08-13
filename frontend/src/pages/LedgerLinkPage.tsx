@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
+import { LazyInvoiceDetailDrawer } from "@/components/LazyInvoiceDetailDrawer";
 import { PageHeader } from "@/components/PageHeader";
 import { PageTabPanel, PageTabs } from "@/components/PageTabs";
 import { JournalExportTab } from "@/components/ledger-link/JournalExportTab";
@@ -107,7 +107,7 @@ export function LedgerLinkPage() {
         <JournalExportTab exports={exports} currency={currency} />
       </PageTabPanel>
 
-      <InvoiceDetailDrawer
+      <LazyInvoiceDetailDrawer
         invoiceId={drawerInvoiceId}
         open={drawerInvoiceId != null}
         onClose={() => setDrawerInvoiceId(null)}

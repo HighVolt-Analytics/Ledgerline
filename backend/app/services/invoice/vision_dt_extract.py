@@ -237,13 +237,17 @@ async def evaluate_vision_dt_extract(
             apply_due_on_receipt_to_parsed(parsed, dt_defn)
 
             config = RuleBookConfigPayload(document_types=list(document_types))
+            from app.services.approval.approval_pipeline_service import payable_fields_complete
+
+            # Never overwrite clerk-completed vendor/total/dates with a weaker re-extract.
+            preserve = payable_fields_complete(invoice)
             await _apply_parsed_to_invoice(
                 session,
                 invoice=invoice,
                 loaded=invoice,
                 parsed=parsed,
                 config=config,
-                preserve_existing=False,
+                preserve_existing=preserve,
                 org=org,
             )
             line_items_count = len(parsed.line_items or [])

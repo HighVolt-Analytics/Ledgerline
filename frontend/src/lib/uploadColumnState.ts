@@ -3,13 +3,13 @@ import {
   counterpartyName,
   invoiceCounterpartyConfidence,
   invoiceValidationConfidence,
-  invoiceVaultFolderLabel,
   validationPassApplicable,
   vendorMatchApplicable,
   type ValidationPassDocumentType,
 } from "@/lib/invoice";
 import { PIPELINE_STATUSES } from "@/lib/invoiceActions";
 import { buildMatrixCells, type MatrixStage } from "@/lib/matrix";
+import { storedDocumentTypeCode, visionDocumentTypeLabel } from "@/lib/documentTypeResolve";
 
 export type UploadListColumnId =
   | "documentMeta"
@@ -63,22 +63,15 @@ export function columnHasDisplayValue(
     case "documentMeta":
       return Boolean(inv.invoice_no?.trim());
     case "documentType":
-      // Do not treat purchase_document_type alone as a label — that invents
-      // catalogue chips (e.g. "Non-PO vendor invoice") while still Received.
-      return Boolean(
-        inv.document_type_code?.trim() ||
-          inv.document_heading?.trim() ||
-          (typeof inv.extracted_fields?.document_heading === "string" &&
-            inv.extracted_fields.document_heading.trim()) ||
-          (typeof inv.extracted_fields?.canonical_document_type === "string" &&
-            inv.extracted_fields.canonical_document_type.trim())
-      );
+      // Type = vision / printed heading only (not catalogue DT).
+      return Boolean(visionDocumentTypeLabel(inv));
     case "counterparty": {
       const name = counterpartyName(inv);
       return name !== "—" && name.trim().length > 0;
     }
     case "route":
-      return Boolean(invoiceVaultFolderLabel(inv));
+      // Route = mapped Rule Book DT code (not vision heading / vault folder label).
+      return Boolean(storedDocumentTypeCode(inv));
     case "glAccount":
       if (inv.gl_posting_applicable === false) return true;
       return Boolean(inv.account_name?.trim());

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { EmptyState } from "@/components/EmptyState";
-import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
+import { LazyInvoiceDetailDrawer } from "@/components/LazyInvoiceDetailDrawer";
 import { KpiCard } from "@/components/KpiCard";
 import { Card } from "@/components/ui/card";
 import { PageHeader } from "@/components/PageHeader";
@@ -124,7 +124,7 @@ export function CollectionsPage() {
         )}
       </PageTabPanel>
 
-      <InvoiceDetailDrawer
+      <LazyInvoiceDetailDrawer
         invoiceId={drawerInvoiceId}
         open={drawerInvoiceId != null}
         onClose={() => setDrawerInvoiceId(null)}

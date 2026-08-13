@@ -6,6 +6,7 @@ import {
   invoiceValidationConfidence,
 } from "@/lib/invoice";
 import { documentDisplayRef } from "@/lib/format";
+import { clarifyMatrixIssueTitle } from "@/lib/matrixIssue";
 
 export type PipelineAuditStep = {
   stage: string;
@@ -114,7 +115,7 @@ function validationDetail(
   }
 
   if (inv.status === "exception") {
-    return { text: "Routed to review", state: "fail" };
+    return { text: clarifyMatrixIssueTitle(inv), state: "fail" };
   }
   return { text: "Pending", state: "pending" };
 }

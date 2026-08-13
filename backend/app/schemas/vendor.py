@@ -65,6 +65,15 @@ class VendorResponse(BaseModel):
     created_at: datetime
 
 
+class VendorActivityRow(BaseModel):
+    vendor: str
+    invoice_count: int
+    by_currency: dict[str, float] = Field(default_factory=dict)
+    email: str | None = None
+    default_account: str | None = None
+    net_days: int | None = None
+
+
 class VendorPayoutMethodResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

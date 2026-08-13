@@ -7,13 +7,26 @@ import { ThemeProvider } from "@/context/ThemeContext";
 import { ToastProvider } from "@/context/ToastContext";
 import { queryClient } from "@/lib/queryClient";
 import { normalizeBareBasenameUrl } from "@/lib/routerBasename";
-import { startOpenReplay } from "@/third-party/sessionRecorder/OpenReplay/OpenReplay";
 import "./index.css";
 
 normalizeBareBasenameUrl();
-void startOpenReplay().catch(() => {
-  // startOpenReplay already logs; never let a rejection tear down bootstrap.
-});
+
+function deferOpenReplay(): void {
+  const run = () => {
+    void import("@/third-party/sessionRecorder/OpenReplay/OpenReplay")
+      .then((m) => m.startOpenReplay())
+      .catch(() => {
+        // startOpenReplay already logs; never let a rejection tear down bootstrap.
+      });
+  };
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(run, { timeout: 4000 });
+  } else {
+    window.setTimeout(run, 2000);
+  }
+}
+
+deferOpenReplay();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

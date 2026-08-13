@@ -32,7 +32,10 @@ import {
 } from "@/components/invoice-preview/DocumentSummaryPreview";
 import { InvoiceClassificationPanel } from "@/components/invoices/InvoiceClassificationPanel";
 import { DuplicateReviewBadge, EvaluationStatusBadge } from "@/components/inbox/EvaluationStatusBadge";
-import { DocumentTypeChip } from "@/components/inbox/DocumentTypeChip";
+import {
+  MappedDocumentTypeBadge,
+  VisionHeadingBadge,
+} from "@/components/inbox/DocumentTypeDisplay";
 import { PipelineDebugPanel } from "@/components/invoices/PipelineDebugPanel";
 import { DossierPipelineTimeline } from "@/components/dossiers/DossierPipelineTimeline";
 import { PageTabs } from "@/components/PageTabs";
@@ -318,6 +321,8 @@ function FieldRow({
   bold,
   wide,
   editable,
+  placeholder,
+  hint,
   onChange,
 }: {
   label: string;
@@ -326,6 +331,8 @@ function FieldRow({
   bold?: boolean;
   wide?: boolean;
   editable?: boolean;
+  placeholder?: string;
+  hint?: string | null;
   onChange?: (value: string) => void;
 }) {
   const canEdit = Boolean(editable);
@@ -342,28 +349,57 @@ function FieldRow({
         <label className="invoice-drawer-field__label">{label}</label>
         {!canEdit && confidence != null ? <ConfidenceDot value={confidence} /> : null}
       </div>
-      {canEdit ? (
-        <Input
-          value={value}
-          onChange={(e) => onChange?.(e.target.value)}
-          className={cn(
-            "invoice-drawer-field__input tnum",
-            bold && "invoice-drawer-field__input--emphasis"
-          )}
-        />
-      ) : (
-        <div
-          className={cn(
-            "invoice-drawer-field__value tnum",
-            bold && "invoice-drawer-field__value--emphasis",
-            !value && "invoice-drawer-field__value--empty"
-          )}
-        >
-          {value || "—"}
-        </div>
-      )}
+      <div className="min-w-0 space-y-1">
+        {canEdit ? (
+          <Input
+            value={value}
+            placeholder={placeholder}
+            onChange={(e) => onChange?.(e.target.value)}
+            className={cn(
+              "invoice-drawer-field__input tnum",
+              bold && "invoice-drawer-field__input--emphasis"
+            )}
+          />
+        ) : (
+          <div
+            className={cn(
+              "invoice-drawer-field__value tnum",
+              bold && "invoice-drawer-field__value--emphasis",
+              !value && "invoice-drawer-field__value--empty"
+            )}
+          >
+            {value || "—"}
+          </div>
+        )}
+        {hint ? <p className="invoice-drawer-field__hint">{hint}</p> : null}
+      </div>
     </div>
   );
+}
+
+const DATE_EXTRACTION_FIELD_KEYS = new Set([
+  "invoice_date",
+  "due_date",
+  "date_of_joining",
+]);
+
+const DATE_INPUT_FORMAT = "YYYY-MM-DD";
+
+function isDateExtractionField(key: string): boolean {
+  const token = key.trim().toLowerCase();
+  return DATE_EXTRACTION_FIELD_KEYS.has(token) || token.endsWith("_date");
+}
+
+function dateFieldPlaceholder(key: string, value: string): string | undefined {
+  if (!isDateExtractionField(key)) return undefined;
+  return value.trim() ? undefined : DATE_INPUT_FORMAT;
+}
+
+function dateFieldHint(key: string, value: string, editable: boolean): string | null {
+  if (!isDateExtractionField(key) || value.trim()) return null;
+  return editable
+    ? `Date not extracted — enter as ${DATE_INPUT_FORMAT} (e.g. 2026-03-15)`
+    : `Date not extracted — use ${DATE_INPUT_FORMAT} when editing (e.g. 2026-03-15)`;
 }
 
 const DOCUMENT_DETAIL_KEYS = new Set([
@@ -1362,10 +1398,30 @@ export function InvoiceDetailDrawer({
 
   if (!mounted) return null;
 
-  const tax = inv ? invoiceTaxMeta(inv) : { label: "Tax", rate: null };
+  const taxSource = !inv
+    ? null
+    : !editing || !draft
+      ? inv
+      : {
+          ...inv,
+          subtotal: draft.subtotal,
+          gst: draft.gst,
+          total: draft.total,
+          gst_rate: draft.extractedFields.gst_rate?.trim() || inv.gst_rate,
+          tax_label: draft.extractedFields.tax_label?.trim() || inv.tax_label,
+        };
+  const tax = (() => {
+    if (!taxSource) return { label: "Tax", rate: null };
+    const base = invoiceTaxMeta(taxSource);
+    const inferred = invoiceTaxMeta({ ...taxSource, gst_rate: null });
+    return { label: base.label, rate: inferred.rate ?? base.rate };
+  })();
   const currencySymbolHint = inv ? invoiceCurrencySymbol(inv) : null;
+  const displayCurrency = editing && draft ? draft.currency : inv?.currency;
   const fmt = (v: string | null | undefined) =>
-    inv ? formatMoney(v, inv.currency, undefined, currencySymbolHint) : "—";
+    displayCurrency
+      ? formatMoney(v, displayCurrency, undefined, currencySymbolHint)
+      : "—";
   const sourceKind = inv?.email_sender ? "email" : "upload";
   const docNumber = inv ? (vendorInvoiceNo(inv) ?? documentDisplayRef(inv)) : "—";
 
@@ -1681,13 +1737,10 @@ export function InvoiceDetailDrawer({
                   {inv.invoice_no ?? "—"} · {inv.invoice_date ?? "—"} · {fmt(inv.total)}
                 </p>
                 <div className="invoice-drawer-header__status">
-                  {documentTypeBadgeLabel ? (
-                    <DocumentTypeChip
-                      code={resolvedDocumentTypeCode}
-                      label={documentTypeBadgeLabel}
-                      display={documentTypeBadgeLabel}
-                      title={documentTypeBadgeLabel}
-                      purchaseKind={inv?.purchase_document_type}
+                  {inv ? <VisionHeadingBadge inv={inv} empty="" /> : null}
+                  {inv ? (
+                    <MappedDocumentTypeBadge
+                      inv={inv}
                       documentTypes={ruleBook?.documentTypes}
                     />
                   ) : null}
@@ -1819,7 +1872,7 @@ export function InvoiceDetailDrawer({
                         <p className="text-sm text-muted-foreground">
                           {isVisionHeaderPipelineSummary(inv)
                             ? (inv.evaluation_status ?? "").trim() === "vision_header_review"
-                              ? "Vision header needs review — complete Fields, save, then Confirm & process."
+                              ? "Header review — if vendor, total, currency, and dates look correct, Save (if editing) then Confirm & process. Saved values are kept."
                               : (inv.evaluation_status ?? "").trim() === "vision_vaulted"
                                 ? "Understood path complete — vaulted with header fields only (no OCR / DT extract)."
                                 : "Vision header path — open Summary for extracted header fields, or reprocess if they are empty."
@@ -1893,9 +1946,8 @@ export function InvoiceDetailDrawer({
                                   ) : null}
                                   {section.keys.map((key) => (
                                     <div key={key} className="min-w-0">
-                                      <FieldRow
-                                        label={extractionFieldDisplayLabel(key, inv, tax)}
-                                        value={(() => {
+                                      {(() => {
+                                        const fieldValue = (() => {
                                           if (
                                             key === "employee_name" &&
                                             matchedTeamEmployee?.name
@@ -1921,46 +1973,55 @@ export function InvoiceDetailDrawer({
                                             absentFields,
                                             sourceKind
                                           );
-                                        })()}
-                                        confidence={
-                                          key === "employee_name" && matchedTeamEmployee
-                                            ? null
-                                            : invoiceFieldConfidence(inv, key)
-                                        }
-                                        bold={key === "total"}
-                                        wide={
-                                          key === "line_items" ||
-                                          key === "billing_address" ||
-                                          key === "document_text" ||
-                                          key === "bank_details" ||
-                                          key.endsWith("_address")
-                                        }
-                                        editable={Boolean(
+                                        })();
+                                        const fieldEditable = Boolean(
                                           draft &&
                                             editing &&
                                             isEditableExtractionField(
                                               key,
                                               extractionFieldKeys
                                             )
-                                        )}
-                                        onChange={
-                                          draft &&
-                                          editing &&
-                                          isEditableExtractionField(
-                                            key,
-                                            extractionFieldKeys
-                                          )
-                                            ? (value) =>
-                                                setDraft(
-                                                  updateDraftExtractionField(
-                                                    draft,
-                                                    key,
-                                                    value
-                                                  )
-                                                )
-                                            : undefined
-                                        }
-                                      />
+                                        );
+                                        return (
+                                          <FieldRow
+                                            label={extractionFieldDisplayLabel(key, inv, tax)}
+                                            value={fieldValue}
+                                            confidence={
+                                              key === "employee_name" && matchedTeamEmployee
+                                                ? null
+                                                : invoiceFieldConfidence(inv, key)
+                                            }
+                                            bold={key === "total"}
+                                            wide={
+                                              key === "line_items" ||
+                                              key === "billing_address" ||
+                                              key === "document_text" ||
+                                              key === "bank_details" ||
+                                              key.endsWith("_address")
+                                            }
+                                            editable={fieldEditable}
+                                            placeholder={dateFieldPlaceholder(key, fieldValue)}
+                                            hint={dateFieldHint(key, fieldValue, fieldEditable)}
+                                            onChange={
+                                              draft &&
+                                              editing &&
+                                              isEditableExtractionField(
+                                                key,
+                                                extractionFieldKeys
+                                              )
+                                                ? (value) =>
+                                                    setDraft(
+                                                      updateDraftExtractionField(
+                                                        draft,
+                                                        key,
+                                                        value
+                                                      )
+                                                    )
+                                                : undefined
+                                            }
+                                          />
+                                        );
+                                      })()}
                                       {key === "line_items" && canEdit(inv.status) ? (
                                         <button
                                           type="button"
@@ -2104,18 +2165,18 @@ export function InvoiceDetailDrawer({
                   <div className="mt-4 space-y-2 text-sm">
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Subtotal (ex-tax)</span>
-                      <span className="tnum">{fmt(inv.subtotal)}</span>
+                      <span className="tnum">{fmt(editing && draft ? draft.subtotal : inv.subtotal)}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">
                         {tax.rate != null ? `${tax.label} ${tax.rate}%` : tax.label}
                       </span>
-                      <span className="tnum">{fmt(inv.gst)}</span>
+                      <span className="tnum">{fmt(editing && draft ? draft.gst : inv.gst)}</span>
                     </div>
                     <div className="border-t border-border my-2" />
                     <div className="flex justify-between font-semibold">
                       <span>Total (inc-tax)</span>
-                      <span className="tnum">{fmt(inv.total)}</span>
+                      <span className="tnum">{fmt(editing && draft ? draft.total : inv.total)}</span>
                     </div>
                     <p className="text-xs text-muted-foreground pt-2">
                       Tax account: {tax.label} Paid. Currency{" "}

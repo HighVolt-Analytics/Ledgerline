@@ -8,6 +8,7 @@ import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from app.models.audit import AuditLog
 from app.models.invoice import Invoice
@@ -80,22 +81,44 @@ def classification_review_confidence(
         return None
 
 
-def _document_text_if_loaded(inv: Invoice) -> str | None:
-    """Return document_text when already on the instance; None if deferred/expired.
+def invoice_list_load_options() -> tuple:
+    """Omit OCR/JSON blobs from list, board, and matrix SELECTs."""
+    return (
+        defer(Invoice.document_text),
+        defer(Invoice.extracted_fields),
+        defer(Invoice.approval_chain),
+        defer(Invoice.processing_overrides),
+    )
 
-    List invoices defer ``document_text``. Touching an unloaded deferred column
+
+def _attr_if_loaded(inv: Invoice, name: str):
+    """Return a column value only when already in the instance dict.
+
+    List queries defer OCR/JSON columns. Touching an unloaded deferred column
     under async SQLAlchemy raises MissingGreenlet — never trigger that load.
     """
     try:
         from sqlalchemy import inspect as sa_inspect
 
         state = sa_inspect(inv)
-        # Only use the value if it is already present in the instance dict.
-        if "document_text" not in state.dict:
+        if name not in state.dict:
             return None
     except Exception:
         pass
-    return (getattr(inv, "document_text", None) or "") or ""
+    return getattr(inv, name, None)
+
+
+def _document_text_if_loaded(inv: Invoice) -> str | None:
+    """Return document_text when already on the instance; None if deferred/expired."""
+    value = _attr_if_loaded(inv, "document_text")
+    if value is None:
+        return None
+    return (value or "") or ""
+
+
+def _extracted_fields_if_loaded(inv: Invoice) -> dict:
+    fields = _attr_if_loaded(inv, "extracted_fields")
+    return fields if isinstance(fields, dict) else {}
 
 
 def _legacy_awaiting_maps_to_vision_vaulted(inv: Invoice) -> bool:
@@ -104,7 +127,7 @@ def _legacy_awaiting_maps_to_vision_vaulted(inv: Invoice) -> bool:
     Prefer explicit vision markers. Only use empty OCR body when ``document_text``
     is already loaded — never lazy-load it.
     """
-    fields = inv.extracted_fields if isinstance(inv.extracted_fields, dict) else {}
+    fields = _extracted_fields_if_loaded(inv)
     if fields.get("vision_bundle_kind") is not None or fields.get("vision_bundle_key"):
         return True
     if fields.get("vision_header_confidence") or fields.get("canonical_document_type"):
@@ -137,7 +160,7 @@ async def document_type_extraction_fields(
 ) -> list[str]:
     # Pre-DT understood hold: lean type-suggest keys for new path; legacy header keys otherwise.
     if _is_vision_header_fields_contract(inv):
-        fields = inv.extracted_fields if isinstance(inv.extracted_fields, dict) else {}
+        fields = _extracted_fields_if_loaded(inv)
         if fields.get("vision_type_suggest_confidence") or not fields.get(
             "vision_header_confidence"
         ):
@@ -231,9 +254,7 @@ def invoice_to_response(
     )
     logs = list(audit_logs or [])
     if current_stage is None or current_stage_state is None:
-        # Prefer audit-backed stage whenever logs are available (Upload list
-        # now hydrates audits so Stage matches the document drawer).
-        if logs:
+        if logs and not for_list:
             stage_label, stage_state = derive_current_stage(inv, logs)
         elif for_list:
             stage_label, stage_state = derive_list_stage(inv)
@@ -253,7 +274,11 @@ def invoice_to_response(
         and evaluation_status == EvaluationStatus.NEEDS_REVIEW
         and not resolution_hint
     ):
-        resolution_hint = "Open document drawer — check Fields, Audit, or Lines tabs"
+        from app.services.invoice.invoice_blockers import blocker_fix_hint, detect_invoice_blockers
+
+        resolution_hint = blocker_fix_hint(detect_invoice_blockers(inv)) or (
+            "Fields tab — confirm document type, route, or amounts"
+        )
     from app.services.classification.document_type_playbook_profile_service import (
         gl_posting_applicable_for_invoice,
     )
@@ -283,7 +308,7 @@ def invoice_to_response(
         total=inv.total,
         status=InvoiceStatusSchema(inv.status.value),
         file_hash=inv.file_hash,
-        raw_file_path=inv.raw_file_path,
+        raw_file_path=None if for_list else inv.raw_file_path,
         email_sender=inv.email_sender,
         employee_email=getattr(inv, "employee_email", None),
         capture_source=inv.capture_source,
@@ -294,7 +319,9 @@ def invoice_to_response(
         route_target=inv.route_target,
         team_expense_kind=getattr(inv, "team_expense_kind", None),
         linked_advance_invoice_id=getattr(inv, "linked_advance_invoice_id", None),
-        matched_rule_ids=parse_matched_rule_ids(inv.matched_rule_ids) or None,
+        matched_rule_ids=(
+            None if for_list else (parse_matched_rule_ids(inv.matched_rule_ids) or None)
+        ),
         vendor_confidence=vendor_confidence,
         evaluation_status=evaluation_status,
         duplicate_review_suggested=bool(getattr(inv, "duplicate_review_suggested", False)),
@@ -303,19 +330,19 @@ def invoice_to_response(
         document_type_confidence=inv.document_type_confidence,
         llm_suggested_dt=getattr(inv, "llm_suggested_dt", None),
         llm_confidence=getattr(inv, "llm_confidence", None),
-        bank_bsb=inv.bank_bsb,
-        bank_account=inv.bank_account,
+        bank_bsb=None if for_list else inv.bank_bsb,
+        bank_account=None if for_list else inv.bank_account,
         email_attachment_name=inv.email_attachment_name,
-        billing_address=inv.billing_address,
+        billing_address=None if for_list else inv.billing_address,
         email_subject=inv.email_subject if not for_list else None,
-        document_text=inv.document_text if not for_list else None,
+        document_text=None if for_list else _document_text_if_loaded(inv),
         document_heading=getattr(inv, "document_heading", None),
-        extracted_fields=getattr(inv, "extracted_fields", None) or None,
-        validation_results=validation_items,
+        extracted_fields=None if for_list else (_extracted_fields_if_loaded(inv) or None),
+        validation_results=None if for_list else validation_items,
         validation_pass_rate=validation_pass_rate,
         extraction_field_confidence=(
             compute_extraction_field_confidence(inv)
-            if include_extraction_field_confidence
+            if include_extraction_field_confidence and not for_list
             else None
         ),
         created_at=inv.created_at,
@@ -326,11 +353,11 @@ def invoice_to_response(
         current_stage_state=current_stage_state,
         resolution_hint=resolution_hint,
         processing_overrides=(
-            normalise_processing_overrides(getattr(inv, "processing_overrides", None))
-            if not for_list
-            else None
+            None
+            if for_list
+            else normalise_processing_overrides(getattr(inv, "processing_overrides", None))
         ),
-        approval_chain=getattr(inv, "approval_chain", None) or None,
+        approval_chain=None if for_list else (getattr(inv, "approval_chain", None) or None),
         document_type_extraction_fields=(
             document_type_extraction_fields if not for_list else None
         ),
@@ -380,15 +407,11 @@ async def _responses_for_invoices_once(
 
         config = await load_posting_config_for_tenant(db, tenant_id)
         document_types = list(config.document_types)
-        # Hydrate audits so Upload Stage/Evaluation match the document drawer.
-        audit_by_id = await audit_logs_for_invoices(
-            db, invoice_ids, tenant_id=tenant_id
-        )
         return [
             invoice_to_response(
                 row,
                 published_to_ledger=False,
-                audit_logs=audit_by_id.get(row.id, []),
+                audit_logs=[],
                 document_types=document_types,
                 for_list=True,
             )
@@ -425,14 +448,8 @@ async def responses_for_invoices(
         return []
     from app.db_transient import run_with_transient_db_retry
 
-    invoice_ids = [row.id for row in rows]
-
     async def _run() -> list[InvoiceResponse]:
-        attached = []
-        for invoice_id in invoice_ids:
-            row = await db.get(Invoice, invoice_id)
-            if row is not None:
-                attached.append(row)
+        attached = [await _ensure_invoice_attached(db, row) for row in rows]
         return await _responses_for_invoices_once(
             db,
             attached,
@@ -465,14 +482,11 @@ async def responses_for_approval_board(
         published = await published_invoice_ids(db, invoice_ids, tenant_id=tenant_id)
         config = await load_posting_config_for_tenant(db, tenant_id)
         document_types = list(config.document_types)
-        audit_by_id = await audit_logs_for_invoices(
-            db, invoice_ids, tenant_id=tenant_id
-        )
         return [
             invoice_to_response(
                 row,
                 published_to_ledger=row.id in published,
-                audit_logs=audit_by_id.get(row.id, []),
+                audit_logs=[],
                 document_types=document_types,
                 for_list=True,
             )

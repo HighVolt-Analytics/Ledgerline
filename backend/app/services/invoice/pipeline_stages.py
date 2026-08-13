@@ -130,6 +130,84 @@ def _is_after(entry: AuditLog | None, pivot: AuditLog | None) -> bool:
     return entry.created_at >= pivot.created_at
 
 
+def exception_hold_reason(inv: Invoice) -> str:
+    """Concrete reason for an exception hold — never a vague 'Routed to review'."""
+    from app.services.invoice.invoice_blockers import (
+        blocker_hold_reason,
+        detect_invoice_blockers,
+    )
+
+    failed = [
+        r for r in _validation_results(inv) if not r.get("skipped") and not r.get("passed")
+    ]
+    if failed:
+        msg = str(failed[0].get("message") or "").strip()
+        if msg:
+            return msg
+        rule_id = str(failed[0].get("rule") or "").strip()
+        if rule_id:
+            return f"Validation rule {rule_id} failed"
+        return "Validation failed"
+
+    eval_status = (inv.evaluation_status or "").strip().lower()
+    route = (inv.route_target or "").strip()
+    is_sales = route == "Sales Management"
+    dt = (inv.document_type_code or "").strip()
+
+    if eval_status == "awaiting_classification":
+        return "Document type not classified — confirm on Fields"
+    if eval_status == "vision_header_review":
+        field_reason = blocker_hold_reason(detect_invoice_blockers(inv))
+        return field_reason or "Header fields incomplete — complete Fields, then Confirm & process"
+    if eval_status == "pending_vendor":
+        return (
+            "Customer not in master — register in Creations, then reprocess"
+            if is_sales
+            else "Vendor not in master — register in Creations, then reprocess"
+        )
+    if eval_status == "unmatched_expense_vendor":
+        return "Unknown expense vendor — register vendor if needed, then reprocess"
+    if eval_status == "awaiting_po":
+        return "Awaiting PO linkage — link or upload the PO, then reprocess"
+    if eval_status == "awaiting_so":
+        return "Awaiting SO / DN linkage — link or upload, then reprocess"
+    if eval_status == "pending_approval":
+        return "Needs approver sign-off — open Approvals board"
+    if eval_status == "needs_rescan":
+        return "Poor scan quality — ask sender for a clearer PDF, then reprocess"
+    if eval_status == "line_gl_review":
+        return "Line GL mapping incomplete — assign sub-ledgers on Lines"
+    if eval_status == "line_items_review":
+        return "Line items incomplete — add or correct product lines"
+
+    # Missing currency / total / vendor beat default Suspense GL fallback.
+    field_reason = blocker_hold_reason(detect_invoice_blockers(inv))
+    if field_reason:
+        return field_reason
+
+    if eval_status == "needs_review":
+        if not dt:
+            return "Document type not confirmed — confirm on Fields"
+        if not route:
+            return "Routing not confirmed — set purchase, sales, or expense on Fields"
+        account = f"{inv.account_name or ''} {inv.account_code or ''}".lower()
+        if "suspense" in account or "unmapped" in account:
+            return "Suspense / unmapped GL — assign account on Lines"
+        return "Routing or coding needs confirmation — check Fields and Lines"
+
+    if not dt:
+        return "Document type not classified — confirm on Fields"
+    if not route:
+        return "Routing not confirmed — set purchase, sales, or expense on Fields"
+    account = f"{inv.account_name or ''} {inv.account_code or ''}".lower()
+    if "suspense" in account or "unmapped" in account:
+        return "Suspense / unmapped GL — assign account on Lines"
+    if eval_status == "auto_coded":
+        return "Posting halted after coding — check Audit for the blocker"
+
+    return "Needs manual review — open document and check Fields, Audit, or Lines"
+
+
 def _validation_detail(inv: Invoice, logs: list[AuditLog]) -> tuple[str, StageState]:
     failed = [
         r for r in _validation_results(inv) if not r.get("skipped") and not r.get("passed")
@@ -177,7 +255,7 @@ def _validation_detail(inv: Invoice, logs: list[AuditLog]) -> tuple[str, StageSt
         return "In progress", "pending"
 
     if inv.status == InvoiceStatus.EXCEPTION:
-        return "Routed to review", "fail"
+        return exception_hold_reason(inv), "fail"
     return "Pending", "pending"
 
 
@@ -1227,6 +1305,20 @@ _SPECIAL_STAGE_LABELS: dict[str, str] = {
 }
 
 
+def _extracted_fields_if_loaded(inv: Invoice) -> dict:
+    """List queries defer extracted_fields — never lazy-load under async SQLAlchemy."""
+    try:
+        from sqlalchemy import inspect as sa_inspect
+
+        state = sa_inspect(inv)
+        if "extracted_fields" not in state.dict:
+            return {}
+    except Exception:
+        pass
+    fields = getattr(inv, "extracted_fields", None)
+    return fields if isinstance(fields, dict) else {}
+
+
 def derive_list_stage(inv: Invoice) -> tuple[str, StageState]:
     """Fast inbox list label from persisted invoice fields — no audit log scan."""
     status = inv.status
@@ -1248,7 +1340,7 @@ def derive_list_stage(inv: Invoice) -> tuple[str, StageState]:
         return "Mapped", "pending"
     if status == InvoiceStatus.EXCEPTION:
         eval_status = (inv.evaluation_status or "").strip().lower()
-        fields = inv.extracted_fields if isinstance(inv.extracted_fields, dict) else {}
+        fields = _extracted_fields_if_loaded(inv)
         has_vision_bundle = bool(
             fields.get("vision_bundle_kind") or fields.get("vision_bundle_key")
         )
@@ -1285,14 +1377,17 @@ _RESOLUTION_HINT_BY_EVAL: dict[str, str] = {
     "awaiting_po": "Purchase register — link or upload the PO, then reprocess",
     "awaiting_so": "Sales register — link or upload the SO / DN, then reprocess",
     "pending_approval": "Approvals board — review and approve this document",
-    "needs_review": "Open document drawer — check Fields, Audit, or Lines",
+    # needs_review: resolved via field blockers / exception_hold_reason — not a generic drawer hint
 }
 
 # Newest matching event wins; order is priority when timestamps tie.
 _RESOLUTION_HINT_AUDIT_EVENTS: tuple[tuple[str, str], ...] = (
     ("reconciliation_halted", "Audit tab — reconciliation blocked posting"),
     ("validation_failed", "Audit tab — fix failed validation rules"),
-    ("journal_control_account_unresolved", "Lines tab — resolve control account mapping"),
+    (
+        "journal_control_account_unresolved",
+        "Rule Book → Posting — select the missing control ledger from the chart of accounts, then reprocess",
+    ),
     ("vendor_registration_hold", "Creations → Vendors — register vendor, then reprocess"),
     ("customer_registration_hold", "Creations → Customers — register customer, then reprocess"),
     ("mapping_review_required", "Lines tab — review GL mapping"),
@@ -1306,6 +1401,8 @@ def derive_resolution_hint(
     logs: list[AuditLog] | None = None,
 ) -> str | None:
     """Actionable next step for Upload / inbox when a document is blocked."""
+    from app.services.invoice.invoice_blockers import blocker_fix_hint, detect_invoice_blockers
+
     status = inv.status
     if status in (InvoiceStatus.PROCESSED, InvoiceStatus.REJECTED, InvoiceStatus.DUPLICATE_SKIPPED):
         return None
@@ -1320,7 +1417,22 @@ def derive_resolution_hint(
             return None
 
     eval_status = (inv.evaluation_status or "").strip().lower()
-    if eval_status in _RESOLUTION_HINT_BY_EVAL:
+    field_hint = blocker_fix_hint(detect_invoice_blockers(inv))
+
+    # Specific eval statuses that are not about missing currency/total.
+    eval_overrides = {
+        "awaiting_classification",
+        "pending_vendor",
+        "unmatched_expense_vendor",
+        "awaiting_po",
+        "awaiting_so",
+        "pending_approval",
+        "needs_rescan",
+        "line_gl_review",
+        "line_items_review",
+        "vision_vaulted",
+    }
+    if eval_status in eval_overrides and eval_status in _RESOLUTION_HINT_BY_EVAL:
         hint = _RESOLUTION_HINT_BY_EVAL[eval_status]
         if eval_status == "pending_vendor":
             route = (inv.route_target or "").strip()
@@ -1328,6 +1440,9 @@ def derive_resolution_hint(
                 return "Creations → Customers — register customer, then reprocess"
             return "Creations → Vendors — register vendor, then reprocess"
         return hint
+
+    if eval_status == "vision_header_review":
+        return field_hint or _RESOLUTION_HINT_BY_EVAL["vision_header_review"]
 
     logs = logs or []
     best: AuditLog | None = None
@@ -1345,10 +1460,35 @@ def derive_resolution_hint(
         if reason and best.event == "reconciliation_halted":
             short = reason if len(reason) <= 120 else reason[:117] + "…"
             return f"{best_template} ({short})"
+        if best.event == "journal_control_account_unresolved":
+            unresolved = detail.get("unresolved") or []
+            if isinstance(unresolved, str):
+                unresolved = [unresolved]
+            roles = {str(role) for role in unresolved}
+            if "staff_advance_account" in roles:
+                return (
+                    "Rule Book → Posting → Team expense posting — select the "
+                    "advance parent ledger from the chart of accounts, then reprocess"
+                )
+            if "settlement_account" in roles:
+                return (
+                    "Rule Book → Posting → Team expense posting — select the "
+                    "settlement ledger from the chart of accounts, then reprocess"
+                )
         return best_template
 
+    # Field blockers beat Suspense / generic needs_review messaging.
+    if field_hint:
+        return field_hint
+
+    if eval_status == "needs_review":
+        account = f"{inv.account_name or ''} {inv.account_code or ''}".lower()
+        if "suspense" in account or "unmapped" in account:
+            return "Lines tab — assign a GL account or clear suspense mapping"
+        return "Fields tab — confirm document type, route, or amounts"
+
     if status == InvoiceStatus.EXCEPTION:
-        return "Open document drawer — check Fields, Audit, or Lines tabs"
+        return exception_hold_reason(inv)
     return None
 
 

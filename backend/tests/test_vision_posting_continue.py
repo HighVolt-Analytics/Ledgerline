@@ -181,7 +181,39 @@ def test_vision_header_ok_from_invoice_requires_payable_fields() -> None:
         due_date=date(2026, 6, 1),
         extracted_fields={"needs_review": True},
     )
-    assert vision_header_ok_from_invoice(needs_review, defn) is False
+    # Stale vision needs_review must not block once payable fields are complete.
+    assert vision_header_ok_from_invoice(needs_review, defn) is True
+    assert (needs_review.extracted_fields or {}).get("needs_review") in (None, False)
+
+
+def test_vision_posting_skip_message_lists_missing_fields() -> None:
+    from app.services.invoice.vision_posting_continue import vision_posting_skip_user_message
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.EXCEPTION,
+        document_type_code="DT-07",
+        vendor="Acme",
+    )
+    msg = vision_posting_skip_user_message(inv, _dt(), header_ok=False)
+    assert "total" in msg.lower()
+    assert "fields tab" in msg.lower()
+    assert "vendor, amounts, dates" not in msg.lower()
+
+
+def test_vision_header_ok_from_invoice_requires_payable_fields_incomplete_vendor() -> None:
+    from decimal import Decimal
+
+    from app.services.invoice.vision_posting_continue import vision_header_ok_from_invoice
+
+    defn = _dt(posting="Yes")
+    incomplete = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.EXCEPTION,
+        document_type_code="DT-07",
+        total=Decimal("100"),
+    )
+    assert vision_header_ok_from_invoice(incomplete, defn) is False
 
 
 @pytest.mark.asyncio

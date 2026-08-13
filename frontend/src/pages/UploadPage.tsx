@@ -30,7 +30,7 @@ import {
   isNeedsReviewEvaluation,
   mailboxDisplayName,
 } from "@/lib/invoice";
-import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
+import { useRuleBookDocumentTypes } from "@/hooks/useRuleBookConfig";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { sortInvoicesNewestFirst } from "@/lib/invoices";
 import { useNavBadges } from "@/hooks/useNavBadges";
@@ -49,6 +49,7 @@ const InvoiceDetailDrawer = lazy(() =>
     default: m.InvoiceDetailDrawer,
   }))
 );
+import type { InvoiceDrawerTab } from "@/components/InvoiceDetailDrawer";
 import {
   UploadInvoiceMobileRow,
   UploadInvoiceTableRow,
@@ -172,7 +173,7 @@ export function UploadPage() {
   const matrixRefreshRef = useRef<(() => void) | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const prevMergedRef = useRef<Invoice[]>([]);
-  const { data: ruleBook } = useRuleBookConfig();
+  const { data: documentTypes } = useRuleBookDocumentTypes();
   const {
     data: mailboxQueryData = [],
     blocked: mailboxesBlocked,
@@ -200,6 +201,7 @@ export function UploadPage() {
   const [fetchNotice, setFetchNotice] = useState<string | null>(null);
   const [drawerId, setDrawerId] = useState<number | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerInitialTab, setDrawerInitialTab] = useState<InvoiceDrawerTab>("fields");
   const [importMailbox, setImportMailbox] = useState<ConnectedMailbox | null>(null);
   const [importBusy, setImportBusy] = useState(false);
   const [importJob, setImportJob] = useState<MailboxBackfillJob | null>(null);
@@ -229,7 +231,7 @@ export function UploadPage() {
     q: debouncedSearch,
     mailboxId: selectedMailboxId,
     captureSource: channelTab,
-    enabled: listEnabled,
+    enabled: listEnabled && viewTab === "detailed",
     processingIds,
   });
 
@@ -361,9 +363,14 @@ export function UploadPage() {
     return counts;
   }, [captured]);
 
-  const openDrawer = (id: number) => {
+  const openDrawer = (id: number, options?: { tab?: InvoiceDrawerTab }) => {
+    setDrawerInitialTab(options?.tab ?? "fields");
     setDrawerId(id);
     setDrawerOpen(true);
+  };
+
+  const openClassification = (id: number) => {
+    openDrawer(id, { tab: "fields" });
   };
 
   const setChannelTab = (tab: ChannelTab) => {
@@ -718,25 +725,17 @@ export function UploadPage() {
             onFiles={(files) => void runUpload(files)}
             onBrowse={() => uploadInputRef.current?.click()}
           />
-          {viewTab !== "summary" ? (
-            <DocumentMatrixPanel
-              embedded
-              showControls={false}
-              showTable={false}
-              showLegend={false}
-              onFlaggedCount={setMatrixFlagged}
-              refreshRef={matrixRefreshRef}
+          {viewTab === "summary" ? (
+            <input
+              ref={uploadInputRef}
+              type="file"
+              accept={UPLOAD_ACCEPT}
+              multiple
+              className="hidden"
+              data-testid="input-upload-doc"
+              onChange={uploadDocuments}
             />
           ) : null}
-          <input
-            ref={uploadInputRef}
-            type="file"
-            accept={UPLOAD_ACCEPT}
-            multiple
-            className="hidden"
-            data-testid="input-upload-doc"
-            onChange={uploadDocuments}
-          />
         </>
       ) : null}
       {fetchNotice ? (
@@ -959,9 +958,10 @@ export function UploadPage() {
               <UploadInvoiceMobileRow
                 key={inv.id}
                 inv={inv}
-                documentTypes={ruleBook?.documentTypes}
+                documentTypes={documentTypes}
                 processingIds={processingIds}
                 onOpen={() => openDrawer(inv.id)}
+                onOpenClassification={() => openClassification(inv.id)}
                 receivedLabel={relativeTime(inv.created_at)}
               />
             ))}
@@ -1009,9 +1009,10 @@ export function UploadPage() {
                   <UploadInvoiceTableRow
                     key={inv.id}
                     inv={inv}
-                    documentTypes={ruleBook?.documentTypes}
+                    documentTypes={documentTypes}
                     processingIds={processingIds}
                     onOpen={() => openDrawer(inv.id)}
+                    onOpenClassification={() => openClassification(inv.id)}
                     receivedLabel={relativeTime(inv.created_at)}
                   />
                 ))}
@@ -1066,9 +1067,11 @@ export function UploadPage() {
         <InvoiceDetailDrawer
           invoiceId={drawerId}
           open={drawerOpen}
+          initialTab={drawerInitialTab}
           onClose={() => {
             setDrawerOpen(false);
             setDrawerId(null);
+            setDrawerInitialTab("fields");
           }}
           onUpdated={() => void invalidateUploadInvoiceList(queryClient)}
         />

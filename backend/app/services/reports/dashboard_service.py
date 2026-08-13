@@ -3,7 +3,7 @@
 import asyncio
 import json
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy import and_, case, func, select
@@ -131,10 +131,9 @@ async def _institution_today(db: AsyncSession, tenant_id) -> date:
 
 
 def _invoice_date_filters(month_start: date, month_end: date):
-    return (
-        func.date(Invoice.created_at) >= month_start,
-        func.date(Invoice.created_at) <= month_end,
-    )
+    start = datetime.combine(month_start, time.min, tzinfo=timezone.utc)
+    end = datetime.combine(month_end + timedelta(days=1), time.min, tzinfo=timezone.utc)
+    return Invoice.created_at >= start, Invoice.created_at < end
 
 
 async def _count_by_status(
@@ -1520,61 +1519,81 @@ async def build_overview(
 ) -> DashboardOverview:
     today = await _institution_today(db, tenant_id)
     month_start, month_end, period = parse_period(month, today=today)
-    stats = await build_stats(
-        db,
-        tenant_id=tenant_id,
-        month_start=month_start,
-        month_end=month_end,
-        today=today,
-    )
-    kpi_sparklines = await fetch_kpi_sparklines(
-        db,
-        tenant_id=tenant_id,
-        month_start=month_start,
-        month_end=month_end,
-        today=today,
+    stats, kpi_sparklines = await asyncio.gather(
+        build_stats(
+            db,
+            tenant_id=tenant_id,
+            month_start=month_start,
+            month_end=month_end,
+            today=today,
+        ),
+        fetch_kpi_sparklines(
+            db,
+            tenant_id=tenant_id,
+            month_start=month_start,
+            month_end=month_end,
+            today=today,
+        ),
     )
     tenant = await db.get(Tenant, tenant_id)
     labor_rate = tenant_labor_rate_per_hour(tenant)
-    panels = await build_dashboard_panels(
-        db,
-        tenant_id=tenant_id,
-        month_start=month_start,
-        month_end=month_end,
-        today=today,
-        pending_approval=stats.pending_approval,
-        base_currency=stats.base_currency or BASE_CURRENCY,
-        labor_rate_per_hour=labor_rate,
-        timezone_name=tenant_timezone(tenant),
-    )
-    return DashboardOverview(
-        period=period,
-        period_has_data=stats.invoices_this_month > 0,
-        cash_forecast_scope="All open payables for your organisation",
-        stats=stats,
-        activity=await fetch_activity(db, activity_limit, tenant_id=tenant_id),
-        top_vendors=await fetch_top_vendors(
+    (
+        panels,
+        activity,
+        top_vendors,
+        cash_forecast,
+        mailbox_breakdown,
+        anomalies,
+        kpi_trends,
+        integrations_connected,
+    ) = await asyncio.gather(
+        build_dashboard_panels(
+            db,
+            tenant_id=tenant_id,
+            month_start=month_start,
+            month_end=month_end,
+            today=today,
+            pending_approval=stats.pending_approval,
+            base_currency=stats.base_currency or BASE_CURRENCY,
+            labor_rate_per_hour=labor_rate,
+            timezone_name=tenant_timezone(tenant),
+        ),
+        fetch_activity(db, activity_limit, tenant_id=tenant_id),
+        fetch_top_vendors(
             db,
             tenant_id=tenant_id,
             limit=5,
             month_start=month_start,
             month_end=month_end,
         ),
-        cash_forecast=await fetch_cash_forecast(db, tenant_id=tenant_id, today=today),
-        mailbox_breakdown=await fetch_mailbox_breakdown(
+        fetch_cash_forecast(db, tenant_id=tenant_id, today=today),
+        fetch_mailbox_breakdown(
             db,
             tenant_id=tenant_id,
             month_start=month_start,
             month_end=month_end,
         ),
-        anomalies=await fetch_anomalies(db, tenant_id=tenant_id),
-        kpi_trends=await build_kpi_trends(
+        fetch_anomalies(db, tenant_id=tenant_id),
+        build_kpi_trends(
             db,
             tenant_id=tenant_id,
             month_start=month_start,
             month_end=month_end,
         ),
-        integrations_connected=await _integrations_connected(db, tenant_id),
+        _integrations_connected(db, tenant_id),
+    )
+    return DashboardOverview(
+        period=period,
+        period_has_data=stats.invoices_this_month > 0,
+        cash_forecast_scope="All open payables for your organisation",
+        stats=stats,
+        activity=activity,
+        top_vendors=top_vendors,
+        cash_forecast=cash_forecast,
+        mailbox_breakdown=mailbox_breakdown,
+        anomalies=anomalies,
+        kpi_trends=kpi_trends,
+        integrations_connected=integrations_connected,
         kpi_sparklines=kpi_sparklines,
         invoice_volume_sparkline=kpi_sparklines.invoice_volume,
         executive_kpis=panels["executive_kpis"],

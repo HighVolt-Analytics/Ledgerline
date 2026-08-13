@@ -30,7 +30,14 @@ _INVOICE_NO_LABEL = re.compile(
     r"(?:(?<!Proforma\s)(?<!PROFORMA\s)Invoice\s*(?:No\.?|Number|#)|"
     r"Inv\.?\s*(?:No\.?|Number|#)|"
     r"Inv\.?\s*#|Invoice\s*ID|"
-    r"INV\s*NO)\s*[:\s#]*",
+    r"INV\s*NO|"
+    # Retail POS / tax receipt serials: "Ref: #6931", "Ref # 102", "Ref 6931"
+    # Negative lookbehind avoids matching inside compound labels like
+    # "Unique Ref", "Shipment Ref", "Consignment Ref", "Release Ref", etc.
+    r"(?:Receipt\s*(?:No\.?|Number|#)|Bill\s*(?:No\.?|Number|#)|"
+    r"(?<!Unique\s)(?<!Shipment\s)(?<!Consignment\s)(?<!Release\s)(?<!Delivery\s)"
+    r"(?<!Unique )(?<!Shipment )(?<!Consignment )(?<!Release )(?<!Delivery )"
+    r"\bRef\s*(?:No\.?|#)?))\s*[:\s#]*",
     re.I,
 )
 # Kept for callers / tests that still expect a capturing form; prefer label + look-ahead.
@@ -38,7 +45,11 @@ _INVOICE_NO_TIGHT = re.compile(
     r"(?:(?<!Proforma\s)(?<!PROFORMA\s)Invoice\s*(?:No\.?|Number|#)|"
     r"Inv\.?\s*(?:No\.?|Number|#)|"
     r"Inv\.?\s*#|Invoice\s*ID|"
-    r"INV\s*NO)\s*[:\s#]*"
+    r"INV\s*NO|"
+    r"(?:Receipt\s*(?:No\.?|Number|#)|Bill\s*(?:No\.?|Number|#)|"
+    r"(?<!Unique\s)(?<!Shipment\s)(?<!Consignment\s)(?<!Release\s)(?<!Delivery\s)"
+    r"(?<!Unique )(?<!Shipment )(?<!Consignment )(?<!Release )(?<!Delivery )"
+    r"\bRef\s*(?:No\.?|#)?))\s*[:\s#]*"
     r"#?"
     r"([A-Z0-9][A-Z0-9\-/_]{2,})",
     re.I,

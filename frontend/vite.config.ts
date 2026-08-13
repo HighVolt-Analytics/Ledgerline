@@ -15,9 +15,9 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           if (!id.includes("node_modules")) return;
+          if (id.includes("@openreplay")) return "openreplay";
           if (id.includes("recharts") || id.includes("d3-")) return "charts";
           if (id.includes("simple-icons")) return "icons-brands";
-          if (id.includes("lucide-react")) return "icons";
           if (
             id.includes("react-dom") ||
             id.includes("react-router") ||

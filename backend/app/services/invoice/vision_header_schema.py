@@ -70,7 +70,7 @@ VISION_HEADER_PROMPT_MARKERS: tuple[str, ...] = (
     "MULTI-PAGE / WHOLE-PDF HANDLING",
     "Merge evidence across ALL pages",
     "EVERY finance document kind",
-    "invoice_no — ONLY when clearly labeled as an invoice number",
+    "invoice_no — ONLY when clearly labeled as an invoice / receipt number",
     "NEVER put Permit No / Clearance No / Declaration No / Document No",
     "never put an adjacent column HEADER into invoice_no",
     "Never invent AUD/USD when ₹ is printed",
@@ -200,7 +200,7 @@ VISION_HEADER_KEY_ALIASES: dict[str, tuple[str, ...]] = {
     ),
     "po_reference": ("po_reference", "poReference", "po_number", "poNumber", "purchase_order"),
     "so_reference": ("so_reference", "soReference", "so_number", "soNumber", "sales_order"),
-    "other_reference": ("other_reference", "otherReference", "reference", "ref"),
+    "other_reference": ("other_reference", "otherReference", "reference"),
     "line_items": ("line_items", "lineItems", "lines", "items"),
 }
 

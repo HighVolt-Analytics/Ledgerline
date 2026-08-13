@@ -12,7 +12,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { cn } from "@/lib/cn";
 import { formatMoneyByCurrencyMap, formatTaxId, toNumber } from "@/lib/format";
-import { fetchAllInvoices } from "@/lib/invoices";
+import { fetchRoutedInvoices } from "@/lib/routedInvoices";
 
 const CUSTOMERS_POLL_MS = 30_000;
 
@@ -66,7 +66,7 @@ export function CustomerRegistryPanel() {
       const fresh = options?.fresh ?? !options?.silent;
       const [customers, invoiceRows] = await Promise.all([
         api.listCustomers({ fresh }),
-        fetchAllInvoices(fresh),
+        fetchRoutedInvoices("Sales Management"),
       ]);
       setRows(customers);
       setInvoices(invoiceRows);

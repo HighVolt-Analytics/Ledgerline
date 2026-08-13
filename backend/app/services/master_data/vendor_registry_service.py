@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.invoice import Invoice
 from app.models.vendor import VendorRegistry
-from app.schemas.vendor import VendorCreate, VendorResponse, VendorUpdate
+from app.schemas.vendor import VendorActivityRow, VendorCreate, VendorResponse, VendorUpdate
 from app.services.master_data.party_coa_subledger_service import ensure_vendor_party_coa_sub_ledger
 from app.tenant_scoped import get_for_tenant
 
@@ -105,3 +106,91 @@ async def delete_vendor_registry(
         raise LookupError("Vendor not found")
     await db.delete(row)
     await db.flush()
+
+
+async def list_vendor_activity(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+) -> list[VendorActivityRow]:
+    """Aggregate invoice stats by vendor name — avoids loading the full register."""
+    rows = (
+        await db.execute(
+            select(
+                Invoice.vendor,
+                func.count(Invoice.id),
+                func.max(Invoice.email_sender),
+                func.max(Invoice.account_name),
+            )
+            .where(
+                Invoice.tenant_id == tenant_id,
+                Invoice.vendor.isnot(None),
+                Invoice.vendor != "",
+            )
+            .group_by(Invoice.vendor)
+        )
+    ).all()
+
+    totals = (
+        await db.execute(
+            select(Invoice.vendor, Invoice.currency, func.sum(Invoice.total))
+            .where(
+                Invoice.tenant_id == tenant_id,
+                Invoice.vendor.isnot(None),
+                Invoice.vendor != "",
+                Invoice.total.isnot(None),
+            )
+            .group_by(Invoice.vendor, Invoice.currency)
+        )
+    ).all()
+    by_vendor_currency: dict[str, dict[str, float]] = {}
+    for vendor, currency, total in totals:
+        key = (vendor or "").strip()
+        if not key:
+            continue
+        code = (currency or "").strip().upper() or "—"
+        bucket = by_vendor_currency.setdefault(key, {})
+        bucket[code] = bucket.get(code, 0.0) + float(total or 0)
+
+    net_rows = (
+        await db.execute(
+            select(
+                Invoice.vendor,
+                Invoice.invoice_date,
+                Invoice.due_date,
+            ).where(
+                Invoice.tenant_id == tenant_id,
+                Invoice.vendor.isnot(None),
+                Invoice.invoice_date.isnot(None),
+                Invoice.due_date.isnot(None),
+            )
+        )
+    ).all()
+    net_by_vendor: dict[str, list[int]] = {}
+    for vendor, invoice_date, due_date in net_rows:
+        key = (vendor or "").strip()
+        if not key or invoice_date is None or due_date is None:
+            continue
+        days = (due_date - invoice_date).days
+        if days >= 0:
+            net_by_vendor.setdefault(key, []).append(days)
+
+    out: list[VendorActivityRow] = []
+    for vendor, count, email, account in rows:
+        key = (vendor or "").strip()
+        if not key:
+            continue
+        nets = net_by_vendor.get(key, [])
+        net_days = round(sum(nets) / len(nets)) if nets else None
+        out.append(
+            VendorActivityRow(
+                vendor=key,
+                invoice_count=int(count or 0),
+                by_currency=by_vendor_currency.get(key, {}),
+                email=email,
+                default_account=account or "Suspense Account",
+                net_days=net_days,
+            )
+        )
+    out.sort(key=lambda row: row.vendor.lower())
+    return out

@@ -5,7 +5,7 @@ import { Check, Pencil, RefreshCw, Send, Trash2, X } from "lucide-react";
 import { api, ApiError, clearGetCache } from "@/api/client";
 import type { Invoice } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
-import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
+import { LazyInvoiceDetailDrawer } from "@/components/LazyInvoiceDetailDrawer";
 import { ListSearchInput } from "@/components/ListSearchInput";
 import { PageHeader } from "@/components/PageHeader";
 import { PageLoader } from "@/components/PageLoader";
@@ -25,8 +25,10 @@ import {
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { invoiceCanPublishToLedger } from "@/lib/invoice";
 import { invoiceMatchesListSearch } from "@/lib/listSearch";
-import { DocumentTypeChip } from "@/components/inbox/DocumentTypeChip";
-import { invoiceDocumentTypeDisplayLabel } from "@/lib/documentTypeResolve";
+import {
+  MappedDocumentTypeBadge,
+  VisionHeadingBadge,
+} from "@/components/inbox/DocumentTypeDisplay";
 import { ruleBookConfigFromApi } from "@/lib/ruleBookConfigApi";
 import {
   APPROVABLE_STATUSES,
@@ -586,8 +588,6 @@ export function ApprovalsPage() {
               </header>
               <div className="approvals-kanban-column__cards">
                 {cards.map((inv) => {
-                  const typeLabel = invoiceDocumentTypeDisplayLabel(inv, documentTypes);
-                  const typeCode = (inv.document_type_code ?? "").trim();
                   return (
                   <article
                     key={inv.id}
@@ -607,15 +607,14 @@ export function ApprovalsPage() {
                     <div className="approvals-kanban-card__body">
                       <div className="approvals-kanban-card__top">
                         <span className="approvals-kanban-card__vendor">{inv.vendor ?? "—"}</span>
-                        <DocumentTypeChip
-                          code={typeCode}
-                          label={typeLabel}
-                          display={typeLabel}
-                          title={typeLabel}
-                          purchaseKind={inv.purchase_document_type}
-                          documentTypes={documentTypes}
-                          className="approvals-kanban-card__type-chip"
-                        />
+                        <div className="flex flex-wrap items-center justify-end gap-1">
+                          <VisionHeadingBadge inv={inv} className="approvals-kanban-card__type-chip" />
+                          <MappedDocumentTypeBadge
+                            inv={inv}
+                            documentTypes={documentTypes}
+                            className="approvals-kanban-card__type-chip"
+                          />
+                        </div>
                       </div>
                       {inv.duplicate_review_suggested ? (
                         <p
@@ -728,7 +727,7 @@ export function ApprovalsPage() {
         })}
       </div>
 
-      <InvoiceDetailDrawer
+      <LazyInvoiceDetailDrawer
         invoiceId={drawerInvoice?.id ?? null}
         open={drawerOpen}
         onClose={() => {

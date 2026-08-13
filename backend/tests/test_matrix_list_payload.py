@@ -24,4 +24,8 @@ def test_matrix_invoice_payload_omits_document_text_when_for_list() -> None:
     response = invoice_to_response(inv, for_list=True)
     assert response.document_text is None
     assert response.email_subject is None
+    assert response.extracted_fields is None
+    assert response.validation_results is None
+    assert response.approval_chain is None
+    assert response.billing_address is None
     assert response.vendor == "Acme"

@@ -886,7 +886,9 @@ If it is absent or unclear, leave empty — never invent.
 - invoice_no — ONLY when clearly labeled as an invoice / receipt number. Accepted labels
   (examples, not a closed list): Invoice No / Inv No / INV NO / Tax Invoice No /
   Commercial Invoice No / Invoice Number / Receipt No / Bill No / No. (when clearly the
-  receipt serial in the header). Extract on ANY document kind when such a
+  receipt serial in the header) / Ref or Ref # (ONLY on a retail POS / till receipt /
+  tax invoice where it is the sole document serial in the header block — e.g. "Ref #6931"
+  printed immediately below "TAX INVOICE"). Extract on ANY document kind when such a
   label appears (even on a packing list, permit, or transport doc that references
   an invoice). NEVER put Permit No / Clearance No / Declaration No / Document No /
   Doc No / Entry No / AWB / HAWB / BL / Bill of Lading / Unique Ref / GRN / DN into

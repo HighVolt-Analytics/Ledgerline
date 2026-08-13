@@ -17,7 +17,7 @@ router = APIRouter(prefix="/matrix", tags=["matrix"])
 @router.get("", response_model=ApiEnvelope[list[MatrixRowResponse]])
 async def document_matrix(
     page: Annotated[int, Query(ge=1)] = 1,
-    page_size: Annotated[int, Query(ge=1, le=500)] = 100,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
     status: Annotated[str | None, Query()] = None,
     route_target: Annotated[
         str | None, Query(description="Filter by rule book route target")
@@ -25,6 +25,9 @@ async def document_matrix(
     evaluation_status: Annotated[
         str | None, Query(description="Filter by evaluation status")
     ] = None,
+    capture_source: Annotated[str | None, Query()] = None,
+    q: Annotated[str | None, Query()] = None,
+    matrix_filter: Annotated[str | None, Query()] = None,
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[list[MatrixRowResponse]]:
@@ -35,9 +38,21 @@ async def document_matrix(
         status=status,
         route_target=route_target,
         evaluation_status=evaluation_status,
+        capture_source=capture_source,
+        q=q,
+        matrix_filter=matrix_filter,
     )
     result = await fetch_document_matrix(db, tenant_id=ctx.tenant_id, params=params)
     return ApiEnvelope(
         data=result.rows,
-        meta=ResponseMeta(page=result.page, total=result.total, pages=result.pages),
+        meta=ResponseMeta(
+            page=result.page,
+            total=result.total,
+            pages=result.pages,
+            matrix_document_count=result.document_count,
+            matrix_flagged=result.flagged,
+            matrix_duplicates=result.duplicates,
+            matrix_awaiting=result.awaiting,
+            matrix_paid_this_month=result.paid_this_month,
+        ),
     )

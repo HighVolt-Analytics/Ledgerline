@@ -7,9 +7,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import defer
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.payment import Payment, PaymentStatus
@@ -19,8 +18,11 @@ from app.services.invoice.invoice_related_query_service import (
     audit_logs_for_invoice_ids,
     payments_for_invoice_ids,
 )
-from app.services.invoice.invoice_response_service import invoice_to_response
-from app.services.invoice.pipeline_stages import build_matrix_cells
+from app.services.invoice.invoice_response_service import (
+    invoice_list_load_options,
+    invoice_to_response,
+)
+from app.services.invoice.pipeline_stages import build_matrix_cells, exception_hold_reason
 from app.services.integration.publish_service import published_invoice_ids
 
 # Cap audit rows per invoice for matrix stages (latest-first). Full OCR text is never needed.
@@ -72,12 +74,17 @@ def derive_matrix_flag(inv: Invoice) -> tuple[str, str | None]:
         if eval_status == "vision_vaulted":
             return "Clean", "Understood path — bundled and stored in vault"
         if eval_status == "vision_header_review":
-            return "Anomaly Detected", "Vision understood the file but header fields need review"
-        return "Anomaly Detected", _first_validation_failure(inv) or "Routed to exception review"
+            return (
+                "Anomaly Detected",
+                "Header fields incomplete — complete Fields, then Confirm & process",
+            )
+        return "Anomaly Detected", exception_hold_reason(inv)
     if inv.evaluation_status == "needs_rescan":
         return "Anomaly Detected", "Poor image quality — rescan required"
     if inv.evaluation_status == "awaiting_classification":
-        fields = inv.extracted_fields if isinstance(inv.extracted_fields, dict) else {}
+        from app.services.invoice.invoice_response_service import _extracted_fields_if_loaded
+
+        fields = _extracted_fields_if_loaded(inv)
         if fields.get("vision_bundle_kind") is not None or fields.get("vision_bundle_key"):
             return "Clean", "Understood path — bundled and stored in vault"
         return "Anomaly Detected", "Document type not classified — review required"
@@ -179,64 +186,243 @@ def _conflict_detail(inv: Invoice, other: Invoice) -> list[MatrixConflictRow]:
     ]
 
 
+_PIPELINE_STATUSES = (
+    InvoiceStatus.PENDING,
+    InvoiceStatus.PARSING,
+    InvoiceStatus.VALIDATING,
+    InvoiceStatus.MAPPING,
+    InvoiceStatus.JOURNALING,
+    InvoiceStatus.RECONCILING,
+)
+
+_FLAGGED_EVAL = (
+    "needs_review",
+    "pending_vendor",
+    "awaiting_classification",
+    "vision_header_review",
+    "needs_rescan",
+    "unmatched_expense_vendor",
+    "pending_approval",
+    "awaiting_po",
+    "awaiting_so",
+)
+
+
+def _apply_capture_source(query, capture_source: str | None):
+    if not capture_source or not capture_source.strip():
+        return query
+    src = capture_source.strip().lower()
+    if src not in {"upload", "email", "whatsapp", "viber"}:
+        return query
+    unset_capture = or_(Invoice.capture_source.is_(None), Invoice.capture_source == "")
+    if src == "upload":
+        return query.where(
+            or_(
+                func.lower(Invoice.capture_source) == "upload",
+                and_(
+                    unset_capture,
+                    Invoice.connected_mailbox_id.is_(None),
+                    Invoice.whatsapp_connection_id.is_(None),
+                    Invoice.viber_connection_id.is_(None),
+                ),
+            )
+        )
+    if src == "email":
+        return query.where(
+            or_(
+                func.lower(Invoice.capture_source) == "email",
+                and_(unset_capture, Invoice.connected_mailbox_id.isnot(None)),
+            )
+        )
+    if src == "whatsapp":
+        return query.where(
+            or_(
+                func.lower(Invoice.capture_source) == "whatsapp",
+                and_(unset_capture, Invoice.whatsapp_connection_id.isnot(None)),
+            )
+        )
+    return query.where(
+        or_(
+            func.lower(Invoice.capture_source) == "viber",
+            and_(unset_capture, Invoice.viber_connection_id.isnot(None)),
+        )
+    )
+
+
+def _apply_search(query, q: str | None):
+    if not q or not q.strip():
+        return query
+    term = f"%{q.strip()}%"
+    clauses = [
+        Invoice.vendor.ilike(term),
+        Invoice.invoice_no.ilike(term),
+        Invoice.po_reference.ilike(term),
+        Invoice.document_ref.ilike(term),
+        Invoice.route_target.ilike(term),
+    ]
+    raw = q.strip()
+    if raw.isdigit():
+        clauses.append(Invoice.id == int(raw))
+    return query.where(or_(*clauses))
+
+
+def _apply_matrix_filter(query, matrix_filter: str | None, *, tenant_id: uuid.UUID):
+    token = (matrix_filter or "all").strip().lower()
+    if token in {"", "all"}:
+        return query
+    if token == "anomalies":
+        return query.where(
+            or_(
+                Invoice.status.in_(
+                    (
+                        InvoiceStatus.EXCEPTION,
+                        InvoiceStatus.DUPLICATE_SKIPPED,
+                        InvoiceStatus.REJECTED,
+                    )
+                ),
+                and_(
+                    Invoice.evaluation_status.in_(_FLAGGED_EVAL),
+                    Invoice.status != InvoiceStatus.PROCESSED,
+                ),
+            )
+        )
+    if token == "pending":
+        return query.where(Invoice.status.in_(_PIPELINE_STATUSES))
+    if token == "failed":
+        return query.where(
+            Invoice.status.in_((InvoiceStatus.EXCEPTION, InvoiceStatus.REJECTED))
+        )
+    if token == "awaiting":
+        pay_ids = (
+            select(Payment.invoice_id).where(
+                Payment.tenant_id == tenant_id,
+                Payment.invoice_id.isnot(None),
+                Payment.status.in_(
+                    (PaymentStatus.AWAITING, PaymentStatus.QUEUE, PaymentStatus.SCHEDULED)
+                ),
+            )
+        )
+        return query.where(
+            or_(
+                Invoice.id.in_(pay_ids),
+                and_(
+                    Invoice.status == InvoiceStatus.PROCESSED,
+                    Invoice.due_date.isnot(None),
+                ),
+            )
+        )
+    if token == "paid":
+        today = func.current_date()
+        paid_ids = (
+            select(Payment.invoice_id).where(
+                Payment.tenant_id == tenant_id,
+                Payment.invoice_id.isnot(None),
+                Payment.status == PaymentStatus.PAID,
+                Payment.paid_date.isnot(None),
+                func.extract("year", Payment.paid_date) == func.extract("year", today),
+                func.extract("month", Payment.paid_date) == func.extract("month", today),
+            )
+        )
+        return query.where(Invoice.id.in_(paid_ids))
+    return query
+
+
 async def duplicate_conflict_for_invoice(
     db: AsyncSession,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     inv: Invoice,
 ) -> tuple[str | None, list[MatrixConflictRow]]:
-    if inv.status != InvoiceStatus.DUPLICATE_SKIPPED:
-        return None, []
+    mapping = await duplicate_conflicts_for_invoices(db, tenant_id, [inv])
+    return mapping.get(inv.id, (None, []))
+
+
+async def duplicate_conflicts_for_invoices(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    invoices: list[Invoice],
+) -> dict[int, tuple[str | None, list[MatrixConflictRow]]]:
+    """Batch duplicate-conflict lookups for a matrix page."""
+    out: dict[int, tuple[str | None, list[MatrixConflictRow]]] = {
+        inv.id: (None, []) for inv in invoices
+    }
+    dupes = [inv for inv in invoices if inv.status == InvoiceStatus.DUPLICATE_SKIPPED]
+    if not dupes:
+        return out
 
     from app.models.audit import AuditLog
 
-    original_id: int | None = None
-    file_hash: str | None = inv.file_hash
-    audit_row = (
+    dupe_ids = [inv.id for inv in dupes]
+    audit_rows = (
         await db.execute(
             select(AuditLog)
             .where(
-                AuditLog.invoice_id == inv.id,
+                AuditLog.invoice_id.in_(dupe_ids),
                 AuditLog.event == "duplicate_skipped",
             )
             .order_by(AuditLog.created_at.desc())
-            .limit(1)
         )
-    ).scalar_one_or_none()
-    if audit_row and isinstance(audit_row.detail, dict):
-        raw_id = audit_row.detail.get("original_invoice_id")
-        if isinstance(raw_id, int):
-            original_id = raw_id
-        if not file_hash and isinstance(audit_row.detail.get("file_hash"), str):
-            file_hash = audit_row.detail["file_hash"]
+    ).scalars().all()
+    original_by_invoice: dict[int, int] = {}
+    hash_by_invoice: dict[int, str] = {}
+    for row in audit_rows:
+        iid = row.invoice_id
+        if iid is None or iid in original_by_invoice or iid in hash_by_invoice:
+            continue
+        if isinstance(row.detail, dict):
+            raw_id = row.detail.get("original_invoice_id")
+            if isinstance(raw_id, int):
+                original_by_invoice[iid] = raw_id
+            raw_hash = row.detail.get("file_hash")
+            if isinstance(raw_hash, str):
+                hash_by_invoice[iid] = raw_hash
 
-    if original_id is not None:
-        other = await db.get(Invoice, original_id)
-        if other is not None and other.tenant_id == tenant_id:
-            return _document_ref(other), _conflict_detail(inv, other)
+    original_ids = list(original_by_invoice.values())
+    others_by_id: dict[int, Invoice] = {}
+    if original_ids:
+        others = (
+            await db.execute(
+                select(Invoice).where(
+                    Invoice.tenant_id == tenant_id,
+                    Invoice.id.in_(original_ids),
+                )
+            )
+        ).scalars().all()
+        others_by_id = {row.id: row for row in others}
 
-    stmt = (
-        select(Invoice)
-        .where(
-            Invoice.tenant_id == tenant_id,
-            Invoice.id != inv.id,
-            Invoice.status != InvoiceStatus.DUPLICATE_SKIPPED,
+    unresolved: list[Invoice] = []
+    for inv in dupes:
+        original_id = original_by_invoice.get(inv.id)
+        if original_id is not None:
+            other = others_by_id.get(original_id)
+            if other is not None:
+                out[inv.id] = (_document_ref(other), _conflict_detail(inv, other))
+                continue
+        unresolved.append(inv)
+
+    for inv in unresolved:
+        file_hash = hash_by_invoice.get(inv.id) or inv.file_hash
+        stmt = (
+            select(Invoice)
+            .where(
+                Invoice.tenant_id == tenant_id,
+                Invoice.id != inv.id,
+                Invoice.status != InvoiceStatus.DUPLICATE_SKIPPED,
+            )
+            .order_by(Invoice.created_at.desc())
         )
-        .order_by(Invoice.created_at.desc())
-    )
-    if inv.invoice_no and inv.vendor:
-        stmt = stmt.where(
-            Invoice.invoice_no == inv.invoice_no,
-            Invoice.vendor == inv.vendor,
-        )
-    elif file_hash:
-        stmt = stmt.where(Invoice.file_hash == file_hash)
-    else:
-        return None, []
-
-    other = (await db.execute(stmt.limit(1))).scalar_one_or_none()
-    if other is None:
-        return None, []
-    return _document_ref(other), _conflict_detail(inv, other)
+        if inv.invoice_no and inv.vendor:
+            stmt = stmt.where(
+                Invoice.invoice_no == inv.invoice_no,
+                Invoice.vendor == inv.vendor,
+            )
+        elif file_hash:
+            stmt = stmt.where(Invoice.file_hash == file_hash)
+        else:
+            continue
+        other = (await db.execute(stmt.limit(1))).scalar_one_or_none()
+        if other is not None:
+            out[inv.id] = (_document_ref(other), _conflict_detail(inv, other))
+    return out
 
 
 @dataclass(frozen=True)
@@ -245,22 +431,15 @@ class MatrixListResult:
     page: int
     total: int
     pages: int
+    document_count: int = 0
+    flagged: int = 0
+    duplicates: int = 0
+    awaiting: int = 0
+    paid_this_month: int = 0
 
 
-async def fetch_document_matrix(
-    db: AsyncSession,
-    *,
-    tenant_id: uuid.UUID,
-    params: MatrixListRequest,
-) -> MatrixListResult:
-    stmt = (
-        select(Invoice)
-        # List/matrix never need OCR body — loading it for page_size=100 OOMs the API
-        # pod (504 from ingress while the container is restarting).
-        .options(defer(Invoice.document_text))
-        .where(Invoice.tenant_id == tenant_id)
-        .order_by(Invoice.created_at.desc(), Invoice.id.desc())
-    )
+def _scoped_invoice_query(tenant_id: uuid.UUID, params: MatrixListRequest):
+    stmt = select(Invoice).where(Invoice.tenant_id == tenant_id)
     count_stmt = select(func.count(Invoice.id)).where(Invoice.tenant_id == tenant_id)
     if params.status:
         try:
@@ -270,12 +449,99 @@ async def fetch_document_matrix(
         except ValueError:
             pass
     if params.route_target and params.route_target.strip():
-        stmt = stmt.where(Invoice.route_target == params.route_target.strip())
-        count_stmt = count_stmt.where(Invoice.route_target == params.route_target.strip())
+        token = params.route_target.strip()
+        stmt = stmt.where(Invoice.route_target == token)
+        count_stmt = count_stmt.where(Invoice.route_target == token)
     if params.evaluation_status and params.evaluation_status.strip():
         token = params.evaluation_status.strip()
         stmt = stmt.where(Invoice.evaluation_status == token)
         count_stmt = count_stmt.where(Invoice.evaluation_status == token)
+    stmt = _apply_capture_source(stmt, params.capture_source)
+    count_stmt = _apply_capture_source(count_stmt, params.capture_source)
+    stmt = _apply_search(stmt, params.q)
+    count_stmt = _apply_search(count_stmt, params.q)
+    stmt = _apply_matrix_filter(stmt, params.matrix_filter, tenant_id=tenant_id)
+    count_stmt = _apply_matrix_filter(count_stmt, params.matrix_filter, tenant_id=tenant_id)
+    return stmt, count_stmt
+
+
+async def _matrix_summary(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    params: MatrixListRequest,
+) -> tuple[int, int, int, int]:
+    """KPI totals for the scoped matrix (independent of the current page)."""
+    base_ids = select(Invoice.id).where(Invoice.tenant_id == tenant_id)
+    base_ids = _apply_capture_source(base_ids, params.capture_source)
+
+    flagged_stmt = select(func.count(Invoice.id)).where(
+        Invoice.tenant_id == tenant_id,
+        Invoice.id.in_(base_ids),
+        or_(
+            Invoice.status.in_(
+                (
+                    InvoiceStatus.EXCEPTION,
+                    InvoiceStatus.DUPLICATE_SKIPPED,
+                    InvoiceStatus.REJECTED,
+                )
+            ),
+            and_(
+                Invoice.evaluation_status.in_(_FLAGGED_EVAL),
+                Invoice.status != InvoiceStatus.PROCESSED,
+            ),
+        ),
+    )
+    duplicates_stmt = select(func.count(Invoice.id)).where(
+        Invoice.tenant_id == tenant_id,
+        Invoice.id.in_(base_ids),
+        Invoice.status == InvoiceStatus.DUPLICATE_SKIPPED,
+    )
+    today = func.current_date()
+    paid_stmt = select(func.count(func.distinct(Payment.invoice_id))).where(
+        Payment.tenant_id == tenant_id,
+        Payment.invoice_id.in_(base_ids),
+        Payment.status == PaymentStatus.PAID,
+        Payment.paid_date.isnot(None),
+        func.extract("year", Payment.paid_date) == func.extract("year", today),
+        func.extract("month", Payment.paid_date) == func.extract("month", today),
+    )
+    awaiting_pay_ids = select(Payment.invoice_id).where(
+        Payment.tenant_id == tenant_id,
+        Payment.invoice_id.in_(base_ids),
+        Payment.status.in_(
+            (PaymentStatus.AWAITING, PaymentStatus.QUEUE, PaymentStatus.SCHEDULED)
+        ),
+    )
+    awaiting_stmt = select(func.count(Invoice.id)).where(
+        Invoice.tenant_id == tenant_id,
+        Invoice.id.in_(base_ids),
+        or_(
+            Invoice.id.in_(awaiting_pay_ids),
+            and_(
+                Invoice.status == InvoiceStatus.PROCESSED,
+                Invoice.due_date.isnot(None),
+            ),
+        ),
+    )
+    flagged = (await db.execute(flagged_stmt)).scalar() or 0
+    duplicates = (await db.execute(duplicates_stmt)).scalar() or 0
+    awaiting = (await db.execute(awaiting_stmt)).scalar() or 0
+    paid = (await db.execute(paid_stmt)).scalar() or 0
+    return int(flagged), int(duplicates), int(awaiting), int(paid)
+
+
+async def fetch_document_matrix(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    params: MatrixListRequest,
+) -> MatrixListResult:
+    stmt, count_stmt = _scoped_invoice_query(tenant_id, params)
+    stmt = (
+        stmt.options(*invoice_list_load_options())
+        .order_by(Invoice.created_at.desc(), Invoice.id.desc())
+    )
 
     total = (await db.execute(count_stmt)).scalar() or 0
     pages = max(1, (total + params.page_size - 1) // params.page_size)
@@ -294,14 +560,24 @@ async def fetch_document_matrix(
     )
     payments_by_id = await payments_for_invoice_ids(db, tenant_id, invoice_ids)
     published_ids = await published_invoice_ids(db, invoice_ids, tenant_id=tenant_id)
+    conflicts = await duplicate_conflicts_for_invoices(db, tenant_id, list(invoices))
+    flagged, duplicates, awaiting, paid = await _matrix_summary(
+        db, tenant_id=tenant_id, params=params
+    )
+
+    unfiltered_count_stmt = select(func.count(Invoice.id)).where(
+        Invoice.tenant_id == tenant_id
+    )
+    unfiltered_count_stmt = _apply_capture_source(
+        unfiltered_count_stmt, params.capture_source
+    )
+    document_count = (await db.execute(unfiltered_count_stmt)).scalar() or 0
 
     rows: list[MatrixRowResponse] = []
     for inv in invoices:
         flag, flag_reason = derive_matrix_flag(inv)
         payment = payments_by_id.get(inv.id)
-        conflict_with, conflict_detail = await duplicate_conflict_for_invoice(
-            db, tenant_id, inv
-        )
+        conflict_with, conflict_detail = conflicts.get(inv.id, (None, []))
         paid_date = None
         if payment is not None and payment.paid_date is not None:
             paid_date = payment.paid_date.isoformat()
@@ -328,4 +604,9 @@ async def fetch_document_matrix(
         page=params.page,
         total=total,
         pages=pages,
+        document_count=int(document_count),
+        flagged=flagged,
+        duplicates=duplicates,
+        awaiting=awaiting,
+        paid_this_month=paid,
     )

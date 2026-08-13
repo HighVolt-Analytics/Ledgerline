@@ -295,7 +295,7 @@ export function DashboardPage() {
   const {
     data: overview,
     error,
-    isLoading,
+    isPending,
     blocked: overviewBlocked,
   } = useDashboardOverview(period, 10);
 
@@ -329,7 +329,7 @@ export function DashboardPage() {
       monthOptions={monthOptions}
       onYearChange={handleYearChange}
       onMonthChange={handleMonthChange}
-      disabled={isLoading}
+      disabled={isPending && !overview}
       yearId="dashboard-year"
       monthId="dashboard-month"
       yearTestId="select-dashboard-year"
@@ -353,7 +353,7 @@ export function DashboardPage() {
     );
   }
 
-  if (isLoading || overviewBlocked || !overview || !user) {
+  if (overviewBlocked || !user || (isPending && !overview)) {
     return (
       <div>
         {user ? (
@@ -364,6 +364,15 @@ export function DashboardPage() {
             subtitle="Overview of document volume, processing, and cash forecast."
           />
         )}
+        <PageLoader variant="dashboard" />
+      </div>
+    );
+  }
+
+  if (!overview) {
+    return (
+      <div>
+        <PageHeader title="Dashboard" subtitle={dashboardSubtitle(user)} actions={periodSelector} />
         <PageLoader variant="dashboard" />
       </div>
     );

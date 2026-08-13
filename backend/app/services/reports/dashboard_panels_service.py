@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from statistics import median
 from typing import Any, Iterable, Literal
@@ -33,6 +33,7 @@ from app.schemas.dashboard import (
     UserLayerMetric,
     UserLayerStages,
 )
+from app.services.invoice.invoice_response_service import invoice_list_load_options
 from app.services.invoice.invoice_evaluation_service import (
     EVAL_AUTO_CODED,
     EVAL_AWAITING_CLASSIFICATION,
@@ -96,7 +97,7 @@ _POSTING_STATUSES = frozenset(
     }
 )
 
-_EXTRACTION_SAMPLE_LIMIT = 80
+_EXTRACTION_SAMPLE_LIMIT = 24
 
 
 def _normalize_channel(inv: Invoice) -> CaptureId:
@@ -258,10 +259,9 @@ def _format_compact_money(amount: Decimal, currency: str) -> str:
 
 
 def _invoice_date_filters(month_start: date, month_end: date):
-    return (
-        func.date(Invoice.created_at) >= month_start,
-        func.date(Invoice.created_at) <= month_end,
-    )
+    start = datetime.combine(month_start, time.min, tzinfo=timezone.utc)
+    end = datetime.combine(month_end + timedelta(days=1), time.min, tzinfo=timezone.utc)
+    return Invoice.created_at >= start, Invoice.created_at < end
 
 
 async def _load_period_invoices(
@@ -274,7 +274,9 @@ async def _load_period_invoices(
     lo, hi = _invoice_date_filters(start, end)
     rows = (
         await db.execute(
-            select(Invoice).where(Invoice.tenant_id == tenant_id, lo, hi)
+            select(Invoice)
+            .options(*invoice_list_load_options())
+            .where(Invoice.tenant_id == tenant_id, lo, hi)
         )
     ).scalars().all()
     return list(rows)
@@ -814,6 +816,7 @@ async def build_extraction_quality(
     invoices = (
         await db.execute(
             select(Invoice)
+            .options(*invoice_list_load_options())
             .where(
                 Invoice.tenant_id == tenant_id,
                 lo,

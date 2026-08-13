@@ -18,7 +18,7 @@ from app.schemas.notifications import (
     NotificationsResponse,
 )
 from app.services.audit.audit_change_summary import summarize_audit_change
-from app.services.credit_service import refresh_tenant_billing
+from app.services.credit_service import ensure_tenant_billing
 
 LOW_CREDITS_THRESHOLD = 100
 LOW_CREDITS_EVENT = "low_credits"
@@ -238,7 +238,7 @@ async def _low_credits_item(
     tenant_id: uuid.UUID,
     last_read_at: datetime,
 ) -> NotificationItem | None:
-    billing = await refresh_tenant_billing(db, tenant_id)
+    billing = await ensure_tenant_billing(db, tenant_id)
     if billing.credit_balance >= LOW_CREDITS_THRESHOLD:
         return None
     created_at = _as_utc(billing.updated_at)

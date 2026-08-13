@@ -18,7 +18,10 @@ import { InlineTableSkeleton } from "@/components/skeleton/PageSkeletons";
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { cn } from "@/lib/cn";
 import { documentDisplayRef, money } from "@/lib/format";
-import { invoiceDocumentTypeDisplayLabel } from "@/lib/documentTypeResolve";
+import {
+  MappedDocumentTypeBadge,
+  VisionHeadingBadge,
+} from "@/components/inbox/DocumentTypeDisplay";
 import { invoiceValidationConfidence } from "@/lib/invoice";
 import { invoiceMatchesListSearch } from "@/lib/listSearch";
 import { buildPurchaseRegisterCoverage, purchaseActionIssue } from "@/lib/purchaseRegisterQueue";
@@ -583,8 +586,14 @@ export function PurchaseRegisterPanel({
                         <td className="px-4 py-2.5">
                           <div className="font-medium tnum">{documentDisplayRef(inv)}</div>
                           <div className="text-xs text-muted-foreground tnum">
-                            {inv.invoice_no ? `${inv.invoice_no} · ` : ""}
-                            {invoiceDocumentTypeDisplayLabel(inv, ruleBook?.documentTypes)}
+                            {inv.invoice_no ?? "—"}
+                          </div>
+                          <div className="mt-1 flex flex-wrap items-center gap-1">
+                            <VisionHeadingBadge inv={inv} empty="" />
+                            <MappedDocumentTypeBadge
+                              inv={inv}
+                              documentTypes={ruleBook?.documentTypes}
+                            />
                           </div>
                         </td>
                         <td className="px-3 py-2.5 max-w-[140px] truncate">{inv.vendor ?? "—"}</td>

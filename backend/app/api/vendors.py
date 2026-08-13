@@ -7,6 +7,7 @@ from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_
 from app.api.http_errors import http_not_found, http_payout_method_error
 from app.schemas.common import ApiEnvelope
 from app.schemas.vendor import (
+    VendorActivityRow,
     VendorCreate,
     VendorPayoutMethodCreate,
     VendorPayoutMethodResponse,
@@ -25,6 +26,7 @@ from app.services.master_data.vendor_payout_method_service import (
 from app.services.master_data.vendor_registry_service import (
     create_vendor_registry,
     delete_vendor_registry,
+    list_vendor_activity,
     list_vendor_registry,
     update_vendor_registry,
 )
@@ -38,6 +40,14 @@ async def list_vendors(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[list[VendorResponse]]:
     return ApiEnvelope(data=await list_vendor_registry(db, tenant_id=ctx.tenant_id))
+
+
+@router.get("/activity", response_model=ApiEnvelope[list[VendorActivityRow]])
+async def list_vendor_activity_route(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[list[VendorActivityRow]]:
+    return ApiEnvelope(data=await list_vendor_activity(db, tenant_id=ctx.tenant_id))
 
 
 @router.post("", response_model=ApiEnvelope[VendorResponse], status_code=201)

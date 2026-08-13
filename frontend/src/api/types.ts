@@ -299,12 +299,17 @@ export type InvoiceStatus =
 export interface ApiEnvelope<T> {
   data: T;
   error: { code: string; message: string } | null;
-  meta: {
+    meta: {
     page: number;
     total: number;
     pages: number;
     segment_count?: number | null;
     segment_invoice_ids?: number[] | null;
+    matrix_document_count?: number | null;
+    matrix_flagged?: number | null;
+    matrix_duplicates?: number | null;
+    matrix_awaiting?: number | null;
+    matrix_paid_this_month?: number | null;
   };
 }
 
@@ -417,6 +422,7 @@ export interface Invoice {
   processing_overrides?: ProcessingOverrides | null;
   gl_posting_applicable?: boolean;
   approval_chain?: ApprovalChain | null;
+  tax_label?: string | null;
 }
 
 export interface LineItem {
@@ -1405,6 +1411,15 @@ export interface Vendor {
   sender_pattern: string;
   abn: string | null;
   approved: boolean;
+}
+
+export interface VendorActivity {
+  vendor: string;
+  invoice_count: number;
+  by_currency: Record<string, number>;
+  email: string | null;
+  default_account: string | null;
+  net_days: number | null;
 }
 
 export type VendorPayoutMethodType =

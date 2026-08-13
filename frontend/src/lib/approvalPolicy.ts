@@ -22,6 +22,15 @@ export type ApprovalAction = (typeof APPROVAL_ACTIONS)[number];
 
 export type ApprovalQuorumMode = "one_way" | "two_way" | "three_way";
 
+export const APPROVAL_MODULE_ROLES = [
+  "Admin",
+  "Functional manager",
+  "Functional supervisor",
+  "Finance head",
+] as const;
+
+export type ApprovalModuleRole = (typeof APPROVAL_MODULE_ROLES)[number];
+
 export const APPROVAL_MATRIX_MODULES = [
   "team_expenses",
   "expenses",
@@ -51,6 +60,10 @@ export type PolicyRule = { id: string; condition: string; approver: string };
 
 export type ApprovalMatrixConfig = {
   by_module: Record<ApprovalMatrixModule, ApprovalQuorumMode>;
+  approver_roles_by_module: Record<
+    ApprovalMatrixModule,
+    Record<ApprovalModuleRole, boolean>
+  >;
 };
 
 export type LocalApprovalPolicy = {
@@ -75,6 +88,36 @@ export const DEFAULT_APPROVAL_MATRIX_BY_MODULE: Record<
   expenses: "one_way",
   purchase: "two_way",
   sales: "one_way",
+};
+
+export const DEFAULT_APPROVER_ROLES_BY_MODULE: Record<
+  ApprovalMatrixModule,
+  Record<ApprovalModuleRole, boolean>
+> = {
+  team_expenses: {
+    Admin: true,
+    "Functional manager": false,
+    "Functional supervisor": false,
+    "Finance head": false,
+  },
+  expenses: {
+    Admin: true,
+    "Functional manager": false,
+    "Functional supervisor": false,
+    "Finance head": false,
+  },
+  purchase: {
+    Admin: true,
+    "Functional manager": true,
+    "Functional supervisor": false,
+    "Finance head": false,
+  },
+  sales: {
+    Admin: true,
+    "Functional manager": false,
+    "Functional supervisor": false,
+    "Finance head": false,
+  },
 };
 
 const LEADERSHIP: Record<ApprovalAction, boolean> = {
@@ -137,6 +180,12 @@ export function normalizeApprovalMatrixConfig(
   raw: Partial<ApprovalMatrixConfig> | null | undefined
 ): ApprovalMatrixConfig {
   const by_module = { ...DEFAULT_APPROVAL_MATRIX_BY_MODULE };
+  const approver_roles_by_module = Object.fromEntries(
+    APPROVAL_MATRIX_MODULES.map((module) => [
+      module,
+      { ...DEFAULT_APPROVER_ROLES_BY_MODULE[module] },
+    ])
+  ) as Record<ApprovalMatrixModule, Record<ApprovalModuleRole, boolean>>;
   const source: Partial<Record<ApprovalMatrixModule, ApprovalQuorumMode>> =
     raw?.by_module ?? {};
   for (const key of APPROVAL_MATRIX_MODULES) {
@@ -144,6 +193,30 @@ export function normalizeApprovalMatrixConfig(
     if (val === "one_way" || val === "two_way" || val === "three_way") {
       by_module[key] = val;
     }
+
+    const moduleRoles = raw?.approver_roles_by_module?.[key];
+    if (moduleRoles) {
+      for (const role of APPROVAL_MODULE_ROLES) {
+        if (typeof moduleRoles[role] === "boolean") {
+          approver_roles_by_module[key][role] = moduleRoles[role];
+        }
+      }
+    }
+
+    const enabledCount = APPROVAL_MODULE_ROLES.reduce(
+      (acc, role) => acc + (approver_roles_by_module[key][role] ? 1 : 0),
+      0
+    );
+    if (enabledCount <= 0) {
+      approver_roles_by_module[key].Admin = true;
+      by_module[key] = "one_way";
+    } else if (enabledCount === 1) {
+      by_module[key] = "one_way";
+    } else if (enabledCount === 2) {
+      by_module[key] = "two_way";
+    } else {
+      by_module[key] = "three_way";
+    }
   }
-  return { by_module };
+  return { by_module, approver_roles_by_module };
 }

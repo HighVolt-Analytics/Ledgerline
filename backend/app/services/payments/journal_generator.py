@@ -92,7 +92,7 @@ def _with_accrual_fx(
 
 
 def resolve_team_advance_parent_mapping(config: RuleBookConfigPayload) -> AccountMapping:
-    """Org default Staff Advance parent used when an employee child is unavailable."""
+    """Org default advance parent (tenant-selected COA ledger) when an employee child is unavailable."""
     label = (config.team_expense_posting.default_advance_parent_ledger or "").strip()
     return resolve_category_for_config(label, config)
 
@@ -127,7 +127,9 @@ def _team_expense_entries(
     """
     kind = normalize_team_expense_kind(invoice.team_expense_kind)
     settlement = get_team_settlement_account_mapping(config)
-    advance = control_mapping or resolve_team_advance_parent_mapping(config)
+    advance = _team_advance_debit_mapping(
+        invoice, mapping, config, control_mapping
+    )
 
     if kind == TEAM_EXPENSE_KIND_ADVANCE:
         return [
@@ -438,6 +440,62 @@ def is_balanced(lines: list[JournalLine]) -> bool:
     return dr == cr
 
 
+def _is_usable_control_mapping(mapping: AccountMapping | None) -> bool:
+    if mapping is None:
+        return False
+    code = (mapping.account_code or "").strip()
+    name = (mapping.account_name or "").strip()
+    if not code:
+        return False
+    token = f"{name} {code}".lower()
+    if code == "9999" or "suspense" in token or "unmapped" in token:
+        return False
+    return True
+
+
+def _invoice_has_team_advance_ledger(
+    invoice: Invoice,
+    config: RuleBookConfigPayload,
+) -> bool:
+    """True when the invoice already maps a usable employee advance ledger."""
+    code = (invoice.account_code or "").strip()
+    name = (invoice.account_name or "").strip()
+    if not code:
+        return False
+    token = f"{name} {code}".lower()
+    if "suspense" in token or "unmapped" in token:
+        return False
+    if code.upper().startswith("EM-"):
+        return True
+    for entry in config.chart_of_accounts or []:
+        if (entry.code or "").strip() == code:
+            return True
+        for sub in entry.sub_ledgers or []:
+            if (sub.code or "").strip() == code:
+                return True
+    return False
+
+
+def _team_advance_debit_mapping(
+    invoice: Invoice,
+    mapping: AccountMapping,
+    config: RuleBookConfigPayload,
+    control_mapping: AccountMapping | None,
+) -> AccountMapping:
+    """Employee advance line: party child, else invoice EM- ledger, else parent."""
+    if _is_usable_control_mapping(control_mapping):
+        return control_mapping
+    if _invoice_has_team_advance_ledger(invoice, config):
+        code = (invoice.account_code or "").strip()
+        name = (invoice.account_name or "").strip() or code
+        return AccountMapping(code, name)
+    if _is_usable_control_mapping(mapping) and (mapping.account_code or "").upper().startswith(
+        "EM-"
+    ):
+        return mapping
+    return resolve_team_advance_parent_mapping(config)
+
+
 def get_unresolved_control_accounts(
     *,
     invoice: Invoice,
@@ -461,9 +519,15 @@ def get_unresolved_control_accounts(
         # Settlement always; Staff Advance needed for requisitions and claim netting.
         if not category_resolved_in_coa(settlement_label, config):
             unresolved.append("settlement_account")
-        if not category_resolved_in_coa(
+        parent_ok = category_resolved_in_coa(
             team.default_advance_parent_ledger, config
-        ):
+        )
+        # Advance requisitions already debit the employee child (EM-…). Do not
+        # halt posting solely because the parent Staff Advance label is absent.
+        if kind == TEAM_EXPENSE_KIND_ADVANCE:
+            if not parent_ok and not _invoice_has_team_advance_ledger(invoice, config):
+                unresolved.append("staff_advance_account")
+        elif not parent_ok:
             unresolved.append("staff_advance_account")
         if kind != TEAM_EXPENSE_KIND_ADVANCE and not category_resolved_in_coa(
             config.posting_defaults.tax_account, config

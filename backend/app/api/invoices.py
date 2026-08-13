@@ -6,7 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Qu
 from fastapi.responses import Response
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import defer, selectinload
+from sqlalchemy.orm import selectinload
 
 from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_db, require_admin
 from app.config import get_settings
@@ -93,6 +93,7 @@ from app.services.invoice.invoice_access_service import (
 from app.services.invoice.invoice_response_service import (
     classification_review_confidence as _classification_review_confidence,
     document_type_extraction_fields as _document_type_extraction_fields,
+    invoice_list_load_options,
     invoice_to_response as _to_response,
     response_for_invoice as _response_for_invoice,
     responses_for_invoices as _responses_for_invoices,
@@ -186,7 +187,7 @@ async def list_invoices(
 ) -> ApiEnvelope[list[InvoiceResponse]]:
     stmt = (
         select(Invoice)
-        .options(defer(Invoice.document_text))
+        .options(*invoice_list_load_options())
         .where(Invoice.tenant_id == ctx.tenant_id)
         .order_by(Invoice.created_at.desc(), Invoice.id.desc())
     )

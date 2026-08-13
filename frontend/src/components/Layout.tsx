@@ -42,6 +42,36 @@ import {
 import { getAccessToken } from "@/lib/authSession";
 import { cn } from "@/lib/cn";
 
+const ROUTE_PREFETCH: Record<string, () => Promise<unknown>> = {
+  "/": () => import("@/pages/DashboardPage"),
+  "/upload": () => import("@/pages/UploadPage"),
+  "/dossiers": () => import("@/pages/DossiersPage"),
+  "/creations": () => import("@/pages/CreationsPage"),
+  "/approvals": () => import("@/pages/ApprovalsPage"),
+  "/vault": () => import("@/pages/VaultPage"),
+  "/purchases": () => import("@/pages/PurchaseManagementPage"),
+  "/sales": () => import("@/pages/SalesManagementPage"),
+  "/team-expenses": () => import("@/pages/TeamExpensesPage"),
+  "/expenses": () => import("@/pages/ExpensesManagementPage"),
+  "/collections": () => import("@/pages/CollectionsPage"),
+  "/payments": () => import("@/pages/PaymentsPage"),
+  "/customers": () => import("@/pages/CustomersPage"),
+  "/vendors": () => import("@/pages/VendorsPage"),
+  "/ledger-link": () => import("@/pages/LedgerLinkPage"),
+  "/reconciliation": () => import("@/pages/ReconciliationPage"),
+  "/matrix": () => import("@/pages/MatrixPage"),
+  "/reports": () => import("@/pages/ReportsPage"),
+  "/rules": () => import("@/pages/RulesPage"),
+  "/integrations": () => import("@/pages/IntegrationsPage"),
+  "/billing": () => import("@/pages/BillingPage"),
+  "/settings": () => import("@/pages/SettingsPage"),
+};
+
+function prefetchRoute(path: string): void {
+  const load = ROUTE_PREFETCH[path];
+  if (load) void load();
+}
+
 type NavItem = {
   to: string;
   label: string;
@@ -398,6 +428,7 @@ export function Layout() {
         key={item.to}
         to={item.to}
         end={navLinkEnd(item.to)}
+        onPointerEnter={() => prefetchRoute(item.to)}
         aria-label={iconOnly ? item.label : undefined}
         data-sidebar-tip={iconOnly ? item.label : undefined}
         data-testid={navTestId(item.label)}
@@ -505,6 +536,7 @@ export function Layout() {
           <NavLink
             to={DASHBOARD_ITEM.to}
             end
+            onPointerEnter={() => prefetchRoute(DASHBOARD_ITEM.to)}
             aria-label={iconOnly ? DASHBOARD_ITEM.label : undefined}
             data-sidebar-tip={iconOnly ? DASHBOARD_ITEM.label : undefined}
             data-testid={navTestId(DASHBOARD_ITEM.label)}
