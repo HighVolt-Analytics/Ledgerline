@@ -44,6 +44,13 @@ _DETAIL_KEYS = (
     "min_route_confidence",
     "org_auto_route_min_confidence",
     "dt_min_route_confidence",
+    "method",
+    "rule_reason",
+    "vision_confidence",
+    "overridden_dt",
+    "overridden_dt_confidence",
+    "runner_up_code",
+    "runner_up_score",
 )
 
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Invoice } from "@/api/types";
 import {
   canShowApproveOnBoard,
+  canShowConfirmOnBoard,
   canShowRejectOnApprovedBoard,
   canShowReprocessOnBoard,
   columnForInvoice,
@@ -147,7 +148,7 @@ describe("isPreClassificationReview and approve visibility", () => {
     ).toBe(false);
   });
 
-  it("hides approve on Review and Rejected, shows on Processing only", () => {
+  it("hides confirm on Review and Rejected, shows on Processing only", () => {
     const reviewInv = inv(1, "exception", {
       evaluation_status: "awaiting_classification",
     });
@@ -156,21 +157,33 @@ describe("isPreClassificationReview and approve visibility", () => {
       document_type_code: "DT-03",
     });
     const rejectedInv = inv(3, "rejected");
-    expect(canShowApproveOnBoard(reviewInv, "pending")).toBe(false);
-    expect(canShowApproveOnBoard(procInv, "awaiting")).toBe(true);
-    expect(canShowApproveOnBoard(rejectedInv, "rejected")).toBe(false);
+    expect(canShowConfirmOnBoard(reviewInv, "pending")).toBe(false);
+    expect(canShowConfirmOnBoard(procInv, "awaiting")).toBe(true);
+    expect(canShowApproveOnBoard(procInv, "awaiting")).toBe(false);
+    expect(canShowConfirmOnBoard(rejectedInv, "rejected")).toBe(false);
   });
 
-  it("shows approve for vision_header_review in Processing, not for vault-terminal", () => {
+  it("shows confirm for vision_header_review in Processing, not for vault-terminal", () => {
     const headerReview = inv(10, "exception", {
       evaluation_status: "vision_header_review",
       document_type_code: "DT-07",
     });
     const vaulted = inv(11, "exception", { evaluation_status: "vision_vaulted" });
-    expect(canShowApproveOnBoard(headerReview, "awaiting")).toBe(true);
-    expect(canShowApproveOnBoard(headerReview, "pending")).toBe(false);
-    expect(canShowApproveOnBoard(vaulted, "awaiting")).toBe(false);
-    expect(canShowApproveOnBoard(vaulted, "approved")).toBe(false);
+    expect(canShowConfirmOnBoard(headerReview, "awaiting")).toBe(true);
+    expect(canShowApproveOnBoard(headerReview, "awaiting")).toBe(false);
+    expect(canShowConfirmOnBoard(headerReview, "pending")).toBe(false);
+    expect(canShowConfirmOnBoard(vaulted, "awaiting")).toBe(false);
+    expect(canShowConfirmOnBoard(vaulted, "approved")).toBe(false);
+  });
+
+  it("shows Approve only when the document is waiting on policy approval", () => {
+    const held = inv(12, "exception", {
+      evaluation_status: "pending_approval",
+      document_type_code: "DT-05",
+    });
+    expect(canShowConfirmOnBoard(held, "awaiting")).toBe(true);
+    expect(canShowApproveOnBoard(held, "awaiting")).toBe(true);
+    expect(canShowApproveOnBoard(held, "pending")).toBe(false);
   });
 
   it("shows reprocess only for rejected status with stored file on Rejected column", () => {

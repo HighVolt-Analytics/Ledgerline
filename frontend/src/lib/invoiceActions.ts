@@ -6,6 +6,7 @@ import type {
   InvoiceUpdatePayload,
   PaymentApi,
 } from "@/api/types";
+import { isPendingApprovalEvaluation } from "@/lib/invoice";
 import {
   approvalChainProgressLabel,
   invoiceHasPendingQuorum,
@@ -79,8 +80,15 @@ export function canReprocessInvoice(status: string): boolean {
   );
 }
 
+/** Request approval / more info — not for posted docs or items already in the queue. */
 export function canRequestInfo(status: string): boolean {
+  if (status === "processed") return false;
   return !(APPROVAL_QUEUE_STATUSES as readonly string[]).includes(status);
+}
+
+/** Manager sign-off from the drawer — only when policy has already held the document. */
+export function canManagerApproveFromDrawer(inv: Invoice): boolean {
+  return canApproveFromDrawer(inv) && isPendingApprovalEvaluation(inv.evaluation_status);
 }
 
 export function validateInvoiceFieldsForApproval(
@@ -351,8 +359,39 @@ export type ApproveAndProcessResult = {
   collection?: CollectionApi;
   /** True when more distinct pool approvers are still required. */
   awaitingQuorum?: boolean;
+  /** True when document-type / team-expense policy is holding for a manager. */
+  awaitingApproval?: boolean;
   quorumLabel?: string | null;
 };
+
+async function settlementAfterProcessed(
+  invoice: InvoiceDetails,
+  invoiceId: number
+): Promise<Pick<ApproveAndProcessResult, "payment" | "collection">> {
+  const settlement = postApprovalSettlement(invoice);
+  let payment: PaymentApi | undefined;
+  let collection: CollectionApi | undefined;
+
+  if (settlement === "payment") {
+    const payments = await api.listPayments(undefined, { fresh: true });
+    payment = payments.find((row) => row.invoice_id === invoiceId);
+    if (!payment) {
+      throw new Error(
+        "Invoice processed but no payment row was created. If this is a supplier invoice, confirm vendor, total, and due date are present."
+      );
+    }
+  } else if (settlement === "collection") {
+    const collections = await api.listCollections({ fresh: true });
+    collection = collections.find((row) => row.invoice_id === invoiceId);
+    if (!collection) {
+      throw new Error(
+        "Invoice processed but no collection row was created. Confirm customer, total, and due date are present."
+      );
+    }
+  }
+
+  return { payment, collection };
+}
 
 export async function approveAndProcess(
   invoiceId: number,
@@ -382,29 +421,49 @@ export async function approveAndProcess(
     throw new Error(approvalFailureMessage(invoice));
   }
 
-  const settlement = postApprovalSettlement(invoice);
-  let payment: PaymentApi | undefined;
-  let collection: CollectionApi | undefined;
+  const extra = await settlementAfterProcessed(invoice, invoiceId);
+  return { invoice, ...extra };
+}
 
-  if (settlement === "payment") {
-    const payments = await api.listPayments(undefined, { fresh: true });
-    payment = payments.find((row) => row.invoice_id === invoiceId);
-    if (!payment) {
-      throw new Error(
-        "Invoice processed but no payment row was created. If this is a supplier invoice, confirm vendor, total, and due date are present."
-      );
+/** Confirm saved fields and continue the pipeline without counting as manager approval. */
+export async function confirmAndProcess(
+  invoiceId: number,
+  refresh: () => Promise<void>,
+  pendingEdits?: InvoiceUpdatePayload
+): Promise<ApproveAndProcessResult> {
+  if (pendingEdits) {
+    await api.updateInvoice(invoiceId, pendingEdits);
+  }
+  const queued = await api.confirmProcess(invoiceId);
+  await refresh();
+
+  const queuedSettled = !PIPELINE_ACTIVE.has(queued.status);
+  if (queuedSettled) {
+    const invoice = (await api.getInvoice(invoiceId, { fresh: true })) as InvoiceDetails;
+    if (isPendingApprovalEvaluation(invoice.evaluation_status)) {
+      return { invoice, awaitingApproval: true };
     }
-  } else if (settlement === "collection") {
-    const collections = await api.listCollections({ fresh: true });
-    collection = collections.find((row) => row.invoice_id === invoiceId);
-    if (!collection) {
-      throw new Error(
-        "Invoice processed but no collection row was created. Confirm customer, total, and due date are present."
-      );
+    if (invoice.status === "processed") {
+      const extra = await settlementAfterProcessed(invoice, invoiceId);
+      return { invoice, ...extra };
     }
+    throw new Error(approvalFailureMessage(invoice));
   }
 
-  return { invoice, payment, collection };
+  await watchInvoiceUntilSettled(invoiceId, refresh, PROCESSING_TIMEOUT_MS, {
+    requirePipelineObserved: true,
+  });
+
+  const invoice = await api.getInvoice(invoiceId, { fresh: true });
+  if (isPendingApprovalEvaluation(invoice.evaluation_status)) {
+    return { invoice, awaitingApproval: true };
+  }
+  if (invoice.status !== "processed") {
+    throw new Error(approvalFailureMessage(invoice));
+  }
+
+  const extra = await settlementAfterProcessed(invoice, invoiceId);
+  return { invoice, ...extra };
 }
 
 /** Confirm document type and re-run the pipeline, polling until settled. */

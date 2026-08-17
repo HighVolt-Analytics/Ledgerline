@@ -23,6 +23,7 @@ from app.services.rule_book.rule_book_mapper import (
 )
 from app.schemas.rule_book_config import (
     TEAM_EXPENSE_KIND_ADVANCE,
+    TEAM_EXPENSE_KIND_DIRECT,
     normalize_team_expense_kind,
 )
 
@@ -175,6 +176,8 @@ def _team_expense_entries(
         )
 
     net_advance = claim_advance_net_amount(total, advance_available)
+    if kind == TEAM_EXPENSE_KIND_DIRECT:
+        net_advance = Decimal("0")
     settle_credit = _quantize_money(total - net_advance)
     if net_advance > 0:
         lines.append(
@@ -227,9 +230,10 @@ def _line_effective_amount_groups(
             continue
         if amount == 0:
             continue
+        line_parent = (getattr(line, "parent_ledger", None) or "").strip() or parent
         name = effective_line_ledger(
             sub_ledger=getattr(line, "sub_ledger", None),
-            parent_ledger=parent,
+            parent_ledger=line_parent,
         )
         if not name:
             name = parent
@@ -527,9 +531,9 @@ def get_unresolved_control_accounts(
         if kind == TEAM_EXPENSE_KIND_ADVANCE:
             if not parent_ok and not _invoice_has_team_advance_ledger(invoice, config):
                 unresolved.append("staff_advance_account")
-        elif not parent_ok:
+        elif kind != TEAM_EXPENSE_KIND_DIRECT and not parent_ok:
             unresolved.append("staff_advance_account")
-        if kind != TEAM_EXPENSE_KIND_ADVANCE and not category_resolved_in_coa(
+        if kind not in {TEAM_EXPENSE_KIND_ADVANCE} and not category_resolved_in_coa(
             config.posting_defaults.tax_account, config
         ):
             unresolved.append("tax_account")

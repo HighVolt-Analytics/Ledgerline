@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import {
+  Check,
   Clock,
   FileText,
   Pencil,
@@ -59,8 +60,10 @@ import { cn } from "@/lib/cn";
 import {
   approveAndProcess,
   canApproveFromDrawer,
+  canManagerApproveFromDrawer,
   canRejectClaim,
   canRequestInfo,
+  confirmAndProcess,
   invoiceCanAttemptReprocess,
   reprocessAndWatch,
   resolveClassificationAndWatch,
@@ -477,6 +480,7 @@ type LineItemDraft = {
   qty: string;
   unit_price: string;
   amount: string;
+  parent_ledger: string;
   sub_ledger: string;
 };
 
@@ -553,6 +557,7 @@ function draftFromInvoice(inv: InvoiceDetails, extractionFieldKeys: string[] = [
       qty: strField(line.qty),
       unit_price: strField(line.unit_price),
       amount: strField(line.amount),
+      parent_ledger: strField(line.parent_ledger),
       sub_ledger: strField(line.sub_ledger),
     })),
     skip_steps: skipStepsFromInvoice(inv.processing_overrides),
@@ -561,7 +566,7 @@ function draftFromInvoice(inv: InvoiceDetails, extractionFieldKeys: string[] = [
 }
 
 function emptyLineItem(): LineItemDraft {
-  return { description: "", qty: "", unit_price: "", amount: "", sub_ledger: "" };
+  return { description: "", qty: "", unit_price: "", amount: "", parent_ledger: "", sub_ledger: "" };
 }
 
 function mapDraftLineItems(inv: InvoiceDetails, draft: InvoiceEditDraft): LineItem[] {
@@ -573,6 +578,7 @@ function mapDraftLineItems(inv: InvoiceDetails, draft: InvoiceEditDraft): LineIt
     unit_price: line.unit_price || null,
     amount: line.amount || null,
     tax_amount: null,
+    parent_ledger: line.parent_ledger || null,
     sub_ledger: line.sub_ledger || null,
   }));
 }
@@ -697,14 +703,15 @@ function LineItemsDrawerGrid({
                       unit_price: line.unit_price,
                       amount: line.amount,
                       tax_amount: null,
+                      parent_ledger: line.parent_ledger || null,
                       sub_ledger: line.sub_ledger || null,
                     }}
                     parentLedger={parentLedger}
                     postingApplies={postingApplies}
                     editable
-                    onSubLedgerChange={(sub_ledger) => {
+                    onGlChange={({ parent_ledger, sub_ledger }) => {
                       const next = [...draftItems];
-                      next[index] = { ...line, sub_ledger };
+                      next[index] = { ...line, parent_ledger, sub_ledger };
                       onDraftChange(next);
                     }}
                   />
@@ -815,7 +822,9 @@ function payloadFromDraft(draft: InvoiceEditDraft, inv?: InvoiceDetails): Invoic
       unit_price: optionalText(line.unit_price),
       amount: optionalText(line.amount),
       sub_ledger: optionalText(line.sub_ledger),
-      gl_mapping_source: line.sub_ledger.trim() ? "manual" : undefined,
+      parent_ledger: optionalText(line.parent_ledger),
+      gl_mapping_source:
+        line.sub_ledger.trim() || line.parent_ledger.trim() ? "manual" : undefined,
     })),
   };
   const overridesPatch = inv
@@ -1624,6 +1633,68 @@ export function InvoiceDetailDrawer({
     }
   }
 
+  async function handleConfirmAndProcess() {
+    if (!inv) return;
+    const targetId = inv.id;
+    const fresh = await api.getInvoice(targetId, { fresh: true });
+    if (!isStillViewing(targetId)) return;
+    setInv(fresh);
+    if (!canApproveFromDrawer(fresh)) {
+      alert(
+        fresh.status === "processed"
+          ? "This invoice is already processed. Use Reprocess to run the pipeline again."
+          : fresh.status === "rejected" || fresh.status === "duplicate_skipped"
+            ? "Rejected documents must be reprocessed from the Rejected column."
+            : "This invoice is not in the review queue."
+      );
+      return;
+    }
+    if (!fresh.has_stored_file) {
+      alert("Upload a PDF before confirming this invoice.");
+      return;
+    }
+
+    const fieldCheck = validateInvoiceReadyForApproval(
+      inv,
+      ruleBook?.documentTypes,
+      approvalFieldsFromDraftOrInvoice()
+    );
+    if (!fieldCheck.ok) {
+      alert(fieldCheck.message);
+      return;
+    }
+
+    const pendingEdits = draft ? payloadFromDraft(draft, fresh) : undefined;
+
+    pipelineBusyIdRef.current = targetId;
+    setActionBusy(true);
+    onPipelineStart?.(fresh);
+    try {
+      const result = await confirmAndProcess(
+        targetId,
+        async () => {
+          onUpdated?.();
+          await reloadInvoice(targetId);
+        },
+        pendingEdits
+      );
+      onUpdated?.();
+      if (!isStillViewing(targetId)) return;
+      if (pendingEdits) {
+        setEditing(false);
+        setDraft(null);
+      }
+      setInv(result.invoice);
+      onClose();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Confirm & process failed");
+    } finally {
+      if (pipelineBusyIdRef.current === targetId) pipelineBusyIdRef.current = null;
+      onPipelineEnd?.(targetId);
+      setActionBusy(false);
+    }
+  }
+
   async function handleApproveAndProcess() {
     if (!inv) return;
     const targetId = inv.id;
@@ -2355,7 +2426,7 @@ export function InvoiceDetailDrawer({
                         size="sm"
                         data-testid="button-approve-process"
                         disabled={actionBusy || !inv.has_stored_file}
-                        onClick={() => void handleApproveAndProcess()}
+                        onClick={() => void handleConfirmAndProcess()}
                       >
                         <Send className="h-4 w-4 mr-1" />
                         Confirm &amp; process
@@ -2400,25 +2471,39 @@ export function InvoiceDetailDrawer({
                         Edit
                       </Button>
                     )}
+                    {canRequestInfo(inv.status) && (
                     <Button
                       variant="outline"
                       size="sm"
                       data-testid="button-request-approval"
-                      disabled={actionBusy || !canRequestInfo(inv.status)}
+                      disabled={actionBusy}
                       onClick={() => void handleRequestApproval()}
                     >
                       <Clock className="h-4 w-4 mr-1" />
                       Request approval
                     </Button>
+                    )}
                     {canApproveFromDrawer(inv) && (
                       <Button
+                        variant={canManagerApproveFromDrawer(inv) ? "outline" : "default"}
                         size="sm"
                         data-testid="button-approve-process"
                         disabled={actionBusy || !inv.has_stored_file}
-                        onClick={() => void handleApproveAndProcess()}
+                        onClick={() => void handleConfirmAndProcess()}
                       >
                         <Send className="h-4 w-4 mr-1" />
                         Confirm &amp; process
+                      </Button>
+                    )}
+                    {canManagerApproveFromDrawer(inv) && (
+                      <Button
+                        size="sm"
+                        data-testid="button-manager-approve"
+                        disabled={actionBusy || !inv.has_stored_file}
+                        onClick={() => void handleApproveAndProcess()}
+                      >
+                        <Check className="h-4 w-4 mr-1" />
+                        Approve
                       </Button>
                     )}
                     {invoiceCanPublishToLedger(inv) && (

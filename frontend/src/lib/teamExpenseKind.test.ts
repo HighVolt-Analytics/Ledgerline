@@ -6,11 +6,12 @@ import {
 } from "./teamExpenseKind";
 
 describe("teamExpenseKind reconcile", () => {
-  it("infers claim and advance from titles", () => {
+  it("infers claim, advance, and direct payment from titles", () => {
     expect(inferTeamExpenseKindFromLabels("Employee expense claim")).toBe("expense_claim");
     expect(inferTeamExpenseKindFromLabels("Employee advance request")).toBe(
       "advance_requisition"
     );
+    expect(inferTeamExpenseKindFromLabels("Payment Voucher")).toBe("direct_payment");
   });
 
   it("lets clear titles win over swapped pins", () => {

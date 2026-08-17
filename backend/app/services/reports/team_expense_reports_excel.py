@@ -500,6 +500,7 @@ def _kind_label(kind: str) -> str:
     mapping = {
         "advance_requisition": "Advance requisition",
         "expense_claim": "Expense claim",
+        "direct_payment": "Direct payment",
         # Legacy stored value — display as claim.
         "expense_against_advance": "Expense claim",
     }
@@ -511,6 +512,8 @@ def _finance_role(kind: str) -> str:
     token = (kind or "").strip().lower()
     if token == "advance_requisition":
         return "Balance-sheet float (no GL budget)"
+    if token == "direct_payment":
+        return "Company direct spend (no GL budget / no advance netting)"
     return "P&L / GL budget spend"
 
 

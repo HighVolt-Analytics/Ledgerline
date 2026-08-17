@@ -15,6 +15,7 @@ from app.models.tenant import Tenant
 from app.schemas.master_data import EmployeeMasterResponse
 from app.schemas.rule_book_config import (
     TEAM_EXPENSE_KIND_ADVANCE,
+    TEAM_EXPENSE_KIND_DIRECT,
     RuleBookConfigPayload,
     TeamExpenseRule,
     normalize_team_expense_kind,
@@ -326,11 +327,14 @@ def vr_te08_department_budget(
     Budget is always checked against the full claim amount (not cash after netting).
     """
     _ = (employee, department)
-    if normalize_team_expense_kind(team_expense_kind) == TEAM_EXPENSE_KIND_ADVANCE:
+    if normalize_team_expense_kind(team_expense_kind) in {
+        TEAM_EXPENSE_KIND_ADVANCE,
+        TEAM_EXPENSE_KIND_DIRECT,
+    }:
         return ValidationResult(
             "VR-TE08",
             True,
-            "GL budget skipped — advance requisition is float, not GL spend",
+            "GL budget skipped — advance requisition is float; direct payment is company spend",
             skipped=True,
         )
     if amount is None:

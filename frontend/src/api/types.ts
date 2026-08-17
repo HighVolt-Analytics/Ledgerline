@@ -465,6 +465,7 @@ export interface LineItemUpdatePayload {
   amount?: string | null;
   tax_amount?: string | null;
   sub_ledger?: string | null;
+  parent_ledger?: string | null;
   gl_mapping_source?: string | null;
   gl_mapping_confidence?: number | null;
   gl_mapping_reason?: string | null;

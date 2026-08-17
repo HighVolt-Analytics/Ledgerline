@@ -195,6 +195,34 @@ def test_missing_kind_defaults_to_expense_claim() -> None:
     ]
 
 
+def test_direct_payment_credits_settlement_without_advance_netting() -> None:
+    config = _config()
+    lines = generate_entries(
+        _invoice("direct_payment"),
+        AccountMapping("6100", "Travel Expense"),
+        config=config,
+        control_mapping=_employee_mapping(config),
+        advance_available=Decimal("500"),
+    )
+
+    assert is_balanced(lines)
+    credits = [ln for ln in lines if ln.credit > 0]
+    assert len(credits) == 1
+    assert credits[0].account_name == "Bank Account"
+    assert credits[0].credit == Decimal("1100")
+    assert all(ln.account_name != "Marcus Webb" for ln in lines if ln.credit > 0)
+
+
+def test_direct_payment_skips_staff_advance_control_gate() -> None:
+    config = _config()
+    config.team_expense_posting.default_advance_parent_ledger = ""
+    unresolved = get_unresolved_control_accounts(
+        invoice=_invoice("direct_payment"),
+        config=config,
+    )
+    assert "staff_advance_account" not in unresolved
+
+
 @pytest.mark.parametrize(
     "value,expected",
     [
@@ -203,6 +231,7 @@ def test_missing_kind_defaults_to_expense_claim() -> None:
         ("nonsense", "expense_claim"),
         ("Advance_Requisition", "advance_requisition"),
         ("expense_against_advance", "expense_claim"),
+        ("direct_payment", "direct_payment"),
     ],
 )
 def test_normalize_team_expense_kind(value: str | None, expected: str) -> None:

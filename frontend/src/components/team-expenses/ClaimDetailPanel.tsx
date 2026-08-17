@@ -227,15 +227,17 @@ export function ClaimDetailPanel({
         >
           <X className="h-4 w-4 mr-1" /> Reject with reason
         </Button>
+        {canRequestInfo ? (
         <Button
           size="sm"
           variant="outline"
-          disabled={busy || !canRequestInfo}
+          disabled={busy}
           onClick={() => void onRequestInfo()}
           data-testid="button-info-claim"
         >
           <HelpCircle className="h-4 w-4 mr-1" /> Request more info
         </Button>
+        ) : null}
       </div>
 
       <DocumentAuditTrail

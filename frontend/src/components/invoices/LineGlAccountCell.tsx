@@ -1,4 +1,3 @@
-import { useEffect, useMemo, useState } from "react";
 import { Sparkles } from "lucide-react";
 
 import type { LineItem } from "@/api/types";
@@ -7,7 +6,6 @@ import { Select } from "@/components/ui/select";
 import { useChartOfAccounts } from "@/hooks/useChartOfAccounts";
 import {
   coaAccountsToSelectOptions,
-  ledgerExistsInCoa,
   ledgerHasSubLedgerCatalog,
   mergeCoaOptionsWithSavedValue,
   subLedgerExistsInCoa,
@@ -17,14 +15,19 @@ import {
   effectiveLineLedger,
   lineGlMappingReason,
   lineSubLedgerRequired,
-  suggestLineSubLedger,
+  resolveLineGlSelection,
 } from "@/lib/lineGlAccount";
+
+export type LineGlChange = {
+  parent_ledger: string;
+  sub_ledger: string;
+};
 
 type LineGlAccountCellProps = {
   line: LineItem;
   parentLedger: string;
   postingApplies: boolean;
-  onSubLedgerChange?: (subLedger: string) => void;
+  onGlChange?: (next: LineGlChange) => void;
   editable?: boolean;
 };
 
@@ -32,53 +35,20 @@ export function LineGlAccountCell({
   line,
   parentLedger,
   postingApplies,
-  onSubLedgerChange,
+  onGlChange,
   editable = false,
 }: LineGlAccountCellProps) {
   const { data: accounts = [] } = useChartOfAccounts();
-  const fallbackMainLedger = line.parent_ledger?.trim() || parentLedger.trim();
-  const initialSubLedger = line.sub_ledger?.trim() ?? "";
-  const inferredMainFromSaved =
-    initialSubLedger && ledgerExistsInCoa(initialSubLedger, accounts) ? initialSubLedger : "";
-  const [mainLedger, setMainLedger] = useState(fallbackMainLedger || inferredMainFromSaved);
-  const hasCatalog = ledgerHasSubLedgerCatalog(mainLedger, accounts);
-  const required = lineSubLedgerRequired(line, mainLedger || parentLedger, accounts);
-  const suggested = useMemo(
-    () => suggestLineSubLedger(line, accounts, mainLedger || parentLedger),
-    [accounts, line, mainLedger, parentLedger]
-  );
-  const [subLedger, setSubLedger] = useState(initialSubLedger || suggested);
+  const { mainLedger, subLedger } = resolveLineGlSelection(line, parentLedger, accounts);
+  const hasCatalog = ledgerHasSubLedgerCatalog(mainLedger || parentLedger, accounts);
+  const required = lineSubLedgerRequired({ sub_ledger: subLedger }, mainLedger || parentLedger, accounts);
 
-  useEffect(() => {
-    const parent = line.parent_ledger?.trim() || parentLedger.trim();
-    const saved = line.sub_ledger?.trim() ?? "";
-    const savedIsMainLedger = saved ? ledgerExistsInCoa(saved, accounts) : false;
-    const nextMain = parent || (savedIsMainLedger ? saved : "");
-    const nextHasCatalog = ledgerHasSubLedgerCatalog(nextMain, accounts);
-    const nextSub = nextHasCatalog && savedIsMainLedger ? "" : saved || suggested;
-    setMainLedger(nextMain);
-    setSubLedger(nextSub);
-  }, [accounts, line.parent_ledger, line.sub_ledger, line.id, parentLedger, suggested]);
-
-  const mainOptions = useMemo(
-    () =>
-      coaAccountsToSelectOptions(accounts, {
-        includeEmpty: true,
-        emptyLabel: "— Select main GL —",
-      }),
-    [accounts]
-  );
-
-  const subLedgerOptions = useMemo(
-    () =>
-      mergeCoaOptionsWithSavedValue(
-        coaAccountsToSelectOptions(accounts, {
-          includeEmpty: true,
-          emptyLabel: required ? "— Select GL —" : "— Optional —",
-        }),
-        subLedger
-      ),
-    [accounts, required, subLedger]
+  const mainOptions = mergeCoaOptionsWithSavedValue(
+    coaAccountsToSelectOptions(accounts, {
+      includeEmpty: true,
+      emptyLabel: "— Select main GL —",
+    }),
+    mainLedger
   );
 
   if (!postingApplies) {
@@ -90,31 +60,20 @@ export function LineGlAccountCell({
   const reason = lineGlMappingReason(line, parentLedger, hasCatalog);
   const displayLedger = effectiveLineLedger(line, parentLedger);
 
-  // Editable: first pick main GL, then optional/required sub-GL under that main.
-  if (editable && onSubLedgerChange) {
+  if (editable && onGlChange) {
     const hasSubForCurrentMain = ledgerHasSubLedgerCatalog(mainLedger, accounts);
     const subInMainCatalog = subLedgerExistsInCoa(mainLedger, subLedger, accounts);
-    const renderedSubLedger = hasSubForCurrentMain ? (subInMainCatalog ? subLedger : "") : subLedger;
-    const mainOrSubValue = hasSubForCurrentMain ? renderedSubLedger : mainLedger;
+    const renderedSubLedger = hasSubForCurrentMain ? (subInMainCatalog ? subLedger : "") : "";
     return (
       <div className={cn(required && hasSubForCurrentMain && "rounded-md ring-1 ring-destructive/40 p-1")}>
         <p className="text-[10px] text-muted-foreground mb-1">Main GL</p>
         <Select
           value={mainLedger}
           onValueChange={(value) => {
-            setMainLedger(value);
-            if (!value) {
-              setSubLedger("");
-              onSubLedgerChange("");
-              return;
-            }
-            if (ledgerHasSubLedgerCatalog(value, accounts)) {
-              setSubLedger("");
-              onSubLedgerChange("");
-              return;
-            }
-            setSubLedger(value);
-            onSubLedgerChange(value);
+            onGlChange({
+              parent_ledger: value,
+              sub_ledger: "",
+            });
           }}
           options={mainOptions}
           className="invoice-drawer-gl-select w-full"
@@ -127,8 +86,10 @@ export function LineGlAccountCell({
             ledger={mainLedger}
             value={renderedSubLedger}
             onChange={(value) => {
-              setSubLedger(value);
-              onSubLedgerChange(value);
+              onGlChange({
+                parent_ledger: mainLedger,
+                sub_ledger: value,
+              });
             }}
             accounts={accounts}
             className="invoice-drawer-gl-select w-full"
@@ -139,15 +100,13 @@ export function LineGlAccountCell({
           />
         ) : (
           <Select
-            value={mainOrSubValue}
-            onValueChange={(value) => {
-              setSubLedger(value);
-              onSubLedgerChange(value);
-            }}
-            options={subLedgerOptions}
+            value=""
+            onValueChange={() => undefined}
+            options={[{ value: "", label: mainLedger ? "No sub-GL catalogue" : "Select main GL first" }]}
             className="invoice-drawer-gl-select w-full"
             data-testid="invoice-sub-gl-select"
             size="sm"
+            disabled
           />
         )}
         <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground min-w-0">
@@ -162,7 +121,7 @@ export function LineGlAccountCell({
     );
   }
 
-  if (!parentLedger.trim()) {
+  if (!parentLedger.trim() && !mainLedger.trim()) {
     return (
       <span className="text-xs text-muted-foreground">Configure document type Post to ledger</span>
     );
@@ -184,8 +143,8 @@ export function LineGlAccountCell({
 
   return (
     <div className={cn(required && "rounded-md ring-1 ring-destructive/40 p-1")}>
-      <p className="text-[10px] text-muted-foreground mb-1 truncate" title={parentLedger}>
-        {parentLedger}
+      <p className="text-[10px] text-muted-foreground mb-1 truncate" title={mainLedger || parentLedger}>
+        {mainLedger || parentLedger}
       </p>
       <span
         className={cn(
@@ -198,7 +157,7 @@ export function LineGlAccountCell({
       <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground min-w-0">
         <Sparkles className="h-3 w-3 text-primary shrink-0" />
         <span className="truncate">
-          {required ? "Pick a sub-ledger under the document-type ledger to post" : reason}
+          {required ? "Pick a sub-ledger under the selected main GL to post" : reason}
         </span>
       </div>
     </div>

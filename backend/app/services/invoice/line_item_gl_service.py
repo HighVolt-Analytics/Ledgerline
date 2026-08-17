@@ -68,24 +68,21 @@ def effective_line_ledger(*, sub_ledger: str | None, parent_ledger: str) -> str:
     return parent_ledger.strip()
 
 
-def resolve_effective_ledger_mapping(
+def _mapping_for_nested_sub(
     *,
     parent_ledger: str,
-    effective_ledger: str,
+    sub_name: str,
     config: RuleBookConfigPayload,
-) -> "AccountMapping":
-    """Map parent or nested sub-ledger name to a journal AccountMapping."""
+) -> "AccountMapping | None":
     from app.services.master_data.chart_of_accounts_service import sub_ledgers_for_ledger
     from app.services.rule_book.account_mapper import AccountMapping, resolve_category_for_config
 
+    needle = (sub_name or "").strip().lower()
+    if not needle:
+        return None
     parent = resolve_category_for_config(parent_ledger, config)
-    eff = (effective_ledger or "").strip()
-    parent_name = (parent.account_name or "").strip()
-    if not eff or eff.lower() == parent_name.lower():
-        return parent
-
     for sub in sub_ledgers_for_ledger(parent_ledger, list(config.chart_of_accounts or [])):
-        if sub.name.strip().lower() == eff.lower():
+        if sub.name.strip().lower() == needle:
             sub_code = (sub.code or "").strip()
             account_code = (
                 f"{parent.account_code}-{sub_code}" if sub_code else parent.account_code
@@ -95,6 +92,44 @@ def resolve_effective_ledger_mapping(
                 sub.name.strip(),
                 expense_category=sub.name.strip(),
             )
+    return None
+
+
+def resolve_effective_ledger_mapping(
+    *,
+    parent_ledger: str,
+    effective_ledger: str,
+    config: RuleBookConfigPayload,
+) -> "AccountMapping":
+    """Map parent or nested sub-ledger name to a journal AccountMapping."""
+    from app.services.master_data.chart_of_accounts_service import parent_ledger_for_account
+    from app.services.rule_book.account_mapper import resolve_category_for_config
+
+    parent = resolve_category_for_config(parent_ledger, config)
+    eff = (effective_ledger or "").strip()
+    parent_name = (parent.account_name or "").strip()
+    if not eff or eff.lower() == parent_name.lower():
+        return parent
+
+    nested = _mapping_for_nested_sub(
+        parent_ledger=parent_ledger, sub_name=eff, config=config
+    )
+    if nested is not None:
+        return nested
+
+    accounts = list(config.chart_of_accounts or [])
+    inferred_parent = parent_ledger_for_account(eff, accounts)
+    if inferred_parent:
+        if inferred_parent.lower() == eff.lower():
+            flat_main = resolve_category_for_config(eff, config)
+            if (flat_main.account_code or "").strip() not in {"", "9999"}:
+                return flat_main
+        elif inferred_parent.lower() != parent_name.lower():
+            nested_other = _mapping_for_nested_sub(
+                parent_ledger=inferred_parent, sub_name=eff, config=config
+            )
+            if nested_other is not None:
+                return nested_other
 
     flat = resolve_category_for_config(eff, config)
     if (flat.account_code or "").strip() not in {"", "9999"}:
@@ -102,13 +137,22 @@ def resolve_effective_ledger_mapping(
     return parent
 
 
+def resolve_line_parent_ledger(line: LineItem, *, fallback: str) -> str:
+    stored = (getattr(line, "parent_ledger", None) or "").strip()
+    if stored:
+        return stored
+    return (fallback or "").strip()
+
+
 def build_line_item_response(
     line: LineItem,
     *,
     parent_ledger: str,
 ) -> LineItemResponse:
-    parent = parent_ledger.strip()
+    parent = resolve_line_parent_ledger(line, fallback=parent_ledger)
     sub = (line.sub_ledger or "").strip() or None
+    if sub and sub.lower() == parent.lower():
+        sub = None
     confidence = line.gl_mapping_confidence
     return LineItemResponse(
         id=line.id,
@@ -220,6 +264,8 @@ def missing_line_sub_ledger_indexes(invoice: Invoice) -> list[int]:
         index
         for index, line in enumerate(getattr(invoice, "line_items", None) or [])
         if not (getattr(line, "sub_ledger", None) or "").strip()
+        or (getattr(line, "sub_ledger", None) or "").strip().lower()
+        == (getattr(line, "parent_ledger", None) or "").strip().lower()
     ]
 
 
@@ -227,9 +273,29 @@ def line_sub_ledger_review_required(
     invoice: Invoice,
     config: RuleBookConfigPayload,
 ) -> bool:
-    if not line_sub_ledger_gate_applies(invoice, config):
+    if not line_gl_mapping_applicable(invoice, config):
         return False
-    return bool(missing_line_sub_ledger_indexes(invoice))
+    if _is_team_expense_invoice(invoice, config):
+        return False
+    if not getattr(invoice, "line_items", None):
+        return False
+    fallback = resolve_parent_ledger(invoice, config)
+    if not fallback:
+        return False
+    from app.services.extraction.llm_coa_catalogue import (
+        parent_ledger_has_sub_ledger_catalogue,
+    )
+
+    accounts = list(config.chart_of_accounts or [])
+    for line in invoice.line_items:
+        parent = resolve_line_parent_ledger(line, fallback=fallback)
+        if not parent or not parent_ledger_has_sub_ledger_catalogue(parent, accounts):
+            continue
+        saved = (getattr(line, "sub_ledger", None) or "").strip()
+        if saved and saved.lower() != parent.lower():
+            continue
+        return True
+    return False
 
 
 def validate_sub_ledger_for_parent(
@@ -251,8 +317,11 @@ def apply_sub_ledger_to_line(
     source: str,
     confidence: Decimal | float | None = None,
     reason: str | None = None,
+    parent_ledger: str | None = None,
 ) -> None:
     line.sub_ledger = (sub_ledger or "").strip() or None
+    if parent_ledger is not None:
+        line.parent_ledger = (parent_ledger or "").strip() or None
     line.gl_mapping_source = source
     line.gl_mapping_confidence = plausible_confidence(confidence)
     line.gl_mapping_reason = (reason or "").strip() or None

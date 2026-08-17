@@ -192,6 +192,64 @@ def test_purchase_journal_splits_by_line_sub_ledger() -> None:
     }
 
 
+def test_purchase_journal_uses_line_parent_ledger_override() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        invoice_date=date(2026, 4, 3),
+        subtotal=Decimal("300"),
+        gst=Decimal("30"),
+        total=Decimal("330"),
+        status=InvoiceStatus.JOURNALING,
+        currency="AUD",
+        account_name="Cloud Hosting Expense",
+    )
+    inv.line_items = [
+        LineItem(
+            tenant_id=TESTING_TENANT_UUID,
+            description="Hotel",
+            amount=Decimal("200"),
+            parent_ledger="Travel Expense",
+            sub_ledger="Hotel",
+        ),
+        LineItem(
+            tenant_id=TESTING_TENANT_UUID,
+            description="Office",
+            amount=Decimal("100"),
+            parent_ledger="Operating Expenses",
+            sub_ledger=None,
+        ),
+    ]
+    config = RuleBookConfigPayload(
+        posting_defaults=PostingDefaults(),
+        chart_of_accounts=[
+            ChartOfAccountEntry(
+                code="6110",
+                name="Cloud Hosting Expense",
+                type="Expense",
+                sub_ledgers=[{"code": "01", "name": "AWS Production"}],
+            ),
+            ChartOfAccountEntry(
+                code="6200",
+                name="Travel Expense",
+                type="Expense",
+                sub_ledgers=[{"code": "01", "name": "Hotel"}],
+            ),
+            ChartOfAccountEntry(code="6100", name="Operating Expenses", type="Expense"),
+            ChartOfAccountEntry(code="1400", name="Tax Paid", type="Asset"),
+            ChartOfAccountEntry(code="2000", name="Accounts Payable", type="Liability"),
+        ],
+    )
+    lines = generate_entries(
+        inv,
+        AccountMapping("6110", "Cloud Hosting Expense"),
+        config=config,
+    )
+    assert is_balanced(lines)
+    by_code = {ln.account_code: ln.debit for ln in lines if ln.debit > 0}
+    assert by_code["6200-01"] == Decimal("200")
+    assert by_code["6100"] == Decimal("100")
+
+
 def test_purchase_journal_residual_goes_to_parent() -> None:
     inv = Invoice(
         tenant_id=TESTING_TENANT_UUID,

@@ -6,6 +6,7 @@ import {
   lineGlMappingReason,
   lineGlSourceLabel,
   lineSubLedgerRequired,
+  resolveLineGlSelection,
   suggestLineSubLedger,
 } from "@/lib/lineGlAccount";
 
@@ -17,6 +18,15 @@ const coa: ChartOfAccountRow[] = [
     subLedgers: [
       { code: "01", name: "AWS Production" },
       { code: "02", name: "Azure Staging" },
+    ],
+  },
+  {
+    code: "6200",
+    name: "Travel Expense",
+    type: "Expense",
+    subLedgers: [
+      { code: "01", name: "Hotel" },
+      { code: "02", name: "Food" },
     ],
   },
   {
@@ -95,5 +105,35 @@ describe("lineGlAccount", () => {
       )
     ).toBe(false);
     expect(lineSubLedgerRequired(baseLine, "Operating Expenses", coa)).toBe(false);
+  });
+
+  it("keeps a selected main GL instead of snapping back to the document-type parent", () => {
+    expect(
+      resolveLineGlSelection(
+        { parent_ledger: "Operating Expenses", sub_ledger: null },
+        "Cloud Hosting Expense",
+        coa
+      )
+    ).toEqual({ mainLedger: "Operating Expenses", subLedger: "" });
+  });
+
+  it("keeps a selected sub-GL even when its name is a substring of a main GL", () => {
+    expect(
+      resolveLineGlSelection(
+        { parent_ledger: "Travel Expense", sub_ledger: "Hotel" },
+        "Cloud Hosting Expense",
+        coa
+      )
+    ).toEqual({ mainLedger: "Travel Expense", subLedger: "Hotel" });
+  });
+
+  it("infers main GL from a nested sub-GL when parent_ledger is the document type", () => {
+    expect(
+      resolveLineGlSelection(
+        { parent_ledger: "Cloud Hosting Expense", sub_ledger: "Hotel" },
+        "Cloud Hosting Expense",
+        coa
+      )
+    ).toEqual({ mainLedger: "Travel Expense", subLedger: "Hotel" });
   });
 });

@@ -45,6 +45,14 @@ export function teamExpensePostingPreview(
     };
   }
 
+  if (kind === "direct_payment") {
+    return {
+      debit: expense,
+      credit: settlement,
+      note: "Company direct spend — no advance netting.",
+    };
+  }
+
   const total = Number.isFinite(claimAmount) ? Math.max(0, claimAmount) : 0;
   const available = Number.isFinite(advanceAvailable) ? Math.max(0, advanceAvailable) : 0;
   const netAdvance = Math.min(total, available);

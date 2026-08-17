@@ -2416,6 +2416,9 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                     document_heading=invoice.document_heading,
                     canonical_document_type=fields.get(CANONICAL_DOCUMENT_TYPE_KEY),
                     document_type_code=invoice.document_type_code,
+                    vision_confidence=type_suggest.confidence,
+                    overridden_dt=dt_map.runner_up_code,
+                    overridden_dt_confidence=dt_map.runner_up_score,
                 ),
             )
             if not (invoice.document_type_code or "").strip() and not human_locked_dt:
@@ -2635,6 +2638,9 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                     document_heading=invoice.document_heading,
                     canonical_document_type=fields.get(CANONICAL_DOCUMENT_TYPE_KEY),
                     document_type_code=invoice.document_type_code,
+                    vision_confidence=getattr(header, "confidence", None),
+                    overridden_dt=dt_map.runner_up_code,
+                    overridden_dt_confidence=dt_map.runner_up_score,
                 ),
             )
             if not (invoice.document_type_code or "").strip() and not human_locked_dt:
@@ -2712,7 +2718,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             vision_should_continue_posting,
         )
         from app.services.purchase.team_expense_route_policy import (
-            ensure_team_expenses_document_type,
+            apply_employee_channel_team_expenses_route,
             should_force_team_expenses,
         )
         from app.services.extraction.line_item_extraction_policy import (
@@ -2724,8 +2730,9 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         # skips continue and force-TE never runs. Reuse the registry loaded for DT map.
         employees = te_employees
         if should_force_team_expenses(invoice, employees):
-            ensure_team_expenses_document_type(invoice, rb_config.document_types)
-            invoice.route_target = ROUTE_TEAM
+            apply_employee_channel_team_expenses_route(
+                invoice, rb_config.document_types, employees
+            )
             posting_defn = resolve_vision_posting_definition(invoice, rb_config)
             if (
                 (invoice.evaluation_status or "").strip() == EVAL_LINE_ITEMS_REVIEW

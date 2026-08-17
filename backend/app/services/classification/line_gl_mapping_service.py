@@ -330,6 +330,7 @@ async def apply_line_gl_mapping(
                 sub_ledger="",
                 source="main_gl",
                 reason="No sub-ledgers under parent — keep main GL",
+                parent_ledger=parent_ledger,
             )
         if is_te:
             _keep_main_gl_on_header(invoice, config, parent_ledger=parent_ledger)
@@ -405,6 +406,7 @@ async def apply_line_gl_mapping(
                     source="llm",
                     confidence=confidence,
                     reason=reasoning or "LLM sub-ledger suggestion",
+                    parent_ledger=parent_ledger,
                 )
                 applied += 1
                 continue
@@ -418,6 +420,7 @@ async def apply_line_gl_mapping(
                     source=source,
                     confidence=confidence,
                     reason=reasoning or reason,
+                    parent_ledger=parent_ledger,
                 )
                 applied += 1
                 continue
@@ -429,6 +432,7 @@ async def apply_line_gl_mapping(
                 sub_ledger=hint,
                 source="keyword",
                 reason=f"Description match: {hint}",
+                parent_ledger=parent_ledger,
             )
             applied += 1
             continue
@@ -441,6 +445,7 @@ async def apply_line_gl_mapping(
             sub_ledger=fallback,
             source=source,
             reason=reason,
+            parent_ledger=parent_ledger,
         )
         applied += 1
 

@@ -289,6 +289,10 @@ async def get_xero_readiness(db: AsyncSession, tenant_id: uuid.UUID) -> dict[str
     }
 
 
+class XeroNotReadyError(RuntimeError):
+    """Xero is disconnected, needs org selection, or needs re-auth."""
+
+
 async def require_xero_ready(
     db: AsyncSession,
     tenant_id: uuid.UUID,
@@ -296,13 +300,13 @@ async def require_xero_ready(
     readiness = await get_xero_readiness(db, tenant_id)
     if not readiness["ready"]:
         if readiness["status"] == AccountingIntegrationStatus.ORGANISATION_SELECTION_REQUIRED.value:
-            raise RuntimeError("Select a Xero organisation before continuing")
+            raise XeroNotReadyError("Select a Xero organisation before continuing")
         if readiness["status"] == AccountingIntegrationStatus.NEEDS_REAUTH.value:
-            raise RuntimeError("Xero connection requires re-authentication")
-        raise RuntimeError("Xero integration is not ready")
+            raise XeroNotReadyError("Xero connection requires re-authentication")
+        raise XeroNotReadyError("Xero integration is not ready")
     integration = await get_integration(db, tenant_id, AccountingProvider.XERO.value)
     if integration is None or not integration.provider_tenant_id:
-        raise RuntimeError("Xero integration is not ready")
+        raise XeroNotReadyError("Xero integration is not ready")
     return integration, integration.provider_tenant_id
 
 

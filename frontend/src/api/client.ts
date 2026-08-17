@@ -1396,6 +1396,11 @@ export const api = {
     if (options?.fresh) bustGetCache(path);
     return request<Invoice[]>(path);
   },
+  confirmProcess: (id: number) => {
+    bustGetCacheByPrefix("/api/approvals");
+    bustGetCacheByPrefix("/api/invoices");
+    return request<Invoice>(`/api/invoices/${id}/confirm-process`, { method: "POST" });
+  },
   approve: (id: number) => {
     bustGetCacheByPrefix("/api/approvals");
     bustGetCacheByPrefix("/api/invoices");

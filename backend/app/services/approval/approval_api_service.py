@@ -27,6 +27,7 @@ from app.services.approval.approval_service import (
     APPROVABLE_STATUSES,
     _assert_invoice_ready_for_approval,
     approve_invoice_for_reprocess,
+    confirm_invoice_for_process,
     permanently_delete_invoice,
     reject_invoice,
     request_approval,
@@ -101,6 +102,12 @@ class ApproveInvoiceResult:
     enqueue_posting_resume: bool = False
     quorum_met: bool = True
     quorum: dict | None = None
+
+
+@dataclass(frozen=True)
+class ConfirmInvoiceResult:
+    response: InvoiceResponse
+    enqueue_pipeline: bool = True
 
 
 async def list_approvals_board(
@@ -285,6 +292,7 @@ async def _approve_vision_header_review_for_posting(
     *,
     actor_name: str | None,
     actor_email: str | None,
+    record_approval: bool = True,
 ) -> None:
     loaded = (
         await db.execute(
@@ -307,21 +315,29 @@ async def _approve_vision_header_review_for_posting(
         )
 
     _assert_invoice_ready_for_approval(loaded, definition=definition)
-    if payable_fields_complete(loaded, definition):
+    if record_approval and payable_fields_complete(loaded, definition):
         apply_human_approval_processing_defaults(loaded)
+    if not record_approval:
+        loaded.approval_chain = None
+        inv.approval_chain = None
 
     previous_status = loaded.status.value
     await log_event(
         db,
-        "invoice_approved",
+        "invoice_approved" if record_approval else "invoice_confirm_processed",
         invoice_id=loaded.id,
         detail={
             "previous_status": previous_status,
-            "resolution": resolution_for_review_action(
-                action="approve",
-                previous_status=previous_status,
+            "resolution": (
+                resolution_for_review_action(
+                    action="approve",
+                    previous_status=previous_status,
+                )
+                if record_approval
+                else None
             ),
             "vision_posting_resume": True,
+            "manager_approval": record_approval,
         },
         actor_name=actor_name,
         actor_email=actor_email,
@@ -481,6 +497,47 @@ async def approve_invoice_action(
         quorum_met=True,
         quorum=progress.as_dict(),
     )
+
+
+async def confirm_and_process_action(
+    db: AsyncSession,
+    ctx: AuthContext,
+    *,
+    invoice_id: int,
+) -> ConfirmInvoiceResult:
+    """Continue processing after field review without recording manager approval."""
+    inv = await get_invoice_for_tenant(db, invoice_id, ctx.tenant_id)
+    if is_understood_path_vault_terminal(inv):
+        raise ValueError(_VAULT_TERMINAL_MESSAGE)
+    if inv.status == InvoiceStatus.PROCESSED:
+        raise ValueError(
+            "This invoice is already processed. Reject it first if you need "
+            "to return it to the approval queue."
+        )
+    if inv.status != InvoiceStatus.EXCEPTION:
+        raise ValueError(
+            f"Invoice status '{inv.status.value}' cannot confirm and process"
+        )
+
+    await ensure_stored_file_for_approval(db, inv)
+    actor_name, actor_email = await actor_from_context(db, ctx)
+
+    if _is_vision_header_review_hold(inv):
+        await _approve_vision_header_review_for_posting(
+            db,
+            inv,
+            actor_name=actor_name,
+            actor_email=actor_email,
+            record_approval=False,
+        )
+        response = await response_for_invoice(db, inv, tenant_id=ctx.tenant_id)
+        return ConfirmInvoiceResult(response=response, enqueue_pipeline=False)
+
+    await confirm_invoice_for_process(
+        db, inv, actor_name=actor_name, actor_email=actor_email
+    )
+    response = await response_for_invoice(db, inv, tenant_id=ctx.tenant_id)
+    return ConfirmInvoiceResult(response=response, enqueue_pipeline=True)
 
 
 async def reject_invoice_action(

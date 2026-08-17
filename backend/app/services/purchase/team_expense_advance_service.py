@@ -258,12 +258,16 @@ async def resolve_claim_advance_available(
     """Available Staff Advance float for expense-claim partial netting (None for advances)."""
     from app.schemas.rule_book_config import (
         TEAM_EXPENSE_KIND_ADVANCE,
+        TEAM_EXPENSE_KIND_DIRECT,
         normalize_team_expense_kind,
     )
     from app.services.purchase.team_expense_validator import resolve_employee_for_sender
 
-    if normalize_team_expense_kind(invoice.team_expense_kind) == TEAM_EXPENSE_KIND_ADVANCE:
+    kind = normalize_team_expense_kind(invoice.team_expense_kind)
+    if kind == TEAM_EXPENSE_KIND_ADVANCE:
         return None
+    if kind == TEAM_EXPENSE_KIND_DIRECT:
+        return Decimal("0")
     if (invoice.route_target or "").strip() != ROUTE_TEAM:
         return None
 

@@ -984,6 +984,129 @@ async def test_employee_email_retail_receipt_forces_team_expense_claim(
 
 
 @pytest.mark.asyncio
+async def test_employee_email_payment_voucher_title_match_beats_channel_force(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Confident catalogue title match (Payment Voucher) wins over te_employee_channel."""
+    from app.models.invoice import Invoice, InvoiceStatus
+    from app.schemas.rule_book_config import EmployeeMaster
+    from app.tenant_ids import TESTING_TENANT_UUID
+
+    async def _should_not_call_llm(**_kwargs):
+        raise AssertionError("LLM must not run when title match wins")
+
+    monkeypatch.setattr(
+        "app.services.invoice.vision_document_type_map._llm_pick_catalogue_dt",
+        _should_not_call_llm,
+    )
+
+    catalogue = [
+        DocumentTypeDefinition(
+            code="DT-04",
+            title="Employee expense claim",
+            shortTitle="Claim",
+            klass="Transactional",
+            posting="Yes",
+            recognitionMode="prompt",
+            recognitionSignals=[],
+            llmPrompt="",
+            routeTarget="Team Expenses",
+            enabled=True,
+            playbookProfile="employee_claim",
+            teamExpenseKind="expense_claim",
+        ),
+        DocumentTypeDefinition(
+            code="DT-05",
+            title="Advance requisition",
+            shortTitle="Advance",
+            klass="Transactional",
+            posting="Yes",
+            recognitionMode="prompt",
+            recognitionSignals=[],
+            llmPrompt="",
+            routeTarget="Team Expenses",
+            enabled=True,
+            playbookProfile="employee_claim",
+            teamExpenseKind="advance_requisition",
+        ),
+        DocumentTypeDefinition(
+            code="DT-06",
+            title="Payment Voucher",
+            shortTitle="Payment Voucher",
+            klass="Transactional",
+            posting="Yes",
+            recognitionMode="prompt",
+            recognitionSignals=[],
+            llmPrompt="",
+            routeTarget="Team Expenses",
+            enabled=True,
+            playbookProfile="employee_claim",
+            teamExpenseKind="",
+        ),
+    ]
+    employee = EmployeeMaster(
+        id="e1",
+        name="Khushi",
+        email="ka12122000@gmail.com",
+        status="Active",
+    )
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PARSING,
+        document_heading="Payment Voucher",
+        capture_source="email",
+        email_sender="ka12122000@gmail.com",
+        extracted_fields={"canonical_document_type": "Payment Voucher"},
+    )
+    result = await map_vision_label_to_document_type_with_llm_fallback(
+        document_heading="Payment Voucher",
+        canonical_document_type="Payment Voucher",
+        document_types=catalogue,
+        invoice=inv,
+        employees=[employee],
+    )
+    assert result.code == "DT-06"
+    assert result.method == "catalogue_title_match"
+    assert result.reason == "catalogue_title_matched"
+    assert result.method != "te_employee_channel"
+
+
+def test_team_expense_channel_force_sets_runner_up_from_prior_rule() -> None:
+    from app.services.invoice.vision_document_type_map import (
+        _team_expense_channel_map_result,
+    )
+
+    catalogue = [
+        DocumentTypeDefinition(
+            code="DT-04",
+            title="Employee expense claim",
+            shortTitle="Claim",
+            klass="Transactional",
+            posting="Yes",
+            recognitionMode="prompt",
+            recognitionSignals=[],
+            llmPrompt="",
+            routeTarget="Team Expenses",
+            enabled=True,
+            playbookProfile="employee_claim",
+            teamExpenseKind="expense_claim",
+        ),
+    ]
+    forced = _team_expense_channel_map_result(
+        invoice=None,
+        document_types=catalogue,
+        heading_kind="sales_receipt",
+        rule_reason="matched",
+        prior_code="DT-06",
+        prior_confidence=0.97,
+    )
+    assert forced is not None
+    assert forced.code == "DT-04"
+    assert forced.runner_up_code == "DT-06"
+    assert forced.runner_up_score == 0.97
+
+
+@pytest.mark.asyncio
 async def test_employee_whatsapp_advance_heading_picks_advance_dt() -> None:
     from app.models.invoice import Invoice, InvoiceStatus
     from app.schemas.rule_book_config import EmployeeMaster

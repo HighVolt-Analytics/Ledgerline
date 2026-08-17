@@ -1,7 +1,9 @@
 import type { ChartOfAccountRow, LineItem } from "@/api/types";
 import {
+  exactMainLedgerName,
   formatSubLedgerLabel,
   ledgerHasSubLedgerCatalog,
+  parentLedgerForSubLedger,
   subLedgersForLedger,
 } from "@/lib/coaAccountOptions";
 
@@ -91,6 +93,33 @@ export function parentLedgerForLineItems(
   docTypeLedger?: string | null
 ): string {
   return (docTypeLedger ?? inv.account_name ?? "").trim();
+}
+
+/** Resolve the Main GL + Sub GL the clerk should see for a line. */
+export function resolveLineGlSelection(
+  line: Pick<LineItem, "sub_ledger" | "parent_ledger">,
+  fallbackParent: string,
+  accounts: ChartOfAccountRow[]
+): { mainLedger: string; subLedger: string } {
+  const savedSub = (line.sub_ledger ?? "").trim();
+  const storedParent = (line.parent_ledger ?? "").trim();
+  const fallback = fallbackParent.trim();
+
+  const savedAsMain = savedSub ? exactMainLedgerName(savedSub, accounts) : "";
+  if (savedAsMain) {
+    return { mainLedger: savedAsMain, subLedger: "" };
+  }
+
+  const inferredParent = savedSub ? parentLedgerForSubLedger(savedSub, accounts) : "";
+  if (inferredParent) {
+    return { mainLedger: inferredParent, subLedger: savedSub };
+  }
+
+  const main = storedParent || fallback;
+  if (savedSub && savedSub.toLowerCase() === main.toLowerCase()) {
+    return { mainLedger: main, subLedger: "" };
+  }
+  return { mainLedger: main, subLedger: savedSub };
 }
 
 /** True when parent has a COA catalogue and the line still needs a sub-ledger pick. */

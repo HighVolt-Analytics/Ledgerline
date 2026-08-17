@@ -314,7 +314,7 @@ async def continue_vision_understood_posting(
     )
     from app.services.invoice.processing_override_catalog import should_skip
     from app.services.purchase.team_expense_route_policy import (
-        ensure_team_expenses_document_type,
+        apply_employee_channel_team_expenses_route,
         normalize_capture_source,
         should_force_team_expenses,
         team_expenses_allowed_capture,
@@ -361,8 +361,9 @@ async def continue_vision_understood_posting(
     employees = list(config.employee_masters or [])
     capture_ok = team_expenses_allowed_capture(normalize_capture_source(loaded))
     if should_force_team_expenses(loaded, employees):
-        ensure_team_expenses_document_type(loaded, config.document_types)
-        loaded.route_target = ROUTE_TEAM
+        apply_employee_channel_team_expenses_route(
+            loaded, config.document_types, employees
+        )
     elif not capture_ok and (
         (loaded.route_target or "").strip() == ROUTE_TEAM
         or is_team_expenses_document_type(definition)

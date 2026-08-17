@@ -3,6 +3,7 @@ import type { InvoiceDetails } from "@/api/types";
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
 import {
   approvalFailureMessage,
+  canRequestInfo,
   compulsoryFieldsForInvoice,
   postApprovalSettlement,
   settlementApprovalHint,
@@ -225,5 +226,15 @@ describe("approvalFailureMessage", () => {
         current_stage_state: "fail",
       } as InvoiceDetails)
     ).toContain("chart of accounts");
+  });
+});
+
+describe("canRequestInfo", () => {
+  it("hides request-approval for posted and already-queued documents", () => {
+    expect(canRequestInfo("processed")).toBe(false);
+    expect(canRequestInfo("exception")).toBe(false);
+    expect(canRequestInfo("rejected")).toBe(false);
+    expect(canRequestInfo("duplicate_skipped")).toBe(false);
+    expect(canRequestInfo("pending")).toBe(true);
   });
 });

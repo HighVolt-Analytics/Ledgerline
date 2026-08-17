@@ -141,6 +141,44 @@ async def test_patch_invoice_in_review_queue(
 
 
 @pytest.mark.asyncio
+async def test_patch_invoice_persists_line_gl_accounts(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        invoice_no="INV-GL",
+        status=InvoiceStatus.EXCEPTION,
+        currency="AUD",
+        file_hash="patch-gl-1",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    res = await client.patch(
+        f"/api/invoices/{inv.id}",
+        json={
+            "line_items": [
+                {
+                    "description": "Hotel stay",
+                    "qty": "1",
+                    "unit_price": "200",
+                    "amount": "200",
+                    "parent_ledger": "Travel Expense",
+                    "sub_ledger": "Hotel",
+                    "gl_mapping_source": "manual",
+                }
+            ],
+        },
+    )
+    assert res.status_code == 200
+    line = res.json()["data"]["line_items"][0]
+    assert line["parent_ledger"] == "Travel Expense"
+    assert line["sub_ledger"] == "Hotel"
+    assert line["effective_ledger"] == "Hotel"
+
+
+@pytest.mark.asyncio
 async def test_patch_invoice_rejects_processed(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:

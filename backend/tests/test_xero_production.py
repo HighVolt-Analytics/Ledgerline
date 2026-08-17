@@ -355,6 +355,13 @@ async def test_xero_readiness_endpoint(client) -> None:
 
 
 @pytest.mark.asyncio
+async def test_xero_mappings_not_ready_is_not_500(client) -> None:
+    res = await client.get("/api/integrations/xero/mappings")
+    assert res.status_code == 400
+    assert "not ready" in (res.json().get("detail") or "").lower()
+
+
+@pytest.mark.asyncio
 async def test_xero_verify_endpoint_not_connected(client) -> None:
     res = await client.get("/api/integrations/xero/verify")
     assert res.status_code == 200

@@ -29,6 +29,32 @@ export function resolveCoaAccountName(
   return "";
 }
 
+export function exactMainLedgerName(
+  ledger: string,
+  accounts: ChartOfAccountRow[]
+): string {
+  const needle = ledger.trim().toLowerCase();
+  if (!needle) return "";
+  for (const row of accounts) {
+    if (row.name.trim().toLowerCase() === needle) return row.name;
+  }
+  return "";
+}
+
+export function parentLedgerForSubLedger(
+  subLedger: string,
+  accounts: ChartOfAccountRow[]
+): string {
+  const needle = subLedger.trim().toLowerCase();
+  if (!needle) return "";
+  for (const row of accounts) {
+    for (const sub of row.subLedgers ?? []) {
+      if (sub.name.trim().toLowerCase() === needle) return row.name;
+    }
+  }
+  return "";
+}
+
 export function ledgerExistsInCoa(ledger: string, accounts: ChartOfAccountRow[]): boolean {
   return Boolean(resolveCoaAccountName(ledger, accounts) || accounts.some((row) => row.name === ledger.trim()));
 }

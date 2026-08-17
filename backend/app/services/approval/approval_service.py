@@ -86,7 +86,6 @@ async def _tenant_storage_context(session: AsyncSession, inv: Invoice) -> tuple[
 
 _REQUESTABLE = frozenset(
     {
-        InvoiceStatus.PROCESSED,
         InvoiceStatus.PENDING,
         InvoiceStatus.PARSING,
         InvoiceStatus.VALIDATING,
@@ -323,6 +322,62 @@ async def approve_invoice_for_reprocess(
     )
 
 
+async def confirm_invoice_for_process(
+    session: AsyncSession,
+    inv: Invoice,
+    *,
+    actor_name: str | None = None,
+    actor_email: str | None = None,
+) -> None:
+    """Re-queue for pipeline without recording manager approval.
+
+    Field edits are preserved. Document-type / team-expense approval gates
+    still hold when policy requires a separate approver.
+    """
+    if inv.status != InvoiceStatus.EXCEPTION:
+        raise ValueError(
+            f"Invoice status '{inv.status.value}' cannot confirm and process"
+        )
+
+    loaded = (
+        await session.execute(
+            select(Invoice)
+            .where(Invoice.id == inv.id)
+            .options(selectinload(Invoice.line_items))
+        )
+    ).scalar_one()
+    await assert_team_expense_approvable(session, loaded)
+    from app.services.classification.document_type_catalog import get_document_type_definition
+
+    config = await load_config_for_tenant(session, loaded.tenant_id)
+    definition = get_document_type_definition(
+        loaded.document_type_code,
+        document_types=config.document_types,
+    )
+    _assert_invoice_ready_for_approval(loaded, definition=definition)
+    previous_status = inv.status.value
+    await repair_invoice_stored_path(session, inv)
+    await restore_rejected_invoice_file_if_needed(session, inv)
+
+    if not stored_file_available(inv.raw_file_path, tenant_id=inv.tenant_id):
+        raise ValueError("Invoice has no stored file to process")
+
+    inv.approval_chain = None
+    loaded.approval_chain = None
+    await reset_invoice_for_approval(session, inv)
+    await log_event(
+        session,
+        "invoice_confirm_processed",
+        invoice_id=inv.id,
+        detail={
+            "previous_status": previous_status,
+            "manager_approval": False,
+        },
+        actor_name=actor_name,
+        actor_email=actor_email,
+    )
+
+
 async def request_approval(
     session: AsyncSession,
     inv: Invoice,
@@ -331,6 +386,11 @@ async def request_approval(
     actor_email: str | None = None,
 ) -> None:
     """Route an invoice to the human approval queue."""
+    if inv.status == InvoiceStatus.PROCESSED:
+        raise ValueError(
+            "This document is already posted. Reject it first if you need "
+            "to return it to the approval queue."
+        )
     if inv.status in _QUEUE_STATUSES:
         raise ValueError("Invoice is already in the approval queue")
     if inv.status not in _REQUESTABLE:

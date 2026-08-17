@@ -18,6 +18,9 @@ export function inferTeamExpenseKindFromLabels(
   if (blob.includes("employee advance") && !blob.includes("expense")) {
     return "advance_requisition";
   }
+  if (blob.includes("payment voucher") || blob.includes("direct payment")) {
+    return "direct_payment";
+  }
   return null;
 }
 

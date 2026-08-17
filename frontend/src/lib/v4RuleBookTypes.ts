@@ -271,6 +271,7 @@ export type TeamExpensePostingDefaults = {
 export const TEAM_EXPENSE_KINDS = [
   "expense_claim",
   "advance_requisition",
+  "direct_payment",
 ] as const;
 
 export type TeamExpenseKind = (typeof TEAM_EXPENSE_KINDS)[number];
@@ -278,6 +279,7 @@ export type TeamExpenseKind = (typeof TEAM_EXPENSE_KINDS)[number];
 export const TEAM_EXPENSE_KIND_LABELS: Record<TeamExpenseKind, string> = {
   expense_claim: "Expense claim",
   advance_requisition: "Advance requisition",
+  direct_payment: "Direct payment",
 };
 
 export type { DocumentTypeDefinition } from "./v5DocumentTypes";

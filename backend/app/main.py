@@ -71,6 +71,7 @@ from app.services.integration.xero_background_sync import (
     stop_xero_background_sync,
 )
 from app.services.rule_book.rule_book_save_buffer import flush_all_rule_book_save_buffers
+from app.services.integration.accounting_integration_service import XeroNotReadyError
 from app.services.integration.xero_mapping_validation import XeroMappingValidationError
 from app.services.shared.public_app_url import build_oauth_frontend_path
 from app.services.tenant.tenant_context_service import get_or_create_default_tenant, sync_env_mailbox
@@ -133,6 +134,14 @@ async def xero_mapping_validation_handler(
     exc: XeroMappingValidationError,
 ) -> JSONResponse:
     return JSONResponse(status_code=422, content=exc.result.to_dict())
+
+
+@app.exception_handler(XeroNotReadyError)
+async def xero_not_ready_handler(
+    _request: Request,
+    exc: XeroNotReadyError,
+) -> JSONResponse:
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 app.add_middleware(CorrelationIdMiddleware)
 app.add_middleware(TenantContextMiddleware)

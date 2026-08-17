@@ -11,7 +11,6 @@ import { DepartmentBudgetsPanel } from "@/components/team-expenses/DepartmentBud
 import { EmployeeAdvanceFloatPanel } from "@/components/team-expenses/EmployeeAdvanceFloatPanel";
 import { ChannelBadge, ExpenseStateBadge } from "@/components/team-expenses/ExpenseBadges";
 import { TeamExpenseChannelsStrip } from "@/components/team-expenses/TeamExpenseChannelsStrip";
-import { RoutedInvoicesPanel } from "@/components/rule-book/RoutedInvoicesPanel";
 import { Card } from "@/components/ui/card";
 import { useEmployeeMasters } from "@/hooks/useMasterData";
 import { useExpenseClaimActions } from "@/hooks/useExpenseClaimActions";
@@ -258,13 +257,6 @@ export function TeamExpensesPage() {
           testid="kpi-exp-pending"
         />
       </div>
-
-      <RoutedInvoicesPanel
-        routeTarget={ROUTE_TARGET}
-        title="Documents routed from Rule Book"
-        hint="Employee expense claims routed here after OCR and document classification."
-        testId="team-routed-invoices"
-      />
 
       <PageTabs value={tab} onChange={setTab} tabs={pageTabs} />
 

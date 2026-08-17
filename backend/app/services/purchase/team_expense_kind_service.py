@@ -9,6 +9,7 @@ from app.schemas.document_type import DocumentTypeDefinition
 from app.schemas.rule_book_config import (
     TEAM_EXPENSE_KIND_ADVANCE,
     TEAM_EXPENSE_KIND_CLAIM,
+    TEAM_EXPENSE_KIND_DIRECT,
     RuleBookConfigPayload,
     TeamExpenseKind,
     normalize_team_expense_kind,
@@ -31,6 +32,8 @@ def infer_team_expense_kind_from_labels(*labels: str) -> TeamExpenseKind | None:
         return TEAM_EXPENSE_KIND_ADVANCE
     if "employee advance" in blob and "expense" not in blob:
         return TEAM_EXPENSE_KIND_ADVANCE
+    if "payment voucher" in blob or "direct payment" in blob:
+        return TEAM_EXPENSE_KIND_DIRECT
     return None
 
 
@@ -49,7 +52,11 @@ def reconcile_team_expense_kind_for_document_type(
     raw = (configured or "").strip().lower()
     if raw == "expense_against_advance":
         pinned: TeamExpenseKind | None = None
-    elif raw in {TEAM_EXPENSE_KIND_ADVANCE, TEAM_EXPENSE_KIND_CLAIM}:
+    elif raw in {
+        TEAM_EXPENSE_KIND_ADVANCE,
+        TEAM_EXPENSE_KIND_CLAIM,
+        TEAM_EXPENSE_KIND_DIRECT,
+    }:
         pinned = normalize_team_expense_kind(raw)
     else:
         pinned = None

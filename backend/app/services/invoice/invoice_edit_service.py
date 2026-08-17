@@ -148,8 +148,11 @@ async def update_invoice_fields(
             sub_ledger = item.get("sub_ledger")
             if isinstance(sub_ledger, str):
                 sub_ledger = sub_ledger.strip() or None
+            parent_ledger = item.get("parent_ledger")
+            if isinstance(parent_ledger, str):
+                parent_ledger = parent_ledger.strip() or None
             gl_source = item.get("gl_mapping_source")
-            if sub_ledger is not None and not gl_source:
+            if (sub_ledger is not None or parent_ledger is not None) and not gl_source:
                 gl_source = "manual"
             cleaned = sanitize_parsed_line_item(
                 ParsedLineItem(
@@ -170,6 +173,7 @@ async def update_invoice_fields(
                     amount=cleaned.amount,
                     tax_amount=cleaned.tax_amount,
                     sub_ledger=sub_ledger,
+                    parent_ledger=parent_ledger,
                     gl_mapping_source=gl_source,
                     gl_mapping_confidence=plausible_confidence(item.get("gl_mapping_confidence")),
                     gl_mapping_reason=item.get("gl_mapping_reason"),

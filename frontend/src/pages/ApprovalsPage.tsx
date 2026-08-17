@@ -17,6 +17,7 @@ import { approvalChainProgressLabel } from "@/lib/approvalQuorum";
 import { fetchApprovalsBoard } from "@/lib/invoices";
 import {
   approveAndProcess,
+  confirmAndProcess,
   invoiceCanAttemptReprocess,
   reprocessAndWatch,
   validateInvoiceReadyForApproval,
@@ -35,6 +36,7 @@ import {
   APPROVAL_QUEUE_STATUSES,
   type ApprovalBoardColumnKey,
   canShowApproveOnBoard,
+  canShowConfirmOnBoard,
   canShowRejectOnApprovedBoard,
   canShowReprocessOnBoard,
   columnForInvoice,
@@ -309,6 +311,54 @@ export function ApprovalsPage() {
     }
   };
 
+  const confirmInvoice = async (id: number) => {
+    const inv = invoices.find((i) => i.id === id);
+    if (!inv) return;
+    if (drawerOpen && drawerInvoice?.id === id && drawerEditing) {
+      setToast("Save your edits in the review drawer before confirming from the board.");
+      return;
+    }
+    if (!inv.has_stored_file) {
+      setToast("Upload a PDF before confirming this invoice.");
+      return;
+    }
+    const documentTypes =
+      ruleBook?.documentTypes ??
+      ruleBookConfigFromApi(await api.getRuleBookConfig()).documentTypes;
+    const fieldCheck = validateInvoiceReadyForApproval(inv, documentTypes);
+    if (!fieldCheck.ok) {
+      setToast(fieldCheck.message);
+      return;
+    }
+    setBusyId(id);
+    setProcessingIds((prev) => new Set(prev).add(id));
+    try {
+      setToast("Invoice queued for processing…");
+      const result = await confirmAndProcess(id, () => load({ silent: true, fresh: true }));
+      await load({ fresh: true });
+      await invalidateAfterApproval();
+      if (result.awaitingApproval) {
+        setToast("Waiting for approval per document-type policy");
+      } else if (result.payment) {
+        setToast(`Processed — payment ${result.payment.id} queued for disbursement`);
+      } else if (result.collection) {
+        setToast(`Processed — collection ${result.collection.id} queued for receipt`);
+      } else {
+        setToast("Processing complete");
+      }
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : "Confirm & process failed");
+      await load({ fresh: true });
+    } finally {
+      setProcessingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      setBusyId(null);
+    }
+  };
+
   const runNeedsReviewProcessing = async () => {
     const targets = invoices.filter(
       (inv) =>
@@ -323,7 +373,7 @@ export function ApprovalsPage() {
     setProcessingBusy(true);
     try {
       for (const inv of targets) {
-        await approveInvoice(inv.id);
+        await confirmAndProcess(inv.id, () => load({ silent: true, fresh: true }));
       }
       setToast(
         `Queued ${targets.length} needs-review document${targets.length === 1 ? "" : "s"} for processing.`
@@ -663,11 +713,21 @@ export function ApprovalsPage() {
                           testId={`edit-${inv.id}`}
                         />
                       )}
+                      {canShowConfirmOnBoard(inv, col.key) && (
+                        <ActionChip
+                          tone="approve"
+                          icon={Send}
+                          label={busyId === inv.id ? "…" : "Confirm"}
+                          disabled={busyId === inv.id}
+                          onClick={() => void confirmInvoice(inv.id)}
+                          testId={`confirm-${inv.id}`}
+                        />
+                      )}
                       {canShowApproveOnBoard(inv, col.key) && (
                         <ActionChip
                           tone="approve"
                           icon={Check}
-                          label={busyId === inv.id ? "…" : "Confirm"}
+                          label={busyId === inv.id ? "…" : "Approve"}
                           disabled={busyId === inv.id}
                           onClick={() => void approveInvoice(inv.id)}
                           testId={`approve-${inv.id}`}

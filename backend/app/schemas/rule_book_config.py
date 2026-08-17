@@ -316,10 +316,12 @@ class PostingDefaults(BaseModel):
 
 TEAM_EXPENSE_KIND_ADVANCE = "advance_requisition"
 TEAM_EXPENSE_KIND_CLAIM = "expense_claim"
+TEAM_EXPENSE_KIND_DIRECT = "direct_payment"
 
 TeamExpenseKind = Literal[
     "advance_requisition",
     "expense_claim",
+    "direct_payment",
 ]
 
 DEFAULT_TEAM_EXPENSE_KIND: TeamExpenseKind = TEAM_EXPENSE_KIND_CLAIM
@@ -340,6 +342,7 @@ def normalize_team_expense_kind(value: str | None) -> TeamExpenseKind:
     if cleaned in {
         TEAM_EXPENSE_KIND_ADVANCE,
         TEAM_EXPENSE_KIND_CLAIM,
+        TEAM_EXPENSE_KIND_DIRECT,
     }:
         return cleaned  # type: ignore[return-value]
     return DEFAULT_TEAM_EXPENSE_KIND

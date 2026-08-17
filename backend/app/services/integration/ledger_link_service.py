@@ -129,7 +129,6 @@ async def build_ledger_link(
     tenant_id: int,
 ) -> LedgerLinkResponse:
     overview = await build_reconciliation_overview(session, tenant_id=tenant_id)
-
     invoices = (
         await session.execute(
             select(Invoice)
@@ -141,7 +140,7 @@ async def build_ledger_link(
             .order_by(Invoice.invoice_date.desc(), Invoice.id.desc())
         )
     ).scalars().unique().all()
-
+    
     invoice_ids = [inv.id for inv in invoices]
     audit_by_id: dict[int, list[AuditLog]] = {i: [] for i in invoice_ids}
     if invoice_ids:

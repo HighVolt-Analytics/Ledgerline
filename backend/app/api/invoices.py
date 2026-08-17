@@ -893,6 +893,41 @@ async def reprocess_invoice(
     )
 
 
+@router.post("/{invoice_id:int}/confirm-process", response_model=ApiEnvelope[InvoiceResponse])
+async def confirm_and_process_invoice(
+    invoice_id: int,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[InvoiceResponse]:
+    """Confirm saved fields and continue the pipeline without manager approval.
+
+    Document-type and team-expense approval gates still hold when policy requires
+    a separate approver. Use POST /api/approvals/{id}/approve to sign off.
+    """
+    from app.services.approval.approval_api_service import confirm_and_process_action
+
+    try:
+        result = await confirm_and_process_action(db, ctx, invoice_id=invoice_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    await db.commit()
+    if result.enqueue_pipeline:
+        enqueue_invoice_pipelines(
+            [invoice_id],
+            tenant_id=ctx.tenant_id,
+            background_tasks=background_tasks,
+        )
+    refreshed = await _get_invoice_for_tenant(db, invoice_id, ctx.tenant_id)
+    return ApiEnvelope(
+        data=await _response_for_invoice(
+            db, refreshed, tenant_id=ctx.tenant_id, verify_stored_file=True
+        ),
+    )
+
+
 @router.get("/{invoice_id:int}/pipeline", response_model=ApiEnvelope[PipelineStepsResponse])
 async def invoice_pipeline(
     invoice_id: int,

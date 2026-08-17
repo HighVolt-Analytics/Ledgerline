@@ -352,6 +352,8 @@ def _team_expense_channel_map_result(
     document_types: Sequence[DocumentTypeDefinition],
     heading_kind: str | None,
     rule_reason: str | None = None,
+    prior_code: str | None = None,
+    prior_confidence: float | None = None,
 ) -> VisionDocumentTypeMapResult | None:
     """Pick claim vs advance TE DT for employee-channel force path."""
     from app.schemas.rule_book_config import TEAM_EXPENSE_KIND_CLAIM
@@ -361,15 +363,18 @@ def _team_expense_channel_map_result(
     )
 
     preferred = infer_preferred_team_expense_kind(invoice, document_types)
+    preferred_code = (prior_code or "").strip().upper() or None
     primary = primary_team_expenses_document_type(
         document_types,
         preferred_kind=preferred or TEAM_EXPENSE_KIND_CLAIM,
+        preferred_code=preferred_code,
     )
     if primary is None:
         return None
     code = (primary.code or "").strip().upper() or None
     if not code:
         return None
+    runner_up = (prior_code or "").strip().upper() or None
     return VisionDocumentTypeMapResult(
         code=code,
         confidence=0.95,
@@ -377,6 +382,8 @@ def _team_expense_channel_map_result(
         reason="employee_channel_forced",
         method=_METHOD_TE_CHANNEL,
         rule_reason=rule_reason,
+        runner_up_code=runner_up,
+        runner_up_score=prior_confidence if runner_up else None,
         llm_reasoning=(
             "Known employee on email/WhatsApp/Viber: catalogue Team Expenses DT "
             f"({preferred or TEAM_EXPENSE_KIND_CLAIM})."
@@ -751,6 +758,17 @@ async def map_vision_label_to_document_type_with_llm_fallback(
     if rule.reason == "human_locked":
         return rule
 
+    from app.services.classification.catalogue_title_match import (
+        _TITLE_MATCH_THRESHOLD,
+    )
+
+    if (
+        rule.reason == "catalogue_title_matched"
+        and rule.code
+        and rule.confidence >= _TITLE_MATCH_THRESHOLD
+    ):
+        return rule
+
     force_te = _resolve_force_team_expenses(
         invoice=invoice,
         employees=employees,
@@ -762,6 +780,8 @@ async def map_vision_label_to_document_type_with_llm_fallback(
             document_types=document_types,
             heading_kind=rule.heading_kind,
             rule_reason=rule.reason,
+            prior_code=rule.code,
+            prior_confidence=rule.confidence if rule.code else None,
         )
         if forced is not None:
             return forced

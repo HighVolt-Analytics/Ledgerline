@@ -64,10 +64,14 @@ export function isVisionVaultTerminal(inv: Invoice): boolean {
   return false;
 }
 
-export function canShowApproveOnBoard(inv: Invoice, column: ApprovalBoardColumnKey): boolean {
+export function canShowConfirmOnBoard(inv: Invoice, column: ApprovalBoardColumnKey): boolean {
   if (isVisionVaultTerminal(inv)) return false;
   if (column === "approved" || column === "pending" || column === "rejected") return false;
   return APPROVABLE_STATUSES.has(inv.status);
+}
+
+export function canShowApproveOnBoard(inv: Invoice, column: ApprovalBoardColumnKey): boolean {
+  return canShowConfirmOnBoard(inv, column) && isPendingApprovalInvoice(inv);
 }
 
 /** Reject from Approved: ledger-posted rows, or vision-understood vaulted rows. */

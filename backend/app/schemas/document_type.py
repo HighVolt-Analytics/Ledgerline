@@ -60,9 +60,10 @@ DocumentTypeTeamExpenseKind = Literal[
     "",
     "advance_requisition",
     "expense_claim",
+    "direct_payment",
 ]
 TEAM_EXPENSE_KIND_CHOICES = frozenset(
-    {"advance_requisition", "expense_claim"}
+    {"advance_requisition", "expense_claim", "direct_payment"}
 )
 RecognitionMode = Literal["signals", "prompt"]
 CounterpartySource = Literal["letterhead", "consignee", "applicant", "bill_to"]

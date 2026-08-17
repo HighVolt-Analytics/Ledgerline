@@ -38,6 +38,17 @@ describe("teamExpensePostingPreview", () => {
     expect(preview.credit).toBe("Bank Account");
   });
 
+  it("posts expense and settlement only for direct payment", () => {
+    const preview = teamExpensePostingPreview("direct_payment", {
+      ...LEDGERS,
+      claimAmount: 500,
+      advanceAvailable: 200,
+    });
+    expect(preview.debit).toBe("Travel Expense");
+    expect(preview.credit).toBe("Bank Account");
+    expect(preview.note.toLowerCase()).toContain("no advance");
+  });
+
   it("falls back to readable placeholders when a ledger is unset", () => {
     const preview = teamExpensePostingPreview("expense_claim", {
       expenseLedger: "",
@@ -59,5 +70,6 @@ describe("normalizeTeamExpenseKind", () => {
   it("accepts the supported kinds case-insensitively and maps legacy against-advance to claim", () => {
     expect(normalizeTeamExpenseKind("Advance_Requisition")).toBe("advance_requisition");
     expect(normalizeTeamExpenseKind("expense_against_advance")).toBe("expense_claim");
+    expect(normalizeTeamExpenseKind("direct_payment")).toBe("direct_payment");
   });
 });

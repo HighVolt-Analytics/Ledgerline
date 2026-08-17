@@ -137,6 +137,7 @@ class LineItemUpdateRequest(BaseModel):
     amount: Decimal | None = None
     tax_amount: Decimal | None = None
     sub_ledger: str | None = None
+    parent_ledger: str | None = None
     gl_mapping_source: str | None = None
     gl_mapping_confidence: Decimal | None = None
     gl_mapping_reason: str | None = None

@@ -109,6 +109,20 @@ def test_build_line_item_response() -> None:
     assert response.gl_mapping_source == "llm"
 
 
+def test_build_line_item_response_uses_stored_parent_ledger() -> None:
+    line = LineItem(
+        id=1,
+        tenant_id=uuid.UUID("550e8400-e29b-41d4-a716-446655440001"),
+        invoice_id=10,
+        description="Travel",
+        parent_ledger="Operating Expenses",
+        sub_ledger="Hotel",
+    )
+    response = build_line_item_response(line, parent_ledger="Cloud Hosting Expense")
+    assert response.parent_ledger == "Operating Expenses"
+    assert response.effective_ledger == "Hotel"
+
+
 def test_fallback_sub_ledger_uses_doc_type_default() -> None:
     config = _config_with_sub_ledgers()
     invoice = SimpleNamespace(vendor="Amazon Web Services", document_type_code="DT-01")
@@ -227,6 +241,27 @@ def test_line_sub_ledger_review_required_when_catalogue_and_blank() -> None:
     assert missing_line_sub_ledger_indexes(invoice) == [0]
 
 
+def test_line_sub_ledger_review_not_required_when_line_parent_has_no_catalogue() -> None:
+    config = _config_with_sub_ledgers()
+    config = config.model_copy(
+        update={
+            "chart_of_accounts": [
+                *list(config.chart_of_accounts),
+                ChartOfAccountEntry(code="6100", name="Operating Expenses", type="Expense"),
+            ]
+        }
+    )
+    line = SimpleNamespace(sub_ledger=None, parent_ledger="Operating Expenses")
+    invoice = SimpleNamespace(
+        document_type_code="DT-01",
+        route_target="Purchase Management",
+        account_name="Cloud Hosting Expense",
+        gl_posting_applicable=True,
+        line_items=[line],
+    )
+    assert line_sub_ledger_review_required(invoice, config) is False
+
+
 def test_line_sub_ledger_review_not_required_without_catalogue() -> None:
     config = RuleBookConfigPayload(
         chart_of_accounts=[
@@ -266,6 +301,41 @@ def test_resolve_effective_ledger_mapping_nested_sub() -> None:
     )
     assert mapping.account_code == "6110-01"
     assert mapping.account_name == "AWS Production"
+
+
+def test_resolve_effective_ledger_mapping_other_main_and_sub() -> None:
+    config = RuleBookConfigPayload(
+        chart_of_accounts=[
+            ChartOfAccountEntry(
+                code="6110",
+                name="Cloud Hosting Expense",
+                type="Expense",
+                sub_ledgers=[{"code": "01", "name": "AWS Production"}],
+            ),
+            ChartOfAccountEntry(
+                code="6200",
+                name="Travel Expense",
+                type="Expense",
+                sub_ledgers=[{"code": "01", "name": "Hotel"}],
+            ),
+            ChartOfAccountEntry(code="6100", name="Operating Expenses", type="Expense"),
+        ],
+    )
+    other_main = resolve_effective_ledger_mapping(
+        parent_ledger="Cloud Hosting Expense",
+        effective_ledger="Operating Expenses",
+        config=config,
+    )
+    assert other_main.account_code == "6100"
+    assert other_main.account_name == "Operating Expenses"
+
+    other_sub = resolve_effective_ledger_mapping(
+        parent_ledger="Cloud Hosting Expense",
+        effective_ledger="Hotel",
+        config=config,
+    )
+    assert other_sub.account_code == "6200-01"
+    assert other_sub.account_name == "Hotel"
 
 
 def test_accept_llm_sub_ledger_requires_min_confidence() -> None:
