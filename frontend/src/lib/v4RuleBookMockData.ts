@@ -319,6 +319,7 @@ const VENDOR_MASTERS: VendorMaster[] = [
     totalSpendYTD: 18420,
     invoiceCount: 12,
     matchConfidence: 99,
+    contactEmail: "billing@aws.amazon.com",
   },
   {
     id: "vm-2",
@@ -345,6 +346,7 @@ const VENDOR_MASTERS: VendorMaster[] = [
     totalSpendYTD: 42180,
     invoiceCount: 23,
     matchConfidence: 97,
+    contactEmail: "accounts@sysco.com.au",
   },
   {
     id: "vm-3",
@@ -371,6 +373,7 @@ const VENDOR_MASTERS: VendorMaster[] = [
     totalSpendYTD: 6840,
     invoiceCount: 6,
     matchConfidence: 99,
+    contactEmail: "billing@telstra.com",
   },
   {
     id: "vm-4",
@@ -397,6 +400,7 @@ const VENDOR_MASTERS: VendorMaster[] = [
     totalSpendYTD: 12500,
     invoiceCount: 4,
     matchConfidence: 96,
+    contactEmail: "accounts@smithco.legal",
   },
   {
     id: "vm-5",
@@ -423,6 +427,7 @@ const VENDOR_MASTERS: VendorMaster[] = [
     totalSpendYTD: 28940,
     invoiceCount: 18,
     matchConfidence: 98,
+    contactEmail: "accounts@bidfood.com.au",
   },
   {
     id: "vm-6",
@@ -444,6 +449,7 @@ const VENDOR_MASTERS: VendorMaster[] = [
     totalSpendYTD: 220,
     invoiceCount: 1,
     matchConfidence: 42,
+    contactEmail: "",
   },
 ];
 
