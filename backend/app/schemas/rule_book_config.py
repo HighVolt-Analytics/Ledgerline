@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, Any, Literal, Union
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -167,6 +168,9 @@ class VendorMaster(BaseModel):
     total_spend_ytd: float = Field(default=0, ge=0)
     invoice_count: int = Field(default=0, ge=0)
     match_confidence: float = Field(default=0, ge=0, le=100)
+    contact_email: str = ""
+    confirmation_sent_at: datetime | None = None
+    confirmed_at: datetime | None = None
 
 
 class VendorDetectionWeights(BaseModel):
@@ -233,6 +237,8 @@ class EmployeeMaster(BaseModel):
     claim_count: int = Field(default=0, ge=0)
     last_claim: str = ""
     status: str = ""
+    confirmation_sent_at: datetime | None = None
+    confirmed_at: datetime | None = None
 
     @property
     def budget(self) -> EmployeeSpendingLimit:

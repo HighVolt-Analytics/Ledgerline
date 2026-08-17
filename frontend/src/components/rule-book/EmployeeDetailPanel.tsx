@@ -23,6 +23,13 @@ import { FieldLabel } from "./FieldLabel";
 
 const EMPLOYEE_STATUS_OPTIONS = ["Active", "Suspended", "Pending verification"] as const;
 
+function formatConfirmationStamp(value?: string | null): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
 export function EmployeeDetailPanel({
   emp,
   onChange,
@@ -94,6 +101,10 @@ export function EmployeeDetailPanel({
 
   return (
     <div className="bg-muted/20 p-4 space-y-4" data-testid={`employee-detail-${emp.id}`}>
+      <p className="text-[11px] text-muted-foreground">
+        Confirmation email last sent {formatConfirmationStamp(emp.confirmationSentAt)} ·
+        confirmed {formatConfirmationStamp(emp.confirmedAt)}
+      </p>
       <div>
         <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
           Identity

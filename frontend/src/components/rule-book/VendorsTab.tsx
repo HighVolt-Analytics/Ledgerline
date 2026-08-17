@@ -6,6 +6,7 @@ import {
   ClipboardCheck,
   ExternalLink,
   Loader2,
+  Mail,
   Plus,
   Settings,
   Trash2,
@@ -25,6 +26,7 @@ import {
   useDismissPendingVendor,
   usePendingVendors,
   usePromotePendingVendor,
+  useSendVendorMasterConfirmation,
   useUpdateVendorMaster,
   useVendorMasters,
 } from "@/hooks/useMasterData";
@@ -102,6 +104,24 @@ export function VendorsTab({
   const deleteMutation = useDeleteVendorMaster();
   const promoteMutation = usePromotePendingVendor();
   const dismissMutation = useDismissPendingVendor();
+  const sendConfirmationMutation = useSendVendorMasterConfirmation();
+
+  const sendVendorConfirmation = (vendor: VendorMaster) => {
+    sendConfirmationMutation.mutate(vendor.id, {
+      onSuccess: (result) => {
+        toast({
+          title: "Confirmation email sent",
+          description: result.email ? `Sent to ${result.email}` : undefined,
+        });
+      },
+      onError: (err) =>
+        toast({
+          title: "Could not send confirmation",
+          description: err instanceof Error ? err.message : "Send failed",
+          variant: "destructive",
+        }),
+    });
+  };
 
   const weightSum =
     detection.weights.name + detection.weights.abn + detection.weights.bank + detection.weights.address;
@@ -567,6 +587,25 @@ export function VendorsTab({
                               Remove vendor
                             </Button>
                             <div className="flex items-center gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={sendConfirmationMutation.isPending}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  sendVendorConfirmation(dirty ? draft : v);
+                                }}
+                                data-testid={`send-vendor-confirmation-${v.id}`}
+                              >
+                                {sendConfirmationMutation.isPending ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <>
+                                    <Mail className="h-3.5 w-3.5 mr-1" />
+                                    {v.confirmationSentAt ? "Resend confirmation" : "Send confirmation"}
+                                  </>
+                                )}
+                              </Button>
                               <Button
                                 size="sm"
                                 variant="outline"

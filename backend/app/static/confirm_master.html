@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Confirm your details — LedgerLink</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; min-height: 100vh; background: #f4f4f5; color: #18181b; padding: 1.5rem 0; }
+    .card { background: #fff; border: 1px solid #e4e4e7; border-radius: 12px; padding: 1.5rem; max-width: 42rem; width: calc(100% - 2rem); margin: 0 auto; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+    h1 { font-size: 1.125rem; margin: 0 0 .25rem; }
+    .subtitle { margin: 0 0 1rem; font-size: .875rem; color: #52525b; line-height: 1.5; }
+    .error { color: #dc2626; }
+    .success { color: #16a34a; }
+    section { margin-bottom: 1.25rem; }
+    section h2 { font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; color: #71717a; margin: 0 0 .5rem; }
+    .grid { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }
+    label { display: block; font-size: .75rem; color: #71717a; margin-bottom: .25rem; }
+    input, textarea { width: 100%; box-sizing: border-box; padding: .625rem .75rem; font-size: .875rem; border: 1px solid #e4e4e7; border-radius: 8px; }
+    textarea { min-height: 4rem; resize: vertical; }
+    button { margin-top: .75rem; width: 100%; padding: .75rem 1rem; font-size: .875rem; border: 0; border-radius: 8px; background: #18181b; color: #fff; cursor: pointer; }
+    button:disabled { opacity: .6; cursor: wait; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #09090b; color: #fafafa; }
+      .card { background: #18181b; border-color: #3f3f46; }
+      .subtitle { color: #a1a1aa; }
+      input, textarea { background: #09090b; border-color: #3f3f46; color: #fafafa; }
+      button { background: #fafafa; color: #18181b; }
+    }
+  </style>
+</head>
+<body>
+  <div class="card" id="app">
+    <p>Loading your details…</p>
+  </div>
+  <script>
+    const app = document.getElementById("app");
+    const params = new URLSearchParams(location.search);
+    const token = params.get("token") || "";
+    const apiHeaders = { "ngrok-skip-browser-warning": "1", "Content-Type": "application/json" };
+
+    function render(html) {
+      app.innerHTML = html;
+    }
+
+    async function apiGet(path) {
+      const res = await fetch(path, { headers: { "ngrok-skip-browser-warning": "1" } });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body.detail || body.message || "Request failed");
+      }
+      return body.data;
+    }
+
+    async function apiPost(path, payload) {
+      const res = await fetch(path, { method: "POST", headers: apiHeaders, body: JSON.stringify(payload) });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body.detail || body.message || "Request failed");
+      }
+      return body.data;
+    }
+
+    function field(label, id, value, opts = {}) {
+      const type = opts.type || "text";
+      const readonly = opts.readonly ? "readonly" : "";
+      return `<div><label for="${id}">${label}</label><input id="${id}" name="${id}" type="${type}" value="${escapeHtml(value || "")}" ${readonly} /></div>`;
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/"/g, "&quot;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+
+    function readForm(kind, fields) {
+      const get = (id) => document.getElementById(id)?.value?.trim() ?? "";
+      if (kind === "employee") {
+        return {
+          name: get("name"),
+          email: get("email"),
+          whatsapp_number: get("whatsapp_number"),
+          whatsapp_number_2: get("whatsapp_number_2"),
+          viber_number: get("viber_number"),
+          date_of_joining: get("date_of_joining"),
+          department: get("department"),
+          role: get("role"),
+          location: get("location"),
+          division: get("division"),
+          supervisor_1: get("supervisor_1"),
+          supervisor_2: get("supervisor_2"),
+          bank: {
+            bsb: get("bank_bsb"),
+            account_number: get("bank_account_number"),
+            account_name: get("bank_account_name"),
+            bank_name: get("bank_bank_name"),
+          },
+        };
+      }
+      const aliasesRaw = get("aliases");
+      return {
+        name: get("name"),
+        contact_email: get("contact_email"),
+        aliases: aliasesRaw ? aliasesRaw.split(",").map((s) => s.trim()).filter(Boolean) : (fields.aliases || []),
+        abn: get("abn"),
+        payment_terms: get("payment_terms"),
+        billing_address: {
+          street: get("street"),
+          suburb: get("suburb"),
+          postcode: get("postcode"),
+          country: get("country"),
+        },
+        bank: {
+          bsb: get("bank_bsb"),
+          account_number: get("bank_account_number"),
+          account_name: get("bank_account_name"),
+          bank_name: get("bank_bank_name"),
+        },
+      };
+    }
+
+    function employeeForm(fields) {
+      const bank = fields.bank || {};
+      return `
+        <section><h2>Identity</h2><div class="grid">
+          ${field("Full name", "name", fields.name)}
+          ${field("Email", "email", fields.email, { type: "email" })}
+          ${field("WhatsApp / Mobile 1", "whatsapp_number", fields.whatsapp_number)}
+          ${field("WhatsApp / Mobile 2", "whatsapp_number_2", fields.whatsapp_number_2)}
+          ${field("Viber", "viber_number", fields.viber_number)}
+        </div></section>
+        <section><h2>Organisation</h2><div class="grid">
+          ${field("Date of joining", "date_of_joining", fields.date_of_joining)}
+          ${field("Department", "department", fields.department)}
+          ${field("Designation", "role", fields.role)}
+          ${field("Location", "location", fields.location)}
+          ${field("Division", "division", fields.division)}
+          ${field("Supervisor 1", "supervisor_1", fields.supervisor_1)}
+          ${field("Supervisor 2", "supervisor_2", fields.supervisor_2)}
+        </div></section>
+        <section><h2>Bank details</h2><div class="grid">
+          ${field("BSB", "bank_bsb", bank.bsb)}
+          ${field("Account number", "bank_account_number", bank.account_number)}
+          ${field("Account name", "bank_account_name", bank.account_name)}
+          ${field("Bank name", "bank_bank_name", bank.bank_name)}
+        </div></section>
+      `;
+    }
+
+    function vendorForm(fields) {
+      const bank = fields.bank || {};
+      const billing = fields.billing_address || {};
+      return `
+        <section><h2>Identity</h2><div class="grid">
+          ${field("Business name", "name", fields.name)}
+          ${field("Contact email", "contact_email", fields.contact_email, { type: "email" })}
+          ${field("Aliases (comma-separated)", "aliases", (fields.aliases || []).join(", "))}
+          ${field("ABN / Tax ID", "abn", fields.abn)}
+          ${field("Payment terms", "payment_terms", fields.payment_terms)}
+        </div></section>
+        <section><h2>Billing address</h2><div class="grid">
+          ${field("Street", "street", billing.street)}
+          ${field("Suburb", "suburb", billing.suburb)}
+          ${field("Postcode", "postcode", billing.postcode)}
+          ${field("Country", "country", billing.country)}
+        </div></section>
+        <section><h2>Bank details</h2><div class="grid">
+          ${field("BSB", "bank_bsb", bank.bsb)}
+          ${field("Account number", "bank_account_number", bank.account_number)}
+          ${field("Account name", "bank_account_name", bank.account_name)}
+          ${field("Bank name", "bank_bank_name", bank.bank_name)}
+        </div></section>
+      `;
+    }
+
+    function bindSave(kind, fields) {
+      const btn = document.getElementById("save-btn");
+      if (!btn) return;
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        btn.textContent = "Saving…";
+        try {
+          const payload = readForm(kind, fields);
+          const result = await apiPost("/api/master-confirm/save", { token, fields: payload });
+          render(`
+            <h1>Details confirmed</h1>
+            <p class="success">Thank you, ${escapeHtml(result.party_name)}. Your details are now ${escapeHtml(result.status)}.</p>
+          `);
+        } catch (err) {
+          btn.disabled = false;
+          btn.textContent = "Save and confirm";
+          const msg = document.getElementById("form-error");
+          if (msg) msg.textContent = err.message || "Save failed";
+        }
+      });
+    }
+
+    if (!token) {
+      render('<h1>Invalid link</h1><p class="error">This confirmation link is missing a token.</p>');
+    } else {
+      apiGet("/api/master-confirm/preview?token=" + encodeURIComponent(token))
+        .then((data) => {
+          if (data.confirmed) {
+            render('<h1>Already confirmed</h1><p class="success">These details were already confirmed. You can close this page.</p>');
+            return;
+          }
+          if (data.expired) {
+            render('<h1>Link expired</h1><p class="error">This confirmation link has expired. Ask your administrator to resend it.</p>');
+            return;
+          }
+          const kindLabel = data.kind === "employee" ? "employee" : "vendor";
+          const formHtml = data.kind === "employee" ? employeeForm(data.fields) : vendorForm(data.fields);
+          render(`
+            <h1>Confirm your ${kindLabel} details</h1>
+            <p class="subtitle">${escapeHtml(data.tenant_name)} — review the information below, edit anything that is wrong, then save.</p>
+            ${formHtml}
+            <p id="form-error" class="error"></p>
+            <button id="save-btn" type="button">Save and confirm</button>
+          `);
+          bindSave(data.kind, data.fields);
+        })
+        .catch((err) => {
+          render(`<h1>Could not load details</h1><p class="error">${escapeHtml(err.message || "Invalid or expired link")}</p>`);
+        });
+    }
+  </script>
+</body>
+</html>

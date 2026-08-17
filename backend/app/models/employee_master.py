@@ -44,6 +44,8 @@ class EmployeeMasterRecord(Base):
     claim_count: Mapped[int] = mapped_column(Integer, default=0)
     last_claim: Mapped[str] = mapped_column(String(32), default="")
     status: Mapped[str] = mapped_column(String(50), default="")
+    confirmation_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronRight,
   Loader2,
+  Mail,
   MessageCircle,
   Plus,
   Upload,
@@ -21,6 +22,7 @@ import {
   useDeleteEmployeeMaster,
   useEmployeeMasters,
   useImportEmployeeMasters,
+  useSendEmployeeMasterConfirmation,
   useUpdateEmployeeMaster,
 } from "@/hooks/useMasterData";
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
@@ -69,6 +71,24 @@ export function EmployeesTab() {
   const updateMutation = useUpdateEmployeeMaster();
   const deleteMutation = useDeleteEmployeeMaster();
   const importMutation = useImportEmployeeMasters();
+  const sendConfirmationMutation = useSendEmployeeMasterConfirmation();
+
+  const sendEmployeeConfirmation = (employee: EmployeeMaster) => {
+    sendConfirmationMutation.mutate(employee.id, {
+      onSuccess: (result) => {
+        toast({
+          title: "Confirmation email sent",
+          description: result.email ? `Sent to ${result.email}` : undefined,
+        });
+      },
+      onError: (err) =>
+        toast({
+          title: "Could not send confirmation",
+          description: err instanceof Error ? err.message : "Send failed",
+          variant: "destructive",
+        }),
+    });
+  };
 
   const defaultAdvanceParent = useMemo(() => {
     const label = ruleBook?.teamExpensePosting?.defaultAdvanceParentLedger?.trim() ?? "";
@@ -332,6 +352,25 @@ export function EmployeesTab() {
                               Remove employee
                             </Button>
                             <div className="flex items-center gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={sendConfirmationMutation.isPending}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  sendEmployeeConfirmation(dirty ? draft : emp);
+                                }}
+                                data-testid={`send-employee-confirmation-${emp.id}`}
+                              >
+                                {sendConfirmationMutation.isPending ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <>
+                                    <Mail className="h-3.5 w-3.5 mr-1" />
+                                    {emp.confirmationSentAt ? "Resend confirmation" : "Send confirmation"}
+                                  </>
+                                )}
+                              </Button>
                               <Button
                                 size="sm"
                                 variant="outline"

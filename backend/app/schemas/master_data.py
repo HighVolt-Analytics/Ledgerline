@@ -31,6 +31,7 @@ class VendorMasterCreate(BaseModel):
     total_spend_ytd: float = Field(default=0, ge=0)
     invoice_count: int = Field(default=0, ge=0)
     match_confidence: float = Field(default=0, ge=0, le=100)
+    contact_email: str = ""
 
 
 class VendorMasterUpdate(BaseModel):
@@ -47,6 +48,7 @@ class VendorMasterUpdate(BaseModel):
     total_spend_ytd: float | None = Field(None, ge=0)
     invoice_count: int | None = Field(None, ge=0)
     match_confidence: float | None = Field(None, ge=0, le=100)
+    contact_email: str | None = None
 
 
 class VendorMasterResponse(VendorMaster):
@@ -215,3 +217,33 @@ class PendingCustomerResponse(BaseModel):
     promoted_master_id: str | None
     created_at: datetime
     resolved_at: datetime | None
+
+
+class MasterConfirmationSendResponse(BaseModel):
+    sent: bool
+    email: str | None = None
+    error: str | None = None
+    expires_at: datetime | None = None
+
+
+class MasterConfirmationPreviewResponse(BaseModel):
+    kind: str
+    master_id: str
+    party_name: str
+    tenant_name: str
+    expired: bool
+    confirmed: bool
+    fields: dict[str, object]
+
+
+class MasterConfirmationSaveRequest(BaseModel):
+    token: str
+    fields: dict[str, object] = Field(default_factory=dict)
+
+
+class MasterConfirmationSaveResponse(BaseModel):
+    kind: str
+    master_id: str
+    party_name: str
+    status: str
+    confirmed_at: datetime

@@ -142,6 +142,16 @@ export function useDeleteVendorMaster() {
   });
 }
 
+export function useSendVendorMasterConfirmation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.sendVendorMasterConfirmation(id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vendorMasters() });
+    },
+  });
+}
+
 function patchCustomerInCache(
   queryClient: ReturnType<typeof useQueryClient>,
   updated: CustomerMaster
@@ -238,6 +248,16 @@ export function useDeleteEmployeeMaster() {
       queryClient.setQueryData<EmployeeMaster[]>(queryKeys.employeeMasters(), (rows) =>
         rows?.filter((row) => row.id !== id)
       );
+    },
+  });
+}
+
+export function useSendEmployeeMasterConfirmation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.sendEmployeeMasterConfirmation(id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.employeeMasters() });
     },
   });
 }

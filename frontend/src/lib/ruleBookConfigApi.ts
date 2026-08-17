@@ -242,6 +242,9 @@ export function mapVendor(raw: Record<string, unknown>): VendorMaster {
     totalSpendYTD: Number(raw.total_spend_ytd ?? 0),
     invoiceCount: Number(raw.invoice_count ?? 0),
     matchConfidence: Number(raw.match_confidence ?? 0),
+    contactEmail: String(raw.contact_email ?? ""),
+    confirmationSentAt: (raw.confirmation_sent_at as string | null | undefined) ?? null,
+    confirmedAt: (raw.confirmed_at as string | null | undefined) ?? null,
   };
 }
 
@@ -320,6 +323,7 @@ export function vendorToApi(vendor: VendorMaster): Record<string, unknown> {
     total_spend_ytd: vendor.totalSpendYTD,
     invoice_count: vendor.invoiceCount,
     match_confidence: vendor.matchConfidence,
+    contact_email: vendor.contactEmail,
   };
 }
 
@@ -368,6 +372,8 @@ export function mapEmployee(raw: Record<string, unknown>): EmployeeMaster {
     claimCount: Number(raw.claim_count ?? 0),
     lastClaim: String(raw.last_claim ?? ""),
     status: String(raw.status ?? ""),
+    confirmationSentAt: (raw.confirmation_sent_at as string | null | undefined) ?? null,
+    confirmedAt: (raw.confirmed_at as string | null | undefined) ?? null,
   };
 }
 

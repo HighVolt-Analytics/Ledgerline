@@ -14,6 +14,13 @@ import {
 
 const VENDOR_STATUS_OPTIONS = ["Active", "On hold", "Pending registration"] as const;
 
+function formatConfirmationStamp(value?: string | null): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
 function normalizeLedgerValue(ledger: string): string {
   const trimmed = ledger.trim();
   return trimmed === "—" ? "" : trimmed;
@@ -46,12 +53,24 @@ export function VendorDetailPanel({
       className={cn("bg-muted/20 p-4 space-y-4", focusBank && "ring-1 ring-primary/30")}
       data-testid={`vendor-detail-${vendor.id}`}
     >
+      <p className="text-[11px] text-muted-foreground">
+        Confirmation email last sent {formatConfirmationStamp(vendor.confirmationSentAt)} ·
+        confirmed {formatConfirmationStamp(vendor.confirmedAt)}
+      </p>
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
         <FieldLabel label="Name">
           <Input
             value={vendor.name}
             onChange={(e) => onChange({ name: e.target.value })}
             className="h-8 text-sm"
+          />
+        </FieldLabel>
+        <FieldLabel label="Contact email">
+          <Input
+            value={vendor.contactEmail}
+            onChange={(e) => onChange({ contactEmail: e.target.value })}
+            placeholder="accounts@vendor.com"
+            className="h-8 text-xs font-mono"
           />
         </FieldLabel>
         <FieldLabel label="Aliases (comma-separated)">

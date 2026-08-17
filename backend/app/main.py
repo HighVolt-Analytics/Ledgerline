@@ -17,6 +17,7 @@ from app.api import (
     customers,
     department_budgets,
     ledger_link,
+    master_confirm,
     matrix,
     audit,
     auth,
@@ -157,6 +158,7 @@ if _settings.root_path:
     app.add_middleware(ProxyPathPrefixMiddleware, prefix=_settings.root_path)
 
 app.include_router(auth.router, prefix="/api")
+app.include_router(master_confirm.router, prefix="/api")
 app.include_router(geo.router, prefix="/api")
 app.include_router(meta.router, prefix="/api")
 app.include_router(oauth_auth.router, prefix="/api")
@@ -236,6 +238,9 @@ _CONNECT_MAILBOX_HTML = (
 _ACCEPT_INVITE_HTML = (
     Path(__file__).resolve().parent / "static" / "accept_invite.html"
 ).read_text(encoding="utf-8")
+_CONFIRM_MASTER_HTML = (
+    Path(__file__).resolve().parent / "static" / "confirm_master.html"
+).read_text(encoding="utf-8")
 
 
 @app.get("/connect-mailbox", response_class=HTMLResponse, include_in_schema=False)
@@ -248,6 +253,12 @@ async def connect_mailbox_page() -> HTMLResponse:
 async def accept_invite_page() -> HTMLResponse:
     """Public tenant member invite landing page (works via ngrok on the API port)."""
     return HTMLResponse(content=_ACCEPT_INVITE_HTML)
+
+
+@app.get("/confirm-master", response_class=HTMLResponse, include_in_schema=False)
+async def confirm_master_page() -> HTMLResponse:
+    """Public vendor/employee master confirmation page."""
+    return HTMLResponse(content=_CONFIRM_MASTER_HTML)
 
 
 @app.get("/signup", include_in_schema=False)

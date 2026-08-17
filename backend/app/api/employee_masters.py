@@ -16,6 +16,12 @@ from app.schemas.master_data import (
     EmployeeMasterCreate,
     EmployeeMasterResponse,
     EmployeeMasterUpdate,
+    MasterConfirmationSendResponse,
+)
+from app.services.master_data.master_confirmation_service import (
+    employee_confirmable_patch_keys,
+    maybe_send_after_admin_change,
+    send_master_confirmation,
 )
 from app.services.master_data.employee_import_service import (
     build_import_template,
@@ -135,6 +141,7 @@ async def list_employee_master_records(
 @router.post("", response_model=ApiEnvelope[EmployeeMasterResponse], status_code=201)
 async def create_employee_master_record(
     body: EmployeeMasterCreate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_admin),
 ) -> ApiEnvelope[EmployeeMasterResponse]:
@@ -142,6 +149,26 @@ async def create_employee_master_record(
         row = await create_employee_master(db, ctx.tenant_id, body)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
+    send_result = await send_master_confirmation(
+        db,
+        ctx.tenant_id,
+        kind="employee",
+        master_id=row.id,
+    )
+    if not send_result.sent and (body.email or "").strip():
+        actor_name, actor_email = await actor_from_context(db, ctx)
+        client_ip = request.client.host if request.client else None
+        await log_event(
+            db,
+            "employee_master_confirmation_send_failed",
+            tenant_id=ctx.tenant_id,
+            detail={"master_id": row.id, "error": send_result.error},
+            actor_name=actor_name,
+            actor_email=actor_email,
+            client_ip=client_ip,
+        )
+    rows = await list_employee_masters(db, ctx.tenant_id)
+    row = next((item for item in rows if item.id == row.id), row)
     return ApiEnvelope(data=row)
 
 
@@ -155,6 +182,10 @@ async def update_employee_master_record(
 ) -> ApiEnvelope[EmployeeMasterResponse]:
     before_rows = await list_employee_masters(db, ctx.tenant_id)
     before = next((row for row in before_rows if row.id == master_id), None)
+    patch = body.model_dump(exclude_unset=True)
+    confirmable_changed = bool(employee_confirmable_patch_keys(patch))
+    if confirmable_changed and body.status is None:
+        body = body.model_copy(update={"status": "Pending verification"})
     try:
         row = await update_employee_master(db, ctx.tenant_id, master_id, body)
     except LookupError as exc:
@@ -174,6 +205,15 @@ async def update_employee_master_record(
         actor_email=actor_email,
         client_ip=client_ip,
     )
+    await maybe_send_after_admin_change(
+        db,
+        ctx.tenant_id,
+        kind="employee",
+        master_id=master_id,
+        confirmable_changed=confirmable_changed,
+    )
+    rows = await list_employee_masters(db, ctx.tenant_id)
+    row = next((item for item in rows if item.id == master_id), row)
     return ApiEnvelope(data=row)
 
 
@@ -187,3 +227,27 @@ async def delete_employee_master_record(
         await delete_employee_master(db, ctx.tenant_id, master_id)
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
+
+
+@router.post("/{master_id}/send-confirmation", response_model=ApiEnvelope[MasterConfirmationSendResponse])
+async def send_employee_master_confirmation(
+    master_id: str,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[MasterConfirmationSendResponse]:
+    result = await send_master_confirmation(
+        db,
+        ctx.tenant_id,
+        kind="employee",
+        master_id=master_id,
+    )
+    if not result.sent:
+        raise HTTPException(400, result.error or "Could not send confirmation email")
+    return ApiEnvelope(
+        data=MasterConfirmationSendResponse(
+            sent=result.sent,
+            email=result.email,
+            error=result.error,
+            expires_at=result.expires_at,
+        )
+    )

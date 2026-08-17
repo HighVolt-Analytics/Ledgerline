@@ -363,3 +363,205 @@ async def send_password_reset_otp_email(*, to_email: str, otp: str) -> InviteEma
         body_text=body_text,
     )
     return smtp_result
+
+
+def _format_confirmation_fields(fields: dict) -> str:
+    lines: list[str] = []
+    for key, value in fields.items():
+        if key == "bank" and isinstance(value, dict):
+            for bank_key, bank_val in value.items():
+                if bank_val:
+                    lines.append(f"{bank_key.replace('_', ' ').title()}: {bank_val}")
+            continue
+        if key == "billing_address" and isinstance(value, dict):
+            parts = [str(v) for v in value.values() if v]
+            if parts:
+                lines.append(f"Address: {', '.join(parts)}")
+            continue
+        if isinstance(value, list):
+            if value:
+                lines.append(f"{key.replace('_', ' ').title()}: {', '.join(str(v) for v in value)}")
+            continue
+        if value:
+            lines.append(f"{key.replace('_', ' ').title()}: {value}")
+    return "\n".join(lines) if lines else "No details on file yet."
+
+
+async def send_master_confirmation_email(
+    *,
+    to_email: str,
+    party_name: str,
+    kind: str,
+    confirm_url: str,
+    fields: dict,
+) -> InviteEmailResult:
+    """Send vendor/employee master confirmation link."""
+    settings = get_settings()
+    if settings.is_production or graph_mail_send_configured():
+        validate_deliverable_email_or_raise(to_email)
+
+    label = "employee" if kind == "employee" else "vendor"
+    subject = f"Please confirm your {label} details — LedgerLink"
+    detail_block = _format_confirmation_fields(fields)
+    body_text = (
+        f"Hello {party_name},\n\n"
+        f"Please review and confirm your {label} details on file:\n\n"
+        f"{detail_block}\n\n"
+        f"Review, edit if needed, and confirm here:\n{confirm_url}\n\n"
+        "This link expires in 7 days.\n\n"
+        "If you did not expect this email, you can ignore it."
+    )
+    body_html = (
+        f"<p>Hello <strong>{party_name}</strong>,</p>"
+        f"<p>Please review and confirm your {label} details on file:</p>"
+        f"<pre style=\"white-space:pre-wrap;font-family:inherit\">{detail_block}</pre>"
+        f'<p><a href="{confirm_url}">Review and confirm your details</a></p>'
+        "<p>This link expires in 7 days.</p>"
+        "<p>If you did not expect this email, you can ignore it.</p>"
+    )
+
+    if not settings.is_production:
+        logger.info(
+            "master_confirmation_email",
+            extra={
+                "email": to_email,
+                "kind": kind,
+                "confirm_url": confirm_url,
+            },
+        )
+
+    if graph_mail_send_configured():
+        graph_result = send_graph_mail(
+            to_email=to_email,
+            subject=subject,
+            body_text=body_text,
+            body_html=body_html,
+        )
+        if graph_result.sent:
+            return InviteEmailResult(sent=True)
+        smtp_result = _send_via_smtp(
+            to_email=to_email,
+            subject=subject,
+            body_text=body_text,
+        )
+        if smtp_result.sent:
+            return InviteEmailResult(sent=True)
+        return InviteEmailResult(
+            sent=False,
+            error=graph_result.error or smtp_result.error,
+        )
+
+    smtp_result = _send_via_smtp(
+        to_email=to_email,
+        subject=subject,
+        body_text=body_text,
+    )
+    if smtp_result.sent:
+        return InviteEmailResult(sent=True)
+
+    if not settings.is_production:
+        return InviteEmailResult(sent=True)
+
+    return smtp_result
+
+
+
+def _format_confirmation_fields(fields: dict) -> str:
+    lines: list[str] = []
+    for key, value in fields.items():
+        if key == "bank" and isinstance(value, dict):
+            for bank_key, bank_val in value.items():
+                if bank_val:
+                    lines.append(f"{bank_key.replace('_', ' ').title()}: {bank_val}")
+            continue
+        if key == "billing_address" and isinstance(value, dict):
+            parts = [str(v) for v in value.values() if v]
+            if parts:
+                lines.append(f"Address: {', '.join(parts)}")
+            continue
+        if isinstance(value, list):
+            if value:
+                lines.append(f"{key.replace('_', ' ').title()}: {', '.join(str(v) for v in value)}")
+            continue
+        if value:
+            lines.append(f"{key.replace('_', ' ').title()}: {value}")
+    return "\n".join(lines) if lines else "No details on file yet."
+
+
+async def send_master_confirmation_email(
+    *,
+    to_email: str,
+    party_name: str,
+    kind: str,
+    confirm_url: str,
+    fields: dict,
+) -> InviteEmailResult:
+    """Send vendor/employee master confirmation link."""
+    settings = get_settings()
+    if settings.is_production or graph_mail_send_configured():
+        validate_deliverable_email_or_raise(to_email)
+
+    label = "employee" if kind == "employee" else "vendor"
+    subject = f"Please confirm your {label} details — LedgerLink"
+    detail_block = _format_confirmation_fields(fields)
+    body_text = (
+        f"Hello {party_name},\n\n"
+        f"Please review and confirm your {label} details on file:\n\n"
+        f"{detail_block}\n\n"
+        f"Review, edit if needed, and confirm here:\n{confirm_url}\n\n"
+        "This link expires in 7 days.\n\n"
+        "If you did not expect this email, you can ignore it."
+    )
+    body_html = (
+        f"<p>Hello <strong>{party_name}</strong>,</p>"
+        f"<p>Please review and confirm your {label} details on file:</p>"
+        f"<pre style=\"white-space:pre-wrap;font-family:inherit\">{detail_block}</pre>"
+        f'<p><a href="{confirm_url}">Review and confirm your details</a></p>'
+        "<p>This link expires in 7 days.</p>"
+        "<p>If you did not expect this email, you can ignore it.</p>"
+    )
+
+    if not settings.is_production:
+        logger.info(
+            "master_confirmation_email",
+            extra={
+                "email": to_email,
+                "kind": kind,
+                "confirm_url": confirm_url,
+            },
+        )
+
+    if graph_mail_send_configured():
+        graph_result = send_graph_mail(
+            to_email=to_email,
+            subject=subject,
+            body_text=body_text,
+            body_html=body_html,
+        )
+        if graph_result.sent:
+            return InviteEmailResult(sent=True)
+        smtp_result = _send_via_smtp(
+            to_email=to_email,
+            subject=subject,
+            body_text=body_text,
+        )
+        if smtp_result.sent:
+            return InviteEmailResult(sent=True)
+        return InviteEmailResult(
+            sent=False,
+            error=graph_result.error or smtp_result.error,
+        )
+
+    smtp_result = _send_via_smtp(
+        to_email=to_email,
+        subject=subject,
+        body_text=body_text,
+    )
+    if smtp_result.sent:
+        return InviteEmailResult(sent=True)
+
+    if not settings.is_production:
+        return InviteEmailResult(sent=True)
+
+    return smtp_result
+

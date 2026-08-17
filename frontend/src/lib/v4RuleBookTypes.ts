@@ -175,6 +175,9 @@ export type VendorMaster = {
   totalSpendYTD: number;
   invoiceCount: number;
   matchConfidence: number;
+  contactEmail: string;
+  confirmationSentAt?: string | null;
+  confirmedAt?: string | null;
 };
 
 export type VendorDetectionConfig = {
@@ -220,6 +223,8 @@ export type EmployeeMaster = {
   claimCount: number;
   lastClaim: string;
   status: string;
+  confirmationSentAt?: string | null;
+  confirmedAt?: string | null;
 };
 
 export type SampleEmail = {

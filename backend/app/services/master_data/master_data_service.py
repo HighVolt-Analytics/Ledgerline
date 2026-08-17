@@ -75,6 +75,9 @@ def vendor_record_to_schema(row: VendorMasterRecord) -> VendorMasterResponse:
         total_spend_ytd=row.total_spend_ytd or 0,
         invoice_count=row.invoice_count or 0,
         match_confidence=row.match_confidence or 0,
+        contact_email=row.contact_email or "",
+        confirmation_sent_at=row.confirmation_sent_at,
+        confirmed_at=row.confirmed_at,
     )
 
 
@@ -104,6 +107,8 @@ def employee_record_to_schema(row: EmployeeMasterRecord) -> EmployeeMasterRespon
         claim_count=row.claim_count or 0,
         last_claim=row.last_claim or "",
         status=row.status or "",
+        confirmation_sent_at=row.confirmation_sent_at,
+        confirmed_at=row.confirmed_at,
     )
 
 
@@ -400,6 +405,7 @@ async def create_vendor_master(
         total_spend_ytd=body.total_spend_ytd,
         invoice_count=body.invoice_count,
         match_confidence=body.match_confidence,
+        contact_email=(body.contact_email or "").strip(),
     )
     db.add(row)
     await db.flush()

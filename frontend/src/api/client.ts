@@ -1515,6 +1515,11 @@ export const api = {
     }),
   deleteVendorMaster: (masterId: string) =>
     request<void>(`/api/vendor-masters/${encodeURIComponent(masterId)}`, { method: "DELETE" }),
+  sendVendorMasterConfirmation: (masterId: string) =>
+    request<{ sent: boolean; email?: string | null; error?: string | null; expires_at?: string | null }>(
+      `/api/vendor-masters/${encodeURIComponent(masterId)}/send-confirmation`,
+      { method: "POST" }
+    ),
   listEmployeeMasters: (options?: FreshRequestOptions) => {
     const path = "/api/employee-masters";
     if (options?.fresh) bustGetCache(path);
@@ -1534,6 +1539,11 @@ export const api = {
     }),
   deleteEmployeeMaster: (masterId: string) =>
     request<void>(`/api/employee-masters/${encodeURIComponent(masterId)}`, { method: "DELETE" }),
+  sendEmployeeMasterConfirmation: (masterId: string) =>
+    request<{ sent: boolean; email?: string | null; error?: string | null; expires_at?: string | null }>(
+      `/api/employee-masters/${encodeURIComponent(masterId)}/send-confirmation`,
+      { method: "POST" }
+    ),
   listDepartmentBudgets: (department?: string) => {
     const q = department?.trim()
       ? `?department=${encodeURIComponent(department.trim())}`
