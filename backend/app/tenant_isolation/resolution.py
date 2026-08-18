@@ -40,6 +40,8 @@ _SKIP_DEFAULT_PATHS = (
     "/health",
     "/connect-mailbox",
     "/accept-invite",
+    "/confirm-master",
+    "/api/master-confirm",
     "/forgot-password",
     "/reset-password",
     "/signup",

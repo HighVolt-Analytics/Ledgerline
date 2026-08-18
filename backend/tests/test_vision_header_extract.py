@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 
 from app.models.invoice import Invoice, InvoiceStatus
@@ -279,7 +281,7 @@ def test_persist_vision_header_to_invoice_columns() -> None:
     result = parse_vision_header_raw(
         {
             "document_heading": "Purchase Order",
-            "counterparty_name": "Supplier Co",
+            "counterparty_name": "Classic Enterprise",
             "perspective": "purchase",
             "invoice_no": "",
             "po_reference": "PO-777",
@@ -293,10 +295,39 @@ def test_persist_vision_header_to_invoice_columns() -> None:
     persist_vision_header_to_invoice(inv, result)
     assert inv.document_heading == "Purchase Order"
     assert inv.po_reference == "PO-777"
-    assert inv.vendor == "Supplier Co"
+    assert inv.vendor == "Classic Enterprise"
     fields = inv.extracted_fields or {}
     assert fields.get("document_heading") == "Purchase Order"
-    assert fields.get("seller_name") == "Supplier Co"
+    assert fields.get("seller_name") == "Classic Enterprise"
+
+
+def test_persist_vision_header_preserve_keeps_clerk_total() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PARSING,
+        currency="USD",
+        vendor="Classic Enterprise",
+        total=Decimal("16000.00"),
+        extracted_fields={"total": "16000.00"},
+    )
+    result = parse_vision_header_raw(
+        {
+            "document_heading": "TAX-CUM-COMMERCIAL INVOICE",
+            "counterparty_name": "Classic Enterprise",
+            "perspective": "purchase",
+            "invoice_no": "CE-1",
+            "total": "0",
+            "currency": "",
+            "confidence": 0.9,
+            "reason": "invoice header",
+        },
+        provider="azure_foundry_vision",
+    )
+    persist_vision_header_to_invoice(inv, result, preserve_existing=True)
+    assert inv.total == Decimal("16000.00")
+    assert inv.currency == "USD"
+    assert inv.vendor == "Classic Enterprise"
+    assert (inv.extracted_fields or {}).get("total") == "16000.00"
 
 
 def test_persist_proforma_invoice_no_to_extracted_fields() -> None:

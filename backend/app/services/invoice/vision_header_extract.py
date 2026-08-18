@@ -448,6 +448,8 @@ def parse_vision_header_raw(
 def persist_vision_header_to_invoice(
     invoice: Invoice,
     result: VisionHeaderExtractResult,
+    *,
+    preserve_existing: bool = False,
 ) -> None:
     """Write header fields onto invoice columns used by Upload + dossier bundling."""
     from app.services.extraction.extraction_field_values import (
@@ -461,44 +463,60 @@ def persist_vision_header_to_invoice(
     from app.services.shared.amount_sanity import plausible_money
     from app.utils.abn_validator import is_valid_abn, storage_abn
 
+    def _empty(value: object) -> bool:
+        if value is None:
+            return True
+        if isinstance(value, str) and not value.strip():
+            return True
+        return False
+
+    def _maybe_set(attr: str, value: object) -> None:
+        if value is None:
+            return
+        if preserve_existing and not _empty(getattr(invoice, attr, None)):
+            return
+        setattr(invoice, attr, value)
+
     primary, secondary = sanitize_invoice_no_parts(result.invoice_no or None)
     if primary:
-        invoice.invoice_no = primary
+        _maybe_set("invoice_no", primary)
     if result.po_reference:
-        invoice.po_reference = result.po_reference
+        _maybe_set("po_reference", result.po_reference)
     if result.so_reference:
-        invoice.so_reference = result.so_reference
+        _maybe_set("so_reference", result.so_reference)
     from app.services.sales.so_reference import sanitize_cross_book_linkage_references
 
     sanitize_cross_book_linkage_references(invoice)
     from app.services.master_data.vendor_name_utils import is_plausible_vendor_name
 
     if result.counterparty_name and is_plausible_vendor_name(result.counterparty_name):
-        invoice.vendor = result.counterparty_name
-    elif (invoice.vendor or "").strip() and not is_plausible_vendor_name(invoice.vendor):
+        _maybe_set("vendor", result.counterparty_name)
+    elif not preserve_existing and (invoice.vendor or "").strip() and not is_plausible_vendor_name(invoice.vendor):
         invoice.vendor = None
     if result.invoice_date is not None:
-        invoice.invoice_date = result.invoice_date
+        _maybe_set("invoice_date", result.invoice_date)
 
     money = plausible_money(result.total)
     if money is not None:
-        invoice.total = money
+        _maybe_set("total", money)
     subtotal = plausible_money(result.subtotal)
     if subtotal is not None:
-        invoice.subtotal = subtotal
-    else:
+        _maybe_set("subtotal", subtotal)
+    elif not preserve_existing:
         invoice.subtotal = None
     gst = plausible_money(result.gst)
     if gst is not None:
-        invoice.gst = gst
-    else:
+        _maybe_set("gst", gst)
+    elif not preserve_existing:
         invoice.gst = None
     if result.gst_rate is not None:
-        invoice.gst_rate = result.gst_rate
+        _maybe_set("gst_rate", result.gst_rate)
 
     # Always write currency from vision — empty clears any ingest/tenant seed so
     # undetected currency shows blank (UI asks user) instead of inventing AUD.
-    invoice.currency = (result.currency or "").strip().upper()[:3]
+    # Clerk-preserved reprocess keeps a user-set ISO code.
+    if not (preserve_existing and not _empty(invoice.currency)):
+        invoice.currency = (result.currency or "").strip().upper()[:3]
 
     # Party tax ids: always keep opaque strings in extracted_fields; AU column only
     # when storage_abn succeeds (and preferably checksum-valid).
@@ -509,7 +527,8 @@ def persist_vision_header_to_invoice(
         counterparty_tax = result.seller_abn or result.buyer_abn
     abn_digits = storage_abn(counterparty_tax) if counterparty_tax else None
     if abn_digits and is_valid_abn(abn_digits):
-        invoice.abn = abn_digits
+        if not (preserve_existing and not _empty(invoice.abn)):
+            invoice.abn = abn_digits
     elif abn_digits and len(abn_digits) == 11:
         # Format OK but checksum fail — do not force invoices.abn
         pass
@@ -528,7 +547,7 @@ def persist_vision_header_to_invoice(
         currency=invoice.currency or "",
         line_items=list(result.line_items or ()),
     )
-    apply_parsed_extraction_fields(invoice, parsed)
+    apply_parsed_extraction_fields(invoice, parsed, preserve_existing=preserve_existing)
 
     patch: dict[str, str] = {
         "perspective": result.perspective,
@@ -556,20 +575,23 @@ def persist_vision_header_to_invoice(
     elif (result.invoice_date_raw or "").strip():
         patch["invoice_date_raw"] = (result.invoice_date_raw or "").strip()[:64]
     if money is not None:
-        patch["total"] = format(money, "f")
-    elif "total" in (invoice.extracted_fields or {}):
+        if not (preserve_existing and (invoice.extracted_fields or {}).get("total") not in (None, "")):
+            patch["total"] = format(money, "f")
+    elif not preserve_existing and "total" in (invoice.extracted_fields or {}):
         fields = dict(invoice.extracted_fields or {})
         fields.pop("total", None)
         invoice.extracted_fields = fields or None
     if subtotal is not None:
-        patch["subtotal"] = format(subtotal, "f")
-    elif "subtotal" in (invoice.extracted_fields or {}):
+        if not (preserve_existing and (invoice.extracted_fields or {}).get("subtotal") not in (None, "")):
+            patch["subtotal"] = format(subtotal, "f")
+    elif not preserve_existing and "subtotal" in (invoice.extracted_fields or {}):
         fields = dict(invoice.extracted_fields or {})
         fields.pop("subtotal", None)
         invoice.extracted_fields = fields or None
     if gst is not None:
-        patch["gst"] = format(gst, "f")
-    elif "gst" in (invoice.extracted_fields or {}):
+        if not (preserve_existing and (invoice.extracted_fields or {}).get("gst") not in (None, "")):
+            patch["gst"] = format(gst, "f")
+    elif not preserve_existing and "gst" in (invoice.extracted_fields or {}):
         fields = dict(invoice.extracted_fields or {})
         fields.pop("gst", None)
         invoice.extracted_fields = fields or None

@@ -28,7 +28,10 @@ async def test_processing_overrides_preserved_on_requeue(
     await requeue_invoice_for_pipeline(db_session, inv, preserve_extracted_fields=True)
     await db_session.flush()
 
-    assert inv.processing_overrides == {"skip_steps": ["validation"]}
+    assert inv.processing_overrides == {
+        "skip_steps": ["validation"],
+        "preserve_extracted_fields": True,
+    }
 
 
 @pytest.mark.asyncio

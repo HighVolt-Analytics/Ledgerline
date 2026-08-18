@@ -187,3 +187,37 @@ async def test_apply_parsed_preserve_existing_expired_keeps_db_lines(
     assert len(inv.line_items) == 1
     assert inv.line_items[0].description == "clerk line"
 
+
+@pytest.mark.asyncio
+async def test_apply_parsed_preserve_existing_keeps_clerk_total(
+    db_session,
+) -> None:
+    inv = await _seed_invoice_with_line(db_session, description="clerk line")
+    inv.total = Decimal("16000.00")
+    inv.extracted_fields = {"total": "16000.00"}
+    await db_session.flush()
+    stmt = (
+        select(Invoice)
+        .where(Invoice.id == inv.id)
+        .options(selectinload(Invoice.line_items))
+    )
+    loaded = (await db_session.execute(stmt)).scalar_one()
+
+    parsed = InvoiceData(
+        vendor="Classic Enterprise",
+        total=Decimal("0"),
+        extracted_fields={"total": "0.0"},
+        line_items=[ParsedLineItem(description="ocr line", amount=Decimal("0"))],
+    )
+    await _apply_parsed_to_invoice(
+        db_session,
+        invoice=loaded,
+        loaded=loaded,
+        parsed=parsed,
+        config=RuleBookConfigPayload(document_types=[]),
+        preserve_existing=True,
+    )
+
+    assert loaded.total == Decimal("16000.00")
+    assert (loaded.extracted_fields or {}).get("total") == "16000.00"
+

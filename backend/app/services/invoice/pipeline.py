@@ -1527,7 +1527,7 @@ async def _apply_parsed_to_invoice(
 
         from app.services.extraction.extraction_field_values import apply_parsed_extraction_fields
 
-        apply_parsed_extraction_fields(invoice, parsed)
+        apply_parsed_extraction_fields(invoice, parsed, preserve_existing=True)
 
         loaded.abn = invoice.abn
         loaded.billing_address = invoice.billing_address
@@ -2159,13 +2159,21 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
 
     bypass_review_gates = await human_approved_payable_bypass(session, invoice)
     from app.services.invoice.invoice_edit_service import invoice_has_manual_field_edits
+    from app.services.invoice.processing_override_catalog import (
+        consume_preserve_extracted_fields,
+    )
 
     await session.refresh(invoice, attribute_names=["processing_overrides"])
 
-    preserve_extracted_fields = bypass_review_gates or await invoice_has_manual_field_edits(
-        session,
-        invoice.id,
-        tenant_id=invoice.tenant_id,
+    preserve_from_requeue = consume_preserve_extracted_fields(invoice)
+    preserve_extracted_fields = (
+        preserve_from_requeue
+        or bypass_review_gates
+        or await invoice_has_manual_field_edits(
+            session,
+            invoice.id,
+            tenant_id=invoice.tenant_id,
+        )
     )
 
     if not invoice.raw_file_path:
@@ -2271,11 +2279,13 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
 
         use_dt_scoped = bool(get_settings().vision_dt_scoped_extract)
 
-        stale_clear = await clear_stale_not_understood_for_understood_path(
-            session,
-            invoice,
-            preserve_document_type=bool(human_locked_dt),
-        )
+        stale_clear: dict[str, object] = {}
+        if not preserve_extracted_fields:
+            stale_clear = await clear_stale_not_understood_for_understood_path(
+                session,
+                invoice,
+                preserve_document_type=bool(human_locked_dt),
+            )
         if (
             stale_clear.get("cleared_line_item_count")
             or stale_clear.get("cleared_document_type")
@@ -2509,6 +2519,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                 vision_page_images=vision_page_images,
                 few_shots=vision_few_shots,
                 definition=posting_defn_early,
+                preserve_existing=preserve_extracted_fields,
             )
             # Safety net: if extract revealed link signals that prefer another DT,
             # flip once and re-extract (never when human-locked).
@@ -2565,6 +2576,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                         vision_page_images=vision_page_images,
                         few_shots=vision_few_shots,
                         definition=posting_defn_early,
+                        preserve_existing=preserve_extracted_fields,
                     )
             retained = restore_unrefilled_vision_stale_snapshot(invoice, stale_clear)
             if retained.get("restored_columns") or retained.get("restored_extracted_keys"):
@@ -2585,6 +2597,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                 doc_provider=doc_provider,
                 document_ai_provider=provider_token,
                 vision_page_images=vision_page_images,
+                preserve_existing=preserve_extracted_fields,
             )
             retained = restore_unrefilled_vision_stale_snapshot(invoice, stale_clear)
             if retained.get("restored_columns") or retained.get("restored_extracted_keys"):

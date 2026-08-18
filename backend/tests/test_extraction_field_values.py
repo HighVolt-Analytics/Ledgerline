@@ -291,6 +291,25 @@ def test_apply_parsed_extraction_fields_persists_on_invoice() -> None:
     }
 
 
+def test_apply_parsed_extraction_fields_preserve_keeps_clerk_total() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PARSING,
+        currency="USD",
+        document_heading="TAX-CUM-COMMERCIAL INVOICE",
+        extracted_fields={"total": "16000.00", "vendor": "Classic Enterprise"},
+    )
+    parsed = InvoiceData(
+        vendor="Classic Enterprise",
+        total=Decimal("0"),
+        document_heading="TAX-CUM-COMMERCIAL INVOICE",
+        extracted_fields={"total": "0.0", "vendor": "Classic Enterprise"},
+    )
+    apply_parsed_extraction_fields(inv, parsed, preserve_existing=True)
+    assert inv.extracted_fields["total"] == "16000.00"
+    assert inv.document_heading == "TAX-CUM-COMMERCIAL INVOICE"
+
+
 def test_field_is_present_reads_custom_extracted_field() -> None:
     inv = Invoice(
         tenant_id=TESTING_TENANT_UUID,

@@ -1448,13 +1448,21 @@ def merge_invoice_extracted_fields(invoice: Invoice, patch: dict[str, str]) -> N
     invoice.extracted_fields = fields
 
 
-def apply_parsed_extraction_fields(invoice: Invoice, parsed: InvoiceData) -> None:
+def apply_parsed_extraction_fields(
+    invoice: Invoice,
+    parsed: InvoiceData,
+    *,
+    preserve_existing: bool = False,
+) -> None:
     from app.services.invoice.invoice_data import _resolved_document_heading
 
     heading = (parsed.document_heading or _resolved_document_heading(invoice=None, parsed=parsed) or "").strip()[:500]
     if heading:
         parsed.document_heading = heading
-    invoice.document_heading = heading or None
+    if heading and not (
+        preserve_existing and str(invoice.document_heading or "").strip()
+    ):
+        invoice.document_heading = heading or None
     custom = merge_extracted_field_maps(extracted_fields_from_parsed(parsed))
     # Preserve Employee Master / mailbox channel identity — never overwrite from OCR/LLM.
     for key in CHANNEL_IDENTITY_ATTRS:
@@ -1462,7 +1470,13 @@ def apply_parsed_extraction_fields(invoice: Invoice, parsed: InvoiceData) -> Non
     if heading:
         custom["document_heading"] = heading
     existing = dict(invoice.extracted_fields or {})
-    existing.update(custom)
+    if preserve_existing:
+        for key, value in custom.items():
+            prior = existing.get(key)
+            if prior is None or (isinstance(prior, str) and not prior.strip()):
+                existing[key] = value
+    else:
+        existing.update(custom)
     invoice.extracted_fields = existing or None
     from app.services.purchase.po_reference import ensure_invoice_po_reference
     from app.services.sales.so_reference import ensure_invoice_so_reference

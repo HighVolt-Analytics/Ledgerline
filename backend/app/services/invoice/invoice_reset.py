@@ -10,6 +10,7 @@ from app.models.journal import JournalEntry
 from app.models.line_item import LineItem
 from app.services.invoice.processing_override_catalog import (
     clear_processing_overrides,
+    set_preserve_extracted_fields,
     skip_steps_for,
 )
 from app.tenant_child_tables import journal_entries_for_invoice, line_items_for_invoice
@@ -161,6 +162,7 @@ async def reset_invoice_for_reprocess(
 
 async def reset_invoice_for_approval(session: AsyncSession, inv: Invoice) -> None:
     """Re-queue for pipeline while preserving user-corrected extracted fields."""
+    set_preserve_extracted_fields(inv)
     inv.status = InvoiceStatus.PENDING
     # Approval is the resume path for sticky pending_approval / await PO|SO holds.
     # Leaving evaluation_status set would re-stick the hold after a successful reprocess.
@@ -202,14 +204,27 @@ async def clear_invoice_posting_artifacts(session: AsyncSession, inv: Invoice) -
     await session.flush()
 
 
+_PRESERVE_REQUEUE_STATUSES = frozenset(
+    {
+        InvoiceStatus.EXCEPTION,
+        InvoiceStatus.REJECTED,
+        InvoiceStatus.DUPLICATE_SKIPPED,
+    }
+)
+
+
 async def should_preserve_extracted_on_requeue(
     session: AsyncSession,
     inv: Invoice,
     *,
     manual_edits: bool | None = None,
 ) -> bool:
-    """Keep clerk-corrected header fields when re-queuing from the review queue."""
-    if inv.status != InvoiceStatus.EXCEPTION:
+    """Keep clerk-corrected header fields when re-queuing from the review queue.
+
+    Rejected / duplicate-skipped rows only preserve after a clerk edit in this
+    cycle. Reprocess-without-edit still does a full re-extract.
+    """
+    if inv.status not in _PRESERVE_REQUEUE_STATUSES:
         return False
     from app.services.approval.approval_pipeline_service import (
         document_type_definition_for_invoice,
@@ -223,6 +238,8 @@ async def should_preserve_extracted_on_requeue(
             inv.id,
             tenant_id=inv.tenant_id,
         )
+    if inv.status in {InvoiceStatus.REJECTED, InvoiceStatus.DUPLICATE_SKIPPED}:
+        return bool(manual_edits)
     definition = await document_type_definition_for_invoice(session, inv)
     return manual_edits or payable_fields_complete(inv, definition)
 

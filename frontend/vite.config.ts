@@ -57,6 +57,12 @@ export default defineConfig({
         timeout: 30_000,
         proxyTimeout: 30_000,
       },
+      "/confirm-master": {
+        target: process.env.VITE_API_PROXY_TARGET ?? "http://127.0.0.1:8001",
+        changeOrigin: true,
+        timeout: 30_000,
+        proxyTimeout: 30_000,
+      },
     },
   },
 });

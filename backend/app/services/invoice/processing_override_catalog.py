@@ -175,3 +175,23 @@ def clear_deferred_full_reset(invoice: Invoice) -> None:
     updated = dict(raw)
     updated.pop("deferred_full_reset", None)
     invoice.processing_overrides = updated or None
+
+
+_PRESERVE_EXTRACTED_FLAG = "preserve_extracted_fields"
+
+
+def set_preserve_extracted_fields(invoice: Invoice) -> None:
+    """Mark this pipeline run to keep clerk-corrected header fields."""
+    raw = dict(getattr(invoice, "processing_overrides", None) or {})
+    raw[_PRESERVE_EXTRACTED_FLAG] = True
+    invoice.processing_overrides = raw
+
+
+def consume_preserve_extracted_fields(invoice: Invoice) -> bool:
+    raw = getattr(invoice, "processing_overrides", None)
+    if not isinstance(raw, dict) or not raw.get(_PRESERVE_EXTRACTED_FLAG):
+        return False
+    updated = dict(raw)
+    updated.pop(_PRESERVE_EXTRACTED_FLAG, None)
+    invoice.processing_overrides = updated or None
+    return True

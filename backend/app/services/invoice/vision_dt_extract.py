@@ -69,6 +69,7 @@ async def evaluate_vision_dt_extract(
     vision_page_images: list[bytes] | None = None,
     few_shots: list | None = None,
     definition: DocumentTypeDefinition | None = None,
+    preserve_existing: bool = False,
 ) -> VisionDtExtractResult:
     """Extract fields listed on the mapped DT using vision page images."""
     from app.services.classification.document_type_catalog import get_document_type_definition
@@ -239,8 +240,8 @@ async def evaluate_vision_dt_extract(
             config = RuleBookConfigPayload(document_types=list(document_types))
             from app.services.approval.approval_pipeline_service import payable_fields_complete
 
-            # Never overwrite clerk-completed DT-required fields with a weaker re-extract.
-            preserve = payable_fields_complete(invoice, dt_defn)
+            # Never overwrite clerk-corrected fields with a weaker re-extract.
+            preserve = preserve_existing or payable_fields_complete(invoice, dt_defn)
             await _apply_parsed_to_invoice(
                 session,
                 invoice=invoice,
@@ -254,35 +255,42 @@ async def evaluate_vision_dt_extract(
             # Safety net: DT requires lines + printed total, but every tier left
             # the grid empty (common on handwritten non-Latin receipts).
             if wants_line_items and line_items_count == 0:
-                from dataclasses import replace as dc_replace
-
-                from app.services.extraction.line_items_fallback_service import (
-                    FALLBACK_HEADER,
+                from app.services.invoice.pipeline import (
+                    _invoice_has_persisted_line_items,
+                    _replace_line_items,
                 )
-                from app.services.invoice.invoice_data import ParsedLineItem
-                from app.services.invoice.pipeline import _replace_line_items
-                from app.services.shared.amount_sanity import plausible_money
 
-                rescue_total = plausible_money(parsed.total) or plausible_money(
-                    getattr(invoice, "total", None)
-                )
-                if rescue_total is not None and rescue_total > 0:
-                    heading = (
-                        (parsed.document_heading or "").strip()
-                        or (invoice.document_heading or "").strip()
-                        or None
+                if preserve and await _invoice_has_persisted_line_items(session, invoice):
+                    pass
+                else:
+                    from dataclasses import replace as dc_replace
+
+                    from app.services.extraction.line_items_fallback_service import (
+                        FALLBACK_HEADER,
                     )
-                    rescue_rows = [
-                        ParsedLineItem(
-                            description=heading[:200] if heading else None,
-                            amount=rescue_total,
-                            source=FALLBACK_HEADER,
+                    from app.services.invoice.invoice_data import ParsedLineItem
+                    from app.services.shared.amount_sanity import plausible_money
+
+                    rescue_total = plausible_money(parsed.total) or plausible_money(
+                        getattr(invoice, "total", None)
+                    )
+                    if rescue_total is not None and rescue_total > 0:
+                        heading = (
+                            (parsed.document_heading or "").strip()
+                            or (invoice.document_heading or "").strip()
+                            or None
                         )
-                    ]
-                    parsed = dc_replace(parsed, line_items=rescue_rows)
-                    await _replace_line_items(session, invoice, rescue_rows)
-                    line_items_count = 1
-                    line_items_fallback = FALLBACK_HEADER
+                        rescue_rows = [
+                            ParsedLineItem(
+                                description=heading[:200] if heading else None,
+                                amount=rescue_total,
+                                source=FALLBACK_HEADER,
+                            )
+                        ]
+                        parsed = dc_replace(parsed, line_items=rescue_rows)
+                        await _replace_line_items(session, invoice, rescue_rows)
+                        line_items_count = 1
+                        line_items_fallback = FALLBACK_HEADER
             # Ensure column due_date is set even if scalar apply skipped empties oddly.
             from app.services.invoice.due_date_defaults import apply_due_on_receipt_to_invoice
 

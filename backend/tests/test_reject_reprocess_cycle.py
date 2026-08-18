@@ -163,6 +163,65 @@ async def test_prior_manual_edits_ignored_after_requeue(
 
 
 @pytest.mark.asyncio
+async def test_rejected_manual_edits_are_preserved_on_requeue(
+    db_session: AsyncSession,
+) -> None:
+    from app.services.invoice.invoice_reset import should_preserve_extracted_on_requeue
+    from app.services.invoice.processing_override_catalog import (
+        consume_preserve_extracted_fields,
+    )
+
+    inv = Invoice(
+        tenant_id=_TID,
+        status=InvoiceStatus.REJECTED,
+        currency="USD",
+        file_hash="cycle-edits-preserve-1",
+        vendor="Classic Enterprise",
+        total=Decimal("16000.00"),
+        invoice_no="CE 511 / 25-26",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    await log_event(db_session, "invoice_rejected", invoice_id=inv.id, detail={})
+    await log_event(db_session, "invoice_fields_updated", invoice_id=inv.id, detail={})
+    await db_session.flush()
+
+    assert await should_preserve_extracted_on_requeue(db_session, inv) is True
+
+    await requeue_invoice_for_pipeline(db_session, inv, preserve_extracted_fields=True)
+    await db_session.flush()
+
+    assert inv.status == InvoiceStatus.PENDING
+    assert inv.total == Decimal("16000.00")
+    assert inv.vendor == "Classic Enterprise"
+    assert consume_preserve_extracted_fields(inv) is True
+
+
+@pytest.mark.asyncio
+async def test_rejected_without_edits_does_not_preserve_on_requeue(
+    db_session: AsyncSession,
+) -> None:
+    from app.services.invoice.invoice_reset import should_preserve_extracted_on_requeue
+
+    inv = Invoice(
+        tenant_id=_TID,
+        status=InvoiceStatus.REJECTED,
+        currency="USD",
+        file_hash="cycle-edits-full-reset-1",
+        vendor="Classic Enterprise",
+        total=Decimal("16000.00"),
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    await log_event(db_session, "invoice_rejected", invoice_id=inv.id, detail={})
+    await db_session.flush()
+
+    assert await should_preserve_extracted_on_requeue(db_session, inv) is False
+
+
+@pytest.mark.asyncio
 async def test_full_requeue_preserves_processing_overrides(
     db_session: AsyncSession,
 ) -> None:

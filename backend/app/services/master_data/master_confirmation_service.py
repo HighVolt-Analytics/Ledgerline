@@ -329,6 +329,7 @@ async def _load_token_row(session: AsyncSession, token: str) -> MasterConfirmati
         await clear_platform_lookup_session(session)
     if not row:
         raise HTTPException(404, "Confirmation link not found")
+    await apply_rls_session_context(session, row.tenant_id)
     return row
 
 
@@ -345,7 +346,6 @@ async def preview_master_confirmation(
     tenant = await session.get(Tenant, token_row.tenant_id)
     tenant_name = tenant.name if tenant else "Your organisation"
 
-    await apply_rls_session_context(session, token_row.tenant_id)
     kind: MasterKind = "employee" if token_row.kind == "employee" else "vendor"
     if kind == "employee":
         master = await get_employee_master_by_id(session, token_row.tenant_id, token_row.master_id)
@@ -428,8 +428,6 @@ async def save_master_confirmation(
     kind: MasterKind = "employee" if token_row.kind == "employee" else "vendor"
     allowed = EMPLOYEE_CONFIRM_FIELDS if kind == "employee" else VENDOR_CONFIRM_FIELDS
     fields = _filter_allowed_fields(fields, allowed)
-
-    await apply_rls_session_context(session, token_row.tenant_id)
 
     if kind == "employee":
         before = await get_employee_master_by_id(

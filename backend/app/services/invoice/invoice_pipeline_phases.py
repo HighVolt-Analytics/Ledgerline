@@ -196,6 +196,7 @@ async def phase_vision_header_extract(
     doc_provider: DocumentAiProvider,
     document_ai_provider: str,
     vision_page_images: list[bytes] | None = None,
+    preserve_existing: bool = False,
 ):
     """Vision header extract for can-understand path — never raises."""
     from dataclasses import replace
@@ -216,8 +217,13 @@ async def phase_vision_header_extract(
 
     async def _persist_lines(result_obj) -> None:
         # Lazy import avoids circular import with pipeline → phases.
-        from app.services.invoice.pipeline import _replace_line_items
+        from app.services.invoice.pipeline import (
+            _invoice_has_persisted_line_items,
+            _replace_line_items,
+        )
 
+        if preserve_existing and await _invoice_has_persisted_line_items(session, invoice):
+            return
         await _replace_line_items(
             session,
             invoice,
@@ -267,7 +273,9 @@ async def phase_vision_header_extract(
                         context_text=text or "",
                     )
                 )
-                persist_vision_header_to_invoice(invoice, result)
+                persist_vision_header_to_invoice(
+                    invoice, result, preserve_existing=preserve_existing
+                )
                 if translation_patch:
                     from app.services.extraction.extraction_field_values import (
                         merge_invoice_extracted_fields,
@@ -285,7 +293,10 @@ async def phase_vision_header_extract(
                     )
                 await _persist_lines(result)
                 # Text grounding — fix ₹→INR / S$→SGD, clear bare-$, upgrade totals.
-                reconcile_detail = apply_vision_header_text_reconcile(invoice, text)
+                if preserve_existing:
+                    reconcile_detail = {"skipped": True, "reason": "preserve_existing"}
+                else:
+                    reconcile_detail = apply_vision_header_text_reconcile(invoice, text)
                 reconcile_detail = {
                     **reconcile_detail,
                     "text_source": text_source_detail,
@@ -307,7 +318,9 @@ async def phase_vision_header_extract(
                             "invoice_no_post_persist"
                         ]
             except Exception as exc:
-                persist_vision_header_to_invoice(invoice, result)
+                persist_vision_header_to_invoice(
+                    invoice, result, preserve_existing=preserve_existing
+                )
                 try:
                     await _persist_lines(result)
                 except Exception:
@@ -417,6 +430,7 @@ async def phase_vision_dt_extract(
     vision_page_images: list[bytes] | None = None,
     few_shots: Sequence | None = None,
     definition: DocumentTypeDefinition | None = None,
+    preserve_existing: bool = False,
 ):
     """DT-scoped field extract after org DT map — never raises."""
     from app.services.invoice.vision_dt_extract import (
@@ -434,6 +448,7 @@ async def phase_vision_dt_extract(
         vision_page_images=vision_page_images,
         few_shots=list(few_shots or []),
         definition=definition,
+        preserve_existing=preserve_existing,
     )
     event = (
         "vision_dt_fields_extracted" if result.success else "vision_dt_fields_extract_failed"
