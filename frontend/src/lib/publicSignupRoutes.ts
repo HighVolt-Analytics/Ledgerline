@@ -14,6 +14,9 @@ export const ALL_PUBLIC_SIGNUP_PATHS = [
 /** Tenant invite accept flow (requires ?token=). */
 export const ACCEPT_INVITE_PATH = "/accept-invite";
 
+/** Vendor/employee master confirmation (requires ?token=). */
+export const CONFIRM_MASTER_PATH = "/confirm-master";
+
 export type PublicSignupLinkParams = {
   utm_source?: string;
   utm_medium?: string;

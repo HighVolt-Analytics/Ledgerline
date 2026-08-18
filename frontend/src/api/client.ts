@@ -92,6 +92,8 @@ import type {
   TenantInviteCreated,
   InvitePreview,
   InviteAcceptResult,
+  MasterConfirmationPreview,
+  MasterConfirmationSaveResult,
   InstitutionSettings,
   OrgAiBrief,
   ChartOfAccountsPayload,
@@ -242,6 +244,7 @@ const TENANT_EXEMPT_API_PREFIXES = [
   "/api/mailboxes/invites/",
   "/api/billing/signup/",
   "/api/billing/plans",
+  "/api/master-confirm/",
 ];
 
 export function apiPathWithoutQuery(path: string): string {
@@ -722,6 +725,16 @@ export const api = {
     request<InvitePreview>(`/api/auth/invite/preview?token=${encodeURIComponent(token)}`),
   acceptTenantInvite: (body: { token: string; password: string; full_name?: string }) =>
     request<InviteAcceptResult>("/api/auth/invite/accept", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  previewMasterConfirmation: (token: string) =>
+    request<MasterConfirmationPreview>(
+      `/api/master-confirm/preview?token=${encodeURIComponent(token)}`
+    ),
+  saveMasterConfirmation: (body: { token: string; fields: Record<string, unknown> }) =>
+    request<MasterConfirmationSaveResult>("/api/master-confirm/save", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

@@ -77,6 +77,64 @@ export interface InviteAcceptResult {
   email: string;
 }
 
+export interface MasterConfirmationBankFields {
+  bsb?: string;
+  account_number?: string;
+  account_name?: string;
+  bank_name?: string;
+}
+
+export interface MasterConfirmationBillingAddress {
+  street?: string;
+  suburb?: string;
+  postcode?: string;
+  country?: string;
+}
+
+export interface MasterConfirmationEmployeeFields {
+  name?: string;
+  email?: string;
+  whatsapp_number?: string;
+  whatsapp_number_2?: string;
+  viber_number?: string;
+  date_of_joining?: string;
+  department?: string;
+  role?: string;
+  location?: string;
+  division?: string;
+  supervisor_1?: string;
+  supervisor_2?: string;
+  bank?: MasterConfirmationBankFields;
+}
+
+export interface MasterConfirmationVendorFields {
+  name?: string;
+  contact_email?: string;
+  aliases?: string[];
+  abn?: string;
+  payment_terms?: string;
+  billing_address?: MasterConfirmationBillingAddress;
+  bank?: MasterConfirmationBankFields;
+}
+
+export interface MasterConfirmationPreview {
+  kind: string;
+  master_id: string;
+  party_name: string;
+  tenant_name: string;
+  expired: boolean;
+  confirmed: boolean;
+  fields: MasterConfirmationEmployeeFields | MasterConfirmationVendorFields;
+}
+
+export interface MasterConfirmationSaveResult {
+  kind: string;
+  master_id: string;
+  party_name: string;
+  status: string;
+  confirmed_at: string;
+}
+
 /** @deprecated use Tenant */
 export type Organisation = Tenant;
 

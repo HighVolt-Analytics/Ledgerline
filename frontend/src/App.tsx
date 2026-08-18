@@ -37,6 +37,9 @@ const SuperAdminEmbedPage = lazy(() =>
 const AcceptInvitePage = lazy(() =>
   import("@/pages/AcceptInvitePage").then((m) => ({ default: m.AcceptInvitePage }))
 );
+const ConfirmMasterPage = lazy(() =>
+  import("@/pages/ConfirmMasterPage").then((m) => ({ default: m.ConfirmMasterPage }))
+);
 const OnboardingPage = lazy(() =>
   import("@/pages/OnboardingPage").then((m) => ({ default: m.OnboardingPage }))
 );
@@ -212,6 +215,14 @@ export default function App() {
           element={
             <LazyPage>
               <AcceptInvitePage />
+            </LazyPage>
+          }
+        />
+        <Route
+          path="/confirm-master"
+          element={
+            <LazyPage>
+              <ConfirmMasterPage />
             </LazyPage>
           }
         />

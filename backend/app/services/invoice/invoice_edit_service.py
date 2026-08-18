@@ -108,8 +108,12 @@ async def update_invoice_fields(
             value = plausible_money(value)
         elif field == "gst_rate":
             value = plausible_gst_rate_percent(value)
-        elif field == "currency" and isinstance(value, str):
-            value = value.strip().upper() or ""
+        elif field == "currency":
+            # invoices.currency is NOT NULL; empty string means "unset ISO".
+            if value is None:
+                value = ""
+            elif isinstance(value, str):
+                value = value.strip().upper() or ""
         old = getattr(inv, field)
         if old != value:
             changes[field] = {"from": _serialise(old), "to": _serialise(value)}
