@@ -25,11 +25,10 @@ import {
   useStripeReadiness,
   useStripeTransactions,
 } from "@/hooks/useStripe";
-import { useInstitutionSettings } from "@/hooks/useInstitutionSettings";
 import { useRefreshPayPalReadiness } from "@/hooks/usePayPal";
 import { useTenantTime } from "@/hooks/useTenantTime";
 import type { StripeAccount, StripeBalanceAmount, StripeReadinessResponse } from "@/api/types";
-import { formatMoneyByCurrencyMap, money, normalizeCurrencyCode } from "@/lib/format";
+import { formatMoneyByCurrencyMap, money } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { apiPaymentToRecord, paymentsKpis } from "@/lib/routePageAdapters";
 import { paymentTierLabel, type PaymentRecord, type PaymentTab } from "@/lib/v4MockData";
@@ -162,8 +161,6 @@ export function PaymentsPage() {
   const stripeReturnHandled = useRef(false);
   const paypalReturnHandled = useRef(false);
   const { timeZone } = useTenantTime();
-  const { data: institution } = useInstitutionSettings();
-  const institutionCurrency = normalizeCurrencyCode(institution?.currency) ?? "";
   const { data: paymentRows = [], isLoading: paymentsLoading, isError, blocked: paymentsBlocked } =
     usePayments();
   const { data: appSettings, blocked: settingsBlocked } = useAppSettings();
