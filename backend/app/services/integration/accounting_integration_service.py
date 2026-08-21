@@ -21,7 +21,7 @@ from app.models.accounting_integration import (
 )
 from app.models.xero_connection import XeroConnection
 
-from app.services.integration.xero_token_service import (
+from app.services.integration.xero.xero_token_service import (
     STATE_TTL_SECONDS,
     consume_oauth_jti,
 )
@@ -358,7 +358,7 @@ async def select_xero_connection(
     # Organisation switch: deactivate prior org master data + mappings.
     # Same-org reconnect leaves rows active so sync can update in place.
     if previous_org and new_org and previous_org != new_org:
-        from app.services.integration.xero_organisation_isolation import (
+        from app.services.integration.xero.xero_organisation_isolation import (
             deactivate_xero_organisation_scope,
         )
 
@@ -449,7 +449,7 @@ async def disconnect_xero(
     row.token_version = 0
     row.last_refresh_at = None
 
-    from app.services.integration.xero_sync_job_service import cancel_pending_jobs
+    from app.services.integration.xero.xero_sync_job_service import cancel_pending_jobs
 
     await cancel_pending_jobs(db, tenant_id=tenant_id)
     await db.flush()
@@ -535,7 +535,7 @@ async def _apply_xero_org_selection(
         integration.display_name = org.xero_tenant_name
         integration.status = AccountingIntegrationStatus.CONNECTED.value
         if previous_org and new_org and previous_org != new_org:
-            from app.services.integration.xero_organisation_isolation import (
+            from app.services.integration.xero.xero_organisation_isolation import (
                 deactivate_xero_organisation_scope,
             )
 
@@ -546,7 +546,7 @@ async def _apply_xero_org_selection(
             )
     elif len(organisations) > 1:
         if previous_org:
-            from app.services.integration.xero_organisation_isolation import (
+            from app.services.integration.xero.xero_organisation_isolation import (
                 deactivate_xero_organisation_scope,
             )
 

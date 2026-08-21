@@ -10,7 +10,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.payment import Payment, PaymentStatus
-from app.services.reports.matrix_service import derive_matrix_flag, derive_matrix_payment_status
+from app.services.reports.matrix_service import (
+    derive_matrix_acc_sync,
+    derive_matrix_advance_auth,
+    derive_matrix_budget_auth,
+    derive_matrix_flag,
+    derive_matrix_payment_status,
+    AUTH_DONE,
+    AUTH_FAILED,
+    AUTH_NA,
+    AUTH_PENDING,
+    SYNC_FAILED,
+    SYNC_NA,
+    SYNC_PENDING,
+    SYNC_SYNCED,
+)
 
 
 def test_derive_matrix_flag_exception() -> None:
@@ -282,3 +296,178 @@ async def test_derive_matrix_flag_skips_deferred_ocr_blobs(
     flag, reason = derive_matrix_flag(deferred)
     assert flag == "Anomaly Detected"
     assert reason is not None
+
+
+def _te_dt(*, budget_control: bool = True, advance_control: bool = True):
+    from app.schemas.document_type import DocumentTypeDefinition
+    from app.services.invoice.invoice_evaluation_service import ROUTE_TEAM
+
+    return DocumentTypeDefinition(
+        code="DT-TE",
+        title="Employee claim",
+        shortTitle="Claim",
+        klass="Transactional",
+        posting="Yes",
+        routeTarget=ROUTE_TEAM,
+        playbookProfile="employee_claim",
+        budgetControl=budget_control,
+        advanceControl=advance_control,
+        postTo={"ledger": "Travel Expense"},
+    )
+
+
+def test_derive_matrix_advance_auth_na_outside_team_expenses() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.PROCESSED,
+        route_target="Purchase Management",
+        document_type_code="DT-TE",
+    )
+    assert derive_matrix_advance_auth(inv, document_types=[_te_dt()]) == AUTH_NA
+
+
+def test_derive_matrix_advance_auth_pending_and_done() -> None:
+    from app.services.invoice.invoice_evaluation_service import ROUTE_TEAM
+
+    dts = [_te_dt(advance_control=True)]
+    pending = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Priya",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="pending_approval",
+        route_target=ROUTE_TEAM,
+        document_type_code="DT-TE",
+        team_expense_kind="expense_claim",
+    )
+    assert derive_matrix_advance_auth(pending, document_types=dts) == AUTH_PENDING
+
+    done = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Priya",
+        status=InvoiceStatus.PROCESSED,
+        evaluation_status="auto_coded",
+        route_target=ROUTE_TEAM,
+        document_type_code="DT-TE",
+        team_expense_kind="expense_claim",
+    )
+    assert derive_matrix_advance_auth(done, document_types=dts) == AUTH_DONE
+
+
+def test_derive_matrix_advance_auth_off_unless_advance_kind() -> None:
+    from app.services.invoice.invoice_evaluation_service import ROUTE_TEAM
+
+    dts = [_te_dt(advance_control=False)]
+    claim = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Priya",
+        status=InvoiceStatus.PROCESSED,
+        route_target=ROUTE_TEAM,
+        document_type_code="DT-TE",
+        team_expense_kind="expense_claim",
+    )
+    assert derive_matrix_advance_auth(claim, document_types=dts) == AUTH_NA
+
+    advance = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Priya",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="pending_approval",
+        route_target=ROUTE_TEAM,
+        document_type_code="DT-TE",
+        team_expense_kind="advance_requisition",
+    )
+    assert derive_matrix_advance_auth(advance, document_types=dts) == AUTH_PENDING
+
+
+def test_derive_matrix_budget_auth_from_vr_te08() -> None:
+    from app.services.invoice.invoice_evaluation_service import ROUTE_TEAM
+
+    dts = [_te_dt(budget_control=True)]
+    passed = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Priya",
+        status=InvoiceStatus.PROCESSED,
+        route_target=ROUTE_TEAM,
+        document_type_code="DT-TE",
+        validation_results='[{"rule":"VR-TE08","passed":true,"skipped":false,"message":"ok"}]',
+    )
+    assert derive_matrix_budget_auth(passed, document_types=dts) == AUTH_DONE
+
+    soft = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Priya",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="pending_approval",
+        route_target=ROUTE_TEAM,
+        document_type_code="DT-TE",
+        validation_results=(
+            '[{"rule":"VR-TE08","passed":false,"skipped":false,'
+            '"severity":"warn","message":"over"}]'
+        ),
+    )
+    assert derive_matrix_budget_auth(soft, document_types=dts) == AUTH_PENDING
+
+    hard = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Priya",
+        status=InvoiceStatus.EXCEPTION,
+        route_target=ROUTE_TEAM,
+        document_type_code="DT-TE",
+        validation_results=(
+            '[{"rule":"VR-TE08","passed":false,"skipped":false,'
+            '"severity":"block","message":"over"}]'
+        ),
+    )
+    assert derive_matrix_budget_auth(hard, document_types=dts) == AUTH_FAILED
+
+    off = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Priya",
+        status=InvoiceStatus.PROCESSED,
+        route_target=ROUTE_TEAM,
+        document_type_code="DT-TE",
+        validation_results='[{"rule":"VR-TE08","passed":false,"skipped":false}]',
+    )
+    assert (
+        derive_matrix_budget_auth(off, document_types=[_te_dt(budget_control=False)])
+        == AUTH_NA
+    )
+
+
+def test_derive_matrix_acc_sync_status() -> None:
+    from app.models.accounting_export_ledger import STATUS_FAILED_TERMINAL, STATUS_SUCCESS
+    from app.services.invoice.invoice_evaluation_service import ROUTE_VAULT
+
+    posting = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.PROCESSED,
+        route_target="Purchase Management",
+        purchase_document_type="invoice",
+    )
+    assert (
+        derive_matrix_acc_sync(posting, ledger_status=STATUS_SUCCESS, ref_status=None)
+        == SYNC_SYNCED
+    )
+    assert (
+        derive_matrix_acc_sync(
+            posting, ledger_status=STATUS_FAILED_TERMINAL, ref_status=None
+        )
+        == SYNC_FAILED
+    )
+    assert (
+        derive_matrix_acc_sync(posting, ledger_status=None, ref_status=None)
+        == SYNC_PENDING
+    )
+
+    vaulted = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.PROCESSED,
+        route_target=ROUTE_VAULT,
+    )
+    assert (
+        derive_matrix_acc_sync(vaulted, ledger_status=STATUS_SUCCESS, ref_status=None)
+        == SYNC_NA
+    )

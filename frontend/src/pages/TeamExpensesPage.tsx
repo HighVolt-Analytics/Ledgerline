@@ -14,18 +14,18 @@ import { TeamExpenseChannelsStrip } from "@/components/team-expenses/TeamExpense
 import { Card } from "@/components/ui/card";
 import { useEmployeeMasters } from "@/hooks/useMasterData";
 import { useExpenseClaimActions } from "@/hooks/useExpenseClaimActions";
-import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
+import { useRuleBookTeamExpensesWorkspace } from "@/hooks/useRuleBookConfig";
 import { useRoutedInvoices } from "@/hooks/useRoutedInvoices";
 import { useInstitutionSettings } from "@/hooks/useInstitutionSettings";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { cn } from "@/lib/cn";
 import { matchesListSearch } from "@/lib/listSearch";
-import { formatMoneyByCurrencyMap, money } from "@/lib/format";
+import { formatMoneyByCurrencyMap, money, normalizeCurrencyCode } from "@/lib/format";
 import {
   invoiceToTeamClaim,
   teamRulesToCategories,
 } from "@/lib/routePageAdapters";
-import { useTeamExpenseDepartmentBudgetUtilization } from "@/hooks/useTeamExpenseReports";
+import { useTeamExpenseDepartmentBudgetUtilization, useTeamExpenseWorkspaceKpis } from "@/hooks/useTeamExpenseReports";
 import {
   TEAM_EXPENSE_KINDS,
   TEAM_EXPENSE_KIND_LABELS,
@@ -33,7 +33,8 @@ import {
 } from "@/lib/v4RuleBookTypes";
 
 const ROUTE_TARGET = "Team Expenses";
-const CLAIM_POLL_MS = 15_000;
+const CLAIM_POLL_MS = 90_000;
+const CLAIM_PAGE_SIZE = 50;
 
 function initials(name: string) {
   return name
@@ -45,12 +46,17 @@ function initials(name: string) {
 }
 
 export function TeamExpensesPage() {
-  const { data: routed = [], isLoading, refetch } = useRoutedInvoices(ROUTE_TARGET);
+  const { data: routed = [], isLoading, refetch } = useRoutedInvoices(
+    ROUTE_TARGET,
+    true,
+    { pageSize: CLAIM_PAGE_SIZE, maxPages: 1 }
+  );
   const { data: employees = [] } = useEmployeeMasters();
-  const { data: ruleBook } = useRuleBookConfig();
+  const { data: teamExpenseWorkspace } = useRuleBookTeamExpensesWorkspace();
   const { data: institution } = useInstitutionSettings();
-  const { data: glBudgetUtil = [] } = useTeamExpenseDepartmentBudgetUtilization();
-  const institutionCurrency = (institution?.currency || "SGD").trim().toUpperCase() || "SGD";
+  const { data: glBudgetUtil = [] } = useTeamExpenseDepartmentBudgetUtilization(!isLoading);
+  const { data: workspaceKpis } = useTeamExpenseWorkspaceKpis();
+  const institutionCurrency = normalizeCurrencyCode(institution?.currency) ?? "";
   const actions = useExpenseClaimActions(ROUTE_TARGET);
 
   const claims = useMemo(
@@ -59,8 +65,8 @@ export function TeamExpensesPage() {
   );
   const invoiceById = useMemo(() => new Map(routed.map((inv) => [inv.id, inv])), [routed]);
   const categories = useMemo(
-    () => teamRulesToCategories(ruleBook?.teamExpenseRules ?? []),
-    [ruleBook?.teamExpenseRules]
+    () => teamRulesToCategories(teamExpenseWorkspace?.teamExpenseRules ?? []),
+    [teamExpenseWorkspace?.teamExpenseRules]
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [drawerInvoiceId, setDrawerInvoiceId] = useState<number | null>(null);
@@ -94,16 +100,22 @@ export function TeamExpensesPage() {
     const counts = Object.fromEntries(
       TEAM_EXPENSE_KINDS.map((kind) => [kind, 0])
     ) as Record<TeamExpenseKind, number>;
+    if (workspaceKpis?.kind_counts) {
+      for (const kind of TEAM_EXPENSE_KINDS) {
+        counts[kind] = workspaceKpis.kind_counts[kind] ?? 0;
+      }
+      return counts;
+    }
     for (const claim of claims) counts[claim.kind] += 1;
     return counts;
-  }, [claims]);
-  const settlementLedger = ruleBook?.teamExpensePosting?.settlementAccount ?? "";
+  }, [claims, workspaceKpis]);
+  const settlementLedger = teamExpenseWorkspace?.teamExpensePosting?.settlementAccount ?? "";
   const advanceLedgerFor = (submitter: string) => {
     const employee = employees.find((emp) => emp.name === submitter);
     return (
       employee?.advanceSubLedger ||
       employee?.advanceParentLedger ||
-      ruleBook?.teamExpensePosting?.defaultAdvanceParentLedger ||
+      teamExpenseWorkspace?.teamExpensePosting?.defaultAdvanceParentLedger ||
       ""
     );
   };
@@ -119,28 +131,37 @@ export function TeamExpensesPage() {
   }, [actions.toast, actions.setToast]);
 
   const kpis = useMemo(() => {
-    const open = claims.filter((e) => e.state === "New" || e.state === "In Review").length;
-    const postedInvoices = routed.filter(
-      (inv) => inv.status === "processed" && inv.published_to_ledger
-    );
-    const postedByCurrency: Record<string, number> = {};
-    for (const inv of postedInvoices) {
-      const code = (inv.currency || institutionCurrency).trim().toUpperCase() || institutionCurrency;
-      postedByCurrency[code] =
-        (postedByCurrency[code] ?? 0) + (parseFloat(String(inv.total ?? 0)) || 0);
-    }
-    const pending = claims.filter((e) => e.state === "In Review").length;
+    const open =
+      workspaceKpis?.open_count ??
+      claims.filter((e) => e.state === "New" || e.state === "In Review").length;
+    const postedByCurrency =
+      workspaceKpis?.posted_by_currency ??
+      (() => {
+        const map: Record<string, number> = {};
+        for (const inv of routed) {
+          if (inv.status !== "processed" || !inv.published_to_ledger) continue;
+          const code = (inv.currency || "").trim().toUpperCase();
+          map[code] = (map[code] ?? 0) + (parseFloat(String(inv.total ?? 0)) || 0);
+        }
+        return map;
+      })();
+    const postedCount =
+      workspaceKpis?.posted_count ??
+      routed.filter((inv) => inv.status === "processed" && inv.published_to_ledger).length;
+    const pending =
+      workspaceKpis?.pending_count ??
+      claims.filter((e) => e.state === "In Review").length;
     const totalBudget = glBudgetUtil.reduce((s, b) => s + (b.allocated || 0), 0);
     const totalUsed = glBudgetUtil.reduce((s, b) => s + (b.consumed || 0), 0);
     const util = totalBudget > 0 ? Math.round((totalUsed / totalBudget) * 100) : 0;
     return {
       open,
-      postedCount: postedInvoices.length,
+      postedCount,
       postedByCurrency,
       pending,
       util,
     };
-  }, [claims, glBudgetUtil, routed, institutionCurrency]);
+  }, [claims, glBudgetUtil, routed, workspaceKpis]);
 
   const kindClaims = useMemo(
     () => claims.filter((claim) => claim.kind === kindFilter),
@@ -228,7 +249,7 @@ export function TeamExpensesPage() {
         ))}
       </div>
 
-      <TeamExpenseChannelsStrip />
+      <TeamExpenseChannelsStrip enabled={!isLoading} />
 
       <div className="grid gap-3 grid-cols-2 lg:grid-cols-4 mb-5">
         <KpiCard
@@ -327,7 +348,7 @@ export function TeamExpensesPage() {
                         <div className="text-[10px] text-muted-foreground tnum mt-0.5">
                           Advance left {money(
                             claim.advanceBalance,
-                            invoiceById.get(Number(claim.id))?.currency || institutionCurrency
+                            invoiceById.get(Number(claim.id))?.currency
                           )}
                         </div>
                       ) : null}
@@ -336,7 +357,7 @@ export function TeamExpensesPage() {
                       <div className="tnum font-semibold text-sm">
                         {money(
                           claim.amount,
-                          invoiceById.get(Number(claim.id))?.currency || institutionCurrency
+                            invoiceById.get(Number(claim.id))?.currency
                         )}
                       </div>
                       <div className="text-[10px] text-muted-foreground">{claim.submittedTs}</div>
@@ -367,8 +388,7 @@ export function TeamExpensesPage() {
                     settlementLedger={settlementLedger}
                     advanceBalance={selected.advanceBalance ?? 0}
                     currency={
-                      (selectedInvoice.currency || institutionCurrency).trim().toUpperCase() ||
-                      institutionCurrency
+                      (selectedInvoice.currency || "").trim().toUpperCase()
                     }
                     onChangeKind={async (kind) => {
                       await actions.setKind(selectedInvoice, kind);
@@ -450,7 +470,7 @@ export function TeamExpensesPage() {
                       <div className="tnum font-semibold text-sm">
                         {money(
                           claim.amount,
-                          invoiceById.get(Number(claim.id))?.currency || institutionCurrency
+                            invoiceById.get(Number(claim.id))?.currency
                         )}
                       </div>
                       <div className="text-[10px] text-muted-foreground">{claim.submittedTs}</div>
@@ -480,8 +500,7 @@ export function TeamExpensesPage() {
                     settlementLedger={settlementLedger}
                     advanceBalance={selected.advanceBalance ?? 0}
                     currency={
-                      (selectedInvoice.currency || institutionCurrency).trim().toUpperCase() ||
-                      institutionCurrency
+                      (selectedInvoice.currency || "").trim().toUpperCase()
                     }
                     onChangeKind={async (kind) => {
                       await actions.setKind(selectedInvoice, kind);

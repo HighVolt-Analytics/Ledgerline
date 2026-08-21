@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_db
 from app.schemas.common import ApiEnvelope
-from app.schemas.purchase import GoodsReceiptCreate, PurchaseOrderResponse
+from app.schemas.purchase import GoodsReceiptCreate, PurchaseOrderResponse, PurchaseWorkspaceKpis
 from app.services.audit.audit_service import log_event
 from app.services.auth.privilege_service import require_privilege
 from app.services.approval.approval_quorum_service import ApprovalQuorumForbiddenError
@@ -13,6 +13,7 @@ from app.services.purchase.purchase_match_service import (
     approve_purchase_variance,
     filter_two_way_purchase_rows,
     list_purchase_orders,
+    purchase_workspace_kpis,
     record_goods_receipt,
 )
 
@@ -35,6 +36,20 @@ async def get_two_way_purchase_orders(
 ) -> ApiEnvelope[list[PurchaseOrderResponse]]:
     rows = await list_purchase_orders(db, ctx.tenant_id)
     return ApiEnvelope(data=filter_two_way_purchase_rows(rows))
+
+
+@router.get("/kpis", response_model=ApiEnvelope[PurchaseWorkspaceKpis])
+async def get_purchase_workspace_kpis(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[PurchaseWorkspaceKpis]:
+    awaiting, needs_action = await purchase_workspace_kpis(db, ctx.tenant_id)
+    return ApiEnvelope(
+        data=PurchaseWorkspaceKpis(
+            awaiting_po_count=awaiting,
+            needs_action_count=needs_action,
+        )
+    )
 
 
 @router.post(

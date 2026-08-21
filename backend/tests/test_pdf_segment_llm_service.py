@@ -399,6 +399,82 @@ def test_refine_does_not_merge_awb_with_invoice_page_of_n() -> None:
     ]
 
 
+def test_refine_splits_item_receipt_glued_to_invoice() -> None:
+    """LLM G3 often glues SOS/SAP Item Receipt onto the invoice via shared invoice no."""
+    from app.services.extraction.pdf_segment_llm_service import refine_llm_segments
+
+    pages = [
+        _page(0, "PURCHASE ORDER\nPO Number: WCP/492/2025-26\nVendor: West-Coast"),
+        _page(
+            1,
+            "INVOICE\nInvoice No: E/00114/26-27\nBuyer's Order: WCP/492/2025-26\n"
+            "Nicorandil Tablets\nTotal 10646.00",
+        ),
+        _page(
+            2,
+            "Right And Bright International Company Limited\n"
+            "Item Receipt generated in SOS Inventory\n"
+            "Invoice Number: E/00114/26-27\n"
+            "Received from vendor: West-Coast Pharmaceutical Works\n"
+            "Qty Received: 30\n"
+            "Warehouse: South Dagon\n",
+        ),
+        _page(3, "PACKING LIST\nInvoice No: E/00114/26-27\n30 cartons"),
+        _page(4, "Air Waybill\nHAWB NO: 807-AMD-3817-2875\nShipper details"),
+    ]
+    raw = PdfSegmentResult(
+        segments=[
+            PdfDocumentSegment(0, 0, "purchase_order", 0.95),
+            PdfDocumentSegment(1, 2, "invoice", 0.9),
+            PdfDocumentSegment(3, 3, "packing_list", 0.95),
+            PdfDocumentSegment(4, 4, "transport_doc", 0.95),
+        ],
+        detected_boundary_count=4,
+        segmentation_method="llm",
+    )
+    refined = refine_llm_segments(raw, pages)
+    assert [(s.start_page, s.end_page, s.heading_kind) for s in refined.segments] == [
+        (0, 0, "purchase_order"),
+        (1, 1, "invoice"),
+        (2, 2, "grn"),
+        (3, 3, "packing_list"),
+        (4, 4, "transport_doc"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_rules_path_splits_item_receipt_from_invoice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pages = [
+        _page(0, "PURCHASE ORDER\nPO Number: WCP/492/2025-26\nVendor: West-Coast"),
+        _page(
+            1,
+            "INVOICE\nInvoice No: E/00114/26-27\nBuyer's Order: WCP/492/2025-26\n"
+            "Total 10646.00",
+        ),
+        _page(
+            2,
+            "Item Receipt generated in SOS Inventory\n"
+            "Invoice Number: E/00114/26-27\n"
+            "Received from vendor: West-Coast\n"
+            "Qty Received: 30",
+        ),
+        _page(3, "PACKING LIST\nInvoice No: E/00114/26-27"),
+        _page(4, "Air Waybill\nHAWB NO: 807-AMD-3817-2875\nShipper details"),
+    ]
+    monkeypatch.setenv("PDF_SEGMENT_LLM_ENABLED", "false")
+    result = await segment_pdf_pages_smart(pages)
+    assert result.segmentation_method.startswith("rules")
+    assert [(s.start_page, s.end_page, s.heading_kind) for s in result.segments] == [
+        (0, 0, "purchase_order"),
+        (1, 1, "invoice"),
+        (2, 2, "grn"),
+        (3, 3, "packing_list"),
+        (4, 4, "transport_doc"),
+    ]
+
+
 def test_parse_llm_segments_allows_omitted_blanks() -> None:
     pages = [
         _page(0, "TAX INVOICE\nINV-1"),

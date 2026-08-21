@@ -279,6 +279,7 @@ export interface ConnectedMailbox {
   oauth_connected_at: string | null;
   last_error: string | null;
   last_poll_at: string | null;
+  document_count?: number;
 }
 
 export interface MailboxBackfillJob {
@@ -368,6 +369,11 @@ export interface ApiEnvelope<T> {
     matrix_duplicates?: number | null;
     matrix_awaiting?: number | null;
     matrix_paid_this_month?: number | null;
+    approval_queue_count?: number | null;
+    approval_review_count?: number | null;
+    approval_processing_count?: number | null;
+    approval_approved_count?: number | null;
+    approval_rejected_count?: number | null;
   };
 }
 
@@ -736,6 +742,7 @@ export interface SalesOrderApi {
   ledger?: string | null;
   sub_ledger?: string | null;
   sales_rule_id?: string | null;
+  currency?: string | null;
 }
 
 export interface TwoWaySalesMatchApi {
@@ -821,6 +828,7 @@ export interface PurchaseOrderApi {
   ledger?: string | null;
   sub_ledger?: string | null;
   purchase_rule_id?: string | null;
+  currency?: string | null;
 }
 
 export type PaymentExecutionEligibilityStatus =
@@ -1321,6 +1329,24 @@ export interface DepartmentBudgetUtilizationRow {
   cash_committed?: number;
   cash_remaining?: number | null;
   cash_utilization_pct?: number | null;
+}
+
+export interface TeamExpenseWorkspaceKpis {
+  kind_counts: Record<string, number>;
+  open_count: number;
+  pending_count: number;
+  posted_count: number;
+  posted_by_currency: Record<string, number>;
+}
+
+export interface PurchaseWorkspaceKpis {
+  awaiting_po_count: number;
+  needs_action_count: number;
+}
+
+export interface SalesWorkspaceKpis {
+  awaiting_so_count: number;
+  needs_action_count: number;
 }
 
 export interface EmployeeExpenseSummaryRow {
@@ -2014,6 +2040,10 @@ export interface RuleBookConfig {
     matched_count?: number;
     last_matched?: string;
   }>;
+  email_capture_ingest_stats?: Record<
+    string,
+    { matched_count: number; last_matched: string }
+  >;
   purchase_rules: Array<{
     id: string;
     name: string;
@@ -2385,6 +2415,10 @@ export interface MatrixRow {
   paid_date?: string | null;
   conflict_with?: string | null;
   conflict_detail?: MatrixConflictRow[] | null;
+  line_item_count?: number;
+  advance_auth?: string;
+  budget_auth?: string;
+  acc_sync?: string;
 }
 
 export interface LedgerExportRow {
@@ -2421,6 +2455,7 @@ export interface WalletTransaction {
 export interface WalletSummary {
   balance: number;
   available: number;
+  currency?: string;
   last_top_up: string;
   transactions: WalletTransaction[];
 }

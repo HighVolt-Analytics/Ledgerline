@@ -49,14 +49,46 @@ _PAGE_OF_MARKER = re.compile(
     re.I,
 )
 
+# Field labels ("Invoice No", "Invoice Number") must not count as a document title.
+_INVOICE_FIELD_LOOKAHEAD = r"(?!\s*(?:no\.?|num(?:ber)?|#)\b)"
+
+# Warehouse / inventory receipts (SOS, SAP, NetSuite). Beat generic INVOICE because
+# those pages almost always cite the supplier invoice number.
+_WAREHOUSE_RECEIPT_KIND = re.compile(
+    r"\b(?:ITEM|MATERIAL|WAREHOUSE)\s+RECEIPT\b",
+    re.I,
+)
+_GOODS_RECEIPT_KIND = re.compile(r"\bGOODS\s+RECEIPT(?:\s+NOTE)?\b", re.I)
+_INVOICE_OR_PO_TITLE_LINE = re.compile(
+    rf"(?im)^\s*(?:tax\s+invoice|commercial\s+invoice|invoice{_INVOICE_FIELD_LOOKAHEAD}|purchase\s+order)\b"
+)
+
+
+def warehouse_receipt_kind_from_text(text: str | None) -> HeadingKind | None:
+    """GRN when OCR has Item/Material/Warehouse Receipt — even mid-sentence.
+
+    Goods Receipt Note is GRN unless the page already has an invoice/PO title
+    (those pages often cite a GRN without being one).
+    """
+    blob = text or ""
+    if not blob.strip():
+        return None
+    if _WAREHOUSE_RECEIPT_KIND.search(blob):
+        return "grn"
+    if _GOODS_RECEIPT_KIND.search(blob) and not _INVOICE_OR_PO_TITLE_LINE.search(blob):
+        return "grn"
+    return None
+
 # Keyword fallback when title is embedded in OCR layout (import / logistics dossiers).
 # Prefer commercial titles over logistics *field labels* (e.g. "Bill of Lading No" on an invoice).
 _PAGE_KIND_KEYWORDS: list[tuple[re.Pattern[str], HeadingKind]] = [
     (re.compile(r"\bTAX\s+INVOICE\b", re.I), "tax_invoice"),
     (re.compile(r"\bCOMMERCIAL\s+INVOICE\b", re.I), "commercial_invoice"),
     (re.compile(r"\bPRO[\s-]?FORMA(?:\s+INVOICE)?\b", re.I), "proforma"),
-    # Avoid field labels like "Invoice No:" on packing lists / AWBs.
-    (re.compile(r"\bINVOICE\b(?!\s*no\b)", re.I), "invoice"),
+    (re.compile(r"\b(?:ITEM|MATERIAL|WAREHOUSE)\s+RECEIPT\b", re.I), "grn"),
+    (re.compile(r"\bGOODS\s+RECEIPT(?:\s+NOTE)?\b", re.I), "grn"),
+    # Avoid field labels like "Invoice No:" / "Invoice Number:" on packing lists / GRNs.
+    (re.compile(rf"\bINVOICE\b{_INVOICE_FIELD_LOOKAHEAD}", re.I), "invoice"),
     (re.compile(r"\bCARGO\s+CLEARANCE\s+PERMIT\b", re.I), "customs_permit"),
     (re.compile(r"\bCUSTOMS?\s+(?:ENTRY|DECLARATION)\b", re.I), "customs_permit"),
     # Avoid field labels like "Packing List No:" on invoices (same idea as Invoice No).
@@ -72,7 +104,6 @@ _PAGE_KIND_KEYWORDS: list[tuple[re.Pattern[str], HeadingKind]] = [
     (re.compile(r"\bConsignee'?s?\s+Name\s+and\s+Address\b", re.I), "transport_doc"),
     # Title "BILL OF LADING" only — not the common invoice/packing field "Bill of Lading No".
     (re.compile(r"\bBILL\s+OF\s+LADING\b(?!\s*NO\b)", re.I), "transport_doc"),
-    (re.compile(r"\bGOODS\s+RECEIPT\b", re.I), "grn"),
     (re.compile(r"\bG\.?\s*R\.?\s*N\.?\b", re.I), "grn"),
     (re.compile(r"\bPROOF\s+OF\s+DELIVERY\b", re.I), "grn"),
     (re.compile(r"\bPOD\b", re.I), "grn"),
@@ -117,9 +148,10 @@ _STANDALONE_TITLE = re.compile(
     r"tax\s+invoice|"
     r"commercial\s+invoice|"
     # "INVOICE 9300667281" / "INVOICE COMPUTER GENERATED DOCUMENT" — not "Invoice No:"
-    r"invoice(?!\s*no\b)(?:\s+\S+)*|"
+    rf"invoice{_INVOICE_FIELD_LOOKAHEAD}(?:\s+\S+)*|"
     r"purchase\s+order|"
     r"sales\s+order|"
+    r"(?:item|material|warehouse)\s+receipt|"
     r"goods\s+receipt(?:\s+note)?|"
     r"g\.?\s*r\.?\s*n\.?|"
     r"delivery\s+(?:note|receipt|docket)|"
@@ -155,6 +187,7 @@ _TRAILING_TITLE = re.compile(
     r"invoice|"
     r"purchase\s+order|"
     r"sales\s+order|"
+    r"(?:item|material|warehouse)\s+receipt|"
     r"goods\s+receipt(?:\s+note)?|"
     r"credit\s+note"
     r")\s*$",
@@ -164,9 +197,10 @@ _TRAILING_TITLE = re.compile(
 _KIND_FROM_LABEL: list[tuple[re.Pattern[str], HeadingKind]] = [
     (re.compile(r"^tax\s+invoice$", re.I), "tax_invoice"),
     (re.compile(r"^commercial\s+invoice$", re.I), "commercial_invoice"),
-    (re.compile(r"^invoice(?!\s*no\b)", re.I), "invoice"),
+    (re.compile(rf"^invoice{_INVOICE_FIELD_LOOKAHEAD}", re.I), "invoice"),
     (re.compile(r"^purchase\s+order$", re.I), "purchase_order"),
     (re.compile(r"^sales\s+order$", re.I), "sales_order"),
+    (re.compile(r"^(?:item|material|warehouse)\s+receipt", re.I), "grn"),
     (re.compile(r"^goods\s+receipt", re.I), "grn"),
     (re.compile(r"^g\.?\s*r\.?\s*n\.?$", re.I), "grn"),
     (re.compile(r"^delivery\s+receipt", re.I), "grn"),
@@ -271,7 +305,7 @@ _INVOICE_FAMILY_KINDS: frozenset[HeadingKind] = frozenset(
 _INVOICE_FAMILY_LABEL_RE = re.compile(
     r"(?:"
     r"\b(?:customer|sales|vendor|tax|commercial)\s+invoice\b"
-    r"|\binvoice\b(?!\s*no\b)"
+    rf"|\binvoice\b{_INVOICE_FIELD_LOOKAHEAD}"
     r"|\b(?:credit|debit)\s+note\b"
     r")",
     re.I,
@@ -306,6 +340,9 @@ def _label_from_line(line: str) -> str | None:
     trailing = _TRAILING_TITLE.search(cleaned)
     if trailing:
         return re.sub(r"\s+", " ", trailing.group(0).strip())
+    receipt = _WAREHOUSE_RECEIPT_KIND.search(cleaned) or _GOODS_RECEIPT_KIND.search(cleaned)
+    if receipt:
+        return re.sub(r"\s+", " ", receipt.group(0))
     if re.match(r"^(contract|agreement)\b", cleaned, re.I):
         return re.sub(r"\s+", " ", cleaned).rstrip(".")
     return None
@@ -353,6 +390,15 @@ def _heading_signals_from_lines(
             if preferred is not None:
                 kinds.append(preferred)
                 labels.append(preferred.replace("_", " "))
+
+    # Item Receipt pages cite "Invoice Number" — keep GRN as the primary kind.
+    if warehouse_receipt_kind_from_text(text) is not None:
+        kinds = ["grn"] + [kind for kind in kinds if kind != "grn"]
+        grn_label = next(
+            (lab for lab in labels if _WAREHOUSE_RECEIPT_KIND.search(lab) or _GOODS_RECEIPT_KIND.search(lab)),
+            "Item Receipt",
+        )
+        labels = [grn_label] + [lab for lab in labels if lab != grn_label]
 
     primary_label = labels[0] if labels else None
     primary_kind = kinds[0] if kinds else None
@@ -423,16 +469,29 @@ _TRANSPORT_LAYOUT_CUES: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bNot\s+Negotiable\s+Air\s+Waybill\b", re.I),
     re.compile(r"\bShipper'?s?\s+Name\s+and\s+Address\b", re.I),
 )
+_GRN_SUPPORTING_CUES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bRECEIPT\s*(?:NO\.?|NUMBER|#)\b", re.I),
+    re.compile(r"\b(?:QTY|QUANTITY)\s+RECEIVED\b", re.I),
+    re.compile(r"\bRECEIVED\s+(?:QTY|QUANTITY)\b", re.I),
+    re.compile(r"\bGOODS\s+RECEIVED\s+FROM\b", re.I),
+    re.compile(r"\bRECEIVED\s+FROM\s+(?:VENDOR|SUPPLIER)\b", re.I),
+)
 
 
 def _layout_kind_from_cues(text: str) -> HeadingKind | None:
     """Infer kind from commercial layout when the title word is missing on page 1."""
     blob = text or ""
+    if warehouse_receipt_kind_from_text(blob) is not None:
+        return "grn"
     if any(p.search(blob) for p in _TRANSPORT_LAYOUT_CUES):
         return None
     packing_hits = sum(1 for p in _PACKING_LAYOUT_CUES if p.search(blob))
     if packing_hits >= 1:
         return "packing_list"
+    if not _INVOICE_OR_PO_TITLE_LINE.search(blob):
+        grn_hits = sum(1 for cue in _GRN_SUPPORTING_CUES if cue.search(blob))
+        if grn_hits >= 2:
+            return "grn"
     invoice_hits = sum(1 for p in _INVOICE_LAYOUT_CUES if p.search(blob))
     if invoice_hits >= 2:
         return "invoice"

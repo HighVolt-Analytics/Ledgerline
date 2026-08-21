@@ -70,12 +70,12 @@ SIGNAL_CONDITIONS: dict[RecognitionSignalId, dict[str, Any]] = {
     "text_grn": {
         "field": "document_text",
         "operator": "regex",
-        "value": "(?i)(goods\\s+receipt|delivery\\s+(note|docket)|\\bGRN\\b)",
+        "value": "(?i)(goods\\s+receipt|item\\s+receipt|material\\s+receipt|warehouse\\s+receipt|delivery\\s+(note|docket)|\\bGRN\\b)",
     },
     "filename_grn": {
         "field": "attachment_name",
         "operator": "regex",
-        "value": "(?i)grn|goods[_-]?receipt|delivery[_-]?note",
+        "value": "(?i)grn|goods[_-]?receipt|item[_-]?receipt|material[_-]?receipt|delivery[_-]?note",
     },
     "heading_contract": {"field": "has_heading_contract", "operator": "equals", "value": "true"},
     "text_contract": {
@@ -401,11 +401,11 @@ _SIGNAL_META: dict[RecognitionSignalId, tuple[str, str, str, str, str]] = {
         "GOODS RECEIPT NOTE, DELIVERY DOCKET",
     ),
     "text_grn": (
-        "Body mentions goods receipt or GRN",
+        "Body mentions goods receipt, item receipt, or GRN",
         "Full document text",
         "body",
         "strong",
-        "Goods Receipt, GRN, Delivery Note",
+        "Goods Receipt, Item Receipt, GRN, Delivery Note",
     ),
     "filename_grn": (
         "Filename contains GRN / delivery note",

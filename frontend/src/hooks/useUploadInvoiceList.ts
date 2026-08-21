@@ -4,10 +4,8 @@ import { api } from "@/api/client";
 import type { Invoice } from "@/api/types";
 import { useTenantQuery } from "@/hooks/useTenantQuery";
 import { queryKeys, tenantQueryKey } from "@/lib/queryClient";
+import { UPLOAD_POLL_FAST_MS, UPLOAD_POLL_MS } from "@/lib/uploadPolling";
 import { uploadListHasActiveProcessing } from "@/lib/uploadColumnState";
-
-const INBOX_POLL_MS = 15_000;
-const INBOX_POLL_FAST_MS = 4_000;
 
 export type UploadInvoiceListData = {
   rows: Invoice[];
@@ -40,7 +38,8 @@ export function useUploadInvoiceList(options: {
   source: string;
   q: string;
   mailboxId: number | null;
-  captureSource: "upload" | "email" | "whatsapp" | "viber";
+  /** Omit / pass `"all"` to list every ingest channel. */
+  captureSource: "all" | "upload" | "email" | "whatsapp" | "viber";
   enabled?: boolean;
   processingIds?: ReadonlySet<number>;
 }) {
@@ -59,7 +58,7 @@ export function useUploadInvoiceList(options: {
     getVisibility,
     serverVisibility
   );
-  const [pollInterval, setPollInterval] = useState(INBOX_POLL_MS);
+  const [pollInterval, setPollInterval] = useState(UPLOAD_POLL_MS);
 
   const query = useTenantQuery<UploadInvoiceListData>({
     queryKey: queryKeys.uploadDocuments(page, pageSize, source, q, mailboxId, captureSource),
@@ -76,8 +75,10 @@ export function useUploadInvoiceList(options: {
       const params: Record<string, string> = {
         page: String(page),
         page_size: String(pageSize),
-        capture_source: captureSource,
       };
+      if (captureSource !== "all") {
+        params.capture_source = captureSource;
+      }
       if (mailboxId != null) {
         params.connected_mailbox_id = String(mailboxId);
       }
@@ -98,7 +99,7 @@ export function useUploadInvoiceList(options: {
   useEffect(() => {
     const rows = query.data?.rows ?? [];
     const busy = uploadListHasActiveProcessing(rows, processingIds);
-    setPollInterval(busy ? INBOX_POLL_FAST_MS : INBOX_POLL_MS);
+    setPollInterval(busy ? UPLOAD_POLL_FAST_MS : UPLOAD_POLL_MS);
   }, [query.data?.rows, processingIds]);
 
   return query;

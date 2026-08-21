@@ -124,6 +124,9 @@ describe("SetupPage signup wizard", () => {
 
     await user.type(await screen.findByTestId("input-business-name"), "Typed Business");
     await user.type(screen.getByTestId("input-phone"), "91234567");
+    await user.click(screen.getByTestId("select-country"));
+    const countrySearch = await screen.findByTestId("select-country-search");
+    await user.type(countrySearch, "Australia{Enter}");
     const continueOrg = screen.getByTestId("button-continue-details") as HTMLButtonElement;
     await waitFor(() => expect(continueOrg.disabled).toBe(false));
     await user.click(continueOrg);

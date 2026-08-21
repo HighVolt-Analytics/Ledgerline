@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { createPortal } from "react-dom";
-import { getScopedAuthHeadersForToken } from "@/api/client";
+import { getActiveTenantId, getScopedAuthHeadersForToken } from "@/api/client";
 import { resolveApiBase } from "@/lib/apiBase";
 import { cn } from "@/lib/cn";
 import { withRouterBasename } from "@/lib/routerBasename";
@@ -32,7 +32,28 @@ type OnboardingChecklistContextValue = {
 
 const OnboardingChecklistContext = createContext<OnboardingChecklistContextValue | null>(null);
 
-const STORAGE_KEY = "ledgerlink_setup_checklist_dismissed";
+const STORAGE_KEY_PREFIX = "ledgerlink_setup_checklist_dismissed";
+
+const COMPLETED_STATE: SetupChecklistState = {
+  complete: true,
+  show: false,
+  progress: 100,
+  items: [],
+};
+
+function checklistStorageKey(): string {
+  return `${STORAGE_KEY_PREFIX}:${getActiveTenantId() ?? "none"}`;
+}
+
+function isChecklistDismissed(): boolean {
+  if (typeof localStorage === "undefined") return false;
+  try {
+    if (localStorage.getItem(checklistStorageKey()) === "complete") return true;
+    return localStorage.getItem(STORAGE_KEY_PREFIX) === "complete";
+  } catch {
+    return false;
+  }
+}
 
 async function fetchChecklist(accessToken: string): Promise<SetupChecklistState> {
   const res = await fetch(`${resolveApiBase()}/api/tenants/current/setup-checklist`, {
@@ -54,9 +75,15 @@ export function OnboardingChecklistProvider({
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (opts?: { force?: boolean }) => {
     if (!accessToken) {
       setState(null);
+      return;
+    }
+    const storageKey = checklistStorageKey();
+    if (!opts?.force && isChecklistDismissed()) {
+      setState(COMPLETED_STATE);
+      setExpanded(false);
       return;
     }
     setLoading(true);
@@ -64,12 +91,15 @@ export function OnboardingChecklistProvider({
       const next = await fetchChecklist(accessToken);
       setState(next);
       if (next.complete) {
-        localStorage.setItem(STORAGE_KEY, "complete");
+        const alreadyComplete = localStorage.getItem(storageKey) === "complete";
+        localStorage.setItem(storageKey, "complete");
         setExpanded(false);
-        await fetch(`${resolveApiBase()}/api/tenants/current/setup-checklist/complete`, {
-          method: "POST",
-          headers: getScopedAuthHeadersForToken(accessToken),
-        });
+        if (!alreadyComplete) {
+          await fetch(`${resolveApiBase()}/api/tenants/current/setup-checklist/complete`, {
+            method: "POST",
+            headers: getScopedAuthHeadersForToken(accessToken),
+          });
+        }
       }
     } catch {
       setState(null);
@@ -83,7 +113,7 @@ export function OnboardingChecklistProvider({
   }, [refresh]);
 
   useEffect(() => {
-    const handler = () => void refresh();
+    const handler = () => void refresh({ force: true });
     window.addEventListener("ledgerlink:onboarding-refresh", handler);
     return () => window.removeEventListener("ledgerlink:onboarding-refresh", handler);
   }, [refresh]);
@@ -130,8 +160,7 @@ export function OnboardingChecklistWidget() {
     (totalRequired > 0 && doneCount >= totalRequired) ||
     progressPct >= 100;
 
-  const locallyDismissed =
-    typeof localStorage !== "undefined" && localStorage.getItem(STORAGE_KEY) === "complete";
+  const locallyDismissed = isChecklistDismissed();
 
   // Hide permanently once required setup hits 100%.
   if (locallyDismissed || isComplete) {

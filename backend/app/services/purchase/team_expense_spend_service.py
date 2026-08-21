@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from calendar import monthrange
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -189,6 +189,86 @@ def period_key_bounds(period_kind: str, period_key: str) -> tuple[date, date] | 
     return None
 
 
+def _as_date(value: Any) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    raw = str(value).strip()
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw[:10])
+    except ValueError:
+        return None
+
+
+SpendRow = tuple[str, str, float, date]
+
+
+async def load_processed_claim_spend_rows(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    *,
+    date_from: date,
+    date_to: date,
+) -> list[SpendRow]:
+    """One scan of processed TE claims in [date_from, date_to] for budget roll-ups."""
+    effective = _effective_date_expr()
+    rows = (
+        await session.execute(
+            select(
+                Invoice.account_name,
+                Invoice.account_code,
+                Invoice.total,
+                effective,
+            ).where(
+                Invoice.tenant_id == tenant_id,
+                Invoice.route_target == ROUTE_TEAM,
+                Invoice.status == InvoiceStatus.PROCESSED,
+                Invoice.team_expense_kind.in_(list(_SPEND_KINDS)),
+                effective >= date_from,
+                effective <= date_to,
+            )
+        )
+    ).all()
+    out: list[SpendRow] = []
+    for name, code, total, effective_raw in rows:
+        day = _as_date(effective_raw)
+        if day is None:
+            continue
+        out.append(
+            (
+                (name or "").strip().lower(),
+                (code or "").strip().lower(),
+                float(total or 0),
+                day,
+            )
+        )
+    return out
+
+
+def spend_for_tokens(
+    rows: list[SpendRow],
+    tokens: set[str],
+    *,
+    date_from: date,
+    date_to: date,
+) -> float:
+    if not tokens:
+        return 0.0
+    wanted = {token.strip().lower() for token in tokens if token.strip()}
+    total = 0.0
+    for name, code, amount, day in rows:
+        if day < date_from or day > date_to:
+            continue
+        if name in wanted or code in wanted:
+            total += amount
+    return total
+
+
 async def gl_period_consumed(
     session: AsyncSession,
     tenant_id: uuid.UUID,
@@ -255,6 +335,7 @@ async def gl_period_sub_breakdown(
     period_key: str,
     chart_of_accounts: list | None = None,
     parent_budget: float = 0,
+    spend_rows: list[SpendRow] | None = None,
 ) -> list[dict[str, float | str]]:
     """Per-child spend under a parent wallet for the period (track-only labels)."""
     from app.services.master_data.chart_of_accounts_service import (
@@ -279,22 +360,35 @@ async def gl_period_sub_breakdown(
         if name:
             labels.append((name, name))
 
+    bounds = period_key_bounds(period_kind, period_key)
     rows: list[dict[str, float | str]] = []
     budget = float(parent_budget or 0)
-    for label, token in labels:
-        # Exact token only for breakdown rows (no further roll-up).
-        spent = await gl_period_consumed(
+    loaded_rows = spend_rows
+    if loaded_rows is None and bounds is not None:
+        loaded_rows = await load_processed_claim_spend_rows(
             session,
             tenant_id,
-            gl_ledger=token,
-            period_kind=period_kind,
-            period_key=period_key,
-            chart_of_accounts=entries,
-            include_children=False,
+            date_from=bounds[0],
+            date_to=bounds[1],
         )
-        if spent <= 0 and label != parent:
-            # Still list known children with zero so UI can show the structure.
-            pass
+    for label, token in labels:
+        if loaded_rows is not None and bounds is not None:
+            spent = spend_for_tokens(
+                loaded_rows,
+                {token},
+                date_from=bounds[0],
+                date_to=bounds[1],
+            )
+        else:
+            spent = await gl_period_consumed(
+                session,
+                tenant_id,
+                gl_ledger=token,
+                period_kind=period_kind,
+                period_key=period_key,
+                chart_of_accounts=entries,
+                include_children=False,
+            )
         pct = round((spent / budget) * 100.0, 2) if budget > 0 else None
         rows.append(
             {

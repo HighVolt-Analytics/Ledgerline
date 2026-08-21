@@ -18,8 +18,8 @@ from app.services.integration.accounting_integration_service import (
     get_integration,
     get_xero_readiness,
 )
-from app.services.integration.xero_client import XeroApiError, XeroClient
-from app.services.integration.xero_token_service import get_valid_access_token
+from app.services.integration.xero.xero_client import XeroApiError, XeroClient
+from app.services.integration.xero.xero_token_service import get_valid_access_token
 
 
 async def verify_xero_connection(

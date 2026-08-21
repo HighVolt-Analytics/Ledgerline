@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from app.api import (
@@ -67,13 +68,13 @@ from app.services.ingest.inline_mailbox_poller import (
     start_inline_mailbox_poller,
     stop_inline_mailbox_poller,
 )
-from app.services.integration.xero_background_sync import (
+from app.services.integration.xero.xero_background_sync import (
     start_xero_background_sync,
     stop_xero_background_sync,
 )
 from app.services.rule_book.rule_book_save_buffer import flush_all_rule_book_save_buffers
 from app.services.integration.accounting_integration_service import XeroNotReadyError
-from app.services.integration.xero_mapping_validation import XeroMappingValidationError
+from app.services.integration.xero.xero_mapping_validation import XeroMappingValidationError
 from app.services.shared.public_app_url import build_oauth_frontend_path
 from app.services.tenant.tenant_context_service import get_or_create_default_tenant, sync_env_mailbox
 from app.services.tenant.tenant_module_service import require_module
@@ -156,6 +157,17 @@ app.add_middleware(
 )
 if _settings.root_path:
     app.add_middleware(ProxyPathPrefixMiddleware, prefix=_settings.root_path)
+# Gzip behind Front Door/nginx. Skip local Vite — compressed API bodies plus
+# --reload ECONNRESET leave the SPA unable to parse /api/auth/me on hard refresh.
+if _settings.app_env.strip().lower() in {
+    "production",
+    "prod",
+    "preview",
+    "staging",
+    "stage",
+    "ledgerlink",
+}:
+    app.add_middleware(GZipMiddleware, minimum_size=500)
 
 app.include_router(auth.router, prefix="/api")
 app.include_router(master_confirm.router, prefix="/api")

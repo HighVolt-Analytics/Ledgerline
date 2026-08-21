@@ -35,7 +35,7 @@ class Collection(Base):
     )
     customer: Mapped[str | None] = mapped_column(String(255))
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
-    currency: Mapped[str] = mapped_column(String(3), default="AUD")
+    currency: Mapped[str] = mapped_column(String(3), default="")
     status: Mapped[CollectionStatus] = mapped_column(
         Enum(
             CollectionStatus,

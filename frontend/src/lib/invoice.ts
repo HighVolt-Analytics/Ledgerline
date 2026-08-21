@@ -756,11 +756,12 @@ export function invoiceSourceLabel(source: InvoiceSource): string {
   return "Direct upload";
 }
 
-/** Match an invoice to an Upload page channel tab (Upload / Email / WhatsApp / Viber). */
+/** Match an invoice to an Upload page channel tab (All / Upload / Email / WhatsApp / Viber). */
 export function invoiceMatchesCaptureChannel(
   inv: Invoice,
-  channel: "upload" | "email" | "whatsapp" | "viber"
+  channel: "all" | "upload" | "email" | "whatsapp" | "viber"
 ): boolean {
+  if (channel === "all") return true;
   const kind = invoiceSourceKind(inv);
   if (channel === "upload") return kind === "upload" || kind === "onedrive";
   return kind === channel;

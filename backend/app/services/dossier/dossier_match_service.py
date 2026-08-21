@@ -139,7 +139,21 @@ def _fmt_qty(value: float | None) -> str:
 
 
 def _fmt_money(value: float, currency: str) -> str:
-    symbol = "$" if currency.upper() in {"AUD", "USD", "NZD", "SGD"} else currency
+    from app.services.shared.currency import prefer_currency
+
+    code = prefer_currency(currency)
+    if not code:
+        return f"{value:,.2f}"
+    symbol = {
+        "AUD": "A$",
+        "USD": "US$",
+        "NZD": "NZ$",
+        "SGD": "S$",
+        "INR": "₹",
+        "EUR": "€",
+        "GBP": "£",
+        "AED": "د.إ",
+    }.get(code, f"{code} ")
     return f"{symbol}{value:,.2f}"
 
 

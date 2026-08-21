@@ -30,6 +30,15 @@ BASE_CURRENCY = COUNTRY_CURRENCY[DEFAULT_COUNTRY]
 
 UNKNOWN_CURRENCY = "UNKNOWN"
 
+
+def prefer_currency(*values: str | None) -> str:
+    """First non-blank currency token. Empty if none — never invents AUD/SGD/USD."""
+    for raw in values:
+        token = (raw or "").strip().upper()
+        if token:
+            return token[:3]
+    return ""
+
 # Symbols that map to more than one ISO code — never invent a country.
 # Bare "$" is shared by USD/AUD/SGD/NZD/CAD/HKD/… — store the glyph only.
 AMBIGUOUS_CURRENCY_SYMBOLS = frozenset({"$", "¥"})
@@ -442,10 +451,10 @@ def fx_rate_to_base(currency: str | None, *, base: str | None = None) -> Decimal
         return Decimal("0")
     if code == target:
         return Decimal("1")
-    to_aud = _FX_TO_AUD.get(code, Decimal("1"))
-    base_to_aud = _FX_TO_AUD.get(target, Decimal("1"))
-    if base_to_aud == 0:
-        return Decimal("1")
+    to_aud = _FX_TO_AUD.get(code)
+    base_to_aud = _FX_TO_AUD.get(target)
+    if to_aud is None or base_to_aud is None or base_to_aud == 0:
+        return Decimal("0")
     return to_aud / base_to_aud
 
 

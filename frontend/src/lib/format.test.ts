@@ -62,6 +62,13 @@ describe("money", () => {
     expect(money("", "AUD")).toBe("—");
   });
 
+  it("does not invent S$ when called without a currency argument", () => {
+    const omitted = money(299, undefined, locale);
+    expect(omitted).toMatch(/299\.00/);
+    expect(omitted).not.toContain("S$");
+    expect(money(299)).not.toContain("S$");
+  });
+
   it("does not invent S$ when currency is blank", () => {
     const plain = money(299, "", locale);
     expect(plain).toMatch(/299\.00/);

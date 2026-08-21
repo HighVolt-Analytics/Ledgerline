@@ -17,8 +17,8 @@ from app.schemas.xero_master_data import (
     XeroSyncHistoryResponse,
     XeroTaxRatesResponse,
 )
-from app.services.integration.xero_client import XeroApiError
-from app.services.integration.xero_master_data_service import (
+from app.services.integration.xero.xero_client import XeroApiError
+from app.services.integration.xero.xero_master_data_service import (
     get_master_data_totals,
     list_export_history,
     list_sync_history,
@@ -26,7 +26,7 @@ from app.services.integration.xero_master_data_service import (
     list_xero_contacts,
     list_xero_tax_rates,
 )
-from app.services.integration.xero_reconcile_service import reconcile_pending
+from app.services.integration.xero.xero_reconcile_service import reconcile_pending
 
 router = APIRouter(prefix="/integrations/xero", tags=["accounting-integrations"])
 

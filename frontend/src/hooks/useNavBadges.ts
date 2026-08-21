@@ -9,7 +9,7 @@ export function useNavBadges() {
   return useTenantQuery({
     queryKey: queryKeys.navBadges(),
     queryFn: () => api.getNavBadges(),
-    refetchInterval: 30_000,
+    refetchInterval: 90_000,
     enabled: Boolean(user && !isSuperAdmin(user.role)),
   });
 }

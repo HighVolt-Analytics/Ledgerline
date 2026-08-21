@@ -18,7 +18,7 @@ from app.models.user import User
 from app.services.dossier.document_ref_service import dossier_public_id
 from app.services.ingest.graph_client import is_graph_enabled
 from app.models.journal import JournalEntry
-from app.services.shared.currency import BASE_CURRENCY, convert_to_base, sum_amounts_by_currency
+from app.services.shared.currency import convert_to_base, sum_amounts_by_currency
 from app.tenant_settings import tenant_labor_rate_per_hour, tenant_timezone
 from app.services.invoice.invoice_evaluation_service import (
     EVAL_AWAITING_CLASSIFICATION,
@@ -217,40 +217,22 @@ async def _docs_via_upload(
     return (await db.execute(stmt)).scalar() or 0
 
 
-async def _team_expenses_queue_count(db: AsyncSession, tenant_id: int) -> int:
-    return (
+async def _route_queue_counts(
+    db: AsyncSession, tenant_id: int
+) -> dict[str, int]:
+    """One grouped query for team / business-expense / sales sidebar queues."""
+    rows = (
         await db.execute(
-            select(func.count(Invoice.id)).where(
+            select(Invoice.route_target, func.count(Invoice.id))
+            .where(
                 Invoice.tenant_id == tenant_id,
-                Invoice.route_target == ROUTE_TEAM,
                 Invoice.status.in_(_TEAM_EXPENSE_ACTIONABLE),
+                Invoice.route_target.in_((ROUTE_TEAM, ROUTE_EXPENSES, ROUTE_SALES)),
             )
+            .group_by(Invoice.route_target)
         )
-    ).scalar() or 0
-
-
-async def _business_expenses_queue_count(db: AsyncSession, tenant_id: int) -> int:
-    return (
-        await db.execute(
-            select(func.count(Invoice.id)).where(
-                Invoice.tenant_id == tenant_id,
-                Invoice.route_target == ROUTE_EXPENSES,
-                Invoice.status.in_(_TEAM_EXPENSE_ACTIONABLE),
-            )
-        )
-    ).scalar() or 0
-
-
-async def _sales_queue_count(db: AsyncSession, tenant_id: int) -> int:
-    return (
-        await db.execute(
-            select(func.count(Invoice.id)).where(
-                Invoice.tenant_id == tenant_id,
-                Invoice.route_target == ROUTE_SALES,
-                Invoice.status.in_(_TEAM_EXPENSE_ACTIONABLE),
-            )
-        )
-    ).scalar() or 0
+    ).all()
+    return {str(route): int(count) for route, count in rows if route}
 
 
 async def _collections_queue_count(db: AsyncSession, tenant_id: int) -> int:
@@ -528,17 +510,13 @@ async def build_nav_badges(db: AsyncSession, *, tenant_id: int) -> NavBadges:
     )
     inbox_count = sum(status_counts.get(s, 0) for s in _INBOX_STATUSES)
     (
-        team_expenses_count,
-        business_expenses_count,
-        sales_count,
+        route_counts,
         payments_queue_count,
         collections_queue_count,
         mailboxes_mapped,
         pending_classification,
     ) = await asyncio.gather(
-        _team_expenses_queue_count(db, tenant_id),
-        _business_expenses_queue_count(db, tenant_id),
-        _sales_queue_count(db, tenant_id),
+        _route_queue_counts(db, tenant_id),
         _payments_queue_count(db, tenant_id),
         _collections_queue_count(db, tenant_id),
         _mailboxes_mapped(db, tenant_id=tenant_id),
@@ -548,9 +526,9 @@ async def build_nav_badges(db: AsyncSession, *, tenant_id: int) -> NavBadges:
         inbox_count=inbox_count,
         pending_approval=pending_approval,
         pending_classification=pending_classification,
-        team_expenses_count=team_expenses_count,
-        business_expenses_count=business_expenses_count,
-        sales_count=sales_count,
+        team_expenses_count=route_counts.get(ROUTE_TEAM, 0),
+        business_expenses_count=route_counts.get(ROUTE_EXPENSES, 0),
+        sales_count=route_counts.get(ROUTE_SALES, 0),
         payments_queue_count=payments_queue_count,
         collections_queue_count=collections_queue_count,
         integrations_connected=_integrations_count(mailboxes_mapped),
@@ -787,6 +765,7 @@ async def fetch_top_vendors(
     limit: int = 5,
     month_start: date | None = None,
     month_end: date | None = None,
+    base_currency: str | None = None,
 ) -> list[TopVendorRow]:
     stmt = select(
         func.coalesce(Invoice.vendor, "Unknown"),
@@ -802,6 +781,10 @@ async def fetch_top_vendors(
         lo, hi = _invoice_date_filters(month_start, month_end)
         stmt = stmt.where(lo, hi)
 
+    if not base_currency:
+        tenant = await db.get(Tenant, tenant_id)
+        base_currency = tenant_currency(tenant)
+
     vendor_amounts: dict[str, Decimal] = {}
     vendor_counts: dict[str, int] = {}
     vendor_sales_counts: dict[str, int] = {}
@@ -809,7 +792,7 @@ async def fetch_top_vendors(
     for vendor, total, currency, route_target in (await db.execute(stmt)).all():
         name = str(vendor)
         vendor_amounts[name] = vendor_amounts.get(name, Decimal("0")) + convert_to_base(
-            total, currency
+            total, currency, base=base_currency
         )
         vendor_counts[name] = vendor_counts.get(name, 0) + 1
         route = (route_target or "").strip()
@@ -841,9 +824,16 @@ async def fetch_top_vendors(
 
 
 async def fetch_cash_forecast(
-    db: AsyncSession, *, tenant_id: int, today: date | None = None
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    today: date | None = None,
+    base_currency: str | None = None,
 ) -> list[CashForecastBucket]:
     anchor = today or await _institution_today(db, tenant_id)
+    if not base_currency:
+        tenant = await db.get(Tenant, tenant_id)
+        base_currency = tenant_currency(tenant)
     amounts = {label: Decimal("0") for label, _, _ in _FORECAST_BUCKETS}
 
     stmt = select(Invoice.due_date, Invoice.total, Invoice.currency).where(
@@ -856,7 +846,7 @@ async def fetch_cash_forecast(
         if due_date is None or total is None:
             continue
         days = (due_date - anchor).days
-        amt = convert_to_base(total, currency)
+        amt = convert_to_base(total, currency, base=base_currency)
         for label, lo, hi in _FORECAST_BUCKETS:
             if hi is None and days >= lo:
                 amounts[label] += amt
@@ -958,6 +948,26 @@ async def _daily_recon_delta_by_day(
     return result
 
 
+def _empty_kpi_sparklines(days: int = 7) -> KpiSparklines:
+    """Placeholder series kept on the overview payload for schema compatibility.
+
+    Dashboard UI does not render sparklines; computing them was a large share of
+    overview latency (daily user-count N+1 plus audit/journal scans).
+    """
+    empty = [0] * days
+    return KpiSparklines(
+        invoice_volume=empty,
+        docs_via_email=empty,
+        docs_via_upload=empty,
+        total_value=empty,
+        distinct_vendors=empty,
+        mailboxes_active=empty,
+        active_users=empty,
+        avg_processing_seconds=empty,
+        reconciliation_delta=empty,
+    )
+
+
 async def fetch_kpi_sparklines(
     db: AsyncSession,
     *,
@@ -966,22 +976,15 @@ async def fetch_kpi_sparklines(
     month_end: date,
     today: date | None = None,
     days: int = 7,
+    base_currency: str | None = None,
 ) -> KpiSparklines:
     anchor = today or await _institution_today(db, tenant_id)
+    if not base_currency:
+        tenant = await db.get(Tenant, tenant_id)
+        base_currency = tenant_currency(tenant)
     days_list = _sparkline_days(month_start, month_end, today=anchor, days=days)
     if not days_list:
-        empty = [0] * days
-        return KpiSparklines(
-            invoice_volume=empty,
-            docs_via_email=empty,
-            docs_via_upload=empty,
-            total_value=empty,
-            distinct_vendors=empty,
-            mailboxes_active=empty,
-            active_users=empty,
-            avg_processing_seconds=empty,
-            reconciliation_delta=empty,
-        )
+        return _empty_kpi_sparklines(days)
 
     window_start, window_end = days_list[0], days_list[-1]
     inv_rows = (
@@ -1054,7 +1057,7 @@ async def fetch_kpi_sparklines(
         values.append(
             int(
                 sum(
-                    convert_to_base(total, currency)
+                    convert_to_base(total, currency, base=base_currency)
                     for _, _, total, currency, _, _, _ in booked_rows
                     if total is not None
                 )
@@ -1438,17 +1441,21 @@ async def build_kpi_trends(
     tenant_id: int,
     month_start: date,
     month_end: date,
+    base_currency: str | None = None,
 ) -> dict[str, KpiTrend]:
+    if not base_currency:
+        tenant = await db.get(Tenant, tenant_id)
+        base_currency = tenant_currency(tenant)
     prev_end = month_start - timedelta(days=1)
     prev_start = _month_start(prev_end)
 
     curr_invoices = await _count_in_period(db, tenant_id, month_start, month_end)
     prev_invoices = await _count_in_period(db, tenant_id, prev_start, prev_end)
     curr_value = float(
-        (await _sum_value_in_period(db, tenant_id, month_start, month_end))[0]
+        (await _sum_value_in_period(db, tenant_id, month_start, month_end, base=base_currency))[0]
     )
     prev_value = float(
-        (await _sum_value_in_period(db, tenant_id, prev_start, prev_end))[0]
+        (await _sum_value_in_period(db, tenant_id, prev_start, prev_end, base=base_currency))[0]
     )
     curr_email = await _docs_via_email(
         db, tenant_id, month_start=month_start, month_end=month_end
@@ -1517,36 +1524,27 @@ async def build_overview(
     activity_limit: int = 8,
     month: str | None = None,
 ) -> DashboardOverview:
+    """Assemble the Dashboard page payload.
+
+    ``activity_limit`` is accepted for API compatibility; activity, anomalies,
+    mailbox breakdown, KPI trends, and sparklines are not rendered on the
+    Dashboard page and are omitted here to cut query volume.
+    """
+    _ = activity_limit
     today = await _institution_today(db, tenant_id)
     month_start, month_end, period = parse_period(month, today=today)
-    stats, kpi_sparklines = await asyncio.gather(
-        build_stats(
-            db,
-            tenant_id=tenant_id,
-            month_start=month_start,
-            month_end=month_end,
-            today=today,
-        ),
-        fetch_kpi_sparklines(
-            db,
-            tenant_id=tenant_id,
-            month_start=month_start,
-            month_end=month_end,
-            today=today,
-        ),
-    )
     tenant = await db.get(Tenant, tenant_id)
+    reporting = tenant_currency(tenant)
+    stats = await build_stats(
+        db,
+        tenant_id=tenant_id,
+        month_start=month_start,
+        month_end=month_end,
+        today=today,
+    )
     labor_rate = tenant_labor_rate_per_hour(tenant)
-    (
-        panels,
-        activity,
-        top_vendors,
-        cash_forecast,
-        mailbox_breakdown,
-        anomalies,
-        kpi_trends,
-        integrations_connected,
-    ) = await asyncio.gather(
+    kpi_sparklines = _empty_kpi_sparklines()
+    panels, top_vendors, cash_forecast = await asyncio.gather(
         build_dashboard_panels(
             db,
             tenant_id=tenant_id,
@@ -1554,46 +1552,37 @@ async def build_overview(
             month_end=month_end,
             today=today,
             pending_approval=stats.pending_approval,
-            base_currency=stats.base_currency or BASE_CURRENCY,
+            base_currency=stats.base_currency or reporting,
             labor_rate_per_hour=labor_rate,
             timezone_name=tenant_timezone(tenant),
         ),
-        fetch_activity(db, activity_limit, tenant_id=tenant_id),
         fetch_top_vendors(
             db,
             tenant_id=tenant_id,
             limit=5,
             month_start=month_start,
             month_end=month_end,
+            base_currency=stats.base_currency or reporting,
         ),
-        fetch_cash_forecast(db, tenant_id=tenant_id, today=today),
-        fetch_mailbox_breakdown(
+        fetch_cash_forecast(
             db,
             tenant_id=tenant_id,
-            month_start=month_start,
-            month_end=month_end,
+            today=today,
+            base_currency=stats.base_currency or reporting,
         ),
-        fetch_anomalies(db, tenant_id=tenant_id),
-        build_kpi_trends(
-            db,
-            tenant_id=tenant_id,
-            month_start=month_start,
-            month_end=month_end,
-        ),
-        _integrations_connected(db, tenant_id),
     )
     return DashboardOverview(
         period=period,
         period_has_data=stats.invoices_this_month > 0,
         cash_forecast_scope="All open payables for your organisation",
         stats=stats,
-        activity=activity,
+        activity=[],
         top_vendors=top_vendors,
         cash_forecast=cash_forecast,
-        mailbox_breakdown=mailbox_breakdown,
-        anomalies=anomalies,
-        kpi_trends=kpi_trends,
-        integrations_connected=integrations_connected,
+        mailbox_breakdown=[],
+        anomalies=[],
+        kpi_trends={},
+        integrations_connected=stats.integrations_connected,
         kpi_sparklines=kpi_sparklines,
         invoice_volume_sparkline=kpi_sparklines.invoice_volume,
         executive_kpis=panels["executive_kpis"],

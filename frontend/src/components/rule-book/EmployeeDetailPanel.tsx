@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Select, toSelectOptions } from "@/components/ui/select";
 import { useCoaAccountOptions } from "@/hooks/useCoaAccountOptions";
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
+import { useInstitutionSettings } from "@/hooks/useInstitutionSettings";
 import { cn } from "@/lib/cn";
 import {
   ledgerExistsInCoa,
@@ -18,6 +19,7 @@ import {
 } from "@/lib/coaAccountOptions";
 import type { EmployeeMaster } from "@/lib/v4RuleBookTypes";
 import { fmtAud } from "@/lib/v4MockData";
+import { normalizeCurrencyCode } from "@/lib/format";
 import { BankDetailsSection } from "./BankDetailsSection";
 import { FieldLabel } from "./FieldLabel";
 
@@ -42,6 +44,8 @@ export function EmployeeDetailPanel({
   onToggleMask?: () => void;
 }) {
   const [rulesOpen, setRulesOpen] = useState(false);
+  const { data: institution } = useInstitutionSettings();
+  const booksCurrency = normalizeCurrencyCode(institution?.currency) ?? "";
   const { data: ruleBook } = useRuleBookConfig();
   const {
     options: ledgerOptions,
@@ -241,7 +245,7 @@ export function EmployeeDetailPanel({
           </FieldLabel>
           <FieldLabel label="Net advance outstanding">
             <Input
-              value={fmtAud(emp.advanceBalance ?? 0)}
+              value={fmtAud(emp.advanceBalance ?? 0, booksCurrency)}
               readOnly
               disabled
               className="h-8 text-xs tnum"

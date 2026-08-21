@@ -106,7 +106,7 @@ export function ReportsPage() {
   const { data: apBalances, isLoading: apLoading } = useApBalances(subledgerAsOf);
   const { data: arBalances, isLoading: arLoading } = useArBalances(subledgerAsOf);
 
-  const currency = analytics?.base_currency ?? "SGD";
+  const currency = analytics?.base_currency ?? "";
   const taxLabel = analytics?.tax_label ?? "Tax";
   const symbol = currencySymbol(currency);
   const fmt = (v: number) => money(v, currency, locale);

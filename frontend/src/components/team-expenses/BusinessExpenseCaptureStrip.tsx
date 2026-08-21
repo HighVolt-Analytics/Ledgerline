@@ -5,10 +5,17 @@ import { queryKeys } from "@/lib/queryClient";
 import { CaptureChannelsStrip } from "@/components/team-expenses/CaptureChannelsStrip";
 import type { ClaimChannel } from "@/lib/v4MockData";
 
-export function BusinessExpenseCaptureStrip({ activeRuleCount = 0 }: { activeRuleCount?: number }) {
+export function BusinessExpenseCaptureStrip({
+  activeRuleCount = 0,
+  enabled = true,
+}: {
+  activeRuleCount?: number;
+  enabled?: boolean;
+}) {
   const { data: mailboxes = [], blocked } = useTenantQuery({
     queryKey: queryKeys.mailboxes(),
     queryFn: () => api.listMailboxes(),
+    enabled,
   });
 
   const channels = useMemo((): ClaimChannel[] => {

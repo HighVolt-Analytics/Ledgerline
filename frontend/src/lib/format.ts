@@ -19,8 +19,9 @@ export function normalizeCurrencyCode(
   return code || null;
 }
 
-export function currencySymbol(currency = "SGD"): string {
-  const code = normalizeCurrencyCode(currency) ?? "SGD";
+export function currencySymbol(currency?: string | null): string {
+  const code = normalizeCurrencyCode(currency);
+  if (!code) return "";
   return CURRENCY_SYMBOLS[code] ?? code;
 }
 
@@ -33,7 +34,7 @@ export function axisMoney(v: number, symbol: string): string {
   return `${symbol}${v.toFixed(0)}`;
 }
 
-export function compactMoney(v: number, currency = "SGD"): string {
+export function compactMoney(v: number, currency?: string | null): string {
   return axisMoney(v, currencySymbol(currency));
 }
 
@@ -67,7 +68,7 @@ function formatMoneyWithSymbol(
  */
 export function money(
   v: string | number | null | undefined,
-  currency: string | null | undefined = "SGD",
+  currency: string | null | undefined = null,
   locale: string = DEFAULT_TENANT_LOCALE,
   displaySymbol?: string | null
 ): string {

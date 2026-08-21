@@ -153,6 +153,15 @@ describe("invoiceSourceKind", () => {
     expect(
       invoiceMatchesCaptureChannel(
         {
+          capture_source: "email",
+          connected_mailbox_id: 1,
+        } as Invoice,
+        "all",
+      ),
+    ).toBe(true);
+    expect(
+      invoiceMatchesCaptureChannel(
+        {
           capture_source: "upload",
           email_sender: "priya@acme-hospitality.com.au",
           connected_mailbox_id: null,

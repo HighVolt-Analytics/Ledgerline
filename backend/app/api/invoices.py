@@ -182,6 +182,10 @@ async def list_invoices(
         None,
         description="Search vendor, invoice no, PO, document ref, route, GL account, or id",
     ),
+    include_total: bool = Query(
+        True,
+        description="When false, skip COUNT(*) and set meta.pages=1 (first-page feeds).",
+    ),
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[list[InvoiceResponse]]:
@@ -293,11 +297,18 @@ async def list_invoices(
     stmt = _apply_filters(stmt)
     count_stmt = _apply_filters(count_stmt)
 
-    total = (await db.execute(count_stmt)).scalar() or 0
-    pages = max(1, (total + page_size - 1) // page_size)
     rows = (
         await db.execute(stmt.offset((page - 1) * page_size).limit(page_size))
     ).scalars().all()
+    if include_total:
+        if page == 1 and len(rows) < page_size:
+            total = len(rows)
+        else:
+            total = (await db.execute(count_stmt)).scalar() or 0
+        pages = max(1, (total + page_size - 1) // page_size)
+    else:
+        total = len(rows)
+        pages = 1
 
     return ApiEnvelope(
         data=await _responses_for_invoices(

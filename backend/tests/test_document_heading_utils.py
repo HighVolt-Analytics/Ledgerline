@@ -248,6 +248,63 @@ def test_not_a_tax_invoice_disclaimer_is_not_tax_invoice_kind() -> None:
     assert infer_page_document_kind(disclaimer_only) is None
 
 
+def test_item_receipt_heading_beats_invoice_number_field() -> None:
+    from app.services.extraction.document_heading_utils import (
+        extract_document_heading_signals,
+        infer_page_document_kind,
+        warehouse_receipt_kind_from_text,
+    )
+
+    text = (
+        "Right And Bright International Company Limited\n"
+        "Item Receipt generated in SOS Inventory\n"
+        "Invoice Number: E/00114/26-27\n"
+        "Received from vendor: West-Coast Pharmaceutical Works\n"
+        "Qty Received: 30\n"
+        "Warehouse: South Dagon\n"
+    )
+    signals = extract_document_heading_signals(text)
+    assert signals.primary_kind == "grn"
+    assert signals.has_heading_grn is True
+    assert infer_page_document_kind(text) == "grn"
+    assert warehouse_receipt_kind_from_text(text) == "grn"
+
+
+def test_material_receipt_and_goods_receipt_headings() -> None:
+    from app.services.extraction.document_heading_utils import infer_page_document_kind
+
+    assert infer_page_document_kind("MATERIAL RECEIPT\nPO 9001") == "grn"
+    assert infer_page_document_kind("WAREHOUSE RECEIPT\nReceipt No 12") == "grn"
+    assert infer_page_document_kind("GOODS RECEIPT NOTE\nPO 9001") == "grn"
+
+
+def test_tax_invoice_citing_grn_stays_invoice() -> None:
+    from app.services.extraction.document_heading_utils import infer_page_document_kind
+
+    text = "TAX INVOICE\nInvoice No: INV-1\nGoods Receipt Note attached: GRN-9\nTotal $100"
+    assert infer_page_document_kind(text) == "tax_invoice"
+
+
+def test_grn_layout_without_item_receipt_title() -> None:
+    from app.services.extraction.document_heading_utils import infer_page_document_kind
+
+    text = (
+        "Right And Bright International\n"
+        "Receipt Number: E/00114/26-27\n"
+        "Received from vendor: West-Coast Pharmaceutical Works\n"
+        "Qty Received: 30\n"
+        "South Dagon Warehouse\n"
+    )
+    assert infer_page_document_kind(text) == "grn"
+
+
+def test_invoice_number_field_is_not_invoice_title() -> None:
+    from app.services.extraction.document_heading_utils import infer_page_document_kind
+
+    assert infer_page_document_kind("Invoice Number: E/00114/26-27\nLine items") is None
+    assert infer_page_document_kind("INVOICE 9300667281\nPage : 1 of 3") == "invoice"
+
+
 def test_advance_requisition_not_a_hardcoded_heading_kind() -> None:
     """TE form titles are catalogue-matched, not a fixed HeadingKind."""
     from app.services.extraction.document_heading_utils import infer_page_document_kind

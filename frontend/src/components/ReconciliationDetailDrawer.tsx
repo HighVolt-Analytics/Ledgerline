@@ -18,7 +18,7 @@ export function ReconciliationDetailDrawer({
   detail,
   open,
   onClose,
-  currency = "SGD",
+  currency = "",
 }: ReconciliationDetailDrawerProps) {
   const [mounted, setMounted] = useState(false);
   const [sheetState, setSheetState] = useState<"open" | "closed">("closed");

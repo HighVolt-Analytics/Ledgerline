@@ -30,8 +30,8 @@ export function CreateTenantWizard({ open, onClose, onCreated }: CreateTenantWiz
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [slugTouched, setSlugTouched] = useState(false);
-  const [country, setCountry] = useState("SG");
-  const [currency, setCurrency] = useState("SGD");
+  const [country, setCountry] = useState("");
+  const [currency, setCurrency] = useState("");
   const [currencyTouched, setCurrencyTouched] = useState(false);
   const [industry, setIndustry] = useState<Industry>("Hospitality");
   const [adminName, setAdminName] = useState("");
@@ -45,8 +45,8 @@ export function CreateTenantWizard({ open, onClose, onCreated }: CreateTenantWiz
     setName("");
     setSlug("");
     setSlugTouched(false);
-    setCountry("SG");
-    setCurrency("SGD");
+    setCountry("");
+    setCurrency("");
     setCurrencyTouched(false);
     setIndustry("Hospitality");
     setAdminName("");
@@ -79,6 +79,7 @@ export function CreateTenantWizard({ open, onClose, onCreated }: CreateTenantWiz
     if (current === 0) {
       if (!name.trim()) return "Client name is required.";
       if (!slug.trim()) return "Slug is required.";
+      if (!country.trim()) return "Select a country.";
       if (!currency.trim()) return "Select a currency.";
       if (!currencyAllow.has(currency.trim().toUpperCase())) {
         return "Select a supported currency.";

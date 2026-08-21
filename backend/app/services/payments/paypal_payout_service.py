@@ -19,6 +19,9 @@ from app.services.audit.audit_service import log_event
 from app.services.payments.payment_execution_rules import approval_ready
 from app.services.payments.paypal_account_service import get_paypal_account_for_tenant
 from app.services.payments.paypal_client import PaypalApiError, get_paypal_client
+from app.models.tenant import Tenant
+from app.services.shared.currency import prefer_currency
+from app.tenant_settings import tenant_currency
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -204,10 +207,17 @@ async def create_paypal_payout(
     except (InvalidOperation, ValueError) as exc:
         raise PaypalPayoutError("Invalid payout amount", code="invalid_amount") from exc
 
-    payout_currency = (currency or method.currency or payment.currency or "AUD").upper()[
-        :3
-    ]
-    payment_currency = (payment.currency or "AUD").upper()[:3]
+    tenant = await db.get(Tenant, tenant_id)
+    books = tenant_currency(tenant)
+    payout_currency = prefer_currency(
+        currency, method.currency, payment.currency, books
+    )
+    payment_currency = prefer_currency(payment.currency, books)
+    if not payout_currency or not payment_currency:
+        raise PaypalPayoutError(
+            "Payout currency is missing",
+            code="currency_missing",
+        )
     if payout_currency != payment_currency:
         raise PaypalPayoutError(
             "Payout currency must match payment currency",

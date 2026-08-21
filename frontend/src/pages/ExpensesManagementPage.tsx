@@ -12,9 +12,9 @@ import { ChannelBadge, ExpenseStateBadge } from "@/components/team-expenses/Expe
 import { RoutedInvoicesPanel } from "@/components/rule-book/RoutedInvoicesPanel";
 import { Card } from "@/components/ui/card";
 import { useExpenseClaimActions } from "@/hooks/useExpenseClaimActions";
-import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
+import { useRuleBookExpenseRules } from "@/hooks/useRuleBookConfig";
 import { useRoutedInvoices } from "@/hooks/useRoutedInvoices";
-import { useInstitutionSettings } from "@/hooks/useInstitutionSettings";
+import { useExpensesWorkspaceKpis } from "@/hooks/useTeamExpenseReports";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { cn } from "@/lib/cn";
 import { matchesListSearch } from "@/lib/listSearch";
@@ -22,24 +22,28 @@ import { formatMoneyByCurrencyMap, money } from "@/lib/format";
 import { expenseRulesToCategories, invoiceToBusinessExpense } from "@/lib/routePageAdapters";
 
 const ROUTE_TARGET = "Expenses Management";
-const CLAIM_POLL_MS = 15_000;
+const CLAIM_POLL_MS = 90_000;
+const CLAIM_PAGE_SIZE = 50;
 
 export function ExpensesManagementPage() {
-  const { data: routed = [], isLoading, refetch } = useRoutedInvoices(ROUTE_TARGET);
-  const { data: ruleBook } = useRuleBookConfig();
-  const { data: institution } = useInstitutionSettings();
-  const institutionCurrency = (institution?.currency || "SGD").trim().toUpperCase() || "SGD";
+  const { data: routed = [], isLoading, refetch } = useRoutedInvoices(
+    ROUTE_TARGET,
+    true,
+    { pageSize: CLAIM_PAGE_SIZE, maxPages: 1 }
+  );
+  const { data: expenseRules = [] } = useRuleBookExpenseRules();
+  const { data: workspaceKpis } = useExpensesWorkspaceKpis();
   const actions = useExpenseClaimActions(ROUTE_TARGET);
 
   const claims = useMemo(() => routed.map(invoiceToBusinessExpense), [routed]);
   const invoiceById = useMemo(() => new Map(routed.map((inv) => [inv.id, inv])), [routed]);
   const categories = useMemo(
-    () => expenseRulesToCategories(ruleBook?.expenseRules ?? []),
-    [ruleBook?.expenseRules]
+    () => expenseRulesToCategories(expenseRules),
+    [expenseRules]
   );
   const activeRuleCount = useMemo(
-    () => (ruleBook?.expenseRules ?? []).filter((r) => r.enabled).length,
-    [ruleBook?.expenseRules]
+    () => expenseRules.filter((r) => r.enabled).length,
+    [expenseRules]
   );
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -58,19 +62,28 @@ export function ExpensesManagementPage() {
   }, [actions.toast, actions.setToast]);
 
   const kpis = useMemo(() => {
-    const open = claims.filter((e) => e.state === "New" || e.state === "In Review").length;
-    const postedInvoices = routed.filter(
-      (inv) => inv.status === "processed" && inv.published_to_ledger
-    );
-    const postedByCurrency: Record<string, number> = {};
-    for (const inv of postedInvoices) {
-      const code = (inv.currency || institutionCurrency).trim().toUpperCase() || institutionCurrency;
-      postedByCurrency[code] =
-        (postedByCurrency[code] ?? 0) + (parseFloat(String(inv.total ?? 0)) || 0);
-    }
-    const pending = claims.filter((e) => e.state === "In Review").length;
-    return { open, postedCount: postedInvoices.length, postedByCurrency, pending };
-  }, [claims, routed, institutionCurrency]);
+    const open =
+      workspaceKpis?.open_count ??
+      claims.filter((e) => e.state === "New" || e.state === "In Review").length;
+    const postedByCurrency =
+      workspaceKpis?.posted_by_currency ??
+      (() => {
+        const map: Record<string, number> = {};
+        for (const inv of routed) {
+          if (inv.status !== "processed" || !inv.published_to_ledger) continue;
+          const code = (inv.currency || "").trim().toUpperCase();
+          map[code] = (map[code] ?? 0) + (parseFloat(String(inv.total ?? 0)) || 0);
+        }
+        return map;
+      })();
+    const postedCount =
+      workspaceKpis?.posted_count ??
+      routed.filter((inv) => inv.status === "processed" && inv.published_to_ledger).length;
+    const pending =
+      workspaceKpis?.pending_count ??
+      claims.filter((e) => e.state === "In Review").length;
+    return { open, postedCount, postedByCurrency, pending };
+  }, [claims, routed, workspaceKpis]);
 
   const selected = claims.find((e) => e.id === selectedId) ?? claims[0] ?? null;
   const filteredClaims = useMemo(
@@ -105,7 +118,10 @@ export function ExpensesManagementPage() {
         subtitle="Non-PO business expenses — utilities, subscriptions, and professional services routed by expense rules."
       />
 
-      <BusinessExpenseCaptureStrip activeRuleCount={activeRuleCount} />
+      <BusinessExpenseCaptureStrip
+        activeRuleCount={activeRuleCount}
+        enabled={!isLoading}
+      />
 
       <div className="grid gap-3 grid-cols-2 lg:grid-cols-4 mb-5">
         <KpiCard label="Open expenses" value={isLoading ? "…" : kpis.open} testid="kpi-biz-open" />
@@ -136,6 +152,8 @@ export function ExpensesManagementPage() {
         title="Documents routed from Rule Book"
         hint="Invoices routed to Expenses Management after OCR and document classification."
         testId="expenses-routed-invoices"
+        invoices={routed}
+        isLoading={isLoading}
       />
 
       <PageTabs
@@ -200,7 +218,7 @@ export function ExpensesManagementPage() {
                       <div className="tnum font-semibold text-sm">
                         {money(
                           claim.amount,
-                          invoiceById.get(Number(claim.id))?.currency || institutionCurrency
+                          invoiceById.get(Number(claim.id))?.currency
                         )}
                       </div>
                       <div className="text-[10px] text-muted-foreground">{claim.submittedTs}</div>
@@ -228,8 +246,7 @@ export function ExpensesManagementPage() {
                     canReject={actions.canRejectClaim(selectedInvoice.status)}
                     canRequestInfo={actions.canRequestInfo(selectedInvoice.status)}
                     currency={
-                      (selectedInvoice.currency || institutionCurrency).trim().toUpperCase() ||
-                      institutionCurrency
+                      (selectedInvoice.currency || "").trim().toUpperCase()
                     }
                     onApprove={async () => {
                       await actions.approve(selectedInvoice);

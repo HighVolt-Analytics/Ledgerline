@@ -13,6 +13,7 @@ import type {
 } from "@/lib/v4RuleBookTypes";
 import {
   emptyOrgContextConfig,
+  DEFAULT_VENDOR_DETECTION_CONFIG,
   INGEST_ACTION_ROUTE_PLACEHOLDER,
   ROUTE_TARGETS,
   TEAM_EXPENSE_KINDS,
@@ -771,6 +772,78 @@ export function documentTypesFromRuleBookApi(api: Pick<RuleBookConfig, "document
   );
 }
 
+export function expenseRulesFromRuleBookApi(
+  api: Pick<RuleBookConfig, "expense_rules">
+): ExpenseRule[] {
+  return (api.expense_rules ?? []).map((rule, index) => ({
+    id: rule.id,
+    name: rule.name,
+    enabled: rule.enabled,
+    priority: rule.priority ?? 100 + index * 10,
+    matchOn: mapExpenseMatchOn((rule.match_on ?? {}) as Record<string, unknown>),
+    postTo: {
+      ledger: rule.post_to?.ledger ?? "",
+      subLedger: rule.post_to?.sub_ledger ?? "",
+    },
+    matchedCount: rule.matched_count,
+  }));
+}
+
+export function purchaseRulesFromRuleBookApi(
+  api: Pick<RuleBookConfig, "purchase_rules">
+): PurchaseRule[] {
+  return (api.purchase_rules ?? []).map((rule, index) => ({
+    id: rule.id,
+    name: rule.name,
+    enabled: rule.enabled,
+    priority: rule.priority ?? 100 + index * 10,
+    matchOn: mapPurchaseMatchOn((rule.match_on ?? {}) as Record<string, unknown>),
+    postTo: mapPostTo(rule.post_to ?? { ledger: "", sub_ledger: "" }),
+    matchedCount: rule.matched_count,
+  }));
+}
+
+export function salesRulesFromRuleBookApi(
+  api: Pick<RuleBookConfig, "sales_rules">
+): SalesRule[] {
+  return (api.sales_rules ?? []).map((rule, index) => ({
+    id: rule.id,
+    name: rule.name,
+    enabled: rule.enabled,
+    priority: rule.priority ?? 100 + index * 10,
+    matchOn: mapSalesMatchOn((rule.match_on ?? {}) as Record<string, unknown>),
+    postTo: {
+      ledger: rule.post_to?.ledger ?? "",
+      subLedger: rule.post_to?.sub_ledger ?? "",
+      taxAccount: rule.post_to?.tax_account,
+      receivableAccount: rule.post_to?.receivable_account,
+    },
+    matchedCount: rule.matched_count,
+  }));
+}
+
+export function teamExpenseRulesFromRuleBookApi(
+  api: Pick<RuleBookConfig, "team_expense_rules">
+): TeamExpenseRule[] {
+  return (api.team_expense_rules ?? []).map((rule, index) => ({
+    id: rule.id,
+    name: rule.name,
+    enabled: rule.enabled,
+    priority: rule.priority ?? 100 + index * 10,
+    matchOn: mapTeamMatchOn((rule.match_on ?? {}) as unknown as Record<string, unknown>),
+    postTo: {
+      ledger: rule.post_to?.ledger ?? "",
+      subLedger: rule.post_to?.sub_ledger ?? "",
+    },
+    policy: {
+      requireReceipt: rule.policy?.require_receipt ?? false,
+      receiptThreshold: rule.policy?.receipt_threshold ?? 0,
+      autoApproveBelow: rule.policy?.auto_approve_below ?? 0,
+    },
+    matchedCount: rule.matched_count,
+  }));
+}
+
 export function ruleBookConfigFromApi(api: RuleBookConfig): RuleBookConfigState {
   return {
     documentTypes: documentTypesFromRuleBookApi(api),
@@ -790,7 +863,7 @@ export function ruleBookConfigFromApi(api: RuleBookConfig): RuleBookConfigState 
       autoRouteMinConfidence: api.ai_classification?.auto_route_min_confidence ?? 0.85,
     },
     orgContext: mapOrgContextFromApi(api.org_context),
-    emailCaptureRules: api.email_capture_rules.map((rule) => ({
+    emailCaptureRules: (api.email_capture_rules ?? []).map((rule) => ({
       id: rule.id,
       name: rule.name,
       enabled: rule.enabled,
@@ -805,64 +878,16 @@ export function ruleBookConfigFromApi(api: RuleBookConfig): RuleBookConfigState 
       matchedCount: rule.matched_count ?? 0,
       lastMatched: rule.last_matched ?? "—",
     })),
-    purchaseRules: api.purchase_rules.map((rule, index) => ({
-      id: rule.id,
-      name: rule.name,
-      enabled: rule.enabled,
-      priority: rule.priority ?? 100 + index * 10,
-      matchOn: mapPurchaseMatchOn(rule.match_on),
-      postTo: mapPostTo(rule.post_to),
-      matchedCount: rule.matched_count,
-    })),
-    salesRules: (api.sales_rules ?? []).map((rule, index) => ({
-      id: rule.id,
-      name: rule.name,
-      enabled: rule.enabled,
-      priority: rule.priority ?? 100 + index * 10,
-      matchOn: mapSalesMatchOn(rule.match_on),
-      postTo: {
-        ledger: rule.post_to.ledger,
-        subLedger: rule.post_to.sub_ledger,
-        taxAccount: rule.post_to.tax_account,
-        receivableAccount: rule.post_to.receivable_account,
-      },
-      matchedCount: rule.matched_count,
-    })),
-    expenseRules: api.expense_rules.map((rule, index) => ({
-      id: rule.id,
-      name: rule.name,
-      enabled: rule.enabled,
-      priority: rule.priority ?? 100 + index * 10,
-      matchOn: mapExpenseMatchOn(rule.match_on),
-      postTo: {
-        ledger: rule.post_to.ledger,
-        subLedger: rule.post_to.sub_ledger,
-      },
-      matchedCount: rule.matched_count,
-    })),
-    teamExpenseRules: api.team_expense_rules.map((rule, index) => ({
-      id: rule.id,
-      name: rule.name,
-      enabled: rule.enabled,
-      priority: rule.priority ?? 100 + index * 10,
-      matchOn: mapTeamMatchOn(rule.match_on),
-      postTo: {
-        ledger: rule.post_to.ledger,
-        subLedger: rule.post_to.sub_ledger,
-      },
-      policy: {
-        requireReceipt: rule.policy.require_receipt,
-        receiptThreshold: rule.policy.receipt_threshold,
-        autoApproveBelow: rule.policy.auto_approve_below,
-      },
-      matchedCount: rule.matched_count,
-    })),
-    vendorMasters: api.vendor_masters.map(mapVendor),
+    purchaseRules: purchaseRulesFromRuleBookApi(api),
+    salesRules: salesRulesFromRuleBookApi(api),
+    expenseRules: expenseRulesFromRuleBookApi(api),
+    teamExpenseRules: teamExpenseRulesFromRuleBookApi(api),
+    vendorMasters: (api.vendor_masters ?? []).map(mapVendor),
     vendorDetectionConfig: {
-      weights: api.vendor_detection_config.weights,
-      threshold: api.vendor_detection_config.threshold,
+      weights: api.vendor_detection_config?.weights ?? DEFAULT_VENDOR_DETECTION_CONFIG.weights,
+      threshold: api.vendor_detection_config?.threshold ?? DEFAULT_VENDOR_DETECTION_CONFIG.threshold,
     },
-    employeeMasters: api.employee_masters.map(mapEmployee),
+    employeeMasters: (api.employee_masters ?? []).map(mapEmployee),
     postingDefaults: {
       taxAccount: api.posting_defaults?.tax_account ?? "GST Paid",
       payableAccount: api.posting_defaults?.payable_account ?? "Accounts Payable",

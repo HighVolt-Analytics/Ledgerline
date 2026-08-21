@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer, load_only
 
 from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
@@ -33,7 +34,7 @@ from app.schemas.dashboard import (
     UserLayerMetric,
     UserLayerStages,
 )
-from app.services.invoice.invoice_response_service import invoice_list_load_options
+from app.services.invoice.invoice_response_service import dashboard_period_load_options
 from app.services.invoice.invoice_evaluation_service import (
     EVAL_AUTO_CODED,
     EVAL_AWAITING_CLASSIFICATION,
@@ -264,6 +265,46 @@ def _invoice_date_filters(month_start: date, month_end: date):
     return Invoice.created_at >= start, Invoice.created_at < end
 
 
+def _period_bounds(start: date, end: date) -> tuple[datetime, datetime]:
+    lo = datetime.combine(start, time.min, tzinfo=timezone.utc)
+    hi = datetime.combine(end + timedelta(days=1), time.min, tzinfo=timezone.utc)
+    return lo, hi
+
+
+def _created_in_period(inv: Invoice, start: date, end: date) -> bool:
+    created = inv.created_at
+    if created is None:
+        return False
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    lo, hi = _period_bounds(start, end)
+    return lo <= created < hi
+
+
+def _invoices_from_loaded_windows(
+    start: date,
+    end: date,
+    loaded: list[tuple[date, date, list[Invoice]]],
+) -> list[Invoice] | None:
+    """Filter already-loaded invoice rows when they fully cover [start, end].
+
+    Avoids a third (month) or extra 7d/30d SELECT * when those windows sit
+    inside the current+prior period loads already done for KPIs.
+    """
+    if not loaded:
+        return None
+    ordered = sorted(loaded, key=lambda item: item[0])
+    cover_start, cover_end, rows = ordered[0][0], ordered[0][1], list(ordered[0][2])
+    for window_start, window_end, window_rows in ordered[1:]:
+        if window_start > cover_end + timedelta(days=1):
+            return None
+        cover_end = max(cover_end, window_end)
+        rows.extend(window_rows)
+    if start < cover_start or end > cover_end:
+        return None
+    return [inv for inv in rows if _created_in_period(inv, start, end)]
+
+
 async def _load_period_invoices(
     db: AsyncSession,
     *,
@@ -275,7 +316,7 @@ async def _load_period_invoices(
     rows = (
         await db.execute(
             select(Invoice)
-            .options(*invoice_list_load_options())
+            .options(*dashboard_period_load_options())
             .where(Invoice.tenant_id == tenant_id, lo, hi)
         )
     ).scalars().all()
@@ -772,6 +813,10 @@ async def build_operations_panel(
     month_start: date,
     month_end: date,
     today: date,
+    month_invoices: list[Invoice] | None = None,
+    prior_invoices: list[Invoice] | None = None,
+    prior_start: date | None = None,
+    prior_end: date | None = None,
 ) -> OperationsPanel:
     users = (
         await db.execute(
@@ -784,6 +829,12 @@ async def build_operations_panel(
         if email
     ]
 
+    loaded: list[tuple[date, date, list[Invoice]]] = []
+    if month_invoices is not None:
+        loaded.append((month_start, month_end, month_invoices))
+    if prior_invoices is not None and prior_start is not None and prior_end is not None:
+        loaded.append((prior_start, prior_end, prior_invoices))
+
     windows: dict[str, list[OpsMemberSnapshot]] = {}
     ranges = {
         "7d": (today - timedelta(days=6), today),
@@ -791,9 +842,11 @@ async def build_operations_panel(
         "month": (month_start, month_end),
     }
     for key, (start, end) in ranges.items():
-        invoices = await _load_period_invoices(
-            db, tenant_id=tenant_id, start=start, end=end
-        )
+        invoices = _invoices_from_loaded_windows(start, end, loaded)
+        if invoices is None:
+            invoices = await _load_period_invoices(
+                db, tenant_id=tenant_id, start=start, end=end
+            )
         journaled = await _journaled_invoice_ids(
             db, tenant_id=tenant_id, invoice_ids=(inv.id for inv in invoices)
         )
@@ -816,14 +869,13 @@ async def build_extraction_quality(
     invoices = (
         await db.execute(
             select(Invoice)
-            .where(
-                Invoice.tenant_id == tenant_id,
-                lo,
-                hi,
-                Invoice.status.notin_(
-                    [InvoiceStatus.PENDING, InvoiceStatus.PARSING]
-                ),
+            .options(
+                defer(Invoice.document_text),
+                defer(Invoice.approval_chain),
+                defer(Invoice.processing_overrides),
+                defer(Invoice.raw_file_path),
             )
+            .where(Invoice.tenant_id == tenant_id, lo, hi)
             .order_by(Invoice.created_at.desc())
             .limit(_EXTRACTION_SAMPLE_LIMIT)
         )
@@ -853,7 +905,19 @@ async def build_approval_queue(
 ) -> ApprovalQueueStats:
     rows = (
         await db.execute(
-            select(Invoice).where(
+            select(Invoice)
+            .options(
+                load_only(
+                    Invoice.id,
+                    Invoice.currency,
+                    Invoice.total,
+                    Invoice.created_at,
+                    Invoice.status,
+                    Invoice.evaluation_status,
+                    Invoice.tenant_id,
+                )
+            )
+            .where(
                 Invoice.tenant_id == tenant_id,
                 or_(
                     Invoice.status.in_(list(_APPROVAL_STATUSES)),
@@ -1304,6 +1368,10 @@ async def build_dashboard_panels(
         month_start=month_start,
         month_end=month_end,
         today=today,
+        month_invoices=current,
+        prior_invoices=prior,
+        prior_start=prev_start,
+        prior_end=prev_end,
     )
     extraction_quality = await build_extraction_quality(
         db,

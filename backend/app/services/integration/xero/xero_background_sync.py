@@ -17,8 +17,8 @@ from app.models.accounting_sync_job import (
     JOB_TYPE_SETTINGS,
     AccountingSyncJob,
 )
-from app.services.integration.xero_reconcile_service import reconcile_pending
-from app.services.integration.xero_sync_service import sync_contacts, sync_settings
+from app.services.integration.xero.xero_reconcile_service import reconcile_pending
+from app.services.integration.xero.xero_sync_service import sync_contacts, sync_settings
 from app.tenant_rls import apply_rls_session_context
 from app.utils.logger import get_logger
 
@@ -74,7 +74,7 @@ async def _enqueue_scheduled_syncs() -> None:
     settings = get_settings()
     if not settings.xero_background_sync_enabled:
         return
-    from app.services.integration.xero_sync_job_service import enqueue_sync_job
+    from app.services.integration.xero.xero_sync_job_service import enqueue_sync_job
 
     async with async_session_factory() as db:
         integrations = list(

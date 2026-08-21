@@ -1,5 +1,5 @@
 import { api, clearGetCache } from "@/api/client";
-import type { Invoice } from "@/api/types";
+import type { ApiEnvelope, Invoice } from "@/api/types";
 import { PIPELINE_STATUSES } from "@/lib/invoiceActions";
 
 const DEFAULT_PAGE_SIZE = "100";
@@ -62,21 +62,30 @@ export async function fetchAllApprovals(fresh = false): Promise<Invoice[]> {
   return [...first.data, ...rest.flatMap((r) => r.data)];
 }
 
-let boardFetchInflight: Promise<Invoice[]> | null = null;
+let boardFetchInflight: Promise<ApprovalsBoardResult> | null = null;
+
+export type ApprovalsBoardResult = {
+  rows: Invoice[];
+  meta: ApiEnvelope<Invoice[]>["meta"];
+};
 
 export function clearInvoiceFetchDedupe(): void {
   boardFetchInflight = null;
 }
 
 /** Single-request payload for the approvals kanban board. */
-export async function fetchApprovalsBoard(fresh = false): Promise<Invoice[]> {
+export async function fetchApprovalsBoard(fresh = false): Promise<ApprovalsBoardResult> {
   if (fresh) {
-    return api.listApprovalsBoard({ fresh: true });
+    const payload = await api.listApprovalsBoard({ fresh: true });
+    return { rows: payload.data, meta: payload.meta };
   }
   if (boardFetchInflight) {
     return boardFetchInflight;
   }
-  boardFetchInflight = api.listApprovalsBoard().finally(() => {
+  boardFetchInflight = api.listApprovalsBoard().then((payload) => ({
+    rows: payload.data,
+    meta: payload.meta,
+  })).finally(() => {
     boardFetchInflight = null;
   });
   return boardFetchInflight;

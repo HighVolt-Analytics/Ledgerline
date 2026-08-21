@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -25,7 +25,11 @@ from app.schemas.purchase import (
 )
 from app.schemas.rule_book_config import RuleBookConfigPayload
 from app.schemas.uom_conversion import PurchaseMatchConfig
-from app.services.invoice.invoice_evaluation_service import ROUTE_PURCHASE, parse_matched_rule_ids
+from app.services.invoice.invoice_evaluation_service import (
+    ROUTE_PURCHASE,
+    load_posting_config_for_tenant,
+    parse_matched_rule_ids,
+)
 from app.services.matching.line_match_engine import (
     compute_line_match,
     sum_received_by_order_line,
@@ -45,6 +49,7 @@ from app.services.audit.audit_detail_helpers import (
 )
 from app.services.audit.audit_service import log_event
 from app.services.rule_book.rule_book_mapper import load_classification_config, resolve_config_mapping
+from app.services.shared.currency import prefer_currency
 
 ROUTE_PURCHASE_MANAGEMENT = ROUTE_PURCHASE
 
@@ -663,6 +668,7 @@ def purchase_order_to_response(
         ledger=po.ledger,
         sub_ledger=po.sub_ledger,
         purchase_rule_id=po.purchase_rule_id,
+        currency=prefer_currency(inv.currency if inv is not None else None),
     )
 
 
@@ -704,7 +710,7 @@ async def list_purchase_orders(
         )
     ).scalars().all()
 
-    config = await load_classification_config(db, tenant_id)
+    config = await load_posting_config_for_tenant(db, tenant_id)
     responses: list[PurchaseOrderResponse] = []
     seen_pairs: set[tuple[int, int]] = set()
     pos_with_rows: set[int] = set()
@@ -725,23 +731,33 @@ async def list_purchase_orders(
         pos_with_rows.add(po.id)
         responses.append(purchase_order_to_response(po, inv, config=config))
 
+    orphan_invoice_ids = [
+        po.invoice_id
+        for po in rows
+        if po.id not in pos_with_rows
+        and purchase_order_has_document_anchor(po)
+        and po.invoice_id is not None
+    ]
+    orphan_invoices: dict[int, Invoice] = {}
+    if orphan_invoice_ids:
+        loaded = (
+            await db.execute(
+                select(Invoice)
+                .where(
+                    Invoice.id.in_(orphan_invoice_ids),
+                    Invoice.status.notin_(_HIDDEN_STATUSES),
+                )
+                .options(selectinload(Invoice.line_items))
+            )
+        ).scalars().all()
+        orphan_invoices = {inv.id: inv for inv in loaded}
+
     for po in rows:
         if po.id in pos_with_rows:
             continue
         if not purchase_order_has_document_anchor(po):
             continue
-        inv = None
-        if po.invoice_id:
-            inv = (
-                await db.execute(
-                    select(Invoice)
-                    .where(
-                        Invoice.id == po.invoice_id,
-                        Invoice.status.notin_(_HIDDEN_STATUSES),
-                    )
-                    .options(selectinload(Invoice.line_items))
-                )
-            ).scalar_one_or_none()
+        inv = orphan_invoices.get(po.invoice_id) if po.invoice_id else None
         responses.append(purchase_order_to_response(po, inv, config=config))
 
     return responses
@@ -753,6 +769,96 @@ def filter_two_way_purchase_rows(rows: list[PurchaseOrderResponse]) -> list[Purc
         for row in rows
         if row.match_mode in {"two_way_po_ses", "two_way_grn_invoice"}
     ]
+
+
+async def purchase_workspace_kpis(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> tuple[int, int]:
+    """Uncapped Awaiting PO / Needs action counts for Purchase Management KPIs."""
+    hidden = (InvoiceStatus.REJECTED, InvoiceStatus.DUPLICATE_SKIPPED)
+    base = [
+        Invoice.tenant_id == tenant_id,
+        Invoice.route_target == ROUTE_PURCHASE,
+        Invoice.status.notin_(hidden),
+    ]
+    awaiting = int(
+        (
+            await db.execute(
+                select(func.count(Invoice.id)).where(
+                    *base,
+                    Invoice.evaluation_status == "awaiting_po",
+                )
+            )
+        ).scalar()
+        or 0
+    )
+
+    invoice_ids = {
+        row[0]
+        for row in (
+            await db.execute(
+                select(PurchaseOrder.invoice_id).where(
+                    PurchaseOrder.tenant_id == tenant_id,
+                    PurchaseOrder.invoice_id.isnot(None),
+                )
+            )
+        ).all()
+        if row[0] is not None
+    }
+    po_doc_ids = {
+        row[0]
+        for row in (
+            await db.execute(
+                select(PurchaseOrder.po_document_id).where(
+                    PurchaseOrder.tenant_id == tenant_id,
+                    PurchaseOrder.po_document_id.isnot(None),
+                )
+            )
+        ).all()
+        if row[0] is not None
+    }
+    grn_doc_ids = {
+        row[0]
+        for row in (
+            await db.execute(
+                select(GoodsReceipt.grn_invoice_id).where(
+                    GoodsReceipt.tenant_id == tenant_id,
+                    GoodsReceipt.grn_invoice_id.isnot(None),
+                )
+            )
+        ).all()
+        if row[0] is not None
+    }
+
+    doc_type = func.lower(func.coalesce(Invoice.purchase_document_type, ""))
+    po_clause = doc_type == "po"
+    if po_doc_ids:
+        po_clause = and_(po_clause, Invoice.id.notin_(po_doc_ids))
+    grn_clause = doc_type == "grn"
+    if grn_doc_ids:
+        grn_clause = and_(grn_clause, Invoice.id.notin_(grn_doc_ids))
+    other_clause = doc_type.notin_(("po", "grn"))
+    if invoice_ids:
+        other_clause = and_(other_clause, Invoice.id.notin_(invoice_ids))
+
+    needs_action = int(
+        (
+            await db.execute(
+                select(func.count(Invoice.id)).where(
+                    *base,
+                    or_(
+                        Invoice.evaluation_status == "awaiting_po",
+                        po_clause,
+                        grn_clause,
+                        other_clause,
+                    ),
+                )
+            )
+        ).scalar()
+        or 0
+    )
+    return awaiting, needs_action
 
 
 @dataclass(frozen=True)

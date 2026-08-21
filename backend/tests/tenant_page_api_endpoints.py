@@ -54,7 +54,9 @@ TENANT_PAGE_GET_PATHS: tuple[str, ...] = (
     "/api/integrations/viber/status",
     # Workspace modules
     "/api/purchases",
+    "/api/purchases/kpis",
     "/api/sales",
+    "/api/sales/kpis",
     "/api/collections",
     "/api/payments",
     "/api/payments/wallet-summary",

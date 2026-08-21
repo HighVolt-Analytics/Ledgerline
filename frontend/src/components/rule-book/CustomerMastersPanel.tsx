@@ -18,6 +18,8 @@ import {
 } from "@/hooks/useMasterData";
 import { cn } from "@/lib/cn";
 import { fmtAud } from "@/lib/v4MockData";
+import { normalizeCurrencyCode } from "@/lib/format";
+import { useInstitutionSettings } from "@/hooks/useInstitutionSettings";
 import type { CustomerMaster } from "@/lib/v4RuleBookTypes";
 import { AccountBadge } from "./AccountBadge";
 import { ConfidenceBar } from "./ConfidenceBar";
@@ -40,6 +42,8 @@ function StatusDot({ status }: { status: string }) {
 /** GL defaults, aliases, and billing used in sales routing. */
 export function CustomerMastersPanel() {
   const { toast } = useToast();
+  const { data: institution } = useInstitutionSettings();
+  const booksCurrency = normalizeCurrencyCode(institution?.currency) ?? "";
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, CustomerMaster>>({});
   const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set());
@@ -266,7 +270,7 @@ export function CustomerMastersPanel() {
                       <td className="px-3 py-2">
                         <AccountBadge account={customer.defaultLedger || "Suspense Account"} />
                       </td>
-                      <td className="px-3 py-2 text-right tnum">{fmtAud(customer.totalRevenueYTD)}</td>
+                      <td className="px-3 py-2 text-right tnum">{fmtAud(customer.totalRevenueYTD, booksCurrency)}</td>
                       <td className="px-3 py-2 w-28">
                         <ConfidenceBar value={customer.matchConfidence} />
                       </td>

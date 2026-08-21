@@ -3,7 +3,6 @@ import { SalesDetailContent } from "@/components/sales/SalesDetailPanel";
 import type { SalesDossierResponse } from "@/api/types";
 import { useSalesMutations } from "@/hooks/useSalesMutations";
 import { salesDetailFromDossier, type SalesDossierWithSummary } from "@/lib/salesDossierDetail";
-import { matchTabLabel } from "@/lib/documentPlaybookConfig";
 import { isSalesManagementRoute } from "@/lib/documentBundleConfig";
 
 type InvoiceSalesDossierSectionProps = {
@@ -28,7 +27,6 @@ export function InvoiceSalesDossierSection({
   onMutated,
 }: InvoiceSalesDossierSectionProps) {
   const mutations = useSalesMutations();
-  const matchLabel = matchTabLabel(routeTarget ?? "Sales Management", twoWay ? "two_way_dn_invoice" : "three_way_so_dn");
 
   const reloadAfterMutation = useCallback(async () => {
     onMutated?.();
@@ -49,7 +47,7 @@ export function InvoiceSalesDossierSection({
         </p>
         {isSalesManagementRoute(routeTarget) ? (
           <p className="text-xs text-muted-foreground mt-2">
-            Tab: <span className="font-medium text-foreground">{matchLabel}</span>
+            Tab: <span className="font-medium text-foreground">Match</span>
           </p>
         ) : null}
       </div>

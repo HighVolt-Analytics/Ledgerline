@@ -19,6 +19,7 @@ from app.services.extraction.document_heading_utils import (
     infer_page_document_kind_with_source,
     is_continuation_page,
     parse_page_of_marker,
+    warehouse_receipt_kind_from_text,
 )
 from app.services.extraction.document_identity_service import page_identity_signature
 from app.services.extraction.pdf_page_text_service import PdfPageText
@@ -246,6 +247,9 @@ def _kinds_same_family(left: str | None, right: str | None) -> bool:
 
 def _effective_page_kind(text: str) -> HeadingKind | None:
     """Kind from title/body signals (ignores continuation short-circuit)."""
+    receipt_kind = warehouse_receipt_kind_from_text(text or "")
+    if receipt_kind:
+        return receipt_kind
     signals = extract_document_heading_signals(text or "")
     return signals.primary_kind
 

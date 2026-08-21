@@ -4,10 +4,16 @@ import { useTenantQuery } from "@/hooks/useTenantQuery";
 import { fetchRoutedInvoices } from "@/lib/routedInvoices";
 import { queryKeys } from "@/lib/queryClient";
 
-export function useRoutedInvoices(routeTarget: string, enabled = true) {
+export function useRoutedInvoices(
+  routeTarget: string,
+  enabled = true,
+  options?: { pageSize?: number; maxPages?: number }
+) {
   return useTenantQuery({
-    queryKey: queryKeys.routedInvoices(routeTarget),
-    queryFn: () => fetchRoutedInvoices(routeTarget),
+    queryKey: options
+      ? [...queryKeys.routedInvoices(routeTarget), options.pageSize ?? 100, options.maxPages ?? 5]
+      : queryKeys.routedInvoices(routeTarget),
+    queryFn: () => fetchRoutedInvoices(routeTarget, {}, options),
     enabled: enabled && Boolean(routeTarget),
   });
 }

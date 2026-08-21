@@ -1,62 +1,31 @@
-import { Suspense, lazy, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
-import { CloudUpload, Mail, Plus, RefreshCw } from "lucide-react";
+import { CloudUpload, Plus, RefreshCw } from "lucide-react";
 import { api } from "@/api/client";
-import type { ConnectedMailbox, Invoice, MailboxBackfillJob } from "@/api/types";
+import type { ConnectedMailbox, MailboxBackfillJob } from "@/api/types";
 import { ConnectMailboxDialog } from "@/components/ConnectMailboxDialog";
 import { useAuth } from "@/context/AuthContext";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import { useMailboxes } from "@/hooks/useMailboxes";
-import {
-  API_PORT_HINT,
-  canRenderTenantOwnedUi,
-  formatTenantLoadError,
-} from "@/lib/tenantSession";
-import { ListSearchInput } from "@/components/ListSearchInput";
+import { canRenderTenantOwnedUi } from "@/lib/tenantSession";
 import { MailboxImportDialog } from "@/components/mailboxes/MailboxImportDialog";
-import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { PageTabs } from "@/components/PageTabs";
-import { DocumentMatrixPanel } from "@/components/upload/DocumentMatrixPanel";
+import { AllDocumentsSummaryTable } from "@/components/upload/AllDocumentsSummaryTable";
+import { AllDocumentsDetailedTable } from "@/components/upload/AllDocumentsDetailedTable";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { CapturedDocumentsSkeleton, InlineTableSkeleton } from "@/components/skeleton/PageSkeletons";
-import { Skeleton } from "@/components/skeleton/Skeleton";
-import { Select } from "@/components/ui/select";
-import {
-  counterpartyColumnLabel,
-  counterpartyMatchColumnLabel,
-  isNeedsReviewEvaluation,
-  mailboxDisplayName,
-} from "@/lib/invoice";
-import { useRuleBookDocumentTypes } from "@/hooks/useRuleBookConfig";
-import { useDebouncedValue } from "@/hooks/useDebouncedValue";
-import { sortInvoicesNewestFirst } from "@/lib/invoices";
-import { useNavBadges } from "@/hooks/useNavBadges";
-import {
-  invalidateUploadInvoiceList,
-  useUploadInvoiceList,
-} from "@/hooks/useUploadInvoiceList";
+import { parseUploadChannelTab, type AllDocumentsChannelTab } from "@/lib/allDocumentsSummary";
+import { fetchMatrixPage } from "@/lib/matrixApi";
+import { invalidateUploadInvoiceList } from "@/hooks/useUploadInvoiceList";
 import {
   UploadEmailChannelPanel,
   UploadViberChannelPanel,
   UploadWhatsappChannelPanel,
 } from "@/components/upload/UploadChannelPanels";
-
-const InvoiceDetailDrawer = lazy(() =>
-  import("@/components/InvoiceDetailDrawer").then((m) => ({
-    default: m.InvoiceDetailDrawer,
-  }))
-);
-import type { InvoiceDrawerTab } from "@/components/InvoiceDetailDrawer";
-import {
-  UploadInvoiceMobileRow,
-  UploadInvoiceTableRow,
-} from "@/components/upload/UploadInvoiceListRow";
 import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/queryClient";
-import { mergeBoardRowWithLocal, shouldClearProcessingId } from "@/lib/approvalsBoard";
 import { IntegrationBrandIcon } from "@/components/integrations/IntegrationBrandIcon";
 import {
   BULK_UPLOAD_MAX_FILES,
@@ -69,14 +38,11 @@ import {
 } from "@/lib/bulkUpload";
 import { UploadDropZone } from "@/components/upload/UploadDropZone";
 
-type ChannelTab = "upload" | "email" | "whatsapp" | "viber";
+type ChannelTab = AllDocumentsChannelTab;
 type ViewTab = "summary" | "detailed";
 
 function parseChannelTab(value: string | null): ChannelTab {
-  if (value === "upload" || value === "email" || value === "whatsapp" || value === "viber") {
-    return value;
-  }
-  return "upload";
+  return parseUploadChannelTab(value);
 }
 
 function parseViewTab(searchParams: URLSearchParams): ViewTab {
@@ -86,10 +52,7 @@ function parseViewTab(searchParams: URLSearchParams): ViewTab {
   return "summary";
 }
 
-const UPLOAD_LOAD_HINT =
-  `${API_PORT_HINT.trim()} and migrations are up to date `;
 const PROCESSING_WAIT_MS = 120_000;
-const PAGE_SIZE = 10;
 const NOTICE_AUTO_DISMISS_MS = 5000; // upload / mailbox notices (not in-progress fetch/import)
 
 function isProgressNotice(notice: string): boolean {
@@ -115,50 +78,9 @@ async function waitForProcessingIdle(timeoutMs = PROCESSING_WAIT_MS): Promise<vo
   }
 }
 
-function relativeTime(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
-}
-
-function mailboxNickname(mb: ConnectedMailbox): string {
-  const label = mb.display_name?.trim();
-  if (label && !label.includes("@") && !label.includes("(")) {
-    return label;
-  }
-  return mailboxDisplayName(mb.email, mb.display_name);
-}
 
 function isMailboxPollable(mb: ConnectedMailbox): boolean {
   return mb.is_active && mb.connection_status === "connected";
-}
-
-function uploadListRowSignature(inv: Invoice): string {
-  return [
-    inv.id,
-    inv.status,
-    inv.evaluation_status ?? "",
-    inv.current_stage ?? "",
-    inv.current_stage_state ?? "",
-    inv.vendor ?? "",
-    inv.total ?? "",
-    inv.route_target ?? "",
-    inv.validation_pass_rate ?? "",
-    inv.vendor_confidence ?? "",
-    inv.document_type_code ?? "",
-    inv.account_name ?? "",
-    inv.created_at,
-  ].join("|");
-}
-
-function sameUploadListRows(prev: Invoice[], next: Invoice[]): boolean {
-  if (prev.length !== next.length) return false;
-  return prev.every((row, index) => uploadListRowSignature(row) === uploadListRowSignature(next[index]!));
 }
 
 export function UploadPage() {
@@ -168,21 +90,17 @@ export function UploadPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const channelTab = parseChannelTab(searchParams.get("channel"));
   const viewTab = parseViewTab(searchParams);
-  const { data: navBadges } = useNavBadges();
   const [matrixFlagged, setMatrixFlagged] = useState(0);
+  const [allDocsCount, setAllDocsCount] = useState(0);
   const matrixRefreshRef = useRef<(() => void) | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
-  const prevMergedRef = useRef<Invoice[]>([]);
-  const { data: documentTypes } = useRuleBookDocumentTypes();
   const {
     data: mailboxQueryData = [],
     blocked: mailboxesBlocked,
+    isPending: mailboxesPending,
     refetch: refetchMailboxes,
-  } = useMailboxes(Boolean(user));
-  const [source, setSource] = useState("all");
-  const [evalFilter, setEvalFilter] = useState<"all" | "needs_review" | "possible_duplicate">("all");
+  } = useMailboxes(Boolean(user) && channelTab === "email");
   const [searchQuery, setSearchQuery] = useState(() => searchParams.get("q") ?? "");
-  const debouncedSearch = useDebouncedValue(searchQuery.trim());
 
   useEffect(() => {
     // Only sync when the URL explicitly carries q — do not wipe local typing when
@@ -199,104 +117,18 @@ export function UploadPage() {
     null
   );
   const [fetchNotice, setFetchNotice] = useState<string | null>(null);
-  const [drawerId, setDrawerId] = useState<number | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [drawerInitialTab, setDrawerInitialTab] = useState<InvoiceDrawerTab>("fields");
   const [importMailbox, setImportMailbox] = useState<ConnectedMailbox | null>(null);
   const [importBusy, setImportBusy] = useState(false);
   const [importJob, setImportJob] = useState<MailboxBackfillJob | null>(null);
-  const [page, setPage] = useState(1);
-  const [processingIds, setProcessingIds] = useState<Set<number>>(() => new Set());
   const tenantScope = user?.tenant_id ?? null;
   const mailboxes = canRenderTenantOwnedUi(tenantScope) && !mailboxesBlocked ? mailboxQueryData : [];
-
-  const selectedMailboxId = useMemo(() => {
-    if (channelTab !== "email" || source === "all") return null;
-    return mailboxes.find((mb) => mb.email === source)?.id ?? null;
-  }, [channelTab, source, mailboxes]);
-
-  const listEnabled = canRenderTenantOwnedUi(tenantScope);
-
-  const {
-    data: listData,
-    isLoading: listLoading,
-    isFetching: listFetching,
-    isError: listIsError,
-    error: listError,
-    refetch: refetchInvoiceList,
-  } = useUploadInvoiceList({
-    page,
-    pageSize: PAGE_SIZE,
-    source,
-    q: debouncedSearch,
-    mailboxId: selectedMailboxId,
-    captureSource: channelTab,
-    enabled: listEnabled && viewTab === "detailed",
-    processingIds,
-  });
-
-  const rawRows = listData?.rows ?? [];
-  const all = useMemo(() => {
-    const prevById = new Map(prevMergedRef.current.map((inv) => [inv.id, inv]));
-    const merged = rawRows.map((row) =>
-      mergeBoardRowWithLocal(row, prevById.get(row.id), processingIds)
-    );
-    const next =
-      sameUploadListRows(prevMergedRef.current, merged) ? prevMergedRef.current : merged;
-    prevMergedRef.current = next;
-    return next;
-  }, [rawRows, processingIds]);
-
-  const totalInvoices = listData?.total ?? 0;
-  const totalPages = listData?.pages ?? 1;
-  // Treat page transitions as loading when this page has no rows yet (RQ keeps
-  // isLoading=false while placeholder/previous data is shown or cleared).
-  const loading = (listLoading || listFetching) && all.length === 0;
-  const error =
-    listIsError && listError instanceof Error ? listError.message : listIsError ? "Failed to load documents" : null;
-
-  useLayoutEffect(() => {
-    if (source !== "all" && !mailboxes.some((mb) => mb.email === source)) {
-      setSource("all");
-    }
-  }, [tenantScope, mailboxes, source]);
+  const loading = (mailboxesPending || mailboxesBlocked) && channelTab === "email";
 
   useResetOnTenantChange(() => {
-    prevMergedRef.current = [];
-    setPage(1);
-    setSource("all");
-    setDrawerId(null);
-    setDrawerOpen(false);
     setImportMailbox(null);
     setImportJob(null);
     setFetchNotice(null);
-    setProcessingIds(new Set());
   });
-
-  useEffect(() => {
-    setPage(1);
-  }, [source, debouncedSearch, channelTab]);
-
-  useEffect(() => {
-    if (channelTab !== "email") {
-      setSource("all");
-    }
-  }, [channelTab]);
-
-  // Clear merged local overrides only when the channel/mailbox changes. Keep rows
-  // across page flips so pagination does not flash the inbox EmptyState.
-  useEffect(() => {
-    prevMergedRef.current = [];
-  }, [source, channelTab]);
-
-  useEffect(() => {
-    // Only clamp after a settled response for this query — never while fetching,
-    // or placeholder totalPages=1 from a cold key snaps page back and looks empty.
-    if (listFetching) return;
-    if (page > totalPages) {
-      setPage(totalPages);
-    }
-  }, [page, totalPages, listFetching]);
 
   useEffect(() => {
     if (!fetchNotice || isProgressNotice(fetchNotice)) return;
@@ -304,78 +136,22 @@ export function UploadPage() {
     return () => window.clearTimeout(timer);
   }, [fetchNotice]);
 
-  const captured = useMemo(() => {
-    if (!canRenderTenantOwnedUi(tenantScope)) return [];
-    const rows = all.filter((r) => r.status !== "duplicate_skipped");
-    return sortInvoicesNewestFirst(rows);
-  }, [all, tenantScope]);
-
-  const filtered = useMemo(() => {
-    if (evalFilter === "needs_review") {
-      return captured.filter(
-        (inv) =>
-          inv.status !== "processed" && isNeedsReviewEvaluation(inv.evaluation_status),
-      );
-    }
-    if (evalFilter === "possible_duplicate") {
-      return captured.filter((inv) => inv.duplicate_review_suggested === true);
-    }
-    return captured;
-  }, [captured, evalFilter]);
-
-  const hasActiveSearch = Boolean(searchQuery.trim() || debouncedSearch);
-  // Keep list chrome (search, filters, pagination) whenever this channel has docs
-  // or we are mid page/search fetch — do not tear down to "No documents yet".
-  const showCapturedChrome =
-    captured.length > 0 ||
-    hasActiveSearch ||
-    totalInvoices > 0 ||
-    page > 1 ||
-    listFetching;
-
-  useEffect(() => {
-    setProcessingIds((prev) => {
-      if (prev.size === 0) return prev;
-      const byId = new Map(all.map((row) => [row.id, row]));
-      let changed = false;
-      const next = new Set(prev);
-      for (const id of prev) {
-        const row = byId.get(id);
-        if (row && shouldClearProcessingId(row.status, true)) {
-          next.delete(id);
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
-    });
-  }, [all]);
-
   const docsPerMailbox = useMemo(() => {
     const counts = new Map<number, number>();
-    for (const inv of captured) {
-      if (inv.connected_mailbox_id != null) {
-        counts.set(
-          inv.connected_mailbox_id,
-          (counts.get(inv.connected_mailbox_id) ?? 0) + 1
-        );
-      }
+    for (const mailbox of mailboxes) {
+      counts.set(mailbox.id, mailbox.document_count ?? 0);
     }
     return counts;
-  }, [captured]);
+  }, [mailboxes]);
 
-  const openDrawer = (id: number, options?: { tab?: InvoiceDrawerTab }) => {
-    setDrawerInitialTab(options?.tab ?? "fields");
-    setDrawerId(id);
-    setDrawerOpen(true);
-  };
-
-  const openClassification = (id: number) => {
-    openDrawer(id, { tab: "fields" });
-  };
+  useEffect(() => {
+    setAllDocsCount(0);
+    setMatrixFlagged(0);
+  }, [channelTab]);
 
   const setChannelTab = (tab: ChannelTab) => {
     const next = new URLSearchParams(searchParams);
-    if (tab === "upload") next.delete("channel");
+    if (tab === "all") next.delete("channel");
     else next.set("channel", tab);
     setSearchParams(next, { replace: true });
   };
@@ -387,8 +163,6 @@ export function UploadPage() {
     else next.delete("view");
     setSearchParams(next, { replace: true });
   };
-
-  const inboxCount = navBadges?.inbox_count ?? 0;
 
   async function sendMailboxInvite(body: {
     email: string;
@@ -423,11 +197,8 @@ export function UploadPage() {
     try {
       await api.removeMailbox(mb.id);
       void queryClient.invalidateQueries({ queryKey: queryKeys.mailboxes() });
-      if (source === mb.email) {
-        setSource("all");
-        setPage(1);
-      }
       await invalidateUploadInvoiceList(queryClient);
+      matrixRefreshRef.current?.();
     } catch (e) {
       setFetchNotice(e instanceof Error ? e.message : "Failed to remove mailbox");
     }
@@ -443,22 +214,18 @@ export function UploadPage() {
     }
     setFetching(mailbox.email);
     setFetchNotice(null);
-    const beforeTotal = totalInvoices;
-    const beforeIds = new Set(all.map((i) => i.id));
+    const before = await fetchMatrixPage(1, { capture_source: "email" }, true);
+    const beforeIds = new Set(before.rows.map((row) => row.invoice.id));
     try {
       await api.triggerProcess(mailbox.id);
       setFetchNotice("Fetch queued — waiting for worker…");
       await waitForProcessingIdle();
       void refetchMailboxes();
 
-      let latestTotal = beforeTotal;
       for (let attempt = 0; attempt < 20; attempt += 1) {
-        const result = await refetchInvoiceList();
-        const snapshot = result.data;
-        if (snapshot != null) latestTotal = snapshot.total;
-        const hasNewDoc = snapshot?.rows.some((row) => !beforeIds.has(row.id)) ?? false;
-        if (latestTotal > beforeTotal || hasNewDoc) {
-          setPage(1);
+        const snapshot = await fetchMatrixPage(1, { capture_source: "email" }, true);
+        const hasNewDoc = snapshot.rows.some((row) => !beforeIds.has(row.invoice.id));
+        if (snapshot.total > before.total || hasNewDoc) {
           break;
         }
         if (attempt < 19) {
@@ -467,6 +234,7 @@ export function UploadPage() {
         }
       }
       setFetchNotice(null);
+      matrixRefreshRef.current?.();
     } catch (e) {
       setFetchNotice(e instanceof Error ? e.message : "Fetch failed");
       void refetchMailboxes();
@@ -519,8 +287,8 @@ export function UploadPage() {
       }
 
       await waitForProcessingIdle();
-      setPage(1);
       await invalidateUploadInvoiceList(queryClient);
+      matrixRefreshRef.current?.();
 
       if (job.status === "completed") {
         setFetchNotice(
@@ -573,21 +341,17 @@ export function UploadPage() {
         notice = `${notice} Only the first ${BULK_UPLOAD_MAX_FILES} files were uploaded.`;
       }
       setFetchNotice(notice);
-      setPage(1);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.mailboxes() });
       await invalidateUploadInvoiceList(queryClient);
+      matrixRefreshRef.current?.();
       const uploadedIds = summary.results
         .filter((row): row is Extract<BulkUploadItemResult, { ok: true }> => row.ok)
         .flatMap((row) => row.invoiceIds);
       if (uploadedIds.length > 0) {
-        setProcessingIds((prev) => {
-          const next = new Set(prev);
-          for (const id of uploadedIds) next.add(id);
-          return next;
-        });
         void (async () => {
           const holdNotice = await watchInvoiceIdsForVendorHold(uploadedIds, {
             onPoll: async () => {
-              await refetchInvoiceList();
+              matrixRefreshRef.current?.();
             },
           });
           if (holdNotice) {
@@ -597,12 +361,8 @@ export function UploadPage() {
           }
         })();
         window.setTimeout(() => {
-          void refetchInvoiceList();
+          matrixRefreshRef.current?.();
         }, 3000);
-      } else if (uploadedIds.length > 0) {
-        window.setTimeout(() => {
-          void refetchInvoiceList();
-        }, 1000);
       }
     } catch (err) {
       setFetchNotice(err instanceof Error ? err.message : "Upload failed");
@@ -626,17 +386,30 @@ export function UploadPage() {
         <Plus className="h-4 w-4 mr-1.5 shrink-0" />
         Add mailbox
       </Button>
-    ) : viewTab === "summary" ? (
-      <Button
-        variant="surface"
-        size="sm"
-        data-testid="button-matrix-refresh"
-        onClick={() => matrixRefreshRef.current?.()}
-      >
-        <RefreshCw className="h-4 w-4 mr-1" />
-        Refresh
-      </Button>
-    ) : null;
+    ) : (
+      <div className="flex items-center gap-2">
+        {channelTab === "all" ? (
+          <Button
+            variant="surface"
+            size="sm"
+            data-testid="button-all-docs-upload"
+            onClick={() => setChannelTab("upload")}
+          >
+            <CloudUpload className="h-4 w-4 mr-1" />
+            Upload files
+          </Button>
+        ) : null}
+        <Button
+          variant="surface"
+          size="sm"
+          data-testid="button-matrix-refresh"
+          onClick={() => matrixRefreshRef.current?.()}
+        >
+          <RefreshCw className="h-4 w-4 mr-1" />
+          Refresh
+        </Button>
+      </div>
+    );
 
   const workspaceShell = (content: ReactNode) => (
     <div>
@@ -648,6 +421,15 @@ export function UploadPage() {
             onChange={(value) => setChannelTab(value as ChannelTab)}
             data-testid="upload-channel-tabs"
             tabs={[
+              {
+                value: "all",
+                testid: "tab-upload-all",
+                label: (
+                  <span className="inline-flex items-center gap-2">
+                    All Documents
+                  </span>
+                ),
+              },
               {
                 value: "upload",
                 testid: "tab-upload-upload",
@@ -709,9 +491,9 @@ export function UploadPage() {
           isPollable={isMailboxPollable}
         />
       ) : channelTab === "whatsapp" ? (
-        <UploadWhatsappChannelPanel docCount={totalInvoices} />
+        <UploadWhatsappChannelPanel docCount={allDocsCount} />
       ) : channelTab === "viber" ? (
-        <UploadViberChannelPanel docCount={totalInvoices} />
+        <UploadViberChannelPanel docCount={allDocsCount} />
       ) : null}
 
       {channelTab === "upload" ? (
@@ -781,9 +563,9 @@ export function UploadPage() {
             label: (
               <>
                 Detailed
-                {(channelTab === "upload" ? inboxCount : totalInvoices) > 0 ? (
+                {allDocsCount > 0 ? (
                   <Badge variant="secondary" className="ml-1.5 tnum font-normal">
-                    {channelTab === "upload" ? inboxCount : totalInvoices}
+                    {allDocsCount}
                   </Badge>
                 ) : null}
               </>
@@ -808,27 +590,24 @@ export function UploadPage() {
     </div>
   );
 
-  if (
-    error &&
-    viewTab === "detailed" &&
-    captured.length === 0 &&
-    !loading
-  ) {
-    return workspaceShell(
-      <Card className="p-6 border-destructive/30 bg-destructive/5 text-sm text-destructive">
-        {formatTenantLoadError(error, UPLOAD_LOAD_HINT)}
-        <code className="text-xs">(alembic upgrade head)</code>.
-        <div className="mt-3">
-          <Button variant="outline" size="sm" onClick={() => void refetchInvoiceList()}>
-            Retry
-          </Button>
-        </div>
-      </Card>
-    );
-  }
+  const channelCaptureSource =
+    channelTab === "all" ? undefined : channelTab;
+  const showUploadSourceColumn = channelTab === "all";
+  const channelDocsTitle =
+    channelTab === "all"
+      ? "All documents"
+      : channelTab === "upload"
+        ? "Direct upload"
+        : channelTab === "email"
+          ? "Email documents"
+          : channelTab === "whatsapp"
+            ? "WhatsApp documents"
+            : "Viber documents";
 
   const emptyHint =
-    channelTab === "upload"
+    channelTab === "all"
+      ? "Upload files from the Upload tab, or capture documents from Email, WhatsApp, or Viber."
+      : channelTab === "upload"
       ? "Drop files above to upload, or capture documents from the Email, WhatsApp, or Viber tabs. Team expense claims use Email / WhatsApp / Viber when the sender is in Employees."
       : channelTab === "email"
         ? "Connect a mailbox and fetch mail. Messages from employees in the registry route to Team Expenses."
@@ -837,7 +616,9 @@ export function UploadPage() {
           : "Connect Viber to capture employee claims (sender must match Employees).";
 
   const emptyTitle =
-    channelTab === "upload"
+    channelTab === "all"
+      ? "No documents yet"
+      : channelTab === "upload"
       ? "No documents yet"
       : channelTab === "email"
         ? "No email documents yet"
@@ -847,236 +628,41 @@ export function UploadPage() {
 
   return workspaceShell(
     viewTab === "summary" ? (
-      <>
-        <DocumentMatrixPanel
-          embedded
-          showKpis={false}
-          captureSource={channelTab}
-          onFlaggedCount={setMatrixFlagged}
-          onGoUpload={() => setViewTab("detailed")}
-          refreshRef={matrixRefreshRef}
-        />
-      </>
+      <AllDocumentsSummaryTable
+        captureSource={channelCaptureSource}
+        showUploadSource={showUploadSourceColumn}
+        title={channelDocsTitle}
+        emptyTitle={emptyTitle}
+        emptyHint={emptyHint}
+        onFlaggedCount={setMatrixFlagged}
+        onDocumentCount={setAllDocsCount}
+        onGoUpload={
+          channelTab === "all" || channelTab === "upload"
+            ? () => setChannelTab("upload")
+            : undefined
+        }
+        refreshRef={matrixRefreshRef}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+      />
     ) : (
-      <>
-      {loading && !showCapturedChrome ? (
-        <CapturedDocumentsSkeleton rows={8} />
-      ) : !showCapturedChrome ? (
-        <EmptyState
-          title={emptyTitle}
-          hint={emptyHint}
-          action={
-            channelTab === "email" && isAdmin ? (
-              <Button size="sm" onClick={() => setAddOpen(true)}>
-                <Plus className="h-4 w-4 mr-1" />
-                Add mailbox
-              </Button>
-            ) : undefined
-          }
-        />
-      ) : (
-        <Card className="overflow-hidden">
-          <div className="flex flex-col gap-3 px-3 sm:px-4 py-3 border-b border-border sm:flex-row sm:items-center sm:justify-between">
-            <h3 className="text-sm font-semibold flex items-center gap-2 shrink-0">
-              <Mail className="h-4 w-4 text-primary" />
-              Captured documents
-              <span className="text-muted-foreground tnum font-normal">({totalInvoices})</span>
-            </h3>
-            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:ml-auto">
-            <ListSearchInput
-              value={searchQuery}
-              onChange={setSearchQuery}
-              placeholder="Search this list…"
-              testId="input-upload-search"
-              className="w-full sm:max-w-xs"
-            />
-            <Select
-              value={evalFilter}
-              onValueChange={(value) => {
-                if (value === "needs_review" || value === "possible_duplicate") {
-                  setEvalFilter(value);
-                } else {
-                  setEvalFilter("all");
-                }
-                setPage(1);
-              }}
-              data-testid="select-eval-filter"
-              className="w-full sm:w-[220px] h-8 text-xs"
-              options={[
-                { value: "all", label: "All evaluations" },
-                { value: "needs_review", label: "Needs review only" },
-                { value: "possible_duplicate", label: "Possible duplicates" },
-              ]}
-            />
-            {channelTab === "email" ? (
-              <Select
-                value={source}
-                onValueChange={(value) => {
-                  setSource(value);
-                  setPage(1);
-                }}
-                data-testid="select-source-filter"
-                className="w-full sm:w-[220px] h-8 text-xs"
-                options={[
-                  { value: "all", label: "All mailboxes" },
-                  ...mailboxes.map((mb) => ({
-                    value: mb.email,
-                    label: mailboxNickname(mb),
-                  })),
-                ]}
-              />
-            ) : null}
-            </div>
-          </div>
-
-          {loading && captured.length === 0 ? (
-            <>
-              <InlineTableSkeleton rows={6} columns={8} />
-              <div className="flex items-center justify-between gap-3 px-3 sm:px-4 py-3 border-t border-border">
-                <Skeleton className="h-3 w-24" />
-                <div className="flex items-center gap-1.5">
-                  <Skeleton className="h-8 w-12 rounded-md" />
-                  <Skeleton className="h-8 w-12 rounded-md" />
-                </div>
-              </div>
-            </>
-          ) : (
-            <>
-          <div className="md:hidden divide-y divide-border">
-            {filtered.length === 0 && (
-              <p className="px-4 py-8 text-center text-sm text-muted-foreground">
-                {hasActiveSearch
-                  ? "No documents match your search."
-                  : evalFilter !== "all"
-                    ? "No documents match this filter."
-                    : totalInvoices > 0
-                      ? "No documents on this page."
-                      : "No documents match this filter."}
-              </p>
-            )}
-            {filtered.map((inv) => (
-              <UploadInvoiceMobileRow
-                key={inv.id}
-                inv={inv}
-                documentTypes={documentTypes}
-                processingIds={processingIds}
-                onOpen={() => openDrawer(inv.id)}
-                onOpenClassification={() => openClassification(inv.id)}
-                receivedLabel={relativeTime(inv.created_at)}
-              />
-            ))}
-          </div>
-
-          <div className="hidden md:block overflow-x-auto">
-            <table className="w-full min-w-[1100px] text-sm">
-              <thead>
-                <tr className="text-left text-xs text-muted-foreground border-b border-border">
-                  <th className="px-4 py-2 font-medium">Document</th>
-                  <th className="px-3 py-2 font-medium">Type</th>
-                  <th className="px-3 py-2 font-medium">{counterpartyColumnLabel({ mixed: true })}</th>
-                  <th className="px-3 py-2 font-medium">Route</th>
-                  <th className="px-3 py-2 font-medium">GL account</th>
-                  <th className="px-3 py-2 font-medium">Stage</th>
-                  <th
-                    className="px-3 py-2 font-medium"
-                    title="Routing outcome after rule book evaluation"
-                  >
-                    Evaluation
-                  </th>
-                  <th className="px-3 py-2 font-medium text-right">Rule pass</th>
-                  <th className="px-3 py-2 font-medium text-right">
-                    {counterpartyMatchColumnLabel({ mixed: true })}
-                  </th>
-                  <th className="px-3 py-2 font-medium text-right">Total</th>
-                  <th className="px-4 py-2 font-medium text-right">Received</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.length === 0 && (
-                  <tr>
-                    <td colSpan={11} className="px-4 py-8 text-center text-muted-foreground">
-                      {hasActiveSearch
-                        ? "No documents match your search."
-                        : evalFilter !== "all"
-                          ? "No documents match this filter."
-                          : totalInvoices > 0
-                            ? "No documents on this page."
-                            : "No documents match this filter."}
-                    </td>
-                  </tr>
-                )}
-                {filtered.map((inv) => (
-                  <UploadInvoiceTableRow
-                    key={inv.id}
-                    inv={inv}
-                    documentTypes={documentTypes}
-                    processingIds={processingIds}
-                    onOpen={() => openDrawer(inv.id)}
-                    onOpenClassification={() => openClassification(inv.id)}
-                    receivedLabel={relativeTime(inv.created_at)}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="flex items-center justify-between gap-3 px-3 sm:px-4 py-3 border-t border-border">
-            <p className="text-xs text-muted-foreground shrink-0">
-              Page {page} of {totalPages}
-            </p>
-            <div className="flex items-center gap-1.5">
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 px-2 text-xs"
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page <= 1 || listFetching}
-              >
-                Prev
-              </Button>
-              <div className="hidden sm:flex items-center gap-1.5">
-              {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
-                <Button
-                  key={p}
-                  variant={p === page ? "default" : "outline"}
-                  size="sm"
-                  className="h-8 min-w-8 px-2 text-xs tnum"
-                  onClick={() => setPage(p)}
-                  disabled={listFetching && p !== page}
-                >
-                  {p}
-                </Button>
-              ))}
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 px-2 text-xs"
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page >= totalPages || listFetching}
-              >
-                Next
-              </Button>
-            </div>
-          </div>
-            </>
-          )}
-        </Card>
-      )}
-
-      <Suspense fallback={null}>
-        <InvoiceDetailDrawer
-          invoiceId={drawerId}
-          open={drawerOpen}
-          initialTab={drawerInitialTab}
-          onClose={() => {
-            setDrawerOpen(false);
-            setDrawerId(null);
-            setDrawerInitialTab("fields");
-          }}
-          onUpdated={() => void invalidateUploadInvoiceList(queryClient)}
-        />
-      </Suspense>
-      </>
+      <AllDocumentsDetailedTable
+        captureSource={channelCaptureSource}
+        showUploadSource={showUploadSourceColumn}
+        title={channelDocsTitle}
+        emptyTitle={emptyTitle}
+        emptyHint={emptyHint}
+        onFlaggedCount={setMatrixFlagged}
+        onDocumentCount={setAllDocsCount}
+        onGoUpload={
+          channelTab === "all" || channelTab === "upload"
+            ? () => setChannelTab("upload")
+            : undefined
+        }
+        refreshRef={matrixRefreshRef}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+      />
     )
   );
 }

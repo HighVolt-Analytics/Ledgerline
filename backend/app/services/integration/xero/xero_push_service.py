@@ -7,15 +7,15 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.integration.xero_export_service import (
+from app.services.integration.xero.xero_export_service import (
     XeroExportError,
     get_export_ledger,
     ledger_to_dict,
     list_export_ledger,
     push_invoice_to_xero_pipeline,
 )
-from app.services.integration.xero_mapping_validation import XeroMappingValidationError
-from app.services.integration.xero_mapping_validation import (
+from app.services.integration.xero.xero_mapping_validation import XeroMappingValidationError
+from app.services.integration.xero.xero_mapping_validation import (
     XeroMappingValidationResult,
 )
 

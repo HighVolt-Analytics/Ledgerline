@@ -14,8 +14,8 @@ from app.models.accounting_integration import AccountingProvider
 from app.models.accounting_sync_job import JOB_TYPE_RECONCILE
 from app.models.external_accounting_ref import ExternalAccountingRef
 from app.services.integration.accounting_integration_service import require_xero_ready
-from app.services.integration.xero_client import XeroApiError, XeroClient
-from app.services.integration.xero_sync_job_service import (
+from app.services.integration.xero.xero_client import XeroApiError, XeroClient
+from app.services.integration.xero.xero_sync_job_service import (
     enqueue_sync_job,
     mark_job_completed,
     mark_job_failed,

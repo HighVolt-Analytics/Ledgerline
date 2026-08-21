@@ -154,6 +154,11 @@ async def build_setup_checklist_state(
     if is_support_session:
         return SetupChecklistStateResponse(complete=False, show=False, progress=0, items=[])
 
+    if tenant_setup_checklist_complete(tenant):
+        return SetupChecklistStateResponse(
+            complete=True, show=False, progress=100, items=[]
+        )
+
     items: list[SetupChecklistItem] = []
     done_count = 0
     for spec in _CHECKLIST_DEFS:

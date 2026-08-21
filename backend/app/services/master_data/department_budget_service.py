@@ -18,12 +18,18 @@ from app.schemas.department_budget import (
     GlBudgetSubBreakdownRow,
     ParentGlBudgetTreeUpsert,
 )
-from app.services.invoice.invoice_evaluation_service import load_config_for_tenant
+from app.services.invoice.invoice_evaluation_service import (
+    load_config_for_tenant,
+    load_posting_config_for_tenant,
+)
 from app.services.purchase.team_expense_spend_service import (
     current_period_keys,
-    gl_period_consumed,
     gl_period_sub_breakdown,
+    load_processed_claim_spend_rows,
+    period_key_bounds,
+    spend_for_tokens,
 )
+from app.services.master_data.chart_of_accounts_service import child_ledger_names
 
 
 def _tenant_id(tenant_id: uuid.UUID | int | str) -> uuid.UUID:
@@ -389,28 +395,44 @@ async def build_department_budget_utilization_rows(
     today = as_of or date.today()
     keys = current_period_keys(today)
     budgets = await list_department_budgets(session, tid)
-    config = await load_config_for_tenant(session, tid)
+    config = await load_posting_config_for_tenant(session, tid)
     coa = list(config.chart_of_accounts or [])
-    rows: list[DepartmentBudgetUtilizationRow] = []
+    active = []
+    window_from: date | None = None
+    window_to: date | None = None
     for bud in budgets:
         if current_period_only and keys.get(bud.period_kind) != bud.period_key:
             continue
         gl = (bud.gl_ledger or "").strip()
         if not gl:
             continue
+        bounds = period_key_bounds(bud.period_kind, bud.period_key)
+        if bounds is None:
+            continue
+        date_from, date_to = bounds
+        window_from = date_from if window_from is None else min(window_from, date_from)
+        window_to = date_to if window_to is None else max(window_to, date_to)
+        active.append((bud, gl, date_from, date_to))
+
+    spend_rows = (
+        await load_processed_claim_spend_rows(
+            session, tid, date_from=window_from, date_to=window_to
+        )
+        if window_from is not None and window_to is not None
+        else []
+    )
+
+    rows: list[DepartmentBudgetUtilizationRow] = []
+    for bud, gl, date_from, date_to in active:
         is_sub = account_is_sub_ledger(gl, coa)
-        consumed = await gl_period_consumed(
-            session,
-            tid,
-            gl_ledger=gl,
-            period_kind=bud.period_kind,
-            period_key=bud.period_key,
-            as_of=today,
-            chart_of_accounts=coa,
-            include_children=not is_sub,
+        if is_sub:
+            tokens = {gl.lower()}
+        else:
+            tokens = {t.lower() for t in child_ledger_names(gl, coa)} or {gl.lower()}
+        consumed_f = spend_for_tokens(
+            spend_rows, tokens, date_from=date_from, date_to=date_to
         )
         allocated = float(bud.allocated or 0)
-        consumed_f = float(consumed)
         breakdown: list[GlBudgetSubBreakdownRow] = []
         if not is_sub:
             raw_breakdown = await gl_period_sub_breakdown(
@@ -421,6 +443,7 @@ async def build_department_budget_utilization_rows(
                 period_key=bud.period_key,
                 chart_of_accounts=coa,
                 parent_budget=allocated,
+                spend_rows=spend_rows,
             )
             breakdown = [
                 GlBudgetSubBreakdownRow(

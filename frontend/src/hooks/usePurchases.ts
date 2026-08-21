@@ -9,3 +9,11 @@ export function usePurchases(enabled = true) {
     enabled,
   });
 }
+
+export function usePurchaseWorkspaceKpis(enabled = true) {
+  return useTenantQuery({
+    queryKey: queryKeys.purchasesWorkspaceKpis(),
+    queryFn: () => api.getPurchaseWorkspaceKpis(),
+    enabled,
+  });
+}

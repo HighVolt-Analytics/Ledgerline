@@ -77,6 +77,7 @@ class MailboxResponse(BaseModel):
     oauth_connected_at: datetime | None = None
     last_error: str | None = None
     last_poll_at: datetime | None = None
+    document_count: int = 0
 
     model_config = {"from_attributes": True}
 

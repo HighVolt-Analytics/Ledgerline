@@ -14,7 +14,10 @@ from app.models.tenant_payment_provider import (
     PROVIDER_PAYPAL,
     TenantPaymentProviderAccount,
 )
+from app.models.tenant import Tenant
 from app.services.payments.paypal_client import PaypalApiError, get_paypal_client
+from app.services.shared.currency import prefer_currency
+from app.tenant_settings import tenant_currency
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -66,16 +69,20 @@ async def get_paypal_balance(
     if not merchant_id:
         return _unavailable(REPORTING_ACCESS_REQUIRED)
 
+    tenant = await db.get(Tenant, tenant_id)
+    reporting = prefer_currency(account.default_currency, tenant_currency(tenant))
+    params: dict[str, str] = {
+        "as_of_time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    if reporting:
+        params["currency_code"] = reporting
     client = get_paypal_client()
     try:
         # Official Reporting Balances API (requires approved reporting access).
         payload = await client.request_json(
             "GET",
             "/v1/reporting/balances",
-            params={
-                "currency_code": (account.default_currency or "AUD").upper(),
-                "as_of_time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            },
+            params=params,
         )
     except PaypalApiError as exc:
         logger.warning(

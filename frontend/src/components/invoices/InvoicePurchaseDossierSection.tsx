@@ -3,7 +3,6 @@ import { PurchaseDetailContent } from "@/components/purchases/PurchaseDetailPane
 import type { PurchaseDossier } from "@/api/types";
 import { usePurchaseMutations } from "@/hooks/usePurchaseMutations";
 import { purchaseDetailFromDossier, type PurchaseDossierWithSummary } from "@/lib/purchaseDossierDetail";
-import { matchTabLabel } from "@/lib/documentPlaybookConfig";
 import { isPurchaseManagementRoute } from "@/lib/documentBundleConfig";
 
 type InvoicePurchaseDossierSectionProps = {
@@ -28,7 +27,6 @@ export function InvoicePurchaseDossierSection({
   onMutated,
 }: InvoicePurchaseDossierSectionProps) {
   const mutations = usePurchaseMutations();
-  const matchLabel = matchTabLabel(routeTarget ?? "Purchase Management", twoWay ? "two_way_po_ses" : "three_way_po_grn");
 
   const reloadAfterMutation = useCallback(async () => {
     onMutated?.();
@@ -49,7 +47,7 @@ export function InvoicePurchaseDossierSection({
         </p>
         {isPurchaseManagementRoute(routeTarget) ? (
           <p className="text-xs text-muted-foreground mt-2">
-            Tab: <span className="font-medium text-foreground">{matchLabel}</span>
+            Tab: <span className="font-medium text-foreground">Match</span>
           </p>
         ) : null}
       </div>

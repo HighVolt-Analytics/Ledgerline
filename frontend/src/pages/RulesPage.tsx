@@ -7,7 +7,7 @@ import { PageTabPanel, PageTabs } from "@/components/PageTabs";
 import { Card } from "@/components/ui/card";
 import { useToast } from "@/context/ToastContext";
 import { useAuth } from "@/context/AuthContext";
-import { useRuleBookConfig, useDeleteRuleBookDocumentType, useSaveRuleBookConfig } from "@/hooks/useRuleBookConfig";
+import { useRuleBookEditorConfig, useRuleBookIngestStats, useDeleteRuleBookDocumentType, useSaveRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useRecognitionSignalCatalog } from "@/hooks/useRecognitionSignalCatalog";
 import type { RuleBookConfigState } from "@/lib/v4RuleBookTypes";
 import { removeDocumentTypeFromCatalog } from "@/lib/documentTypeLifecycle";
@@ -83,8 +83,11 @@ export function RulesPage() {
     isError,
     blocked,
     refetch,
-  } = useRuleBookConfig(Boolean(user));
-  useRecognitionSignalCatalog(Boolean(user));
+  } = useRuleBookEditorConfig(Boolean(user));
+  const { data: ingestStats } = useRuleBookIngestStats(
+    Boolean(user) && tab === "ingestion"
+  );
+  useRecognitionSignalCatalog(Boolean(user) && tab === "document-types");
   const saveMutation = useSaveRuleBookConfig();
   const deleteDocumentTypeMutation = useDeleteRuleBookDocumentType();
 
@@ -244,6 +247,18 @@ export function RulesPage() {
     return <PageLoader variant="rules" />;
   }
 
+  const ingestionRules = ingestStats
+    ? ruleBook.emailCaptureRules.map((rule) => {
+        const row = ingestStats[rule.id];
+        if (!row) return rule;
+        return {
+          ...rule,
+          matchedCount: row.matched_count,
+          lastMatched: row.last_matched,
+        };
+      })
+    : ruleBook.emailCaptureRules;
+
   const saveLabel =
     saveState === "pending" ||
     saveMutation.isPending ||
@@ -348,7 +363,7 @@ export function RulesPage() {
 
       <PageTabPanel value="ingestion" active={tab} className="mt-0">
         <IngestionTab
-          rules={ruleBook.emailCaptureRules}
+          rules={ingestionRules}
           onChange={(emailCaptureRules) => patch({ emailCaptureRules })}
         />
       </PageTabPanel>

@@ -43,10 +43,10 @@ export function SettingsPage() {
   const [coaSaved, setCoaSaved] = useState(false);
   const [businessName, setBusinessName] = useState("");
   const [industry, setIndustry] = useState<string>("");
-  const [country, setCountry] = useState("SG");
-  const [currency, setCurrency] = useState("SGD");
+  const [country, setCountry] = useState("");
+  const [currency, setCurrency] = useState("");
   const [currencyTouched, setCurrencyTouched] = useState(false);
-  const [initialCurrency, setInitialCurrency] = useState("SGD");
+  const [initialCurrency, setInitialCurrency] = useState("");
   const [laborRatePerHour, setLaborRatePerHour] = useState("45");
   const { countries, currencies } = useSetupCatalogs();
   const [email, setEmail] = useState("");
@@ -64,10 +64,10 @@ export function SettingsPage() {
   useResetOnTenantChange(() => {
     setBusinessName("");
     setIndustry("");
-    setCountry("SG");
-    setCurrency("SGD");
+    setCountry("");
+    setCurrency("");
     setCurrencyTouched(false);
-    setInitialCurrency("SGD");
+    setInitialCurrency("");
     setLaborRatePerHour("45");
     setPhone("");
     setTimezone("");
@@ -123,9 +123,9 @@ export function SettingsPage() {
         return;
       }
       setBusinessName(user.tenant_name);
-      setCountry("SG");
-      setCurrency("SGD");
-      setInitialCurrency("SGD");
+      setCountry("");
+      setCurrency("");
+      setInitialCurrency("");
       setTimezone(user.tenant_timezone);
       setLocale("");
       setProfileLoading(false);
@@ -136,7 +136,7 @@ export function SettingsPage() {
   }, [user, institution, institutionBlocked, institutionLoading, tenantScope, countries]);
 
   function defaultFromCountry(code: string): string {
-    return countries.find((c) => c.code === code)?.defaultCurrency || "SGD";
+    return countries.find((c) => c.code === code)?.defaultCurrency || "";
   }
 
   function catalogForCountry(code: string) {

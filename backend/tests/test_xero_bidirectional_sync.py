@@ -21,13 +21,13 @@ from app.models.xero_contact import XeroContact
 from app.models.xero_connection import XeroConnection
 from app.models.xero_tax_rate import XeroTaxRate
 from app.models.xero_currency import XeroCurrency
-from app.services.integration.xero_client import XeroApiError
-from app.services.integration.xero_master_data_service import (
+from app.services.integration.xero.xero_client import XeroApiError
+from app.services.integration.xero.xero_master_data_service import (
     get_master_data_totals,
     list_xero_accounts,
 )
-from app.services.integration.xero_sync_counts import EntitySyncCounters, payload_hash
-from app.services.integration.xero_sync_service import (
+from app.services.integration.xero.xero_sync_counts import EntitySyncCounters, payload_hash
+from app.services.integration.xero.xero_sync_service import (
     mark_sync_committed,
     sync_contacts,
     sync_settings,
@@ -123,7 +123,7 @@ def _mock_xero_client(
     else:
         client.get_currencies = AsyncMock(return_value=list(currency_rows))
     monkeypatch.setattr(
-        "app.services.integration.xero_sync_service.XeroClient",
+        "app.services.integration.xero.xero_sync_service.XeroClient",
         lambda **kwargs: client,
     )
     return client
@@ -359,7 +359,7 @@ async def test_sync_settings_api_failure_marks_job_failed(db_session, monkeypatc
         async def get_currencies(self):
             raise XeroApiError(status_code=500, error_code="boom", message="fail")
 
-    monkeypatch.setattr("app.services.integration.xero_sync_service.XeroClient", Boom)
+    monkeypatch.setattr("app.services.integration.xero.xero_sync_service.XeroClient", Boom)
     with pytest.raises(XeroApiError):
         await sync_settings(db_session, TESTING_TENANT_UUID)
     job = (
@@ -550,7 +550,7 @@ async def test_export_validation_accepts_aud_after_currency_sync(db_session, mon
     from app.models.line_item import LineItem
     from app.services.integration.accounting_mapping_service import upsert_mapping
     from app.models.accounting_entity_mapping import MAPPING_TAX
-    from app.services.integration.xero_export_service import validate_invoice_for_xero_export
+    from app.services.integration.xero.xero_export_service import validate_invoice_for_xero_export
 
     await _seed_connected(db_session)
     _mock_xero_client(
@@ -608,7 +608,7 @@ async def test_export_validation_accepts_aud_after_currency_sync(db_session, mon
     await db_session.flush()
 
     with patch(
-        "app.services.integration.xero_export_service.require_xero_ready",
+        "app.services.integration.xero.xero_export_service.require_xero_ready",
         AsyncMock(return_value=(MagicMock(provider_tenant_id="org-1"), "org-1")),
     ):
         result = await validate_invoice_for_xero_export(

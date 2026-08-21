@@ -82,8 +82,8 @@ import { useEmployeeMasters } from "@/hooks/useMasterData";
 import { matchEmployeeForSender } from "@/lib/routePageAdapters";
 import type { EmployeeMaster } from "@/lib/v4RuleBookTypes";
 import { LineGlAccountCell } from "@/components/invoices/LineGlAccountCell";
-import { effectiveMatchPolicy, isTwoWayMatchMode, matchTabLabel } from "@/lib/documentPlaybookConfig";
-import { InvoiceProcessingOverridesSection } from "@/components/invoices/InvoiceProcessingOverridesSection";
+import { effectiveMatchPolicy, isTwoWayMatchMode } from "@/lib/documentPlaybookConfig";
+import { ProcessingStepRunSkipControl } from "@/components/invoices/ProcessingStepRunSkipControl";
 import { InvoicePurchaseDossierSection } from "@/components/invoices/InvoicePurchaseDossierSection";
 import { InvoiceSalesDossierSection } from "@/components/invoices/InvoiceSalesDossierSection";
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
@@ -101,8 +101,11 @@ import {
 import {
   processingOverridesPatchFromDraft,
   processingOverridesPayload,
+  overrideStepDef,
+  skipStepIdForAuditStage,
   skipStepsFromInvoice,
   toggleStepRunning,
+  UNMATCHED_OVERRIDE_STEP_IDS,
   type ProcessingOverrideStepId,
 } from "@/lib/processingOverrides";
 
@@ -117,23 +120,18 @@ import {
   filterPipelineStepsForPath,
 } from "@/lib/pipelineAuditPaths";
 
-const TABS = ["fields", "lines", "po", "tax", "audit", "overrides", "pipeline"] as const;
+const TABS = ["fields", "lines", "po", "tax", "audit", "pipeline"] as const;
 export type InvoiceDrawerTab = (typeof TABS)[number];
 type Tab = InvoiceDrawerTab;
 
-const TAB_LABELS: Record<Exclude<Tab, "po">, string> = {
+const TAB_LABELS: Record<Tab, string> = {
   fields: "Fields",
   lines: "Line items",
+  po: "Match",
   tax: "Tax",
   audit: "Processing",
-  overrides: "Processing overrides",
   pipeline: "Pipeline (dev)",
 };
-
-function tabLabel(tab: Tab, routeTarget?: string | null, matchMode?: string | null): string {
-  if (tab === "po") return matchTabLabel(routeTarget, matchMode);
-  return TAB_LABELS[tab];
-}
 
 function canEdit(status: string): boolean {
   return ["exception", "duplicate_skipped", "rejected"].includes(status);
@@ -1013,7 +1011,7 @@ export function InvoiceDetailDrawer({
   const [draft, setDraft] = useState<InvoiceEditDraft | null>(null);
   const startInEditAppliedRef = useRef<number | null>(null);
   const [attachBusy, setAttachBusy] = useState(false);
-  const [previewMode, setPreviewMode] = useState<PreviewPaneMode>("summary");
+  const [previewMode, setPreviewMode] = useState<PreviewPaneMode>("original");
   const [viewId, setViewId] = useState<number | null>(null);
   const [dossier, setDossier] = useState<PurchaseDossier | null>(null);
   const [salesDossier, setSalesDossier] = useState<SalesDossierResponse | null>(null);
@@ -1100,7 +1098,7 @@ export function InvoiceDetailDrawer({
   }, [open, invoiceId, initialTab]);
 
   useEffect(() => {
-    setPreviewMode("summary");
+    setPreviewMode("original");
   }, [invoiceId, open]);
 
   useEffect(() => {
@@ -1122,7 +1120,7 @@ export function InvoiceDetailDrawer({
         setInv(null);
         setPipelineSteps([]);
         setClassificationAudit(null);
-        setPreviewMode("summary");
+        setPreviewMode("original");
         setDossier(null);
       }
       return;
@@ -1404,6 +1402,35 @@ export function InvoiceDetailDrawer({
     () => filterPipelineStepsForPath(pipelineSteps, auditPathTab),
     [pipelineSteps, auditPathTab]
   );
+
+  const processingSkipSteps = useMemo((): ProcessingOverrideStepId[] => {
+    if (!inv) return [];
+    if (editing && draft) return draft.skip_steps;
+    return skipStepsFromInvoice(inv.processing_overrides);
+  }, [inv, editing, draft]);
+
+  const processingOverridesEditable = Boolean(
+    inv && editing && draft && canEdit(inv.status)
+  );
+
+  const highlightedSkipStepId = useMemo((): ProcessingOverrideStepId | null => {
+    const failedStage =
+      pipelineSteps.find((s) => s.state === "fail")?.stage ??
+      (inv?.current_stage_state === "fail" ? inv.current_stage : null);
+    if (!failedStage) return null;
+    const fromMap = skipStepIdForAuditStage(failedStage);
+    if (fromMap) return fromMap;
+    const lower = failedStage.toLowerCase();
+    if (lower.includes("valid")) return "validation";
+    if (lower.includes("map")) return "mapping_review";
+    if (lower.includes("pars") || lower.includes("quality") || lower.includes("image")) {
+      return "image_quality";
+    }
+    if (lower.includes("classif") || lower.includes("gate") || lower.includes("dt")) {
+      return "classification";
+    }
+    return null;
+  }, [pipelineSteps, inv?.current_stage, inv?.current_stage_state]);
 
   if (!mounted) return null;
 
@@ -1901,8 +1928,8 @@ export function InvoiceDetailDrawer({
                   secondaryVariant="chevron"
                   tabs={TABS.map((t) => ({
                     value: t,
-                    label: tabLabel(t, inv?.route_target, invoiceMatchMode),
-                    secondary: t === "overrides" || t === "pipeline",
+                    label: TAB_LABELS[t],
+                    secondary: t === "pipeline",
                   }))}
                 />
 
@@ -2261,7 +2288,7 @@ export function InvoiceDetailDrawer({
                   </div>
                 )}
 
-                {tab === "audit" && (
+                {tab === "audit" && inv && (
                   <div className="mt-4 space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div
@@ -2303,54 +2330,134 @@ export function InvoiceDetailDrawer({
                             : "Legacy OCR path stages (may be inactive for this document)."}
                       </p>
                     </div>
+                    {processingOverridesEditable ? (
+                      <p className="text-xs text-muted-foreground">
+                        Toggle Run / Skip on a step to change what the next reprocess or approve
+                        will run. Save or use Approve / Reprocess to apply.
+                      </p>
+                    ) : null}
                     {auditLoading ? (
                       <p className="text-sm text-muted-foreground">Loading processing stages…</p>
-                    ) : filteredAuditSteps.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">No pipeline stages on this path yet.</p>
                     ) : (
-                      <ol className="relative border-l border-border ml-2 space-y-4">
-                        {filteredAuditSteps.map((step) => (
-                          <li key={step.stage} className="ml-4">
-                            <span
-                              className={cn(
-                                "absolute -left-[5px] h-2.5 w-2.5 rounded-full",
-                                pipelineDotClass(step.state)
-                              )}
-                            />
-                            <div className="text-sm font-medium">{step.stage}</div>
-                            <div className="text-xs text-muted-foreground">
-                              {step.when} · {step.detail}
-                            </div>
-                          </li>
-                        ))}
-                      </ol>
+                      <>
+                        {filteredAuditSteps.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">
+                            No pipeline stages on this path yet.
+                          </p>
+                        ) : null}
+                        <ol className="relative border-l border-border ml-2 space-y-4">
+                          {filteredAuditSteps.map((step) => {
+                            const skipId = skipStepIdForAuditStage(step.stage);
+                            const running = skipId
+                              ? !processingSkipSteps.includes(skipId)
+                              : true;
+                            return (
+                              <li
+                                key={step.stage}
+                                className={cn(
+                                  "ml-4 flex items-start justify-between gap-3",
+                                  skipId &&
+                                    highlightedSkipStepId === skipId &&
+                                    "rounded-md border border-destructive/40 bg-destructive/5 px-2 py-1.5 -ml-1"
+                                )}
+                              >
+                                <div className="min-w-0 flex-1">
+                                  <span
+                                    className={cn(
+                                      "absolute -left-[5px] h-2.5 w-2.5 rounded-full",
+                                      pipelineDotClass(step.state)
+                                    )}
+                                  />
+                                  <div className="text-sm font-medium">{step.stage}</div>
+                                  <div className="text-xs text-muted-foreground">
+                                    {step.when} · {step.detail}
+                                  </div>
+                                  {skipId && !running ? (
+                                    <p className="mt-1 text-xs font-medium ds-warning-text">
+                                      Skipped on reprocess
+                                    </p>
+                                  ) : null}
+                                </div>
+                                {skipId ? (
+                                  <ProcessingStepRunSkipControl
+                                    stepId={skipId}
+                                    label={step.stage}
+                                    running={running}
+                                    editable={processingOverridesEditable}
+                                    highlighted={highlightedSkipStepId === skipId}
+                                    controlKey={`${skipId}-${step.stage}`}
+                                    onToggle={
+                                      processingOverridesEditable && draft
+                                        ? (stepId, run) =>
+                                            setDraft({
+                                              ...draft,
+                                              skip_steps: toggleStepRunning(
+                                                draft.skip_steps,
+                                                stepId,
+                                                run
+                                              ),
+                                            })
+                                        : undefined
+                                    }
+                                  />
+                                ) : null}
+                              </li>
+                            );
+                          })}
+                          {UNMATCHED_OVERRIDE_STEP_IDS.map((stepId) => {
+                            const def = overrideStepDef(stepId);
+                            if (!def) return null;
+                            const running = !processingSkipSteps.includes(stepId);
+                            return (
+                              <li
+                                key={`override-${stepId}`}
+                                className={cn(
+                                  "ml-4 flex items-start justify-between gap-3",
+                                  highlightedSkipStepId === stepId &&
+                                    "rounded-md border border-destructive/40 bg-destructive/5 px-2 py-1.5 -ml-1"
+                                )}
+                              >
+                                <div className="min-w-0 flex-1">
+                                  <span
+                                    className={cn(
+                                      "absolute -left-[5px] h-2.5 w-2.5 rounded-full",
+                                      running ? "bg-muted-foreground/40" : "bg-amber-500"
+                                    )}
+                                  />
+                                  <div className="text-sm font-medium">{def.label}</div>
+                                  <div className="text-xs text-muted-foreground">{def.hint}</div>
+                                  {!running ? (
+                                    <p className="mt-1 text-xs font-medium ds-warning-text">
+                                      Skipped on reprocess
+                                    </p>
+                                  ) : null}
+                                </div>
+                                <ProcessingStepRunSkipControl
+                                  stepId={stepId}
+                                  label={def.label}
+                                  running={running}
+                                  editable={processingOverridesEditable}
+                                  highlighted={highlightedSkipStepId === stepId}
+                                  onToggle={
+                                    processingOverridesEditable && draft
+                                      ? (id, run) =>
+                                          setDraft({
+                                            ...draft,
+                                            skip_steps: toggleStepRunning(
+                                              draft.skip_steps,
+                                              id,
+                                              run
+                                            ),
+                                          })
+                                      : undefined
+                                  }
+                                />
+                              </li>
+                            );
+                          })}
+                        </ol>
+                      </>
                     )}
-                  </div>
-                )}
-
-                {tab === "overrides" && inv && (
-                  <div className="mt-4">
-                    <InvoiceProcessingOverridesSection
-                      skipSteps={
-                        editing && draft
-                          ? draft.skip_steps
-                          : skipStepsFromInvoice(inv.processing_overrides)
-                      }
-                      editable={Boolean(editing && draft && canEdit(inv.status))}
-                      failedStage={
-                        pipelineSteps.find((s) => s.state === "fail")?.stage ??
-                        (inv.current_stage_state === "fail" ? inv.current_stage : null)
-                      }
-                      onToggle={
-                        editing && draft && canEdit(inv.status)
-                          ? (stepId, run) =>
-                              setDraft({
-                                ...draft,
-                                skip_steps: toggleStepRunning(draft.skip_steps, stepId, run),
-                              })
-                          : undefined
-                      }
-                    />
                   </div>
                 )}
 

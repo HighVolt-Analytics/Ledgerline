@@ -42,7 +42,8 @@ from app.services.payments.payment_execution_readiness_service import (
 from app.services.payments.payment_service import payment_to_response
 from app.services.payments.stripe_service import get_stripe_readiness_for_tenant
 from app.services.master_data.vendor_payout_method_service import payout_summary_for_payments
-from app.tenant_settings import tenant_payment_execution_disabled
+from app.services.shared.currency import prefer_currency
+from app.tenant_settings import tenant_currency, tenant_payment_execution_disabled
 
 
 class PaymentExecutionBlockedError(Exception):
@@ -261,6 +262,8 @@ async def create_payment_execution_instruction(
     actor_name = str(actor.get("name") or actor.get("email") or "User").strip()
     actor_email = str(actor.get("email") or "").strip() or None
 
+    tenant = await db.get(Tenant, tenant_id)
+    instruction_currency = prefer_currency(payment.currency, tenant_currency(tenant))
     row = PaymentExecutionInstruction(
         tenant_id=tenant_id,
         payment_id=payment_id,
@@ -270,7 +273,7 @@ async def create_payment_execution_instruction(
         vendor_name=payment.vendor,
         vendor_payout_method_label=format_payout_method_label(method),
         amount=Decimal(str(payment.amount)),
-        currency=(payment.currency or "USD").upper(),
+        currency=instruction_currency,
         due_date=payment.due_date,
         created_by_user_id=int(actor_user_id) if actor_user_id is not None else None,
         created_by_name=actor_name,
@@ -388,8 +391,6 @@ async def mark_payment_paid_manual(
     from decimal import Decimal
 
     from app.services.payments.journal_fx import resolve_payment_fx, round_money
-    from app.models.tenant import Tenant
-    from app.tenant_settings import tenant_currency
 
     if body.bank_payment_amount is not None:
         payment.bank_payment_amount = round_money(Decimal(str(body.bank_payment_amount)))

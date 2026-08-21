@@ -290,3 +290,11 @@ class EmployeeAdvanceDetailRow(BaseModel):
     approved_by: str = ""
     approved_on: str = ""
     invoice_id: int = 0
+
+
+class TeamExpenseWorkspaceKpis(BaseModel):
+    kind_counts: dict[str, int] = Field(default_factory=dict)
+    open_count: int = 0
+    pending_count: int = 0
+    posted_count: int = 0
+    posted_by_currency: dict[str, float] = Field(default_factory=dict)

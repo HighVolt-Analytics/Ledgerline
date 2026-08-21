@@ -187,7 +187,7 @@ class VendorPaymentMethod(Base):
     display_label: Mapped[str | None] = mapped_column(String(255))
     stripe_account_id: Mapped[str | None] = mapped_column(String(255), index=True)
     last4: Mapped[str | None] = mapped_column(String(4))
-    currency: Mapped[str] = mapped_column(String(3), default="AUD")
+    currency: Mapped[str] = mapped_column(String(3), default="")
     country: Mapped[str | None] = mapped_column(String(2))
     provider: Mapped[str | None] = mapped_column(String(32), index=True)
     recipient_type: Mapped[str | None] = mapped_column(String(32))

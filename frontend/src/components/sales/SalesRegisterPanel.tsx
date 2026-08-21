@@ -15,7 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { InlineTableSkeleton } from "@/components/skeleton/PageSkeletons";
-import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
+import { useRuleBookDocumentTypes } from "@/hooks/useRuleBookConfig";
 import { cn } from "@/lib/cn";
 import { documentDisplayRef, money } from "@/lib/format";
 import {
@@ -66,6 +66,7 @@ export function SalesRegisterPanel({
   twoWayRows,
   salesRows,
   actionRequired,
+  actionCount,
   loading,
   isError,
   searchQuery,
@@ -82,6 +83,7 @@ export function SalesRegisterPanel({
   twoWayRows: SalesRegisterTableRow[];
   salesRows: SalesOrderApi[];
   actionRequired: Invoice[];
+  actionCount?: number;
   loading: boolean;
   isError: boolean;
   searchQuery: string;
@@ -94,7 +96,7 @@ export function SalesRegisterPanel({
   busySalesId: number | null;
   onApproveVariance: (salesId: number) => void;
 }) {
-  const { data: ruleBook } = useRuleBookConfig();
+  const { data: documentTypes } = useRuleBookDocumentTypes(activeTab === "action");
   const [registerPage, setRegisterPage] = useState(1);
   const [twoWayPage, setTwoWayPage] = useState(1);
   const [actionPage, setActionPage] = useState(1);
@@ -182,8 +184,9 @@ export function SalesRegisterPanel({
     if (actionPage > actionPages) setActionPage(actionPages);
   }, [actionPage, actionPages]);
 
+  const actionBadgeCount = actionCount ?? actionRequired.length;
   const showActionBanner =
-    activeTab === "register" && actionRequired.length > 0 && !loading;
+    activeTab === "register" && actionBadgeCount > 0 && !loading;
 
   return (
     <Card className="overflow-hidden" data-testid="sales-register-panel">
@@ -243,9 +246,9 @@ export function SalesRegisterPanel({
               label: (
                 <>
                   Needs action
-                  {actionRequired.length > 0 ? (
+                  {actionBadgeCount > 0 ? (
                     <Badge variant="destructive" className="ml-1.5 tnum font-normal">
-                      {actionRequired.length}
+                      {actionBadgeCount}
                     </Badge>
                   ) : (
                     <Badge variant="secondary" className="ml-1.5 tnum font-normal">
@@ -266,7 +269,7 @@ export function SalesRegisterPanel({
         >
           <span className="inline-flex items-center gap-1.5 text-foreground">
             <AlertTriangle className="h-3.5 w-3.5 ds-warning-text shrink-0" />
-            {actionRequired.length} document{actionRequired.length === 1 ? "" : "s"} need attention
+            {actionBadgeCount} document{actionBadgeCount === 1 ? "" : "s"} need attention
             before three-way match.
           </span>
           <Button
@@ -296,14 +299,14 @@ export function SalesRegisterPanel({
               <EmptyState
                 title="No SO register rows yet"
                 hint={
-                  actionRequired.length > 0
+                  actionBadgeCount > 0
                     ? "Link SO references on routed documents in Needs action, or ingest SO documents first."
                     : "Commercial invoices with a valid SO reference appear here after processing."
                 }
                 action={
-                  actionRequired.length > 0 ? (
+                  actionBadgeCount > 0 ? (
                     <Button size="sm" variant="outline" onClick={() => onTabChange("action")}>
-                      Open needs action ({actionRequired.length})
+                      Open needs action ({actionBadgeCount})
                     </Button>
                   ) : undefined
                 }
@@ -361,7 +364,7 @@ export function SalesRegisterPanel({
                             {so.date}
                           </td>
                           <td className="px-3 py-2.5 text-right tnum whitespace-nowrap">
-                            {so.soQty} · {fmtAud(m.poValue)}
+                            {so.soQty} · {fmtAud(m.poValue, m.currency)}
                           </td>
                           <td className="px-3 py-2.5 text-right tnum whitespace-nowrap">
                             {so.dnQty === null ? (
@@ -373,7 +376,7 @@ export function SalesRegisterPanel({
                             )}
                           </td>
                           <td className="px-3 py-2.5 text-right tnum whitespace-nowrap">
-                            {so.invoiceQty} · {fmtAud(m.invoiceValue)}
+                            {so.invoiceQty} · {fmtAud(m.invoiceValue, m.currency)}
                           </td>
                           <td
                             className={cn(
@@ -382,7 +385,7 @@ export function SalesRegisterPanel({
                                 "ds-warning-text font-medium"
                             )}
                           >
-                            {m.qtyVarianceValue === 0 ? "—" : fmtAud(m.qtyVarianceValue)}
+                            {m.qtyVarianceValue === 0 ? "—" : fmtAud(m.qtyVarianceValue, m.currency)}
                           </td>
                           <td
                             className={cn(
@@ -391,7 +394,7 @@ export function SalesRegisterPanel({
                                 "ds-warning-text font-medium"
                             )}
                           >
-                            {m.priceVarianceValue === 0 ? "—" : fmtAud(m.priceVarianceValue)}
+                            {m.priceVarianceValue === 0 ? "—" : fmtAud(m.priceVarianceValue, m.currency)}
                           </td>
                           <td className="px-3 py-2.5">
                             <MatchStatusBadge status={m.status} />
@@ -505,10 +508,10 @@ export function SalesRegisterPanel({
                             <td className="px-3 py-2.5 text-muted-foreground">{row.customer}</td>
                             <td className="px-3 py-2.5 text-right tnum">{row.dnQty ?? "—"}</td>
                             <td className="px-3 py-2.5 text-right tnum">
-                              {row.invoiceQty} · {fmtAud(row.m.invoiceValue)}
+                              {row.invoiceQty} · {fmtAud(row.m.invoiceValue, row.m.currency)}
                             </td>
                             <td className="px-3 py-2.5 text-right tnum">
-                              {row.m.qtyVarianceValue === 0 ? "—" : fmtAud(row.m.qtyVarianceValue)}
+                              {row.m.qtyVarianceValue === 0 ? "—" : fmtAud(row.m.qtyVarianceValue, row.m.currency)}
                             </td>
                             <td className="px-3 py-2.5">
                               <MatchStatusBadge status={row.m.status} />
@@ -546,10 +549,10 @@ export function SalesRegisterPanel({
                           <td className="px-3 py-2.5 text-muted-foreground">{so.customer}</td>
                           <td className="px-3 py-2.5 text-right tnum">{so.dnQty ?? "—"}</td>
                           <td className="px-3 py-2.5 text-right tnum">
-                            {so.invoiceQty} · {fmtAud(m.invoiceValue)}
+                            {so.invoiceQty} · {fmtAud(m.invoiceValue, m.currency)}
                           </td>
                           <td className="px-3 py-2.5 text-right tnum">
-                            {m.qtyVarianceValue === 0 ? "—" : fmtAud(m.qtyVarianceValue)}
+                            {m.qtyVarianceValue === 0 ? "—" : fmtAud(m.qtyVarianceValue, m.currency)}
                           </td>
                           <td className="px-3 py-2.5">
                             <MatchStatusBadge status={m.status} />
@@ -633,7 +636,7 @@ export function SalesRegisterPanel({
                             <VisionHeadingBadge inv={inv} empty="" />
                             <MappedDocumentTypeBadge
                               inv={inv}
-                              documentTypes={ruleBook?.documentTypes}
+                              documentTypes={documentTypes}
                             />
                           </div>
                         </td>

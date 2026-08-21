@@ -290,8 +290,8 @@ export function InvoicePreviewModeToggle({
       onChange={(v) => onChange(v as PreviewPaneMode)}
       data-testid="invoice-preview-mode-tabs"
       tabs={[
-        { value: "summary", label: "Extracted", testid: "tab-preview-summary" },
         { value: "original", label: "Original document", testid: "tab-preview-original" },
+        { value: "summary", label: "Extracted", testid: "tab-preview-summary" },
       ]}
     />
   );

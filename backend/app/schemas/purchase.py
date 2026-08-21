@@ -61,6 +61,7 @@ class ThreeWayMatchResult(BaseModel):
     invoice_value: float
     invoice_gst: float
     invoice_total: float
+    currency: str = ""
     display: ThreeWayMatchDisplay | None = None
     line_results: list[LineMatchResultOut] = Field(default_factory=list)
 
@@ -99,6 +100,7 @@ class PurchaseOrderResponse(BaseModel):
     ledger: str | None = None
     sub_ledger: str | None = None
     purchase_rule_id: str | None = None
+    currency: str = ""
 
 
 class GoodsReceiptCreate(BaseModel):
@@ -127,3 +129,8 @@ class PurchaseDossierResponse(BaseModel):
     match_status: str | None = None
     match_summary: DossierMatchSummaryResponse | None = None
     purchase_register: PurchaseOrderResponse | None = None
+
+
+class PurchaseWorkspaceKpis(BaseModel):
+    awaiting_po_count: int = 0
+    needs_action_count: int = 0

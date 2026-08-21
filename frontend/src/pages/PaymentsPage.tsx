@@ -29,7 +29,7 @@ import { useInstitutionSettings } from "@/hooks/useInstitutionSettings";
 import { useRefreshPayPalReadiness } from "@/hooks/usePayPal";
 import { useTenantTime } from "@/hooks/useTenantTime";
 import type { StripeAccount, StripeBalanceAmount, StripeReadinessResponse } from "@/api/types";
-import { formatMoneyByCurrencyMap, money } from "@/lib/format";
+import { formatMoneyByCurrencyMap, money, normalizeCurrencyCode } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { apiPaymentToRecord, paymentsKpis } from "@/lib/routePageAdapters";
 import { paymentTierLabel, type PaymentRecord, type PaymentTab } from "@/lib/v4MockData";
@@ -63,24 +63,22 @@ function maskStripeAccountId(id: string): string {
 function formatBalanceLine(
   label: string,
   items: StripeBalanceAmount[],
-  fallbackCurrency: string
 ): string {
   if (!items.length) return `${label}: —`;
   const parts = items
     .filter((item) => item.amount != null)
-    .map((item) => money(item.amount, item.currency || fallbackCurrency));
+    .map((item) => money(item.amount, item.currency));
   return `${label}: ${parts.length ? parts.join(" · ") : "—"}`;
 }
 
 function sumStripeBalanceAmounts(
   items: StripeBalanceAmount[],
-  fallbackCurrency: string
 ): { total: number; currency: string } {
   const withAmount = items.filter((item) => item.amount != null);
   if (!withAmount.length) {
-    return { total: 0, currency: fallbackCurrency };
+    return { total: 0, currency: "" };
   }
-  const currency = withAmount[0]?.currency || fallbackCurrency;
+  const currency = withAmount[0]?.currency || "";
   const total = withAmount.reduce((sum, item) => sum + (item.amount ?? 0), 0);
   return { total, currency };
 }
@@ -165,7 +163,7 @@ export function PaymentsPage() {
   const paypalReturnHandled = useRef(false);
   const { timeZone } = useTenantTime();
   const { data: institution } = useInstitutionSettings();
-  const institutionCurrency = (institution?.currency || "SGD").trim().toUpperCase() || "SGD";
+  const institutionCurrency = normalizeCurrencyCode(institution?.currency) ?? "";
   const { data: paymentRows = [], isLoading: paymentsLoading, isError, blocked: paymentsBlocked } =
     usePayments();
   const { data: appSettings, blocked: settingsBlocked } = useAppSettings();
@@ -206,12 +204,10 @@ export function PaymentsPage() {
   );
   const needsOnboarding = stripeAccount ? stripeNeedsOnboarding(stripeAccount) : false;
   const stripeWalletAvailable = sumStripeBalanceAmounts(
-    stripeBalance?.available ?? [],
-    institutionCurrency
+    stripeBalance?.available ?? []
   );
   const stripeWalletPending = sumStripeBalanceAmounts(
-    stripeBalance?.pending ?? [],
-    institutionCurrency
+    stripeBalance?.pending ?? []
   );
   const readinessBanner = stripeReadinessBanner(stripeReadiness);
   const environmentBanner = paymentEnvironmentBanner(
@@ -562,8 +558,8 @@ export function PaymentsPage() {
                 <span className="text-muted-foreground">Loading balance…</span>
               ) : stripeBalance ? (
                 <div className="space-y-1 tnum">
-                  <div>{formatBalanceLine("Available", stripeBalance.available, institutionCurrency)}</div>
-                  <div>{formatBalanceLine("Pending", stripeBalance.pending, institutionCurrency)}</div>
+                  <div>{formatBalanceLine("Available", stripeBalance.available)}</div>
+                  <div>{formatBalanceLine("Pending", stripeBalance.pending)}</div>
                 </div>
               ) : (
                 <span className="text-muted-foreground">Balance unavailable</span>
@@ -615,7 +611,7 @@ export function PaymentsPage() {
                           </td>
                           <td className="px-3 py-2 text-xs text-right tnum whitespace-nowrap">
                             {txn.amount != null
-                              ? money(txn.amount, txn.currency || institutionCurrency)
+                              ? money(txn.amount, txn.currency)
                               : "—"}
                           </td>
                           <td className="px-3 py-2 text-xs text-muted-foreground">

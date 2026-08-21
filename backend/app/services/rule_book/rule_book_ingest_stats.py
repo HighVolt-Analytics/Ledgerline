@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import AuditLog
@@ -60,40 +60,38 @@ async def load_email_capture_ingest_stats(
 ) -> dict[str, EmailCaptureIngestStats]:
     """Aggregate ingest_capture_matched audit rows per rule id."""
     month_start = month_start_utc(now)
+    rule_id_expr = AuditLog.detail["rule_id"].as_string()
     rows = (
         await session.execute(
-            select(AuditLog).where(
+            select(
+                rule_id_expr.label("rule_id"),
+                func.coalesce(
+                    func.sum(case((AuditLog.created_at >= month_start, 1), else_=0)),
+                    0,
+                ).label("month_count"),
+                func.max(AuditLog.created_at).label("last_at"),
+            )
+            .where(
                 AuditLog.tenant_id == tenant_id,
                 AuditLog.event == INGEST_CAPTURE_EVENT,
             )
+            .group_by(rule_id_expr)
         )
-    ).scalars().all()
+    ).all()
 
-    buckets: dict[str, dict[str, Any]] = {}
-    for row in rows:
-        detail = row.detail if isinstance(row.detail, dict) else {}
-        rule_id = str(detail.get("rule_id") or "").strip()
-        if not rule_id:
+    stats: dict[str, EmailCaptureIngestStats] = {}
+    for rule_id, month_count, last_at in rows:
+        token = str(rule_id or "").strip()
+        if not token:
             continue
-
-        created = row.created_at
-        if created.tzinfo is None:
+        created = last_at
+        if created is not None and getattr(created, "tzinfo", None) is None:
             created = created.replace(tzinfo=timezone.utc)
-
-        bucket = buckets.setdefault(rule_id, {"month_count": 0, "last_at": None})
-        if created >= month_start:
-            bucket["month_count"] += 1
-        last_at = bucket["last_at"]
-        if last_at is None or created > last_at:
-            bucket["last_at"] = created
-
-    return {
-        rule_id: EmailCaptureIngestStats(
-            matched_count=int(data["month_count"]),
-            last_matched=format_relative_time(data["last_at"], now=now),
+        stats[token] = EmailCaptureIngestStats(
+            matched_count=int(month_count or 0),
+            last_matched=format_relative_time(created, now=now),
         )
-        for rule_id, data in buckets.items()
-    }
+    return stats
 
 
 def strip_email_capture_volatile_stats(data: dict[str, Any]) -> dict[str, Any]:

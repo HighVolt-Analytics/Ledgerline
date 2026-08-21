@@ -203,6 +203,8 @@ def _catalog_upgrade_markers() -> dict[str, tuple[str, ...]]:
             "Run the R11 coverage self-check before returning output",
             "E23. Reissue/duplicate/replacement document",
             "E22. Same template/layout, different issuing company",
+            "E39. Item Receipt / Material Receipt",
+            "ITEM RECEIPT / MATERIAL RECEIPT is never invoice continuation (E39)",
         ),
     }
 

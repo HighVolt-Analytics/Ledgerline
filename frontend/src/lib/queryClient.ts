@@ -41,6 +41,10 @@ const baseKeys = {
     "team-expenses",
     "department-budget-utilization",
   ] as const,
+  teWorkspaceKpis: ["reports", "team-expenses", "workspace-kpis"] as const,
+  expensesWorkspaceKpis: ["reports", "expenses", "workspace-kpis"] as const,
+  purchasesWorkspaceKpis: ["purchases", "workspace-kpis"] as const,
+  salesWorkspaceKpis: ["sales", "workspace-kpis"] as const,
   teExpenseSummary: (dateFrom?: string, dateTo?: string) =>
     ["reports", "team-expenses", "expense-summary", dateFrom ?? "all", dateTo ?? "all"] as const,
   departmentBudgets: ["department-budgets"] as const,
@@ -108,6 +112,10 @@ export const queryKeys = {
   teBudgetUtilization: () => tenantQueryKey(baseKeys.teBudgetUtilization),
   teDepartmentBudgetUtilization: () =>
     tenantQueryKey(baseKeys.teDepartmentBudgetUtilization),
+  teWorkspaceKpis: () => tenantQueryKey(baseKeys.teWorkspaceKpis),
+  expensesWorkspaceKpis: () => tenantQueryKey(baseKeys.expensesWorkspaceKpis),
+  purchasesWorkspaceKpis: () => tenantQueryKey(baseKeys.purchasesWorkspaceKpis),
+  salesWorkspaceKpis: () => tenantQueryKey(baseKeys.salesWorkspaceKpis),
   teExpenseSummary: (dateFrom?: string, dateTo?: string) =>
     tenantQueryKey(baseKeys.teExpenseSummary(dateFrom, dateTo)),
   departmentBudgets: () => tenantQueryKey(baseKeys.departmentBudgets),

@@ -16,10 +16,27 @@ export function useTeamExpenseBudgetUtilization() {
   });
 }
 
-export function useTeamExpenseDepartmentBudgetUtilization() {
+export function useTeamExpenseDepartmentBudgetUtilization(enabled = true) {
   return useTenantQuery({
     queryKey: queryKeys.teDepartmentBudgetUtilization(),
     queryFn: () => api.getTeamExpenseDepartmentBudgetUtilization(),
+    enabled,
+  });
+}
+
+export function useTeamExpenseWorkspaceKpis(enabled = true) {
+  return useTenantQuery({
+    queryKey: queryKeys.teWorkspaceKpis(),
+    queryFn: () => api.getTeamExpenseWorkspaceKpis(),
+    enabled,
+  });
+}
+
+export function useExpensesWorkspaceKpis(enabled = true) {
+  return useTenantQuery({
+    queryKey: queryKeys.expensesWorkspaceKpis(),
+    queryFn: () => api.getExpensesWorkspaceKpis(),
+    enabled,
   });
 }
 

@@ -13,68 +13,86 @@ import {
   type PurchaseRegisterTab,
 } from "@/components/purchases/PurchaseRegisterPanel";
 import { usePurchaseMutations } from "@/hooks/usePurchaseMutations";
-import { usePurchases } from "@/hooks/usePurchases";
-import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
+import { usePurchases, usePurchaseWorkspaceKpis } from "@/hooks/usePurchases";
+import { useRuleBookPurchaseRules } from "@/hooks/useRuleBookConfig";
 import { useRoutedInvoices } from "@/hooks/useRoutedInvoices";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
-import { usePurchasesTwoWay } from "@/hooks/usePurchasesTwoWay";
 import { purchaseActionRequiredInvoices } from "@/lib/purchaseRegisterQueue";
 import {
   apiPurchaseToRow,
   isPurchaseTwoWayMode,
   purchaseKpisFromRegister,
+  splitPurchaseRegisterRows,
 } from "@/lib/routePageAdapters";
 
 const ROUTE_TARGET = "Purchase Management";
-const POLL_MS = 15_000;
+const POLL_MS = 90_000;
+const ACTION_PAGE_SIZE = 50;
 
 function purchaseRowKey(purchaseId: number, invoiceId: number | null) {
   return `${purchaseId}-${invoiceId ?? "none"}`;
 }
 
 export function PurchaseManagementPage() {
-  const { data: routed = [], refetch: refetchRouted } = useRoutedInvoices(ROUTE_TARGET);
+  const [registerTab, setRegisterTab] = useState<PurchaseRegisterTab>("register");
   const {
     data: purchaseRows = [],
     isLoading: purchasesLoading,
     isError,
     refetch: refetchPurchases,
   } = usePurchases();
-  const { data: twoWayPurchaseRows = [], refetch: refetchPurchasesTwoWay } = usePurchasesTwoWay();
-  const { data: ruleBook } = useRuleBookConfig();
+  const { data: workspaceKpis, refetch: refetchKpis } = usePurchaseWorkspaceKpis();
+  const { data: purchaseRules = [] } = useRuleBookPurchaseRules();
+  const {
+    data: routed = [],
+    refetch: refetchRouted,
+  } = useRoutedInvoices(ROUTE_TARGET, registerTab === "action", {
+    pageSize: ACTION_PAGE_SIZE,
+    maxPages: 1,
+  });
   const mutations = usePurchaseMutations();
 
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [drawerInvoiceId, setDrawerInvoiceId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [registerTab, setRegisterTab] = useState<PurchaseRegisterTab>("register");
 
-  const rows = useMemo(() => purchaseRows.map(apiPurchaseToRow), [purchaseRows]);
+  const { threeWayApiRows, twoWayApiRows } = useMemo(() => {
+    const split = splitPurchaseRegisterRows(purchaseRows);
+    return { threeWayApiRows: split.threeWayRows, twoWayApiRows: split.twoWayRows };
+  }, [purchaseRows]);
   const threeWayRows = useMemo(
-    () => rows.filter((row) => !isPurchaseTwoWayMode(row.matchMode)),
-    [rows]
+    () => threeWayApiRows.map(apiPurchaseToRow),
+    [threeWayApiRows]
   );
-  const twoWayRows = useMemo(
-    () => twoWayPurchaseRows.map(apiPurchaseToRow),
-    [twoWayPurchaseRows]
-  );
+  const twoWayRows = useMemo(() => twoWayApiRows.map(apiPurchaseToRow), [twoWayApiRows]);
+  const rows = threeWayRows;
   const actionRequired = useMemo(
     () => purchaseActionRequiredInvoices(routed, purchaseRows),
     [routed, purchaseRows]
   );
-  const kpis = useMemo(
-    () => purchaseKpisFromRegister(purchaseRows, routed),
-    [purchaseRows, routed]
-  );
+  const kpis = useMemo(() => {
+    const fromRegister = purchaseKpisFromRegister(purchaseRows, routed);
+    return {
+      ...fromRegister,
+      awaitingPo: workspaceKpis?.awaiting_po_count ?? fromRegister.awaitingPo,
+      needsAction: workspaceKpis?.needs_action_count ?? fromRegister.needsAction,
+    };
+  }, [purchaseRows, routed, workspaceKpis]);
   const selected =
-    rows.find((r) => purchaseRowKey(r.purchaseId, r.invoiceId) === selectedKey) ?? null;
+    rows.find((r) => purchaseRowKey(r.purchaseId, r.invoiceId) === selectedKey) ??
+    twoWayRows.find((r) => purchaseRowKey(r.purchaseId, r.invoiceId) === selectedKey) ??
+    null;
   const activeRuleCount = useMemo(
-    () => (ruleBook?.purchaseRules ?? []).filter((r) => r.enabled).length,
-    [ruleBook?.purchaseRules]
+    () => purchaseRules.filter((r) => r.enabled).length,
+    [purchaseRules]
   );
 
   const refetchAll = async () => {
-    await Promise.all([refetchRouted(), refetchPurchases(), refetchPurchasesTwoWay()]);
+    await Promise.all([
+      refetchPurchases(),
+      refetchKpis(),
+      registerTab === "action" ? refetchRouted() : Promise.resolve(),
+    ]);
   };
 
   useVisibilityPolling(() => {
@@ -82,10 +100,14 @@ export function PurchaseManagementPage() {
   }, POLL_MS);
 
   useEffect(() => {
-    if (selectedKey && !rows.some((r) => purchaseRowKey(r.purchaseId, r.invoiceId) === selectedKey)) {
+    if (
+      selectedKey &&
+      !threeWayRows.some((r) => purchaseRowKey(r.purchaseId, r.invoiceId) === selectedKey) &&
+      !twoWayRows.some((r) => purchaseRowKey(r.purchaseId, r.invoiceId) === selectedKey)
+    ) {
       setSelectedKey(null);
     }
-  }, [selectedKey, rows]);
+  }, [selectedKey, threeWayRows, twoWayRows]);
 
   useEffect(() => {
     if (!mutations.toast) return;
@@ -117,7 +139,7 @@ export function PurchaseManagementPage() {
         subtitle="PO → GRN → Invoice matching (3-way or 2-way per playbook). Variances are routed for tiered approval before payment."
       />
 
-      <PurchaseCaptureStrip activeRuleCount={activeRuleCount} />
+      <PurchaseCaptureStrip activeRuleCount={activeRuleCount} enabled={!purchasesLoading} />
 
       <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 mb-5">
         <KpiCard
@@ -184,6 +206,7 @@ export function PurchaseManagementPage() {
         twoWayRows={twoWayRows}
         purchaseRows={purchaseRows}
         actionRequired={actionRequired}
+        actionCount={kpis.needsAction}
         loading={purchasesLoading}
         isError={isError}
         searchQuery={searchQuery}

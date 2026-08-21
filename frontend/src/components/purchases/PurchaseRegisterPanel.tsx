@@ -15,7 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { InlineTableSkeleton } from "@/components/skeleton/PageSkeletons";
-import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
+import { useRuleBookDocumentTypes } from "@/hooks/useRuleBookConfig";
 import { cn } from "@/lib/cn";
 import { documentDisplayRef, money } from "@/lib/format";
 import {
@@ -62,6 +62,7 @@ export function PurchaseRegisterPanel({
   twoWayRows,
   purchaseRows,
   actionRequired,
+  actionCount,
   loading,
   isError,
   searchQuery,
@@ -78,6 +79,7 @@ export function PurchaseRegisterPanel({
   twoWayRows: RegisterRow[];
   purchaseRows: PurchaseOrderApi[];
   actionRequired: Invoice[];
+  actionCount?: number;
   loading: boolean;
   isError: boolean;
   searchQuery: string;
@@ -90,7 +92,7 @@ export function PurchaseRegisterPanel({
   busyPurchaseId: number | null;
   onApproveVariance: (purchaseId: number) => void;
 }) {
-  const { data: ruleBook } = useRuleBookConfig();
+  const { data: documentTypes } = useRuleBookDocumentTypes(activeTab === "action");
   const [registerPage, setRegisterPage] = useState(1);
   const [twoWayPage, setTwoWayPage] = useState(1);
   const [actionPage, setActionPage] = useState(1);
@@ -178,8 +180,9 @@ export function PurchaseRegisterPanel({
     if (actionPage > actionPages) setActionPage(actionPages);
   }, [actionPage, actionPages]);
 
+  const actionBadgeCount = actionCount ?? actionRequired.length;
   const showActionBanner =
-    activeTab === "register" && actionRequired.length > 0 && !loading;
+    activeTab === "register" && actionBadgeCount > 0 && !loading;
 
   return (
     <Card className="overflow-hidden" data-testid="purchase-register-panel">
@@ -240,7 +243,7 @@ export function PurchaseRegisterPanel({
                 <>
                   Needs action
                   <Badge variant="secondary" className="ml-1.5 tnum font-normal">
-                    {actionRequired.length}
+                    {actionBadgeCount}
                   </Badge>
                 </>
               ),
@@ -256,7 +259,7 @@ export function PurchaseRegisterPanel({
         >
           <span className="inline-flex items-center gap-1.5 text-foreground">
             <AlertTriangle className="h-3.5 w-3.5 ds-warning-text shrink-0" />
-            {actionRequired.length} document{actionRequired.length === 1 ? "" : "s"} need attention
+            {actionBadgeCount} document{actionBadgeCount === 1 ? "" : "s"} need attention
             before three-way match.
           </span>
           <Button
@@ -351,7 +354,7 @@ export function PurchaseRegisterPanel({
                             {po.date}
                           </td>
                           <td className="px-3 py-2.5 text-right tnum whitespace-nowrap">
-                            {po.poQty} · {fmtAud(m.poValue)}
+                            {po.poQty} · {fmtAud(m.poValue, m.currency)}
                           </td>
                           <td className="px-3 py-2.5 text-right tnum whitespace-nowrap">
                             {po.grnQty === null ? (
@@ -363,7 +366,7 @@ export function PurchaseRegisterPanel({
                             )}
                           </td>
                           <td className="px-3 py-2.5 text-right tnum whitespace-nowrap">
-                            {po.invoiceQty} · {fmtAud(m.invoiceValue)}
+                            {po.invoiceQty} · {fmtAud(m.invoiceValue, m.currency)}
                           </td>
                           <td
                             className={cn(
@@ -372,7 +375,7 @@ export function PurchaseRegisterPanel({
                                 "ds-warning-text font-medium"
                             )}
                           >
-                            {m.qtyVarianceValue === 0 ? "—" : fmtAud(m.qtyVarianceValue)}
+                            {m.qtyVarianceValue === 0 ? "—" : fmtAud(m.qtyVarianceValue, m.currency)}
                           </td>
                           <td
                             className={cn(
@@ -381,7 +384,7 @@ export function PurchaseRegisterPanel({
                                 "ds-warning-text font-medium"
                             )}
                           >
-                            {m.priceVarianceValue === 0 ? "—" : fmtAud(m.priceVarianceValue)}
+                            {m.priceVarianceValue === 0 ? "—" : fmtAud(m.priceVarianceValue, m.currency)}
                           </td>
                           <td className="px-3 py-2.5">
                             <MatchStatusBadge status={m.status} />
@@ -499,16 +502,16 @@ export function PurchaseRegisterPanel({
                           </td>
                           <td className="px-3 py-2.5 text-muted-foreground">{po.vendor}</td>
                           <td className="px-3 py-2.5 text-right tnum">
-                            {po.poQty} · {fmtAud(m.poValue)}
+                            {po.poQty} · {fmtAud(m.poValue, m.currency)}
                           </td>
                           <td className="px-3 py-2.5 text-right tnum">
-                            {po.invoiceQty} · {fmtAud(m.invoiceValue)}
+                            {po.invoiceQty} · {fmtAud(m.invoiceValue, m.currency)}
                           </td>
                           <td className="px-3 py-2.5 text-right tnum">
-                            {m.qtyVarianceValue === 0 ? "—" : fmtAud(m.qtyVarianceValue)}
+                            {m.qtyVarianceValue === 0 ? "—" : fmtAud(m.qtyVarianceValue, m.currency)}
                           </td>
                           <td className="px-3 py-2.5 text-right tnum">
-                            {m.priceVarianceValue === 0 ? "—" : fmtAud(m.priceVarianceValue)}
+                            {m.priceVarianceValue === 0 ? "—" : fmtAud(m.priceVarianceValue, m.currency)}
                           </td>
                           <td className="px-3 py-2.5">
                             <MatchStatusBadge status={m.status} />
@@ -592,7 +595,7 @@ export function PurchaseRegisterPanel({
                             <VisionHeadingBadge inv={inv} empty="" />
                             <MappedDocumentTypeBadge
                               inv={inv}
-                              documentTypes={ruleBook?.documentTypes}
+                              documentTypes={documentTypes}
                             />
                           </div>
                         </td>

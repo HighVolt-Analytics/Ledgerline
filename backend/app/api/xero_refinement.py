@@ -8,8 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import AuthContext, get_db, require_admin
 from app.schemas.common import ApiEnvelope
 from app.schemas.xero_refinement import XeroVerifyResponse
-from app.services.integration.xero_mapping_validation import XeroMappingValidationError
-from app.services.integration.xero_verify_service import verify_xero_connection
+from app.services.integration.xero.xero_mapping_validation import XeroMappingValidationError
+from app.services.integration.xero.xero_verify_service import verify_xero_connection
 
 router = APIRouter(prefix="/integrations/xero", tags=["accounting-integrations"])
 

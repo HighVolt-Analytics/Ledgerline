@@ -54,7 +54,7 @@ function viberChannelRow(conn: ViberConnection | null): CaptureChannelItem {
   };
 }
 
-export function TeamExpenseChannelsStrip() {
+export function TeamExpenseChannelsStrip({ enabled = true }: { enabled?: boolean }) {
   const { toast } = useToast();
   const navigate = useNavigate();
   const [channels, setChannels] = useState<CaptureChannelItem[]>([
@@ -81,8 +81,9 @@ export function TeamExpenseChannelsStrip() {
   }, []);
 
   useEffect(() => {
+    if (!enabled) return;
     void load();
-  }, [load]);
+  }, [load, enabled]);
 
   async function handleReconnect(channel: CaptureChannelItem) {
     if (channel.id === "wa") {

@@ -39,11 +39,11 @@ from app.services.integration.accounting_integration_service import (
     select_xero_connection,
     validate_oauth_state_replay,
 )
-from app.services.integration.xero_client import XeroApiError, XeroClient
-from app.services.integration.xero_mapping_validation import validate_invoice_xero_mappings
-from app.services.integration.xero_readiness import enrich_xero_readiness
-from app.services.integration.xero_sync_job_service import cancel_pending_jobs, enqueue_sync_job
-from app.services.integration.xero_token_service import (
+from app.services.integration.xero.xero_client import XeroApiError, XeroClient
+from app.services.integration.xero.xero_mapping_validation import validate_invoice_xero_mappings
+from app.services.integration.xero.xero_readiness import enrich_xero_readiness
+from app.services.integration.xero.xero_sync_job_service import cancel_pending_jobs, enqueue_sync_job
+from app.services.integration.xero.xero_token_service import (
     REFRESH_MARGIN_SECONDS,
     _token_expiring_soon,
 )
@@ -147,7 +147,7 @@ def test_xero_api_error_structure() -> None:
 async def test_xero_client_429_retry(monkeypatch: pytest.MonkeyPatch) -> None:
     db = AsyncMock()
     monkeypatch.setattr(
-        "app.services.integration.xero_client.get_valid_access_token",
+        "app.services.integration.xero.xero_client.get_valid_access_token",
         AsyncMock(return_value="token"),
     )
     rate_limited = MagicMock(status_code=429, text="rate limited", headers={"Retry-After": "0"})
@@ -157,8 +157,8 @@ async def test_xero_client_429_retry(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_client.request = AsyncMock(side_effect=[rate_limited, ok_response])
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
-    monkeypatch.setattr("app.services.integration.xero_client.httpx.AsyncClient", lambda **_: mock_client)
-    monkeypatch.setattr("app.services.integration.xero_client.asyncio.sleep", AsyncMock())
+    monkeypatch.setattr("app.services.integration.xero.xero_client.httpx.AsyncClient", lambda **_: mock_client)
+    monkeypatch.setattr("app.services.integration.xero.xero_client.asyncio.sleep", AsyncMock())
 
     client = XeroClient(db=db, tenant_id=TESTING_TENANT_UUID, xero_tenant_id="org-1")
     payload = await client.get_json("Organisation")

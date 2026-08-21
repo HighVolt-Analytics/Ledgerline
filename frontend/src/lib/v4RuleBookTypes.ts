@@ -180,6 +180,11 @@ export type VendorMaster = {
   confirmedAt?: string | null;
 };
 
+export const DEFAULT_VENDOR_DETECTION_CONFIG: VendorDetectionConfig = {
+  weights: { name: 30, abn: 40, bank: 20, address: 10 },
+  threshold: 70,
+};
+
 export type VendorDetectionConfig = {
   weights: { name: number; abn: number; bank: number; address: number };
   threshold: number;

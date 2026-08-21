@@ -91,6 +91,14 @@ def invoice_list_load_options() -> tuple:
     )
 
 
+def dashboard_period_load_options() -> tuple:
+    """Dashboard period scans: skip OCR/JSON blobs and stored-file paths."""
+    return (
+        *invoice_list_load_options(),
+        defer(Invoice.raw_file_path),
+    )
+
+
 def _attr_if_loaded(inv: Invoice, name: str):
     """Return a column value only when already in the instance dict.
 
@@ -372,7 +380,11 @@ def invoice_to_response(
             if for_list
             else normalise_processing_overrides(getattr(inv, "processing_overrides", None))
         ),
-        approval_chain=None if for_list else (getattr(inv, "approval_chain", None) or None),
+        approval_chain=(
+            _attr_if_loaded(inv, "approval_chain")
+            if for_list
+            else (getattr(inv, "approval_chain", None) or None)
+        ),
         document_type_extraction_fields=document_type_extraction_fields,
     )
 
@@ -420,10 +432,20 @@ async def _responses_for_invoices_once(
 
         config = await load_posting_config_for_tenant(db, tenant_id)
         document_types = list(config.document_types)
+        from app.services.integration.publish_service import published_invoice_ids
+
+        processed_ids = [
+            row.id for row in rows if row.status == InvoiceStatus.PROCESSED
+        ]
+        published = (
+            await published_invoice_ids(db, processed_ids, tenant_id=tenant_id)
+            if processed_ids
+            else set()
+        )
         return [
             invoice_to_response(
                 row,
-                published_to_ledger=False,
+                published_to_ledger=row.id in published,
                 audit_logs=[],
                 document_types=document_types,
                 for_list=True,
@@ -487,11 +509,12 @@ async def responses_for_approval_board(
     from app.services.integration.publish_service import published_invoice_ids
     from app.services.invoice.invoice_evaluation_service import load_posting_config_for_tenant
 
-    invoice_ids = [row.id for row in rows]
-
     async def _run() -> list[InvoiceResponse]:
         attached = [await _ensure_invoice_attached(db, row) for row in rows]
         assert_invoice_tenant_scope(attached, tenant_id)
+        invoice_ids = [
+            row.id for row in attached if row.status == InvoiceStatus.PROCESSED
+        ]
         published = await published_invoice_ids(db, invoice_ids, tenant_id=tenant_id)
         config = await load_posting_config_for_tenant(db, tenant_id)
         document_types = list(config.document_types)

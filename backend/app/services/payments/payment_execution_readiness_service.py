@@ -34,9 +34,9 @@ from app.services.master_data.vendor_payout_method_service import (
     PAYOUT_METHOD_TYPES,
     resolve_vendor_registry_id_for_invoice,
 )
+from app.services.shared.iso4217_catalog import is_iso4217_currency
 from app.tenant_settings import tenant_payment_execution_disabled
 
-_SUPPORTED_CURRENCIES = frozenset({"AUD", "USD"})
 _EXECUTION_SUPPORTED_METHOD_TYPES = frozenset(
     {"manual_bank", "stripe_connected_account"},
 )
@@ -224,9 +224,12 @@ async def _build_readiness_checks(
     else:
         checks.amount_ready = True
 
-    currency = (payment.currency or "USD").upper()
-    if currency not in _SUPPORTED_CURRENCIES:
-        checks.blocking_reasons.append(f"Payment currency {currency} is not supported")
+    currency = (payment.currency or "").strip().upper()
+    if not currency:
+        checks.blocking_reasons.append("Payment currency is missing")
+        checks.amount_ready = False
+    elif not is_iso4217_currency(currency):
+        checks.blocking_reasons.append(f"Payment currency {currency} is not a valid ISO 4217 code")
         checks.amount_ready = False
     elif checks.amount_ready and not payment.due_date:
         checks.warnings.append("Payment due date is missing; confirm scheduling before execution")

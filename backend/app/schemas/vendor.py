@@ -83,7 +83,7 @@ class VendorPayoutMethodResponse(BaseModel):
     display_label: str | None = None
     stripe_account_id: str | None = None
     last4: str | None = None
-    currency: str = "SGD"
+    currency: str = ""
     status: str
     is_default: bool
     provider: str | None = None
@@ -100,7 +100,7 @@ class VendorPayoutMethodCreate(BaseModel):
     display_label: str | None = Field(None, max_length=255)
     stripe_account_id: str | None = Field(None, max_length=255)
     last4: str | None = Field(None, max_length=4)
-    currency: str = Field(default="SGD", min_length=3, max_length=3)
+    currency: str = Field(default="", max_length=3)
     country: str | None = Field(None, min_length=2, max_length=2)
     status: PayoutMethodStatus = "pending"
     is_default: bool = True

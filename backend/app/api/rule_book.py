@@ -6,7 +6,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +20,7 @@ from app.schemas.rule_book_config import (
     RuleBookDocumentTypeInvariantError,
     RuleBookPostToValidationError,
     RuleBookRulesPayload,
+    VendorDetectionConfig,
     validate_rule_book_config_for_save,
     validate_rule_book_config_payload,
 )
@@ -78,26 +79,34 @@ def _validation_http_error(exc: Exception) -> HTTPException:
     return HTTPException(400, str(exc))
 
 
-async def _load_rule_book_response_dict(
+async def _load_rule_book_raw_dict(
     db: AsyncSession,
     tenant_id: uuid.UUID,
+    *,
+    validate: bool = False,
 ) -> dict[str, Any]:
     buffered = get_buffered_rule_book_raw(tenant_id)
     if buffered is not None:
-        data = buffered
-    else:
-        try:
-            data = await load_rule_book_config_dict(db, tenant_id)
-        except FileNotFoundError as exc:
-            raise HTTPException(404, str(exc)) from exc
-        except json.JSONDecodeError as exc:
-            raise HTTPException(400, f"Invalid rule book config JSON: {exc}") from exc
-
+        return buffered
+    try:
+        data = await load_rule_book_config_dict(db, tenant_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except json.JSONDecodeError as exc:
+        raise HTTPException(400, f"Invalid rule book config JSON: {exc}") from exc
+    if validate:
         try:
             data = validate_rule_book_config_payload(data).model_dump()
         except (ValidationError, ValueError):
             pass
+    return data
 
+
+async def _load_rule_book_response_dict(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> dict[str, Any]:
+    data = await _load_rule_book_raw_dict(db, tenant_id, validate=True)
     return await attach_email_capture_ingest_stats(
         db,
         tenant_id,
@@ -105,32 +114,134 @@ async def _load_rule_book_response_dict(
     )
 
 
+async def _load_rule_book_editor_dict(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> dict[str, Any]:
+    """Rule Book workspace payload — skip vendor/employee master hydration.
+
+    Ingest match stats are a separate ``fields=ingest_stats`` request so first
+    paint is not blocked on the audit_logs GROUP BY.
+    """
+    data = await _load_rule_book_raw_dict(db, tenant_id, validate=True)
+    data["vendor_masters"] = []
+    data["employee_masters"] = []
+    return data
+
+
+async def _load_rule_book_ingest_stats_only(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> dict[str, Any]:
+    from app.services.rule_book.rule_book_ingest_stats import load_email_capture_ingest_stats
+
+    stats = await load_email_capture_ingest_stats(db, tenant_id)
+    return {
+        "email_capture_ingest_stats": {
+            rule_id: {
+                "matched_count": row.matched_count,
+                "last_matched": row.last_matched,
+            }
+            for rule_id, row in stats.items()
+        }
+    }
+
+
 async def _load_rule_book_document_types_only(
     db: AsyncSession,
     tenant_id: uuid.UUID,
 ) -> dict[str, Any]:
-    buffered = get_buffered_rule_book_raw(tenant_id)
-    if buffered is not None:
-        data = buffered
-    else:
-        try:
-            data = await load_rule_book_config_dict(db, tenant_id)
-        except FileNotFoundError as exc:
-            raise HTTPException(404, str(exc)) from exc
-        except json.JSONDecodeError as exc:
-            raise HTTPException(400, f"Invalid rule book config JSON: {exc}") from exc
+    data = await _load_rule_book_raw_dict(db, tenant_id)
     return {"document_types": data.get("document_types") or []}
+
+
+async def _load_rule_book_vendor_detection_only(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> dict[str, Any]:
+    data = await _load_rule_book_raw_dict(db, tenant_id)
+    raw = data.get("vendor_detection_config") or {}
+    try:
+        config = VendorDetectionConfig.model_validate(raw)
+    except ValidationError:
+        config = VendorDetectionConfig()
+    return {"vendor_detection_config": config.model_dump()}
+
+
+async def _load_rule_book_team_expense_posting_only(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> dict[str, Any]:
+    data = await _load_rule_book_raw_dict(db, tenant_id)
+    posting = data.get("team_expense_posting")
+    return {"team_expense_posting": posting if isinstance(posting, dict) else {}}
+
+
+async def _load_rule_book_sales_rules_only(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> dict[str, Any]:
+    data = await _load_rule_book_raw_dict(db, tenant_id)
+    return {"sales_rules": data.get("sales_rules") or []}
+
+
+async def _load_rule_book_purchase_rules_only(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> dict[str, Any]:
+    data = await _load_rule_book_raw_dict(db, tenant_id)
+    return {"purchase_rules": data.get("purchase_rules") or []}
+
+
+async def _load_rule_book_expense_rules_only(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> dict[str, Any]:
+    data = await _load_rule_book_raw_dict(db, tenant_id)
+    return {"expense_rules": data.get("expense_rules") or []}
+
+
+async def _load_rule_book_team_expenses_only(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> dict[str, Any]:
+    data = await _load_rule_book_raw_dict(db, tenant_id)
+    posting = data.get("team_expense_posting")
+    return {
+        "team_expense_rules": data.get("team_expense_rules") or [],
+        "team_expense_posting": posting if isinstance(posting, dict) else {},
+    }
 
 
 @router.get("/config", response_model=ApiEnvelope[dict[str, Any]])
 async def get_rule_book_config(
-    fields: str | None = Query(None, description="Optional slice, e.g. document_types"),
+    fields: str | None = Query(
+        None,
+        description="Optional slice: document_types, vendor_detection, team_expense_posting, team_expenses, expense_rules, purchase_rules, sales_rules, editor, ingest_stats",
+    ),
     ctx: AuthContext = Depends(get_auth_context),
     db: AsyncSession = Depends(get_db),
 ) -> ApiEnvelope[dict[str, Any]]:
     """Return the rule book config for the current organisation."""
-    if fields and fields.strip() == "document_types":
+    token = (fields or "").strip()
+    if token == "document_types":
         return ApiEnvelope(data=await _load_rule_book_document_types_only(db, ctx.tenant_id))
+    if token == "vendor_detection":
+        return ApiEnvelope(data=await _load_rule_book_vendor_detection_only(db, ctx.tenant_id))
+    if token == "team_expense_posting":
+        return ApiEnvelope(data=await _load_rule_book_team_expense_posting_only(db, ctx.tenant_id))
+    if token == "team_expenses":
+        return ApiEnvelope(data=await _load_rule_book_team_expenses_only(db, ctx.tenant_id))
+    if token == "expense_rules":
+        return ApiEnvelope(data=await _load_rule_book_expense_rules_only(db, ctx.tenant_id))
+    if token == "purchase_rules":
+        return ApiEnvelope(data=await _load_rule_book_purchase_rules_only(db, ctx.tenant_id))
+    if token == "sales_rules":
+        return ApiEnvelope(data=await _load_rule_book_sales_rules_only(db, ctx.tenant_id))
+    if token == "editor":
+        return ApiEnvelope(data=await _load_rule_book_editor_dict(db, ctx.tenant_id))
+    if token == "ingest_stats":
+        return ApiEnvelope(data=await _load_rule_book_ingest_stats_only(db, ctx.tenant_id))
     return ApiEnvelope(data=await _load_rule_book_response_dict(db, ctx.tenant_id))
 
 
@@ -141,6 +252,10 @@ async def get_recognition_signal_catalog(
     """Return the platform recognition signal registry for Rule Book UI."""
     _ = ctx
     return ApiEnvelope(data=RecognitionSignalCatalogResponse.model_validate(catalog_payload()))
+
+
+class VendorDetectionConfigUpdate(BaseModel):
+    vendor_detection_config: VendorDetectionConfig
 
 
 @router.put("/config", response_model=ApiEnvelope[dict[str, Any]])
@@ -191,8 +306,52 @@ async def put_rule_book_config(
         client_ip=client_ip,
     )
 
-    data = await _load_rule_book_response_dict(db, ctx.tenant_id)
+    data = await _load_rule_book_editor_dict(db, ctx.tenant_id)
     return ApiEnvelope(data=data)
+
+
+@router.put("/config/vendor-detection", response_model=ApiEnvelope[dict[str, Any]])
+async def put_rule_book_vendor_detection(
+    body: VendorDetectionConfigUpdate,
+    request: Request,
+    ctx: AuthContext = Depends(get_auth_context),
+    db: AsyncSession = Depends(get_db),
+) -> ApiEnvelope[dict[str, Any]]:
+    """Update vendor detection weights/threshold without rewriting the full rule book."""
+    require_privilege(ctx, "Edit Policy")
+    stored = await load_rule_book_config_dict(db, ctx.tenant_id)
+    current = VendorDetectionConfig.model_validate(stored.get("vendor_detection_config") or {})
+    updated = current.model_copy(
+        update={
+            "weights": body.vendor_detection_config.weights,
+            "threshold": body.vendor_detection_config.threshold,
+        }
+    )
+    stored["vendor_detection_config"] = updated.model_dump()
+    try:
+        payload = validate_rule_book_config_payload(stored)
+    except (ValidationError, ValueError) as exc:
+        raise _validation_http_error(exc) from exc
+
+    after_raw = payload.model_dump()
+    actor_name, actor_email = await actor_from_context(db, ctx)
+    client_ip = request.client.host if request.client else None
+    await schedule_rule_book_save(
+        tenant_id=ctx.tenant_id,
+        payload=payload,
+        after_raw=after_raw,
+        actor_name=actor_name,
+        actor_email=actor_email,
+        client_ip=client_ip,
+        db=db,
+        remap_invoices=False,
+    )
+    await flush_rule_book_save_buffer(
+        tenant_id=ctx.tenant_id,
+        db=db,
+        remap_invoices=False,
+    )
+    return ApiEnvelope(data={"vendor_detection_config": updated.model_dump()})
 
 
 @router.delete("/document-types/{code}", response_model=ApiEnvelope[dict[str, Any]])
@@ -268,7 +427,9 @@ async def delete_document_type(
         client_ip=client_ip,
     )
 
-    data = await attach_masters_to_config_dict(db, ctx.tenant_id, after_raw)
+    data = await attach_email_capture_ingest_stats(db, ctx.tenant_id, after_raw)
+    data["vendor_masters"] = []
+    data["employee_masters"] = []
     return ApiEnvelope(data=data)
 
 

@@ -21,12 +21,12 @@ from app.services.integration.accounting_mapping_service import (
     mapping_to_dict,
     upsert_mapping,
 )
-from app.services.integration.xero_contact_resolution_service import (
+from app.services.integration.xero.xero_contact_resolution_service import (
     create_xero_supplier_contact,
     resolve_supplier_contact,
     save_supplier_contact_mapping,
 )
-from app.services.integration.xero_export_service import (
+from app.services.integration.xero.xero_export_service import (
     XeroExportError,
     export_supplier_invoice_to_xero,
     get_export_ledger,
@@ -36,12 +36,12 @@ from app.services.integration.xero_export_service import (
     retry_attachment,
     validate_invoice_for_xero_export,
 )
-from app.services.integration.xero_master_data_service import (
+from app.services.integration.xero.xero_master_data_service import (
     list_xero_accounts,
     list_xero_contacts,
     list_xero_tax_rates,
 )
-from app.services.integration.xero_reconcile_service import (
+from app.services.integration.xero.xero_reconcile_service import (
     run_export_reconciliation,
 )
 

@@ -45,6 +45,7 @@ class SalesOrderResponse(BaseModel):
     ledger: str | None = None
     sub_ledger: str | None = None
     sales_rule_id: str | None = None
+    currency: str = ""
 
 
 class DeliveryNoteCreate(BaseModel):
@@ -91,3 +92,8 @@ class TwoWaySalesMatchResponse(BaseModel):
     route_target: str | None = None
     evaluation_status: str | None = None
     document_type_code: str | None = None
+
+
+class SalesWorkspaceKpis(BaseModel):
+    awaiting_so_count: int = 0
+    needs_action_count: int = 0

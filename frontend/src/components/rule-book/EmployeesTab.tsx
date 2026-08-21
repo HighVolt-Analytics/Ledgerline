@@ -25,13 +25,17 @@ import {
   useSendEmployeeMasterConfirmation,
   useUpdateEmployeeMaster,
 } from "@/hooks/useMasterData";
-import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
-import { useRoutedInvoices } from "@/hooks/useRoutedInvoices";
+import { useRuleBookTeamExpensePosting } from "@/hooks/useRuleBookConfig";
+import { useTenantQuery } from "@/hooks/useTenantQuery";
 import { ledgerExistsInCoa } from "@/lib/coaAccountOptions";
 import { useChartOfAccounts } from "@/hooks/useChartOfAccounts";
+import { useInstitutionSettings } from "@/hooks/useInstitutionSettings";
 import { cn } from "@/lib/cn";
+import { queryKeys } from "@/lib/queryClient";
+import { fetchRoutedInvoices } from "@/lib/routedInvoices";
 import { recentClaimValidationsFromInvoices } from "@/lib/routePageAdapters";
 import { fmtAud } from "@/lib/v4MockData";
+import { normalizeCurrencyCode } from "@/lib/format";
 import type { EmployeeMaster } from "@/lib/v4RuleBookTypes";
 import { ChannelBadge } from "@/components/team-expenses/ExpenseBadges";
 import { EmployeeDetailPanel } from "./EmployeeDetailPanel";
@@ -60,9 +64,15 @@ export function EmployeesTab() {
   const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set());
 
   const { data: employees = [], isLoading } = useEmployeeMasters();
-  const { data: ruleBook } = useRuleBookConfig();
-  const { data: coaAccounts = [] } = useChartOfAccounts();
-  const { data: teamClaims = [], isLoading: claimsLoading } = useRoutedInvoices("Team Expenses");
+  const { data: posting } = useRuleBookTeamExpensePosting(!isLoading);
+  const { data: institution } = useInstitutionSettings();
+  const booksCurrency = normalizeCurrencyCode(institution?.currency) ?? "";
+  const { data: coaAccounts = [] } = useChartOfAccounts(!isLoading);
+  const { data: teamClaims = [], isLoading: claimsLoading } = useTenantQuery({
+    queryKey: [...queryKeys.routedInvoices("Team Expenses"), "recent", 10],
+    queryFn: () => fetchRoutedInvoices("Team Expenses", {}, { pageSize: 10, maxPages: 1 }),
+    enabled: !isLoading,
+  });
   const recentClaimValidations = useMemo(
     () => recentClaimValidationsFromInvoices(teamClaims, employees, 10),
     [teamClaims, employees]
@@ -91,10 +101,10 @@ export function EmployeesTab() {
   };
 
   const defaultAdvanceParent = useMemo(() => {
-    const label = ruleBook?.teamExpensePosting?.defaultAdvanceParentLedger?.trim() ?? "";
+    const label = posting?.defaultAdvanceParentLedger?.trim() ?? "";
     if (label && ledgerExistsInCoa(label, coaAccounts)) return label;
     return "";
-  }, [coaAccounts, ruleBook?.teamExpensePosting?.defaultAdvanceParentLedger]);
+  }, [coaAccounts, posting?.defaultAdvanceParentLedger]);
 
   const employeeById = (id: string) => employees.find((e) => e.id === id);
 
@@ -319,10 +329,10 @@ export function EmployeesTab() {
                         <StatusDot status={dirty ? draft.status : emp.status} />
                       </td>
                       <td className="px-3 py-2 text-xs tnum whitespace-nowrap">
-                        {fmtAud(emp.mtdSpent)}
+                        {fmtAud(emp.mtdSpent, booksCurrency)}
                       </td>
                       <td className="px-3 py-2 text-xs tnum whitespace-nowrap">
-                        {fmtAud(emp.advanceBalance ?? 0)}
+                        {fmtAud(emp.advanceBalance ?? 0, booksCurrency)}
                       </td>
                       <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
                         {emp.lastClaim}
@@ -440,7 +450,7 @@ export function EmployeesTab() {
                 recentClaimValidations.map((claim) => (
                   <tr key={claim.id} className="row-band border-b border-border/60">
                     <td className="px-3 py-2 font-medium">{claim.employee}</td>
-                    <td className="px-3 py-2 text-right tnum">{fmtAud(claim.amount)}</td>
+                    <td className="px-3 py-2 text-right tnum">{fmtAud(claim.amount, claim.currency)}</td>
                     <td className="px-3 py-2">
                       <span className="inline-flex items-center gap-1">
                         <MessageCircle className="h-3.5 w-3.5 text-muted-foreground" />

@@ -50,6 +50,8 @@ import type {
   PaymentExecutionReadinessResponse,
   PaymentMarkPaidManualPayload,
   PurchaseOrderApi,
+  PurchaseWorkspaceKpis,
+  SalesWorkspaceKpis,
   PurchaseDossier,
   SalesOrderApi,
   SalesDossierResponse,
@@ -1407,7 +1409,7 @@ export const api = {
   listApprovalsBoard: (options?: FreshRequestOptions) => {
     const path = "/api/approvals/board";
     if (options?.fresh) bustGetCache(path);
-    return request<Invoice[]>(path);
+    return requestWithMeta<Invoice[]>(path);
   },
   confirmProcess: (id: number) => {
     bustGetCacheByPrefix("/api/approvals");
@@ -1743,6 +1745,15 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+  putRuleBookVendorDetection: (config: RuleBookConfig["vendor_detection_config"]) =>
+    request<Pick<RuleBookConfig, "vendor_detection_config">>(
+      "/api/rule-book/config/vendor-detection",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ vendor_detection_config: config }),
+      }
+    ),
   deleteRuleBookDocumentType: (code: string) =>
     request<RuleBookConfig>(
       `/api/rule-book/document-types/${encodeURIComponent(code.trim())}`,
@@ -1896,6 +1907,14 @@ export const api = {
     request<DepartmentBudgetUtilizationRow[]>(
       "/api/reports/team-expenses/department-budget-utilization"
     ),
+  getTeamExpenseWorkspaceKpis: () =>
+    request<import("@/api/types").TeamExpenseWorkspaceKpis>(
+      "/api/reports/team-expenses/workspace-kpis"
+    ),
+  getExpensesWorkspaceKpis: () =>
+    request<import("@/api/types").TeamExpenseWorkspaceKpis>(
+      "/api/reports/expenses/workspace-kpis"
+    ),
   getTeamExpenseExpenseSummary: (filter?: ReportDateFilter) =>
     request<EmployeeExpenseSummaryRow[]>(
       `/api/reports/team-expenses/expense-summary${reportDateQuery(filter)}`
@@ -2006,6 +2025,11 @@ export const api = {
     if (options?.fresh) bustGetCache(path);
     return request<PurchaseOrderApi[]>(path);
   },
+  getPurchaseWorkspaceKpis: (options?: FreshRequestOptions) => {
+    const path = "/api/purchases/kpis";
+    if (options?.fresh) bustGetCache(path);
+    return request<PurchaseWorkspaceKpis>(path);
+  },
   approvePurchaseVariance: (purchaseOrderId: number) =>
     request<PurchaseOrderApi>(`/api/purchases/${purchaseOrderId}/approve-variance`, {
       method: "POST",
@@ -2023,6 +2047,11 @@ export const api = {
     const path = "/api/sales";
     if (options?.fresh) bustGetCache(path);
     return request<SalesOrderApi[]>(path);
+  },
+  getSalesWorkspaceKpis: (options?: FreshRequestOptions) => {
+    const path = "/api/sales/kpis";
+    if (options?.fresh) bustGetCache(path);
+    return request<SalesWorkspaceKpis>(path);
   },
   listSalesTwoWay: (options?: FreshRequestOptions) => {
     const path = "/api/sales/two-way";

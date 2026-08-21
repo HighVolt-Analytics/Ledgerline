@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.services.integration.xero_client import XeroApiError, XeroClient
+from app.services.integration.xero.xero_client import XeroApiError, XeroClient
 from app.services.shared.file_storage import open_pdf_for_reading
 from app.utils.logger import get_logger
 

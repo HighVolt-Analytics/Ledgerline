@@ -183,7 +183,6 @@ async def list_pending_customers(
     tenant_id: uuid.UUID | int | str,
 ) -> list[PendingCustomerResponse]:
     tid = _tenant_id(tenant_id)
-    await _dismiss_pending_customers_matching_masters(db, tid)
     rows = (
         await db.execute(
             select(PendingCustomer)
@@ -194,24 +193,60 @@ async def list_pending_customers(
             .order_by(PendingCustomer.created_at.desc())
         )
     ).scalars().all()
-    return [PendingCustomerResponse.model_validate(row) for row in rows]
+    if not rows:
+        return []
+    await _dismiss_pending_customers_matching_masters(db, tid, pending=rows)
+    remaining = [row for row in rows if row.status == "pending"]
+    return [PendingCustomerResponse.model_validate(row) for row in remaining]
+
+
+async def _customer_masters_for_match(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> list[CustomerMaster]:
+    from app.schemas.customer import CustomerMaster
+
+    rows = (
+        await db.execute(
+            select(
+                CustomerMasterRecord.master_id,
+                CustomerMasterRecord.name,
+                CustomerMasterRecord.aliases,
+                CustomerMasterRecord.abn,
+            ).where(CustomerMasterRecord.tenant_id == tenant_id)
+        )
+    ).all()
+    return [
+        CustomerMaster(
+            id=str(row.master_id),
+            name=row.name,
+            aliases=list(row.aliases or []),
+            abn=row.abn or "",
+        )
+        for row in rows
+    ]
 
 
 async def _dismiss_pending_customers_matching_masters(
     db: AsyncSession,
     tenant_id: uuid.UUID,
+    *,
+    pending: list[PendingCustomer] | None = None,
 ) -> None:
     from app.services.master_data.vendor_detection import find_matching_customer_master
 
-    masters = await list_customer_masters(db, tenant_id)
-    pending = (
-        await db.execute(
-            select(PendingCustomer).where(
-                PendingCustomer.tenant_id == tenant_id,
-                PendingCustomer.status == "pending",
+    if pending is None:
+        pending = (
+            await db.execute(
+                select(PendingCustomer).where(
+                    PendingCustomer.tenant_id == tenant_id,
+                    PendingCustomer.status == "pending",
+                )
             )
-        )
-    ).scalars().all()
+        ).scalars().all()
+    if not pending:
+        return
+    masters = await _customer_masters_for_match(db, tenant_id)
     changed = False
     for row in pending:
         if find_matching_customer_master(row.detected_name, row.detected_abn, masters):

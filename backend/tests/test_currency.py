@@ -7,6 +7,7 @@ from app.services.shared.currency import (
     convert_to_base,
     detect_currency_code_in_text,
     detect_currency_symbol_in_text,
+    prefer_currency,
     resolve_currency_from_ocr,
     sum_amounts_by_currency,
 )
@@ -30,7 +31,15 @@ def test_sum_amounts_by_currency_mixed() -> None:
     assert total == Decimal("255.00")
 
 
-def test_convert_to_base_blank_currency_not_base() -> None:
+def test_prefer_currency_never_invents_iso() -> None:
+    assert prefer_currency(None, "", "  ") == ""
+    assert prefer_currency("", "inr", "USD") == "INR"
+    assert prefer_currency(None, " aud ") == "AUD"
+
+
+def test_convert_to_base_unknown_iso_not_one_to_one() -> None:
+    assert convert_to_base(Decimal("100"), "MYR", base="SGD") == Decimal("0")
+    assert convert_to_base(Decimal("100"), "INR", base="INR") == Decimal("100")
     assert convert_to_base(Decimal("100"), None, base="SGD") == Decimal("0")
     assert convert_to_base(Decimal("100"), "", base="SGD") == Decimal("0")
 

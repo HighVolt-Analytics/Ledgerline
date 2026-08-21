@@ -29,6 +29,10 @@ class MatrixRowResponse(BaseModel):
     paid_date: str | None = None
     conflict_with: str | None = None
     conflict_detail: list[MatrixConflictRow] | None = None
+    line_item_count: int = 0
+    advance_auth: str = "—"
+    budget_auth: str = "—"
+    acc_sync: str = "—"
 
 
 class PipelineStepsResponse(BaseModel):

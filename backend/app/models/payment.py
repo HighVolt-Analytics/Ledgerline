@@ -37,7 +37,7 @@ class Payment(Base):
     )
     vendor: Mapped[str | None] = mapped_column(String(255))
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
-    currency: Mapped[str] = mapped_column(String(3), default="AUD")
+    currency: Mapped[str] = mapped_column(String(3), default="")
     payment_fx_rate: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
     bank_payment_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     fx_variance: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)

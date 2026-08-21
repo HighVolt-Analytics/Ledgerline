@@ -7,7 +7,7 @@ import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, actor_from_context, bind_db_to_tenant, get_auth_context, get_db, require_admin
@@ -503,7 +503,26 @@ async def list_mailboxes(
             .order_by(ConnectedMailbox.email)
         )
     ).scalars().all()
-    return ApiEnvelope(data=[_to_response(r) for r in rows])
+    counts = dict(
+        (
+            await db.execute(
+                select(Invoice.connected_mailbox_id, func.count(Invoice.id))
+                .where(
+                    Invoice.tenant_id == ctx.tenant_id,
+                    Invoice.connected_mailbox_id.isnot(None),
+                )
+                .group_by(Invoice.connected_mailbox_id)
+            )
+        ).all()
+    )
+    return ApiEnvelope(
+        data=[
+            _to_response(row).model_copy(
+                update={"document_count": int(counts.get(row.id, 0) or 0)}
+            )
+            for row in rows
+        ]
+    )
 
 
 @router.post("", response_model=ApiEnvelope[MailboxResponse], status_code=201)

@@ -48,7 +48,12 @@ async def overview(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[DashboardOverview]:
-    """Full dashboard payload (stats, activity, charts) in one request."""
+    """Full dashboard payload for the page (stats, vendors, forecast, panels).
+
+    Activity, anomalies, mailbox breakdown, and sparkline series are not
+    computed here — they are unused on Dashboard. Use ``GET /activity``
+    when recent events are needed.
+    """
     params = DashboardOverviewRequest(activity_limit=activity_limit, month=month)
     return ApiEnvelope(
         data=await build_overview(

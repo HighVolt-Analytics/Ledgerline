@@ -248,7 +248,6 @@ async def list_vendor_masters(
     tenant_id: uuid.UUID | int | str,
 ) -> list[VendorMasterResponse]:
     tid = _tenant_id(tenant_id)
-    await ensure_masters_imported(db, tid)
     rows = (
         await db.execute(
             select(VendorMasterRecord)
@@ -256,6 +255,15 @@ async def list_vendor_masters(
             .order_by(VendorMasterRecord.name)
         )
     ).scalars().all()
+    if not rows:
+        await ensure_masters_imported(db, tid)
+        rows = (
+            await db.execute(
+                select(VendorMasterRecord)
+                .where(VendorMasterRecord.tenant_id == tid)
+                .order_by(VendorMasterRecord.name)
+            )
+        ).scalars().all()
     return [vendor_record_to_schema(row) for row in rows]
 
 
@@ -287,17 +295,13 @@ async def _attach_employee_advance_balances(
     """Stamp read-only advance_balance from Staff Advance journals onto response rows."""
     if not employees:
         return
-    from app.schemas.rule_book_config import validate_rule_book_config_payload
+    from app.services.invoice.invoice_evaluation_service import load_posting_config_for_tenant
     from app.services.purchase.team_expense_advance_service import (
         employee_advance_balances_by_ids,
     )
-    from app.services.rule_book.rule_book_config_io import load_rule_book_config_dict
 
     tid = _tenant_id(tenant_id)
-    # Load raw rule-book config only — never load_config_for_tenant (that re-enters
-    # list_employee_masters via attach_masters and recurses).
-    raw = await load_rule_book_config_dict(db, tid)
-    config = validate_rule_book_config_payload(raw)
+    config = await load_posting_config_for_tenant(db, tid)
     balances = await employee_advance_balances_by_ids(db, tid, config, employees)
     for employee in employees:
         employee.advance_balance = float(balances.get(employee.id, Decimal("0")))
@@ -309,7 +313,6 @@ async def list_employee_masters(
     *,
     include_advance_balances: bool = True,
 ) -> list[EmployeeMasterResponse]:
-    await ensure_masters_imported(db, tenant_id)
     rows = (
         await db.execute(
             select(EmployeeMasterRecord)
@@ -317,6 +320,15 @@ async def list_employee_masters(
             .order_by(EmployeeMasterRecord.name)
         )
     ).scalars().all()
+    if not rows:
+        await ensure_masters_imported(db, tenant_id)
+        rows = (
+            await db.execute(
+                select(EmployeeMasterRecord)
+                .where(EmployeeMasterRecord.tenant_id == tenant_id)
+                .order_by(EmployeeMasterRecord.name)
+            )
+        ).scalars().all()
     employees = [employee_record_to_schema(row) for row in rows]
     if include_advance_balances:
         await _attach_employee_advance_balances(db, tenant_id, employees)
@@ -579,7 +591,6 @@ async def list_pending_vendors(
     tenant_id: uuid.UUID | int | str,
 ) -> list[PendingVendorResponse]:
     tid = _tenant_id(tenant_id)
-    await _dismiss_pending_matching_masters(db, tid)
     rows = (
         await db.execute(
             select(PendingVendor)
@@ -590,26 +601,60 @@ async def list_pending_vendors(
             .order_by(PendingVendor.created_at.desc())
         )
     ).scalars().all()
-    return [PendingVendorResponse.model_validate(row) for row in rows]
+    if not rows:
+        return []
+    await _dismiss_pending_matching_masters(db, tid, pending=rows)
+    remaining = [row for row in rows if row.status == "pending"]
+    return [PendingVendorResponse.model_validate(row) for row in remaining]
+
+
+async def _vendor_masters_for_match(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> list[VendorMaster]:
+    rows = (
+        await db.execute(
+            select(
+                VendorMasterRecord.master_id,
+                VendorMasterRecord.name,
+                VendorMasterRecord.aliases,
+                VendorMasterRecord.abn,
+            ).where(VendorMasterRecord.tenant_id == tenant_id)
+        )
+    ).all()
+    return [
+        VendorMaster(
+            id=str(row.master_id),
+            name=row.name,
+            aliases=list(row.aliases or []),
+            abn=row.abn or "",
+        )
+        for row in rows
+    ]
 
 
 async def _dismiss_pending_matching_masters(
     db: AsyncSession,
     tenant_id: uuid.UUID | int | str,
+    *,
+    pending: list[PendingVendor] | None = None,
 ) -> None:
     """Remove queue rows when the vendor is already registered in masters."""
     from app.services.master_data.vendor_detection import find_matching_vendor_master
 
     tid = _tenant_id(tenant_id)
-    masters = await list_vendor_masters(db, tid)
-    pending = (
-        await db.execute(
-            select(PendingVendor).where(
-                PendingVendor.tenant_id == tid,
-                PendingVendor.status == "pending",
+    if pending is None:
+        pending = (
+            await db.execute(
+                select(PendingVendor).where(
+                    PendingVendor.tenant_id == tid,
+                    PendingVendor.status == "pending",
+                )
             )
-        )
-    ).scalars().all()
+        ).scalars().all()
+    if not pending:
+        return
+    masters = await _vendor_masters_for_match(db, tid)
     changed = False
     for row in pending:
         if find_matching_vendor_master(row.detected_name, row.detected_abn, masters):

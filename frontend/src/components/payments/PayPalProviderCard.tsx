@@ -314,10 +314,10 @@ export function PayPalProviderCard() {
                   <div key={`${row.currency ?? "cur"}-${index}`}>
                     {row.currency ?? "—"}: available{" "}
                     {row.available != null
-                      ? money(Number(row.available), row.currency ?? "AUD")
+                      ? money(Number(row.available), row.currency)
                       : "—"}
                     {row.total != null
-                      ? ` · total ${money(Number(row.total), row.currency ?? "AUD")}`
+                      ? ` · total ${money(Number(row.total), row.currency)}`
                       : ""}
                   </div>
                 ))}
@@ -388,7 +388,7 @@ export function PayPalProviderCard() {
                           </td>
                           <td className="px-3 py-2 text-xs text-right tnum whitespace-nowrap">
                             {txn.gross_amount != null
-                              ? money(Number(txn.gross_amount), txn.currency ?? "AUD")
+                              ? money(Number(txn.gross_amount), txn.currency)
                               : "—"}
                           </td>
                           <td className="px-3 py-2 text-xs text-muted-foreground">

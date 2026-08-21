@@ -44,6 +44,11 @@ export default defineConfig({
         // proxy responses show up as net::ERR_EMPTY_RESPONSE in the browser.
         timeout: 180_000,
         proxyTimeout: 180_000,
+        configure(proxy) {
+          proxy.on("proxyReq", (proxyReq) => {
+            proxyReq.removeHeader("accept-encoding");
+          });
+        },
       },
       "/health": {
         target: process.env.VITE_API_PROXY_TARGET ?? "http://127.0.0.1:8001",

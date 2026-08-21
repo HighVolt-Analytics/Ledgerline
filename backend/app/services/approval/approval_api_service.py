@@ -5,9 +5,11 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 
+from types import SimpleNamespace
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import defer, selectinload
 
 from app.api.deps import AuthContext, actor_from_context
 from app.models.invoice import Invoice, InvoiceStatus
@@ -86,7 +88,136 @@ _BOARD_PIPELINE_STATUSES = (
     InvoiceStatus.RECONCILING,
 )
 
+_BOARD_QUEUE_LIMIT = 150
+_BOARD_PIPELINE_LIMIT = 100
 _BOARD_PROCESSED_LIMIT = 100
+
+
+def _board_load_options() -> tuple:
+    # Keep quorum JSON for card labels; skip OCR blobs.
+    return (
+        defer(Invoice.document_text),
+        defer(Invoice.extracted_fields),
+        defer(Invoice.processing_overrides),
+    )
+
+
+async def _board_status_rows(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    statuses: tuple[InvoiceStatus, ...],
+    limit: int,
+) -> list[Invoice]:
+    return (
+        await db.execute(
+            select(Invoice)
+            .options(*_board_load_options())
+            .where(
+                Invoice.tenant_id == tenant_id,
+                Invoice.status.in_(statuses),
+            )
+            .order_by(Invoice.created_at.desc(), Invoice.id.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+
+
+async def _board_column_counts(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+) -> tuple[dict[str, int], int]:
+    """Uncapped kanban totals from GROUP BY — cards themselves stay limited."""
+    grouped = (
+        await db.execute(
+            select(
+                Invoice.status,
+                Invoice.evaluation_status,
+                Invoice.document_type_code,
+                func.count(Invoice.id),
+            )
+            .where(
+                Invoice.tenant_id == tenant_id,
+                Invoice.status.in_(
+                    (*_QUEUE_STATUSES, *_BOARD_PIPELINE_STATUSES, InvoiceStatus.PROCESSED)
+                ),
+            )
+            .group_by(
+                Invoice.status,
+                Invoice.evaluation_status,
+                Invoice.document_type_code,
+            )
+        )
+    ).all()
+    counts = {"review": 0, "processing": 0, "approved": 0, "rejected": 0}
+    queue_count = 0
+    queue_status_values = {status.value for status in _QUEUE_STATUSES}
+    for status, evaluation_status, document_type_code, n in grouped:
+        amount = int(n or 0)
+        status_value = status.value if hasattr(status, "value") else str(status)
+        if status_value in queue_status_values or status in _QUEUE_STATUSES:
+            queue_count += amount
+        stub = SimpleNamespace(
+            status=status,
+            evaluation_status=evaluation_status,
+            document_type_code=document_type_code,
+            extracted_fields=None,
+            document_heading=None,
+            document_text=None,
+        )
+        column = approval_board_column(stub)  # type: ignore[arg-type]
+        counts[column] = counts.get(column, 0) + amount
+    return counts, queue_count
+
+
+async def list_approvals_board(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+) -> tuple[list[InvoiceResponse], ResponseMeta]:
+    queue_rows = await _board_status_rows(
+        db,
+        tenant_id=tenant_id,
+        statuses=_QUEUE_STATUSES,
+        limit=_BOARD_QUEUE_LIMIT,
+    )
+    pipeline_rows = await _board_status_rows(
+        db,
+        tenant_id=tenant_id,
+        statuses=_BOARD_PIPELINE_STATUSES,
+        limit=_BOARD_PIPELINE_LIMIT,
+    )
+    processed_rows = await _board_status_rows(
+        db,
+        tenant_id=tenant_id,
+        statuses=(InvoiceStatus.PROCESSED,),
+        limit=_BOARD_PROCESSED_LIMIT,
+    )
+    by_id: dict[int, Invoice] = {}
+    for row in (*queue_rows, *pipeline_rows, *processed_rows):
+        by_id[row.id] = row
+    rows = sorted(
+        by_id.values(),
+        key=lambda inv: (inv.created_at, inv.id),
+        reverse=True,
+    )
+    responses = await responses_for_approval_board(db, list(rows), tenant_id=tenant_id)
+    by_id_inv = {inv.id: inv for inv in rows}
+    enriched: list[InvoiceResponse] = []
+    for resp in responses:
+        inv = by_id_inv.get(resp.id)
+        column = approval_board_column(inv) if inv is not None else None
+        enriched.append(resp.model_copy(update={"approval_board_column": column}))
+    totals, queue_count = await _board_column_counts(db, tenant_id=tenant_id)
+    meta = ResponseMeta(
+        approval_queue_count=queue_count,
+        approval_review_count=totals["review"],
+        approval_processing_count=totals["processing"],
+        approval_approved_count=totals["approved"],
+        approval_rejected_count=totals["rejected"],
+    )
+    return enriched, meta
 
 
 @dataclass(frozen=True)
@@ -108,53 +239,6 @@ class ApproveInvoiceResult:
 class ConfirmInvoiceResult:
     response: InvoiceResponse
     enqueue_pipeline: bool = True
-
-
-async def list_approvals_board(
-    db: AsyncSession,
-    *,
-    tenant_id: uuid.UUID,
-) -> list[InvoiceResponse]:
-    active_statuses = _QUEUE_STATUSES + _BOARD_PIPELINE_STATUSES
-    active_rows = (
-        await db.execute(
-            select(Invoice)
-            .options(*invoice_list_load_options())
-            .where(
-                Invoice.tenant_id == tenant_id,
-                Invoice.status.in_(active_statuses),
-            )
-            .order_by(Invoice.created_at.desc(), Invoice.id.desc())
-        )
-    ).scalars().all()
-    processed_rows = (
-        await db.execute(
-            select(Invoice)
-            .options(*invoice_list_load_options())
-            .where(
-                Invoice.tenant_id == tenant_id,
-                Invoice.status == InvoiceStatus.PROCESSED,
-            )
-            .order_by(Invoice.created_at.desc(), Invoice.id.desc())
-            .limit(_BOARD_PROCESSED_LIMIT)
-        )
-    ).scalars().all()
-    by_id: dict[int, Invoice] = {}
-    for row in (*active_rows, *processed_rows):
-        by_id[row.id] = row
-    rows = sorted(
-        by_id.values(),
-        key=lambda inv: (inv.created_at, inv.id),
-        reverse=True,
-    )
-    responses = await responses_for_approval_board(db, list(rows), tenant_id=tenant_id)
-    by_id_inv = {inv.id: inv for inv in rows}
-    enriched: list[InvoiceResponse] = []
-    for resp in responses:
-        inv = by_id_inv.get(resp.id)
-        column = approval_board_column(inv) if inv is not None else None
-        enriched.append(resp.model_copy(update={"approval_board_column": column}))
-    return enriched
 
 
 async def list_approvals_queue(

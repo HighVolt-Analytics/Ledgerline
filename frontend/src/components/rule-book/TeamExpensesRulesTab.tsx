@@ -16,9 +16,11 @@ import { Select, toSelectOptions } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/context/ToastContext";
 import { useCoaAccountOptions } from "@/hooks/useCoaAccountOptions";
+import { useInstitutionSettings } from "@/hooks/useInstitutionSettings";
 import { cn } from "@/lib/cn";
 import { defaultExpensePostingLedger, mergeCoaOptionsWithSavedValue } from "@/lib/coaAccountOptions";
 import { fmtAud } from "@/lib/v4MockData";
+import { normalizeCurrencyCode } from "@/lib/format";
 import { nextRulePriority } from "@/lib/rulePriority";
 import type { TeamExpenseRule } from "@/lib/v4RuleBookTypes";
 import { TEAM_CHANNELS } from "@/lib/v4RuleBookTypes";
@@ -62,6 +64,8 @@ export function TeamExpensesRulesTab({
   onChange: (rules: TeamExpenseRule[]) => void;
 }) {
   const { toast } = useToast();
+  const { data: institution } = useInstitutionSettings();
+  const booksCurrency = normalizeCurrencyCode(institution?.currency) ?? "";
   const {
     allAccounts,
     options: ledgerOptions,
@@ -159,7 +163,7 @@ export function TeamExpensesRulesTab({
                     <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
                     {rule.policy.autoApproveBelow > 0 ? (
                       <Badge variant="outline" className="text-[10px] font-normal">
-                        auto-approve &lt; {fmtAud(rule.policy.autoApproveBelow)}
+                        auto-approve &lt; {fmtAud(rule.policy.autoApproveBelow, booksCurrency)}
                       </Badge>
                     ) : (
                       <Badge

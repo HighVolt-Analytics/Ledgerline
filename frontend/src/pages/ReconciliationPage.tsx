@@ -64,7 +64,7 @@ export function ReconciliationPage() {
     return map;
   }, [dailyRows]);
 
-  const baseCurrency = overview?.base_currency ?? "SGD";
+  const baseCurrency = overview?.base_currency ?? "";
   const fmtBase = (v: number) => money(v, baseCurrency, locale);
   const fmtRow = (v: number, currency?: string | null) =>
     money(v, currency?.trim() ? currency : null, locale);

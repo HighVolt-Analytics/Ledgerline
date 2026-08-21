@@ -26,6 +26,7 @@ from app.schemas.team_expense_reports import (
     EmployeeBudgetUtilizationRow,
     EmployeeExpenseSummaryRow,
     EmployeeSpendDetailRow,
+    TeamExpenseWorkspaceKpis,
 )
 from app.services.reports.documents_bundle_export_service import (
     build_documents_bundle_export,
@@ -46,6 +47,7 @@ from app.services.reports.team_expense_reports_service import (
     build_employee_advance_detail_rows,
     build_employee_expense_summary_rows,
     build_employee_spend_detail_rows,
+    build_team_expense_workspace_kpis,
 )
 from app.services.reports.team_expense_reports_excel import build_team_expense_excel_export
 from app.services.reports.workbook_writer import write_workbook
@@ -203,6 +205,39 @@ async def reports_team_expense_department_budget_utilization(
     """GL account budgets vs claim spend for the current period (soft/hard enforcement)."""
     rows = await build_department_budget_utilization_rows(db, ctx.tenant_id)
     return ApiEnvelope(data=rows)
+
+
+@router.get(
+    "/team-expenses/workspace-kpis",
+    response_model=ApiEnvelope[TeamExpenseWorkspaceKpis],
+)
+async def reports_team_expense_workspace_kpis(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[TeamExpenseWorkspaceKpis]:
+    """Open / pending / posted-this-month KPIs for the Team Expenses page."""
+    return ApiEnvelope(data=await build_team_expense_workspace_kpis(db, ctx.tenant_id))
+
+
+@router.get(
+    "/expenses/workspace-kpis",
+    response_model=ApiEnvelope[TeamExpenseWorkspaceKpis],
+)
+async def reports_expenses_workspace_kpis(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[TeamExpenseWorkspaceKpis]:
+    """Open / pending / posted-this-month KPIs for Expenses Management."""
+    from app.services.invoice.invoice_evaluation_service import ROUTE_EXPENSES
+
+    return ApiEnvelope(
+        data=await build_team_expense_workspace_kpis(
+            db,
+            ctx.tenant_id,
+            route_target=ROUTE_EXPENSES,
+            include_kinds=False,
+        )
+    )
 
 
 @router.get(

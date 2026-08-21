@@ -7,7 +7,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -898,3 +898,127 @@ async def build_employee_advance_detail_rows(
             )
         )
     return rows
+
+
+async def build_team_expense_workspace_kpis(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    *,
+    as_of: date | None = None,
+    route_target: str | None = None,
+    include_kinds: bool = True,
+):
+    """Header KPIs for a routed workspace without hydrating every claim."""
+    from calendar import monthrange
+
+    from app.schemas.rule_book_config import normalize_team_expense_kind
+    from app.schemas.team_expense_reports import TeamExpenseWorkspaceKpis
+    from app.services.integration.publish_service import published_invoice_ids
+    from app.services.purchase.team_expense_spend_service import _effective_date_expr
+
+    today = as_of or date.today()
+    month_start = date(today.year, today.month, 1)
+    month_end = date(today.year, today.month, monthrange(today.year, today.month)[1])
+    target = (route_target or ROUTE_TEAM).strip() or ROUTE_TEAM
+    base = [
+        Invoice.tenant_id == tenant_id,
+        Invoice.route_target == target,
+        Invoice.status.notin_((InvoiceStatus.REJECTED, InvoiceStatus.DUPLICATE_SKIPPED)),
+    ]
+    pipeline = (
+        InvoiceStatus.PENDING,
+        InvoiceStatus.PARSING,
+        InvoiceStatus.VALIDATING,
+        InvoiceStatus.MAPPING,
+        InvoiceStatus.JOURNALING,
+        InvoiceStatus.RECONCILING,
+        InvoiceStatus.EXCEPTION,
+    )
+    review_eval = ("needs_review", "pending_vendor", "unmatched_expense_vendor")
+
+    kind_counts: dict[str, int] = {}
+    if include_kinds:
+        kind_rows = (
+            await session.execute(
+                select(
+                    func.lower(func.coalesce(Invoice.team_expense_kind, "")),
+                    func.count(Invoice.id),
+                )
+                .where(*base)
+                .group_by(func.lower(func.coalesce(Invoice.team_expense_kind, "")))
+            )
+        ).all()
+        kind_counts = {
+            "expense_claim": 0,
+            "advance_requisition": 0,
+        }
+        for raw_kind, count in kind_rows:
+            kind = normalize_team_expense_kind(raw_kind)
+            if kind == "direct_payment":
+                kind = "expense_claim"
+            kind_counts[kind] = kind_counts.get(kind, 0) + int(count or 0)
+
+    totals = (
+        await session.execute(
+            select(
+                func.count(Invoice.id),
+                func.coalesce(
+                    func.sum(
+                        case((Invoice.status != InvoiceStatus.PROCESSED, 1), else_=0)
+                    ),
+                    0,
+                ),
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (
+                                or_(
+                                    Invoice.status.in_(pipeline),
+                                    func.lower(
+                                        func.coalesce(Invoice.evaluation_status, "")
+                                    ).in_(review_eval),
+                                ),
+                                1,
+                            ),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                ),
+            ).where(*base)
+        )
+    ).one()
+    open_count = int(totals[1] or 0)
+    pending_count = int(totals[2] or 0)
+
+    effective = _effective_date_expr()
+    month_processed = (
+        await session.execute(
+            select(Invoice.id, Invoice.total, Invoice.currency).where(
+                *base,
+                Invoice.status == InvoiceStatus.PROCESSED,
+                effective >= month_start,
+                effective <= month_end,
+            )
+        )
+    ).all()
+    processed_ids = [row[0] for row in month_processed]
+    published = await published_invoice_ids(
+        session, processed_ids, tenant_id=tenant_id
+    )
+    posted_by_currency: dict[str, float] = {}
+    posted_count = 0
+    for invoice_id, total, currency in month_processed:
+        if invoice_id not in published:
+            continue
+        posted_count += 1
+        code = (currency or "").strip().upper()
+        posted_by_currency[code] = posted_by_currency.get(code, 0) + float(total or 0)
+
+    return TeamExpenseWorkspaceKpis(
+        kind_counts=kind_counts,
+        open_count=open_count,
+        pending_count=pending_count,
+        posted_count=posted_count,
+        posted_by_currency=posted_by_currency,
+    )

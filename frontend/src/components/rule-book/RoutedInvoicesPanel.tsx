@@ -29,6 +29,9 @@ type RoutedInvoicesPanelProps = {
   testId?: string;
   /** When set, show PO reference column (purchase management). */
   showPo?: boolean;
+  invoices?: Invoice[];
+  isLoading?: boolean;
+  isError?: boolean;
 };
 
 function InvoiceTable({
@@ -121,8 +124,14 @@ export function RoutedInvoicesPanel({
   hint,
   testId = "routed-invoices",
   showPo = false,
+  invoices,
+  isLoading: invoicesLoading,
+  isError: invoicesError,
 }: RoutedInvoicesPanelProps) {
-  const { data: rows = [], isLoading, isError } = useRoutedInvoices(routeTarget);
+  const fetched = useRoutedInvoices(routeTarget, invoices == null);
+  const rows = invoices ?? fetched.data ?? [];
+  const isLoading = invoices != null ? Boolean(invoicesLoading) : fetched.isLoading;
+  const isError = invoices != null ? Boolean(invoicesError) : fetched.isError;
   const [searchQuery, setSearchQuery] = useState("");
   const filtered = useMemo(
     () => rows.filter((inv) => invoiceMatchesListSearch(inv, searchQuery)),

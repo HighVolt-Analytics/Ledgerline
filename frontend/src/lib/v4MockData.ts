@@ -170,6 +170,7 @@ export type ThreeWayMatch = {
   invoiceValue: number;
   invoiceGst: number;
   invoiceTotal: number;
+  currency?: string | null;
   display?: ThreeWayMatchDisplay | null;
   lineResults?: LineMatchResult[];
 };
@@ -309,7 +310,7 @@ export const INITIAL_PAYMENTS: PaymentRecord[] = (
   raw.payments as Array<Omit<PaymentRecord, "currency"> & { currency?: string }>
 ).map((p) => ({
   ...p,
-  currency: (p.currency || "AUD").trim().toUpperCase() || "AUD",
+  currency: (p.currency || "").trim().toUpperCase(),
 }));
 export const MOCK_WALLET = raw.wallet as StripeWallet;
 export const LEDGER_INVOICES = raw.ledgerInvoices as LedgerExportRow[];
@@ -490,8 +491,13 @@ export function computeThreeWayMatch(po: PurchaseOrder): ThreeWayMatch {
   };
 }
 
-export function fmtAud(amount: number) {
-  return money(amount, "AUD");
+export function fmtMoney(amount: number, currency?: string | null) {
+  return money(amount, currency ?? null);
+}
+
+/** @deprecated Pass document or tenant currency into fmtMoney. */
+export function fmtAud(amount: number, currency?: string | null) {
+  return fmtMoney(amount, currency);
 }
 
 export function expenseNavBadgeCount(expenses: ExpenseClaim[]) {

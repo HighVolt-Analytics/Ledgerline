@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.payment import Payment, PaymentStatus
+from app.models.tenant import Tenant
 from app.schemas.payment import (
     PaymentExecutionInstructionResponse,
     PaymentResponse,
@@ -19,6 +20,8 @@ from app.schemas.payment import (
     WalletSummaryResponse,
     WalletTransactionResponse,
 )
+from app.services.shared.currency import convert_to_base, prefer_currency
+from app.tenant_settings import tenant_currency
 _OPEN_STATUSES = (
     PaymentStatus.QUEUE,
     PaymentStatus.AWAITING,
@@ -362,6 +365,8 @@ async def update_payment_status(
 
 
 async def wallet_summary(db: AsyncSession, tenant_id: uuid.UUID) -> WalletSummaryResponse:
+    tenant = await db.get(Tenant, tenant_id)
+    reporting = tenant_currency(tenant)
     rows = (
         await db.execute(
             select(Payment)
@@ -377,19 +382,21 @@ async def wallet_summary(db: AsyncSession, tenant_id: uuid.UUID) -> WalletSummar
 
     for row in rows:
         amount = Decimal(str(row.amount or 0))
+        code = prefer_currency(row.currency, reporting)
+        base_amount = convert_to_base(amount, code, base=reporting)
         if row.status == PaymentStatus.PAID:
-            paid_total += amount
+            paid_total += base_amount
             if row.paid_date and (last_paid is None or row.paid_date > last_paid):
                 last_paid = row.paid_date
             transactions.append(
                 WalletTransactionResponse(
                     id=str(row.id),
                     label=f"{row.vendor or 'Vendor'} payment",
-                    delta=-float(amount),
+                    delta=-float(base_amount),
                 )
             )
         elif row.status in _OPEN_STATUSES:
-            open_total += amount
+            open_total += base_amount
             transactions.append(
                 WalletTransactionResponse(
                     id=str(row.id),
@@ -404,6 +411,7 @@ async def wallet_summary(db: AsyncSession, tenant_id: uuid.UUID) -> WalletSummar
     return WalletSummaryResponse(
         balance=round(balance, 2),
         available=round(available, 2),
+        currency=reporting,
         last_top_up=last_top_up,
         transactions=transactions[:6],
     )

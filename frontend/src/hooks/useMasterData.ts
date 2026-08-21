@@ -54,12 +54,10 @@ export function usePendingVendors(enabled = true) {
   return useTenantQuery({
     queryKey: queryKeys.pendingVendors(),
     queryFn: async () => {
-      const rows = await api.listPendingVendors({ fresh: true });
+      const rows = await api.listPendingVendors();
       return rows.map((row) => mapPendingVendor(row as Record<string, unknown>));
     },
     enabled,
-    staleTime: 0,
-    refetchOnMount: "always",
   });
 }
 
@@ -67,12 +65,10 @@ export function usePendingCustomers(enabled = true) {
   return useTenantQuery({
     queryKey: queryKeys.pendingCustomers(),
     queryFn: async () => {
-      const rows = await api.listPendingCustomers({ fresh: true });
+      const rows = await api.listPendingCustomers();
       return rows.map((row) => mapPendingCustomer(row as Record<string, unknown>));
     },
     enabled,
-    staleTime: 0,
-    refetchOnMount: "always",
   });
 }
 

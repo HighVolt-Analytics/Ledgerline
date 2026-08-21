@@ -51,6 +51,8 @@ export default defineConfig({
       "src/lib/authSession.test.ts",
       "src/lib/tenantSession.test.ts",
       "src/lib/uploadColumnState.test.ts",
+      "src/lib/allDocumentsSummary.test.ts",
+      "src/lib/allDocumentsDetailed.test.ts",
       "src/lib/pageTenantIsolation.test.ts",
       "src/lib/publicSignupRoutes.test.ts",
       "src/lib/signupForm.test.ts",

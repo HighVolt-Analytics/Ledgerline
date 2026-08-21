@@ -9,18 +9,20 @@ import {
   canRequestInfo,
   validateInvoiceReadyForApproval,
 } from "@/lib/invoiceActions";
-import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
+import { useRuleBookDocumentTypes } from "@/hooks/useRuleBookConfig";
 import { queryKeys } from "@/lib/queryClient";
 
 export function useExpenseClaimActions(routeTarget: string) {
   const queryClient = useQueryClient();
-  const { data: ruleBook } = useRuleBookConfig();
+  const { data: documentTypes = [] } = useRuleBookDocumentTypes();
   const [busyId, setBusyId] = useState<number | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: queryKeys.routedInvoices(routeTarget) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.teWorkspaceKpis() }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.expensesWorkspaceKpis() }),
       queryClient.invalidateQueries({ queryKey: queryKeys.navBadges() }),
     ]);
   }, [queryClient, routeTarget]);
@@ -35,7 +37,7 @@ export function useExpenseClaimActions(routeTarget: string) {
         setToast("Upload a receipt before approving this claim.");
         return false;
       }
-      const fieldCheck = validateInvoiceReadyForApproval(inv, ruleBook?.documentTypes);
+      const fieldCheck = validateInvoiceReadyForApproval(inv, documentTypes);
       if (!fieldCheck.ok) {
         setToast(fieldCheck.message);
         return false;
@@ -61,7 +63,7 @@ export function useExpenseClaimActions(routeTarget: string) {
         setBusyId(null);
       }
     },
-    [refresh, ruleBook?.documentTypes]
+    [refresh, documentTypes]
   );
 
   const reject = useCallback(

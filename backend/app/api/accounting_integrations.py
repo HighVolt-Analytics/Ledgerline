@@ -45,10 +45,10 @@ from app.services.integration.accounting_integration_service import (
     validate_oauth_state_replay,
     xero_configured,
 )
-from app.services.integration.xero_client import XeroApiError
-from app.services.integration.xero_push_service import get_invoice_xero_status, push_invoice_to_xero
-from app.services.integration.xero_readiness import get_xero_readiness_enriched
-from app.services.integration.xero_sync_service import (
+from app.services.integration.xero.xero_client import XeroApiError
+from app.services.integration.xero.xero_push_service import get_invoice_xero_status, push_invoice_to_xero
+from app.services.integration.xero.xero_readiness import get_xero_readiness_enriched
+from app.services.integration.xero.xero_sync_service import (
     mark_sync_committed,
     sync_contacts,
     sync_settings,

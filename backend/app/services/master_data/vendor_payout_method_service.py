@@ -10,12 +10,15 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.stripe_payments import VendorPaymentMethod
+from app.models.tenant import Tenant
 from app.models.vendor import VendorRegistry
 from app.schemas.vendor import (
     VendorPayoutMethodCreate,
     VendorPayoutMethodResponse,
     VendorPayoutMethodUpdate,
 )
+from app.services.shared.currency import prefer_currency
+from app.tenant_settings import tenant_currency
 
 PAYOUT_METHOD_TYPES = frozenset(
     {
@@ -171,7 +174,7 @@ def payout_method_to_response(row: VendorPaymentMethod) -> VendorPayoutMethodRes
         display_label=row.display_label,
         stripe_account_id=row.stripe_account_id,
         last4=row.last4,
-        currency=row.currency or "SGD",
+        currency=row.currency or "",
         status=row.status or "not_configured",
         is_default=bool(row.is_default),
         provider=meta["provider"],
@@ -281,6 +284,9 @@ async def create_payout_method_for_vendor(
     if is_default:
         await _clear_other_defaults(db, tenant_id, vendor_id)
 
+    tenant = await db.get(Tenant, tenant_id)
+    books = tenant_currency(tenant)
+
     row = VendorPaymentMethod(
         tenant_id=tenant_id,
         vendor_id=vendor_id,
@@ -288,7 +294,7 @@ async def create_payout_method_for_vendor(
         display_label=(body.display_label or "").strip() or None,
         stripe_account_id=stripe_account_id,
         last4=last4,
-        currency=(body.currency or "SGD").upper()[:3],
+        currency=prefer_currency(body.currency, books),
         country=(body.country or "").strip().upper()[:2] or None,
         provider=provider,
         recipient_type=recipient_type,

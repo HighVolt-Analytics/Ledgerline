@@ -9,3 +9,11 @@ export function useSales(enabled = true) {
     enabled,
   });
 }
+
+export function useSalesWorkspaceKpis(enabled = true) {
+  return useTenantQuery({
+    queryKey: queryKeys.salesWorkspaceKpis(),
+    queryFn: () => api.getSalesWorkspaceKpis(),
+    enabled,
+  });
+}

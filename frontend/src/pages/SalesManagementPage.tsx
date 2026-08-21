@@ -13,8 +13,8 @@ import {
   type SalesRegisterTab,
 } from "@/components/sales/SalesRegisterPanel";
 import { useSalesMutations } from "@/hooks/useSalesMutations";
-import { useSales } from "@/hooks/useSales";
-import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
+import { useSales, useSalesWorkspaceKpis } from "@/hooks/useSales";
+import { useRuleBookSalesRules } from "@/hooks/useRuleBookConfig";
 import { useRoutedInvoices } from "@/hooks/useRoutedInvoices";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { useSalesTwoWay } from "@/hooks/useSalesTwoWay";
@@ -24,23 +24,21 @@ import {
   apiTwoWaySalesOrphanToRow,
   isSalesTwoWayMode,
   salesKpisFromRegister,
+  salesTwoWayTableRowKey,
   type SalesRegisterTableRow,
   type SalesTwoWayOrphanRow,
 } from "@/lib/routePageAdapters";
 
 const ROUTE_TARGET = "Sales Management";
-const POLL_MS = 15_000;
+const POLL_MS = 90_000;
+const ACTION_PAGE_SIZE = 50;
 
 function salesRowKey(salesId: number, invoiceId: number | null) {
   return `${salesId}-${invoiceId ?? "none"}`;
 }
 
 export function SalesManagementPage() {
-  const {
-    data: routed = [],
-    refetch: refetchRouted,
-    blocked: routedBlocked,
-  } = useRoutedInvoices(ROUTE_TARGET);
+  const [registerTab, setRegisterTab] = useState<SalesRegisterTab>("register");
   const {
     data: salesRows = [],
     isLoading: salesLoading,
@@ -48,19 +46,24 @@ export function SalesManagementPage() {
     refetch: refetchSales,
     blocked: salesBlocked,
   } = useSales();
-  const tenantDataBlocked = routedBlocked || salesBlocked;
+  const tenantDataBlocked = salesBlocked;
+  const { data: workspaceKpis, refetch: refetchKpis } = useSalesWorkspaceKpis(!tenantDataBlocked);
+  const { data: salesRules = [] } = useRuleBookSalesRules(!tenantDataBlocked);
   const {
-    data: twoWayData,
-    isLoading: twoWayLoading,
-    refetch: refetchSalesTwoWay,
-  } = useSalesTwoWay(!tenantDataBlocked);
-  const { data: ruleBook } = useRuleBookConfig();
+    data: routed = [],
+    refetch: refetchRouted,
+  } = useRoutedInvoices(ROUTE_TARGET, registerTab === "action" && !tenantDataBlocked, {
+    pageSize: ACTION_PAGE_SIZE,
+    maxPages: 1,
+  });
+  const { data: twoWayData, refetch: refetchSalesTwoWay } = useSalesTwoWay(
+    registerTab === "two_way" && !tenantDataBlocked
+  );
   const mutations = useSalesMutations();
 
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [drawerInvoiceId, setDrawerInvoiceId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [registerTab, setRegisterTab] = useState<SalesRegisterTab>("register");
 
   const rows = useMemo(
     () => (tenantDataBlocked ? [] : salesRows).map(apiSalesToRow),
@@ -82,14 +85,17 @@ export function SalesManagementPage() {
     () => (tenantDataBlocked ? [] : salesActionRequiredInvoices(routed, salesRows)),
     [routed, salesRows, tenantDataBlocked]
   );
-  const kpis = useMemo(
-    () =>
-      salesKpisFromRegister(
-        tenantDataBlocked ? [] : salesRows,
-        tenantDataBlocked ? [] : routed
-      ),
-    [salesRows, routed, tenantDataBlocked]
-  );
+  const kpis = useMemo(() => {
+    const fromRegister = salesKpisFromRegister(
+      tenantDataBlocked ? [] : salesRows,
+      tenantDataBlocked ? [] : routed
+    );
+    return {
+      ...fromRegister,
+      awaitingSo: workspaceKpis?.awaiting_so_count ?? fromRegister.awaitingSo,
+      needsAction: workspaceKpis?.needs_action_count ?? fromRegister.needsAction,
+    };
+  }, [salesRows, routed, tenantDataBlocked, workspaceKpis]);
   const selected =
     rows.find((r) => salesRowKey(r.salesId, r.invoiceId) === selectedKey) ?? null;
   const selectedTwoWayOrphan =
@@ -98,12 +104,17 @@ export function SalesManagementPage() {
         r.kind === "orphan" && `orphan-${r.invoiceId}` === selectedKey
     ) ?? null;
   const activeRuleCount = useMemo(
-    () => (ruleBook?.salesRules ?? []).filter((r) => r.enabled).length,
-    [ruleBook?.salesRules]
+    () => salesRules.filter((r) => r.enabled).length,
+    [salesRules]
   );
 
   const refetchAll = async () => {
-    await Promise.all([refetchRouted(), refetchSales(), refetchSalesTwoWay()]);
+    await Promise.all([
+      refetchSales(),
+      refetchKpis(),
+      registerTab === "action" ? refetchRouted() : Promise.resolve(),
+      registerTab === "two_way" ? refetchSalesTwoWay() : Promise.resolve(),
+    ]);
   };
 
   useVisibilityPolling(() => {
@@ -111,10 +122,14 @@ export function SalesManagementPage() {
   }, POLL_MS);
 
   useEffect(() => {
-    if (selectedKey && !rows.some((r) => salesRowKey(r.salesId, r.invoiceId) === selectedKey)) {
+    if (!selectedKey) return;
+    const inRegister = rows.some((r) => salesRowKey(r.salesId, r.invoiceId) === selectedKey);
+    const inTwoWay = twoWayRows.some((r) => salesTwoWayTableRowKey(r) === selectedKey);
+    const orphanPending = selectedKey.startsWith("orphan-") && registerTab !== "two_way";
+    if (!inRegister && !inTwoWay && !orphanPending) {
       setSelectedKey(null);
     }
-  }, [selectedKey, rows]);
+  }, [selectedKey, rows, twoWayRows, registerTab]);
 
   useEffect(() => {
     if (!mutations.toast) return;
@@ -213,7 +228,8 @@ export function SalesManagementPage() {
         twoWayRows={twoWayRows}
         salesRows={salesRows}
         actionRequired={actionRequired}
-        loading={salesLoading || twoWayLoading || tenantDataBlocked}
+        actionCount={kpis.needsAction}
+        loading={salesLoading || tenantDataBlocked}
         isError={isError}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}

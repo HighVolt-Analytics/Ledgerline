@@ -23,6 +23,11 @@ class ResponseMeta(BaseModel):
     quorum_recorded: int | None = None
     quorum_remaining: int | None = None
     quorum_met: bool | None = None
+    approval_queue_count: int | None = None
+    approval_review_count: int | None = None
+    approval_processing_count: int | None = None
+    approval_approved_count: int | None = None
+    approval_rejected_count: int | None = None
     matrix_document_count: int | None = None
     matrix_flagged: int | None = None
     matrix_duplicates: int | None = None

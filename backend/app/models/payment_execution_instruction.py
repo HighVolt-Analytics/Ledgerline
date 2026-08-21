@@ -34,7 +34,7 @@ class PaymentExecutionInstruction(Base):
     vendor_name: Mapped[str | None] = mapped_column(String(255))
     vendor_payout_method_label: Mapped[str | None] = mapped_column(String(255))
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2))
-    currency: Mapped[str] = mapped_column(String(8), default="AUD")
+    currency: Mapped[str] = mapped_column(String(8), default="")
     due_date: Mapped[date | None] = mapped_column(Date)
     created_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"),

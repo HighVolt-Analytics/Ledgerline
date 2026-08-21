@@ -3,7 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Check, Pencil, RefreshCw, Send, Trash2, X } from "lucide-react";
 import { api, ApiError, clearGetCache } from "@/api/client";
-import type { Invoice } from "@/api/types";
+import type { ApiEnvelope, Invoice } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
 import { LazyInvoiceDetailDrawer } from "@/components/LazyInvoiceDetailDrawer";
 import { ListSearchInput } from "@/components/ListSearchInput";
@@ -23,14 +23,13 @@ import {
   validateInvoiceReadyForApproval,
   watchProcessingUntilIdle,
 } from "@/lib/invoiceActions";
-import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
+import { useRuleBookDocumentTypes } from "@/hooks/useRuleBookConfig";
 import { invoiceCanPublishToLedger } from "@/lib/invoice";
 import { invoiceMatchesListSearch } from "@/lib/listSearch";
 import {
   MappedDocumentTypeBadge,
   VisionHeadingBadge,
 } from "@/components/inbox/DocumentTypeDisplay";
-import { ruleBookConfigFromApi } from "@/lib/ruleBookConfigApi";
 import {
   APPROVABLE_STATUSES,
   APPROVAL_QUEUE_STATUSES,
@@ -58,7 +57,8 @@ import {
   API_PORT_HINT,
 } from "@/lib/tenantSession";
 
-const APPROVAL_POLL_MS = 15_000;
+const APPROVAL_POLL_MS = 90_000;
+const APPROVAL_POLL_FAST_MS = 4_000;
 
 const KANBAN_COLUMNS: { key: ApprovalBoardColumnKey; label: string }[] = [
   { key: "pending", label: "To review" },
@@ -75,9 +75,10 @@ function upsertInvoice(rows: Invoice[], row: Invoice): Invoice[] {
 
 export function ApprovalsPage() {
   const queryClient = useQueryClient();
-  const { data: ruleBook } = useRuleBookConfig(false);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [boardMeta, setBoardMeta] = useState<ApiEnvelope<Invoice[]>["meta"] | null>(null);
   const [loading, setLoading] = useState(true);
+  const { data: documentTypes = [] } = useRuleBookDocumentTypes(!loading);
   const [error, setError] = useState<string | null>(null);
   const { permissions } = usePermissions();
   const canReject = !permissions || permissions.permissions.Reject === true;
@@ -100,6 +101,7 @@ export function ApprovalsPage() {
   useResetOnTenantChange(() => {
     loadSeq.current += 1;
     setInvoices([]);
+    setBoardMeta(null);
     setLoading(true);
     setError(null);
     setDrawerInvoice(null);
@@ -151,13 +153,14 @@ export function ApprovalsPage() {
       setLoading(true);
       setError(null);
     }
-    const fresh = options?.fresh ?? !options?.silent;
+    const fresh = Boolean(options?.fresh);
     if (fresh) clearGetCache();
 
     try {
-      const rows = await fetchApprovalsBoard(fresh);
+      const { rows, meta } = await fetchApprovalsBoard(fresh);
       if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
       const activeProcessing = processingIdsRef.current;
+      setBoardMeta(meta);
       setInvoices((prev) => {
         const prevById = new Map(prev.map((inv) => [inv.id, inv]));
         return rows.map((row) =>
@@ -178,6 +181,7 @@ export function ApprovalsPage() {
       }
       if (!options?.silent) {
         setInvoices([]);
+        setBoardMeta(null);
         setError(
           reason instanceof Error
             ? formatTenantLoadError(reason.message, API_PORT_HINT)
@@ -218,7 +222,7 @@ export function ApprovalsPage() {
   useVisibilityPolling(() => {
     if (busyRef.current !== null) return;
     void load({ silent: true });
-  }, APPROVAL_POLL_MS);
+  }, processingIds.size > 0 ? APPROVAL_POLL_FAST_MS : APPROVAL_POLL_MS);
 
   useEffect(() => {
     if (!toast) return;
@@ -241,11 +245,19 @@ export function ApprovalsPage() {
   }, [invoices, searchQuery, processingIds]);
 
   const queueCount = useMemo(
-    () => invoices.filter((inv) => APPROVAL_QUEUE_STATUSES.has(inv.status)).length,
-    [invoices]
+    () => boardMeta?.approval_queue_count ?? invoices.filter((inv) => APPROVAL_QUEUE_STATUSES.has(inv.status)).length,
+    [boardMeta, invoices]
+  );
+  const columnTotals = useMemo(
+    () => ({
+      pending: boardMeta?.approval_review_count,
+      awaiting: boardMeta?.approval_processing_count,
+      approved: boardMeta?.approval_approved_count,
+      rejected: boardMeta?.approval_rejected_count,
+    }),
+    [boardMeta]
   );
   const needsReviewCount = useMemo(() => needsReviewQueueCount(invoices), [invoices]);
-  const documentTypes = ruleBook?.documentTypes ?? [];
 
   const invalidateAfterApproval = useCallback(async () => {
     await Promise.all([
@@ -270,9 +282,6 @@ export function ApprovalsPage() {
       setToast("Upload a PDF before approving this invoice.");
       return;
     }
-    const documentTypes =
-      ruleBook?.documentTypes ??
-      ruleBookConfigFromApi(await api.getRuleBookConfig()).documentTypes;
     const fieldCheck = validateInvoiceReadyForApproval(inv, documentTypes);
     if (!fieldCheck.ok) {
       setToast(fieldCheck.message);
@@ -322,9 +331,6 @@ export function ApprovalsPage() {
       setToast("Upload a PDF before confirming this invoice.");
       return;
     }
-    const documentTypes =
-      ruleBook?.documentTypes ??
-      ruleBookConfigFromApi(await api.getRuleBookConfig()).documentTypes;
     const fieldCheck = validateInvoiceReadyForApproval(inv, documentTypes);
     if (!fieldCheck.ok) {
       setToast(fieldCheck.message);
@@ -624,6 +630,10 @@ export function ApprovalsPage() {
       <div className="approvals-kanban-board">
         {KANBAN_COLUMNS.map((col) => {
           const cards = board[col.key];
+          const columnCount =
+            searchQuery.trim() || columnTotals[col.key] == null
+              ? cards.length
+              : columnTotals[col.key];
           return (
             <section
               key={col.key}
@@ -633,7 +643,7 @@ export function ApprovalsPage() {
               <header className="approvals-kanban-column__header">
                 <h3 className="approvals-kanban-column__title">{col.label}</h3>
                 <span className="approvals-kanban-column__count">
-                  {cards.length} {cards.length === 1 ? "Task" : "Tasks"}
+                  {columnCount} {columnCount === 1 ? "Task" : "Tasks"}
                 </span>
               </header>
               <div className="approvals-kanban-column__cards">

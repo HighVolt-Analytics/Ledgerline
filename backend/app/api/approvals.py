@@ -35,7 +35,8 @@ async def list_approvals_board_route(
 
     Includes queue, pipeline, and the most recent processed rows.
     """
-    return ApiEnvelope(data=await list_approvals_board(db, tenant_id=ctx.tenant_id))
+    rows, meta = await list_approvals_board(db, tenant_id=ctx.tenant_id)
+    return ApiEnvelope(data=rows, meta=meta)
 
 
 @router.get("", response_model=ApiEnvelope[list[InvoiceResponse]])

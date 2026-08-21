@@ -53,7 +53,7 @@ HEADING_KIND_TOKENS: dict[str, tuple[str, ...]] = {
         "clearance permit",
     ),
     "purchase_order": ("purchase order", " po "),
-    "grn": ("goods receipt", "grn", "delivery receipt", "proof of delivery"),
+    "grn": ("goods receipt", "grn", "item receipt", "material receipt", "warehouse receipt", "delivery receipt", "proof of delivery"),
     "delivery_note": ("delivery note", "delivery docket", "dispatch note", "dispatch docket"),
     "credit_note": ("credit note", "debit note"),
     "quote": ("quotation", "quote", "estimate"),

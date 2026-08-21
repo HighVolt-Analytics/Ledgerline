@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import uuid
 
+from typing import Collection
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +19,7 @@ async def audit_logs_for_invoice_ids(
     *,
     tenant_id: uuid.UUID,
     per_invoice_limit: int | None = None,
+    events: Collection[str] | None = None,
 ) -> dict[int, list[AuditLog]]:
     """Load audit logs for many invoices.
 
@@ -26,14 +29,17 @@ async def audit_logs_for_invoice_ids(
     """
     if not invoice_ids:
         return {}
+    filters = [
+        AuditLog.invoice_id.in_(invoice_ids),
+        AuditLog.tenant_id == tenant_id,
+    ]
+    if events:
+        filters.append(AuditLog.event.in_(tuple(events)))
     if per_invoice_limit is None or per_invoice_limit <= 0:
         rows = (
             await db.execute(
                 select(AuditLog)
-                .where(
-                    AuditLog.invoice_id.in_(invoice_ids),
-                    AuditLog.tenant_id == tenant_id,
-                )
+                .where(*filters)
                 .order_by(AuditLog.created_at.desc())
             )
         ).scalars().all()
@@ -48,10 +54,7 @@ async def audit_logs_for_invoice_ids(
                 )
                 .label("rn"),
             )
-            .where(
-                AuditLog.invoice_id.in_(invoice_ids),
-                AuditLog.tenant_id == tenant_id,
-            )
+            .where(*filters)
             .subquery()
         )
         rows = (

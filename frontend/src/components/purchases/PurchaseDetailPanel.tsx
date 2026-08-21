@@ -60,17 +60,19 @@ function fmtQtyUom(qty: number, uom?: string | null): string {
   return uom ? `${q} ${uom}` : q;
 }
 
-function fmtMoneyOrDash(v: number | null | undefined): string {
+function fmtMoneyOrDash(v: number | null | undefined, currency?: string | null): string {
   if (v == null) return "—";
-  return fmtAud(v);
+  return fmtAud(v, currency);
 }
 
 function LineMatchTable({
   lines,
   receiptLabel = "GRN qty",
+  currency,
 }: {
   lines: NonNullable<ThreeWayMatch["lineResults"]>;
   receiptLabel?: string;
+  currency?: string | null;
 }) {
   if (!lines.length) return null;
   return (
@@ -98,10 +100,10 @@ function LineMatchTable({
               <td className="px-2 py-1.5 font-mono">{row.receivedQty ?? "—"}</td>
               <td className="px-2 py-1.5 font-mono">{row.invoiceQty ?? "—"}</td>
               <td className="px-2 py-1.5 font-mono">
-                {row.orderUnitPrice != null ? fmtAud(row.orderUnitPrice) : "—"}
+                {row.orderUnitPrice != null ? fmtAud(row.orderUnitPrice, currency) : "—"}
               </td>
               <td className="px-2 py-1.5 font-mono">
-                {row.invoiceUnitPrice != null ? fmtAud(row.invoiceUnitPrice) : "—"}
+                {row.invoiceUnitPrice != null ? fmtAud(row.invoiceUnitPrice, currency) : "—"}
               </td>
               <td className="px-2 py-1.5">{row.status.replace(/_/g, " ")}</td>
             </tr>
@@ -128,9 +130,11 @@ function shouldShowCompared(onDoc: MatchAmountLine, forMatch: MatchAmountLine): 
 function MatchLegAmounts({
   onDocument,
   forMatch,
+  currency,
 }: {
   onDocument: MatchAmountLine;
   forMatch: MatchAmountLine;
+  currency?: string | null;
 }) {
   const showCompared = shouldShowCompared(onDocument, forMatch);
   return (
@@ -140,10 +144,10 @@ function MatchLegAmounts({
       </div>
       <MatchLineRow label="Qty" value={fmtQtyUom(onDocument.qty, onDocument.uom)} />
       {onDocument.unitPrice != null && (
-        <MatchLineRow label="Unit price" value={fmtMoneyOrDash(onDocument.unitPrice)} />
+        <MatchLineRow label="Unit price" value={fmtMoneyOrDash(onDocument.unitPrice, currency)} />
       )}
       {onDocument.lineValue != null && !showCompared && (
-        <MatchLineRow label="Line value" value={fmtMoneyOrDash(onDocument.lineValue)} strong />
+        <MatchLineRow label="Line value" value={fmtMoneyOrDash(onDocument.lineValue, currency)} strong />
       )}
       {showCompared && (
         <>
@@ -152,10 +156,10 @@ function MatchLegAmounts({
           </div>
           <MatchLineRow label="Qty" value={fmtQtyUom(forMatch.qty, forMatch.uom)} />
           {forMatch.unitPrice != null && (
-            <MatchLineRow label="Unit price" value={fmtMoneyOrDash(forMatch.unitPrice)} />
+            <MatchLineRow label="Unit price" value={fmtMoneyOrDash(forMatch.unitPrice, currency)} />
           )}
           {forMatch.lineValue != null && (
-            <MatchLineRow label="Line value" value={fmtMoneyOrDash(forMatch.lineValue)} strong />
+            <MatchLineRow label="Line value" value={fmtMoneyOrDash(forMatch.lineValue, currency)} strong />
           )}
         </>
       )}
@@ -167,16 +171,18 @@ function LegacyDocAmounts({
   qty,
   unitPrice,
   value,
+  currency,
 }: {
   qty: number | string;
   unitPrice: number;
   value: number;
+  currency?: string | null;
 }) {
   return (
     <>
       <MatchLineRow label="Qty" value={String(qty)} />
-      <MatchLineRow label="Unit price" value={fmtAud(unitPrice)} />
-      <MatchLineRow label="Value" value={fmtAud(value)} strong />
+      <MatchLineRow label="Unit price" value={fmtAud(unitPrice, currency)} />
+      <MatchLineRow label="Value" value={fmtAud(value, currency)} strong />
     </>
   );
 }
@@ -198,7 +204,17 @@ function MatchLineRow({
   );
 }
 
-function VarianceRow({ label, sub, value }: { label: string; sub: string; value: number }) {
+function VarianceRow({
+  label,
+  sub,
+  value,
+  currency,
+}: {
+  label: string;
+  sub: string;
+  value: number;
+  currency?: string | null;
+}) {
   return (
     <div>
       <div className="flex items-center justify-between">
@@ -209,7 +225,7 @@ function VarianceRow({ label, sub, value }: { label: string; sub: string; value:
             value !== 0 && "text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)]"
           )}
         >
-          {fmtAud(value)}
+          {fmtAud(value, currency)}
         </span>
       </div>
       <div className="font-mono text-[10px] text-muted-foreground">{sub}</div>
@@ -396,7 +412,7 @@ export function PurchaseDetailContent({
           )}
         </div>
 
-        <LineMatchTable lines={lineResults} receiptLabel="—" />
+        <LineMatchTable lines={lineResults} receiptLabel="—" currency={match.currency} />
 
         <div className="grid grid-cols-2 gap-2">
           <MatchDocCard
@@ -406,9 +422,9 @@ export function PurchaseDetailContent({
             onOpenDocument={onOpenPoDocument}
           >
             {display?.poOnDocument && display.poForMatch ? (
-              <MatchLegAmounts onDocument={display.poOnDocument} forMatch={display.poForMatch} />
+              <MatchLegAmounts onDocument={display.poOnDocument} forMatch={display.poForMatch} currency={match.currency} />
             ) : (
-              <LegacyDocAmounts qty={po.poQty} unitPrice={po.poUnitPrice} value={match.poValue} />
+              <LegacyDocAmounts qty={po.poQty} unitPrice={po.poUnitPrice} value={match.poValue} currency={match.currency} />
             )}
             <MatchLineRow label="Date" value={po.date} />
           </MatchDocCard>
@@ -424,12 +440,14 @@ export function PurchaseDetailContent({
               <MatchLegAmounts
                 onDocument={display.invoiceOnDocument}
                 forMatch={display.invoiceForMatch}
+                currency={match.currency}
               />
             ) : (
               <LegacyDocAmounts
                 qty={po.invoiceQty}
                 unitPrice={po.invoiceUnitPrice}
                 value={match.invoiceValue}
+                currency={match.currency}
               />
             )}
           </MatchDocCard>
@@ -440,12 +458,12 @@ export function PurchaseDetailContent({
             Match reconciliation
           </div>
           <div className="grid grid-cols-2 gap-2 text-sm">
-            <VarianceRow label="Quantity variance" sub="—" value={match.qtyVarianceValue} />
-            <VarianceRow label="Price variance" sub={varianceSubPrice} value={match.priceVarianceValue} />
+            <VarianceRow label="Quantity variance" sub="—" value={match.qtyVarianceValue} currency={match.currency} />
+            <VarianceRow label="Price variance" sub={varianceSubPrice} value={match.priceVarianceValue} currency={match.currency} />
           </div>
           <div className="border-t border-border/60 mt-2 pt-2 flex items-center justify-between text-sm">
             <span className="font-medium">Total deviation</span>
-            <span className="tnum font-semibold">{fmtAud(match.totalDeviation)}</span>
+            <span className="tnum font-semibold">{fmtAud(match.totalDeviation, match.currency)}</span>
           </div>
         </Card>
 
@@ -487,7 +505,7 @@ export function PurchaseDetailContent({
         )}
       </div>
 
-      <LineMatchTable lines={lineResults} receiptLabel="GRN qty" />
+      <LineMatchTable lines={lineResults} receiptLabel="GRN qty" currency={match.currency} />
 
       <div className="grid grid-cols-3 gap-2">
         <MatchDocCard
@@ -500,9 +518,10 @@ export function PurchaseDetailContent({
             <MatchLegAmounts
               onDocument={display.poOnDocument}
               forMatch={display.poForMatch}
+              currency={match.currency}
             />
           ) : (
-            <LegacyDocAmounts qty={po.poQty} unitPrice={po.poUnitPrice} value={match.poValue} />
+            <LegacyDocAmounts qty={po.poQty} unitPrice={po.poUnitPrice} value={match.poValue} currency={match.currency} />
           )}
           <MatchLineRow label="Date" value={po.date} />
         </MatchDocCard>
@@ -522,6 +541,7 @@ export function PurchaseDetailContent({
               <MatchLegAmounts
                 onDocument={display.grnOnDocument}
                 forMatch={display.grnForMatch}
+                currency={match.currency}
               />
               <MatchLineRow label="Received" value={po.grnDate ?? "—"} />
               <MatchLineRow label="By" value={po.grnReceiver ?? "—"} />
@@ -548,12 +568,14 @@ export function PurchaseDetailContent({
             <MatchLegAmounts
               onDocument={display.invoiceOnDocument}
               forMatch={display.invoiceForMatch}
+              currency={match.currency}
             />
           ) : (
             <LegacyDocAmounts
               qty={po.invoiceQty}
               unitPrice={po.invoiceUnitPrice}
               value={match.invoiceValue}
+              currency={match.currency}
             />
           )}
         </MatchDocCard>
@@ -576,11 +598,13 @@ export function PurchaseDetailContent({
             label="Quantity variance"
             sub={varianceSubQty}
             value={match.qtyVarianceValue}
+            currency={match.currency}
           />
           <VarianceRow
             label="Price variance"
             sub={varianceSubPrice}
             value={match.priceVarianceValue}
+            currency={match.currency}
           />
         </div>
         <div className="border-t border-border/60 mt-2 pt-2 flex items-center justify-between text-sm">
@@ -593,14 +617,14 @@ export function PurchaseDetailContent({
                 : "text-primary"
             )}
           >
-            {fmtAud(match.totalDeviation)}
+            {fmtAud(match.totalDeviation, match.currency)}
           </span>
         </div>
         <div className="flex items-center justify-between text-xs text-muted-foreground mt-1.5">
           <span>
-            Invoice subtotal {fmtAud(match.invoiceValue)} + GST {fmtAud(match.invoiceGst)}
+            Invoice subtotal {fmtAud(match.invoiceValue, match.currency)} + GST {fmtAud(match.invoiceGst, match.currency)}
           </span>
-          <span className="tnum">Invoice total {fmtAud(match.invoiceTotal)}</span>
+          <span className="tnum">Invoice total {fmtAud(match.invoiceTotal, match.currency)}</span>
         </div>
       </Card>
 

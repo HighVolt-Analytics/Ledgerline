@@ -17,7 +17,7 @@ from app.config import get_settings
 from app.models.accounting_sync_job import JOB_TYPE_RECONCILE
 from app.models.xero_connection import XeroConnection
 from app.models.xero_webhook_event import XeroWebhookEvent
-from app.services.integration.xero_sync_job_service import enqueue_sync_job
+from app.services.integration.xero.xero_sync_job_service import enqueue_sync_job
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)

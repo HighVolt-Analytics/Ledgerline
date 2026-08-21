@@ -23,10 +23,83 @@ from app.services.invoice.invoice_response_service import (
     invoice_to_response,
 )
 from app.services.invoice.pipeline_stages import build_matrix_cells, exception_hold_reason
+from app.services.invoice.invoice_evaluation_service import load_posting_config_for_tenant
+from app.services.invoice.processing_cycle_service import CYCLE_RESET_EVENTS
 from app.services.integration.publish_service import published_invoice_ids
 
-# Cap audit rows per invoice for matrix stages (latest-first). Full OCR text is never needed.
-_MATRIX_AUDIT_PER_INVOICE = 60
+# Stage-relevant audit only. Newest-N of *all* events was mostly OCR/noise.
+_MATRIX_AUDIT_PER_INVOICE = 24
+_MATRIX_LIST_AUDIT_EVENTS: frozenset[str] = frozenset(
+    {
+        "email_ingested",
+        "invoice_uploaded",
+        "invoice_file_attached",
+        "parse_completed",
+        "invoice_parsed",
+        "parsing_failed",
+        "validation_passed",
+        "validation_failed",
+        "validation_bypassed_after_human_approval",
+        "mapping_applied",
+        "invoice_approved",
+        "approval_required",
+        "approval_requested",
+        "invoice_published_to_ledger",
+        "invoice_processed",
+        "vault_stored",
+        "purchase_document_processed",
+        "sales_document_processed",
+        "supporting_document_processed",
+        "vendor_registration_hold",
+        "customer_registration_hold",
+        "storage_verified",
+        "file_validity_passed",
+        "file_validity_failed",
+        "vision_understand_passed",
+        "vision_understand_failed",
+        "vision_header_extracted",
+        "vision_header_extract_failed",
+        "vision_type_suggested",
+        "vision_type_suggest_failed",
+        "vision_dt_fields_extracted",
+        "vision_dt_fields_extract_failed",
+        "vision_path_pending",
+        "image_quality_passed",
+        "image_quality_failed",
+        "image_quality_gate_passed",
+        "image_quality_gate_failed",
+        "layout_readiness_evaluated",
+        "ocr_completed",
+        "ocr_quality_confirm_passed",
+        "ocr_quality_confirm_failed",
+        "llm_classified",
+        "classification_gate_passed",
+        "classification_gate_failed",
+        "classification_resolved",
+        "vision_document_type_mapped",
+        "vision_bundle_linked",
+        "vision_bundle_standalone",
+        "blob_relocated",
+        "vault_layout_sync_skipped",
+        "vision_posting_continued",
+        "vision_posting_skipped",
+        "three_way_match_evaluated",
+        "match_phase_evaluated",
+        "three_way_match_variance_unapproved",
+        "purchase_variance_approved",
+        "sales_variance_approved",
+        "journal_unbalanced",
+        "journal_control_account_unresolved",
+        "reconciliation_halted",
+        "reconciliation_skipped",
+        "invoice_rejected",
+        "duplicate_in_progress",
+        "duplicate_skipped",
+        "mapping_review_required",
+        "routing_review_required",
+        *CYCLE_RESET_EVENTS,
+    }
+)
 
 
 def _parse_validation_results(raw: str | list | None) -> list[dict[str, Any]]:
@@ -154,6 +227,248 @@ def derive_matrix_payment_status(inv: Invoice, payment: Payment | None) -> str:
     if inv.status == InvoiceStatus.PROCESSED and inv.due_date is not None:
         return "Awaiting Payment"
     return "—"
+
+
+AUTH_NA = "—"
+AUTH_DONE = "Done"
+AUTH_PENDING = "Pending"
+AUTH_FAILED = "Failed"
+SYNC_NA = "—"
+SYNC_SYNCED = "Synced"
+SYNC_FAILED = "Failed"
+SYNC_PENDING = "Pending"
+
+
+def _parse_validation_rows(inv: Invoice) -> list[dict[str, Any]]:
+    raw = getattr(inv, "validation_results", None)
+    if not raw:
+        return []
+    if isinstance(raw, list):
+        return [row for row in raw if isinstance(row, dict)]
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [row for row in parsed if isinstance(row, dict)]
+
+
+def _vr_te08_row(inv: Invoice) -> dict[str, Any] | None:
+    for row in _parse_validation_rows(inv):
+        if row.get("rule") == "VR-TE08":
+            return row
+    return None
+
+
+def derive_matrix_advance_auth(
+    inv: Invoice,
+    *,
+    document_types: list | None = None,
+) -> str:
+    """Advance Auth for All Documents Detailed — TE / advance paths only."""
+    from app.schemas.rule_book_config import (
+        TEAM_EXPENSE_KIND_ADVANCE,
+        normalize_team_expense_kind,
+    )
+    from app.services.invoice.invoice_evaluation_service import ROUTE_TEAM
+    from app.services.purchase.team_expense_validator import document_type_spend_controls
+    from app.schemas.rule_book_config import RuleBookConfigPayload
+
+    if (inv.route_target or "").strip() != ROUTE_TEAM:
+        return AUTH_NA
+
+    config = RuleBookConfigPayload(document_types=list(document_types or []))
+    _budget_control, advance_control = document_type_spend_controls(
+        config, inv.document_type_code
+    )
+    kind = normalize_team_expense_kind(getattr(inv, "team_expense_kind", None))
+    advance_related = kind == TEAM_EXPENSE_KIND_ADVANCE
+    if not advance_control and not advance_related:
+        return AUTH_NA
+
+    if inv.status == InvoiceStatus.REJECTED:
+        return AUTH_FAILED
+    eval_status = (inv.evaluation_status or "").strip().lower()
+    if eval_status == "pending_approval":
+        return AUTH_PENDING
+    if inv.status == InvoiceStatus.EXCEPTION and eval_status in {
+        "needs_review",
+        "pending_vendor",
+        "unmatched_expense_vendor",
+    }:
+        return AUTH_FAILED
+    if inv.status == InvoiceStatus.PROCESSED:
+        return AUTH_DONE
+    if inv.status in (
+        InvoiceStatus.PENDING,
+        InvoiceStatus.PARSING,
+        InvoiceStatus.VALIDATING,
+        InvoiceStatus.MAPPING,
+        InvoiceStatus.JOURNALING,
+        InvoiceStatus.RECONCILING,
+    ):
+        return AUTH_PENDING
+    return AUTH_PENDING
+
+
+def derive_matrix_budget_auth(
+    inv: Invoice,
+    *,
+    document_types: list | None = None,
+) -> str:
+    """Budget Auth from DT budget_control + VR-TE08 validation outcome."""
+    from app.schemas.rule_book_config import RuleBookConfigPayload
+    from app.services.invoice.invoice_evaluation_service import ROUTE_TEAM
+    from app.services.purchase.team_expense_approval import has_soft_budget_overrun
+    from app.services.purchase.team_expense_validator import document_type_spend_controls
+
+    if (inv.route_target or "").strip() != ROUTE_TEAM:
+        return AUTH_NA
+
+    config = RuleBookConfigPayload(document_types=list(document_types or []))
+    budget_control, _advance_control = document_type_spend_controls(
+        config, inv.document_type_code
+    )
+    if not budget_control:
+        return AUTH_NA
+
+    te08 = _vr_te08_row(inv)
+    if te08 is None:
+        # Not validated yet or TE08 never ran.
+        if inv.status in (
+            InvoiceStatus.PENDING,
+            InvoiceStatus.PARSING,
+            InvoiceStatus.VALIDATING,
+        ):
+            return AUTH_PENDING
+        return AUTH_NA
+    if te08.get("skipped"):
+        return AUTH_NA
+    if not te08.get("passed"):
+        severity = (te08.get("severity") or "block").strip().lower()
+        if severity == "warn" or has_soft_budget_overrun(inv):
+            eval_status = (inv.evaluation_status or "").strip().lower()
+            if inv.status == InvoiceStatus.PROCESSED:
+                return AUTH_DONE
+            if eval_status == "pending_approval" or inv.status == InvoiceStatus.EXCEPTION:
+                return AUTH_PENDING
+            return AUTH_PENDING
+        return AUTH_FAILED
+    return AUTH_DONE
+
+
+def derive_matrix_acc_sync(
+    inv: Invoice,
+    *,
+    ledger_status: str | None,
+    ref_status: str | None,
+    document_types: list | None = None,
+) -> str:
+    """Accounting sync (Xero export) status for the matrix Acc Sync column."""
+    from app.models.accounting_export_ledger import (
+        STATUS_FAILED_TERMINAL,
+        STATUS_HUMAN_REVIEW,
+        STATUS_IN_FLIGHT,
+        STATUS_READY,
+        STATUS_RETRY_PENDING,
+        STATUS_SUCCESS,
+    )
+    from app.services.classification.document_type_playbook_profile_service import (
+        gl_posting_applicable_for_invoice,
+    )
+
+    if not gl_posting_applicable_for_invoice(inv, document_types=document_types):
+        return SYNC_NA
+
+    status = (ledger_status or "").strip().upper()
+    if status == STATUS_SUCCESS:
+        return SYNC_SYNCED
+    if status in {STATUS_FAILED_TERMINAL, STATUS_HUMAN_REVIEW}:
+        return SYNC_FAILED
+    if status in {STATUS_READY, STATUS_IN_FLIGHT, STATUS_RETRY_PENDING}:
+        return SYNC_PENDING
+
+    ref = (ref_status or "").strip().lower()
+    if ref in {"synced", "success"}:
+        return SYNC_SYNCED
+    if ref in {"failed", "error"}:
+        return SYNC_FAILED
+    if ref in {"pushing", "pending", "queued"}:
+        return SYNC_PENDING
+    return SYNC_PENDING
+
+
+async def line_item_counts_for_invoice_ids(
+    db: AsyncSession,
+    invoice_ids: list[int],
+) -> dict[int, int]:
+    if not invoice_ids:
+        return {}
+    from app.models.line_item import LineItem
+
+    rows = (
+        await db.execute(
+            select(LineItem.invoice_id, func.count(LineItem.id))
+            .where(LineItem.invoice_id.in_(invoice_ids))
+            .group_by(LineItem.invoice_id)
+        )
+    ).all()
+    return {int(invoice_id): int(count) for invoice_id, count in rows}
+
+
+async def accounting_sync_status_for_invoice_ids(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    invoice_ids: list[int],
+) -> tuple[dict[int, str], dict[int, str]]:
+    """Return (ledger_status_by_id, ref_status_by_id) for Acc Sync enrichment."""
+    ledger_by_id: dict[int, str] = {}
+    ref_by_id: dict[int, str] = {}
+    if not invoice_ids:
+        return ledger_by_id, ref_by_id
+
+    from app.models.accounting_export_ledger import AccountingExportLedger, PROVIDER_XERO
+    from app.models.external_accounting_ref import ExternalAccountingRef
+
+    ledger_rows = (
+        await db.execute(
+            select(AccountingExportLedger)
+            .where(
+                AccountingExportLedger.tenant_id == tenant_id,
+                AccountingExportLedger.provider == PROVIDER_XERO,
+                AccountingExportLedger.source_invoice_id.in_(invoice_ids),
+            )
+            .order_by(
+                AccountingExportLedger.source_invoice_id.asc(),
+                AccountingExportLedger.id.desc(),
+            )
+        )
+    ).scalars().all()
+    for row in ledger_rows:
+        iid = int(row.source_invoice_id)
+        if iid not in ledger_by_id:
+            ledger_by_id[iid] = row.status or ""
+
+    id_tokens = [str(i) for i in invoice_ids]
+    ref_rows = (
+        await db.execute(
+            select(ExternalAccountingRef).where(
+                ExternalAccountingRef.tenant_id == tenant_id,
+                ExternalAccountingRef.provider == PROVIDER_XERO,
+                ExternalAccountingRef.entity_type == "invoice",
+                ExternalAccountingRef.internal_entity_id.in_(id_tokens),
+            )
+        )
+    ).scalars().all()
+    for ref in ref_rows:
+        try:
+            iid = int(ref.internal_entity_id)
+        except (TypeError, ValueError):
+            continue
+        if iid not in ref_by_id:
+            ref_by_id[iid] = (ref.sync_status or "") if hasattr(ref, "sync_status") else ""
+    return ledger_by_id, ref_by_id
 
 
 from app.services.dossier.document_ref_service import display_document_ref
@@ -467,6 +782,16 @@ def _scoped_invoice_query(tenant_id: uuid.UUID, params: MatrixListRequest):
     return stmt, count_stmt
 
 
+def _params_have_list_filters(params: MatrixListRequest) -> bool:
+    return bool(
+        (params.status or "").strip()
+        or (params.route_target or "").strip()
+        or (params.evaluation_status or "").strip()
+        or (params.q or "").strip()
+        or (params.matrix_filter or "").strip()
+    )
+
+
 async def _matrix_summary(
     db: AsyncSession,
     *,
@@ -477,28 +802,35 @@ async def _matrix_summary(
     base_ids = select(Invoice.id).where(Invoice.tenant_id == tenant_id)
     base_ids = _apply_capture_source(base_ids, params.capture_source)
 
-    flagged_stmt = select(func.count(Invoice.id)).where(
-        Invoice.tenant_id == tenant_id,
-        Invoice.id.in_(base_ids),
-        or_(
-            Invoice.status.in_(
-                (
-                    InvoiceStatus.EXCEPTION,
-                    InvoiceStatus.DUPLICATE_SKIPPED,
-                    InvoiceStatus.REJECTED,
-                )
-            ),
-            and_(
-                Invoice.evaluation_status.in_(_FLAGGED_EVAL),
-                Invoice.status != InvoiceStatus.PROCESSED,
-            ),
-        ),
-    )
-    duplicates_stmt = select(func.count(Invoice.id)).where(
-        Invoice.tenant_id == tenant_id,
-        Invoice.id.in_(base_ids),
-        Invoice.status == InvoiceStatus.DUPLICATE_SKIPPED,
-    )
+    flagged_or_dup = (
+        await db.execute(
+            select(
+                func.count(Invoice.id).filter(
+                    or_(
+                        Invoice.status.in_(
+                            (
+                                InvoiceStatus.EXCEPTION,
+                                InvoiceStatus.DUPLICATE_SKIPPED,
+                                InvoiceStatus.REJECTED,
+                            )
+                        ),
+                        and_(
+                            Invoice.evaluation_status.in_(_FLAGGED_EVAL),
+                            Invoice.status != InvoiceStatus.PROCESSED,
+                        ),
+                    )
+                ),
+                func.count(Invoice.id).filter(
+                    Invoice.status == InvoiceStatus.DUPLICATE_SKIPPED
+                ),
+            ).where(
+                Invoice.tenant_id == tenant_id,
+                Invoice.id.in_(base_ids),
+            )
+        )
+    ).one()
+    flagged = int(flagged_or_dup[0] or 0)
+    duplicates = int(flagged_or_dup[1] or 0)
     today = func.current_date()
     paid_stmt = select(func.count(func.distinct(Payment.invoice_id))).where(
         Payment.tenant_id == tenant_id,
@@ -526,11 +858,9 @@ async def _matrix_summary(
             ),
         ),
     )
-    flagged = (await db.execute(flagged_stmt)).scalar() or 0
-    duplicates = (await db.execute(duplicates_stmt)).scalar() or 0
     awaiting = (await db.execute(awaiting_stmt)).scalar() or 0
     paid = (await db.execute(paid_stmt)).scalar() or 0
-    return int(flagged), int(duplicates), int(awaiting), int(paid)
+    return flagged, int(duplicates), int(awaiting), int(paid)
 
 
 async def fetch_document_matrix(
@@ -559,25 +889,31 @@ async def fetch_document_matrix(
         invoice_ids,
         tenant_id=tenant_id,
         per_invoice_limit=_MATRIX_AUDIT_PER_INVOICE,
+        events=_MATRIX_LIST_AUDIT_EVENTS,
     )
     payments_by_id = await payments_for_invoice_ids(db, tenant_id, invoice_ids)
     published_ids = await published_invoice_ids(db, invoice_ids, tenant_id=tenant_id)
     conflicts = await duplicate_conflicts_for_invoices(db, tenant_id, list(invoices))
+    line_counts = await line_item_counts_for_invoice_ids(db, invoice_ids)
+    ledger_status_by_id, ref_status_by_id = await accounting_sync_status_for_invoice_ids(
+        db, tenant_id, invoice_ids
+    )
     flagged, duplicates, awaiting, paid = await _matrix_summary(
         db, tenant_id=tenant_id, params=params
     )
 
-    unfiltered_count_stmt = select(func.count(Invoice.id)).where(
-        Invoice.tenant_id == tenant_id
-    )
-    unfiltered_count_stmt = _apply_capture_source(
-        unfiltered_count_stmt, params.capture_source
-    )
-    document_count = (await db.execute(unfiltered_count_stmt)).scalar() or 0
+    if _params_have_list_filters(params):
+        unfiltered_count_stmt = select(func.count(Invoice.id)).where(
+            Invoice.tenant_id == tenant_id
+        )
+        unfiltered_count_stmt = _apply_capture_source(
+            unfiltered_count_stmt, params.capture_source
+        )
+        document_count = (await db.execute(unfiltered_count_stmt)).scalar() or 0
+    else:
+        document_count = int(total)
 
-    from app.services.invoice.invoice_evaluation_service import load_config_for_tenant
-
-    config = await load_config_for_tenant(db, tenant_id)
+    config = await load_posting_config_for_tenant(db, tenant_id)
     document_types = list(config.document_types or [])
 
     rows: list[MatrixRowResponse] = []
@@ -595,6 +931,7 @@ async def fetch_document_matrix(
                     inv,
                     published_to_ledger=inv.id in published_ids,
                     audit_logs=audit_by_id.get(inv.id, []),
+                    document_types=document_types,
                     for_list=True,
                 ),
                 stages=build_matrix_cells(inv, audit_by_id.get(inv.id, [])),
@@ -604,6 +941,19 @@ async def fetch_document_matrix(
                 paid_date=paid_date,
                 conflict_with=conflict_with,
                 conflict_detail=conflict_detail or None,
+                line_item_count=line_counts.get(inv.id, 0),
+                advance_auth=derive_matrix_advance_auth(
+                    inv, document_types=document_types
+                ),
+                budget_auth=derive_matrix_budget_auth(
+                    inv, document_types=document_types
+                ),
+                acc_sync=derive_matrix_acc_sync(
+                    inv,
+                    ledger_status=ledger_status_by_id.get(inv.id),
+                    ref_status=ref_status_by_id.get(inv.id),
+                    document_types=document_types,
+                ),
             )
         )
     return MatrixListResult(

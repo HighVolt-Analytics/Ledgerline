@@ -37,6 +37,7 @@ import type { PaymentApi, PurchaseOrderApi, SalesOrderApi, MatchAmountLineApi, L
 export const SALES_TWO_WAY_MODE = "two_way_dn_invoice";
 export const SALES_THREE_WAY_MODE = "three_way_so_dn";
 export const PURCHASE_TWO_WAY_MODE = "two_way_po_ses";
+export const PURCHASE_TWO_WAY_GRN_MODE = "two_way_grn_invoice";
 export const PURCHASE_THREE_WAY_MODE = "three_way_po_grn";
 
 export function isSalesTwoWayMode(matchMode?: string | null): boolean {
@@ -44,7 +45,8 @@ export function isSalesTwoWayMode(matchMode?: string | null): boolean {
 }
 
 export function isPurchaseTwoWayMode(matchMode?: string | null): boolean {
-  return (matchMode ?? PURCHASE_THREE_WAY_MODE) === PURCHASE_TWO_WAY_MODE;
+  const mode = matchMode ?? PURCHASE_THREE_WAY_MODE;
+  return mode === PURCHASE_TWO_WAY_MODE || mode === PURCHASE_TWO_WAY_GRN_MODE;
 }
 
 export function splitSalesRegisterRows(rows: SalesOrderApi[]) {
@@ -206,16 +208,16 @@ export function invoiceToSalesRow(inv: Invoice): SalesRegisterRow {
 
 export function salesKpisFromRegister(salesRows: SalesOrderApi[], routed: Invoice[]) {
   const { threeWayRows, twoWayRows } = splitSalesRegisterRows(salesRows);
-  const openSos = threeWayRows.filter((r) => r.match.status !== "3-Way Match").length;
-  const missingDn = threeWayRows.filter((r) => r.match.status === "No DN").length;
-  const matched = threeWayRows.filter((r) => r.match.status === "3-Way Match").length;
+  const openSos = threeWayRows.filter((r) => r.match?.status !== "3-Way Match").length;
+  const missingDn = threeWayRows.filter((r) => r.match?.status === "No DN").length;
+  const matched = threeWayRows.filter((r) => r.match?.status === "3-Way Match").length;
   const matchPct =
     threeWayRows.length > 0 ? Math.round((matched / threeWayRows.length) * 100) : 0;
-  const twoWayMatched = twoWayRows.filter((r) => r.match.status === "2-Way Match").length;
+  const twoWayMatched = twoWayRows.filter((r) => r.match?.status === "2-Way Match").length;
   const twoWayMatchPct =
     twoWayRows.length > 0 ? Math.round((twoWayMatched / twoWayRows.length) * 100) : 0;
   const variancesAwaiting = salesRows.filter((r) =>
-    salesNeedsVarianceApproval(r.match.status, r.variance_approved)
+    salesNeedsVarianceApproval(r.match?.status ?? "", r.variance_approved)
   ).length;
   const awaitingSo = routed.filter((inv) => inv.evaluation_status === "awaiting_so").length;
   const needsAction = salesActionRequiredInvoices(routed, salesRows).length;
@@ -304,6 +306,7 @@ export type RecentClaimValidation = {
   id: string;
   employee: string;
   amount: number;
+  currency?: string | null;
   channel: string;
   outcome: "approved" | "warning" | "rejected";
   reason: string;
@@ -391,6 +394,7 @@ export function invoiceToRecentClaimValidation(
     id: String(inv.id),
     employee: matched?.name ?? claim.submitter,
     amount: claim.amount,
+    currency: inv.currency,
     channel: claim.channel,
     outcome: claimValidationOutcome(inv),
     reason: claimValidationReason(inv),
@@ -482,16 +486,16 @@ export function purchaseRulesToCategories(rules: PurchaseRule[]): ExpenseCategor
 
 export function purchaseKpisFromRegister(rows: PurchaseOrderApi[], routed: Invoice[]) {
   const { threeWayRows, twoWayRows } = splitPurchaseRegisterRows(rows);
-  const openPos = threeWayRows.filter((r) => r.match.status !== "3-Way Match").length;
-  const missingGrn = threeWayRows.filter((r) => r.match.status === "No GRN").length;
-  const matched = threeWayRows.filter((r) => r.match.status === "3-Way Match").length;
+  const openPos = threeWayRows.filter((r) => r.match?.status !== "3-Way Match").length;
+  const missingGrn = threeWayRows.filter((r) => r.match?.status === "No GRN").length;
+  const matched = threeWayRows.filter((r) => r.match?.status === "3-Way Match").length;
   const matchPct =
     threeWayRows.length > 0 ? Math.round((matched / threeWayRows.length) * 100) : 0;
-  const twoWayMatched = twoWayRows.filter((r) => r.match.status === "2-Way Match").length;
+  const twoWayMatched = twoWayRows.filter((r) => r.match?.status === "2-Way Match").length;
   const twoWayMatchPct =
     twoWayRows.length > 0 ? Math.round((twoWayMatched / twoWayRows.length) * 100) : 0;
   const variancesAwaiting = rows.filter((r) =>
-    purchaseNeedsVarianceApproval(r.match.status, r.variance_approved)
+    purchaseNeedsVarianceApproval(r.match?.status ?? "", r.variance_approved)
   ).length;
   const awaitingPo = routed.filter((inv) => inv.evaluation_status === "awaiting_po").length;
   const needsAction = purchaseActionRequiredInvoices(routed, rows).length;
@@ -522,12 +526,12 @@ export function purchaseNeedsVarianceApproval(
   );
 }
 
-function mapMatchAmountLine(line: MatchAmountLineApi): MatchAmountLine {
+function mapMatchAmountLine(line: MatchAmountLineApi | null | undefined): MatchAmountLine {
   return {
-    qty: line.qty,
-    uom: line.uom ?? null,
-    unitPrice: line.unit_price ?? null,
-    lineValue: line.line_value ?? null,
+    qty: line?.qty ?? 0,
+    uom: line?.uom ?? null,
+    unitPrice: line?.unit_price ?? null,
+    lineValue: line?.line_value ?? null,
   };
 }
 
@@ -545,33 +549,34 @@ function mapMatchDisplay(d: ThreeWayMatchDisplayApi): ThreeWayMatchDisplay {
 }
 
 export function mapThreeWayMatchFromApi(match: ThreeWayMatchApi): ThreeWayMatch {
-  const lineResults: LineMatchResult[] | undefined = match.line_results?.map(
-    (row: LineMatchResultApi) => ({
-      status: row.status,
-      description: row.description,
-      sku: row.sku,
-      orderQty: row.order_qty,
-      orderUom: row.order_uom,
-      orderUnitPrice: row.order_unit_price,
-      receivedQty: row.received_qty,
-      receivedUom: row.received_uom,
-      invoiceQty: row.invoice_qty,
-      invoiceUom: row.invoice_uom,
-      invoiceUnitPrice: row.invoice_unit_price,
-      qtyVarianceValue: row.qty_variance_value,
-      priceVarianceValue: row.price_variance_value,
+  const lineResults: LineMatchResult[] | undefined = match?.line_results?.map(
+    (line: LineMatchResultApi) => ({
+      status: line.status,
+      description: line.description,
+      sku: line.sku,
+      orderQty: line.order_qty,
+      orderUom: line.order_uom,
+      orderUnitPrice: line.order_unit_price,
+      receivedQty: line.received_qty,
+      receivedUom: line.received_uom,
+      invoiceQty: line.invoice_qty,
+      invoiceUom: line.invoice_uom,
+      invoiceUnitPrice: line.invoice_unit_price,
+      qtyVarianceValue: line.qty_variance_value,
+      priceVarianceValue: line.price_variance_value,
     }),
   );
   return {
-    status: match.status as MatchStatus,
-    qtyVarianceValue: match.qty_variance_value,
-    priceVarianceValue: match.price_variance_value,
-    totalDeviation: match.total_deviation,
-    poValue: match.po_value,
-    invoiceValue: match.invoice_value,
-    invoiceGst: match.invoice_gst,
-    invoiceTotal: match.invoice_total,
-    display: match.display ? mapMatchDisplay(match.display) : null,
+    status: (match?.status ?? "No GRN") as MatchStatus,
+    qtyVarianceValue: match?.qty_variance_value ?? 0,
+    priceVarianceValue: match?.price_variance_value ?? 0,
+    totalDeviation: match?.total_deviation ?? 0,
+    poValue: match?.po_value ?? 0,
+    invoiceValue: match?.invoice_value ?? 0,
+    invoiceGst: match?.invoice_gst ?? 0,
+    invoiceTotal: match?.invoice_total ?? 0,
+    currency: null,
+    display: match?.display ? mapMatchDisplay(match.display) : null,
     lineResults,
   };
 }
@@ -600,7 +605,7 @@ export function apiPurchaseToRow(row: PurchaseOrderApi): {
     invoiceQty: row.invoice_qty,
     invoiceUnitPrice: row.invoice_unit_price,
     gstRate: row.gst_rate,
-    routedForApproval: purchaseNeedsVarianceApproval(row.match.status, row.variance_approved),
+    routedForApproval: purchaseNeedsVarianceApproval(row.match?.status ?? "", row.variance_approved),
     matchedRuleName: row.matched_rule_name ?? null,
     matchedGl: row.matched_gl ?? null,
     evaluationStatus: row.evaluation_status ?? null,
@@ -608,7 +613,10 @@ export function apiPurchaseToRow(row: PurchaseOrderApi): {
     poDocumentId: row.po_document_id ?? null,
     grnDocumentId: row.grn_document_id ?? null,
   };
-  const m: ThreeWayMatch = mapThreeWayMatchFromApi(row.match);
+  const m: ThreeWayMatch = {
+    ...mapThreeWayMatchFromApi(row.match),
+    currency: (row.currency || "").trim().toUpperCase() || null,
+  };
   return {
     purchaseId: row.id,
     invoiceId: row.invoice_id,
@@ -643,7 +651,7 @@ export function apiSalesToRow(row: SalesOrderApi): {
     invoiceQty: row.invoice_qty,
     invoiceUnitPrice: row.invoice_unit_price,
     gstRate: row.gst_rate,
-    routedForApproval: salesNeedsVarianceApproval(row.match.status, row.variance_approved),
+    routedForApproval: salesNeedsVarianceApproval(row.match?.status ?? "", row.variance_approved),
     matchedRuleName: row.matched_rule_name ?? null,
     matchedGl: row.matched_gl ?? null,
     evaluationStatus: row.evaluation_status ?? null,
@@ -651,7 +659,10 @@ export function apiSalesToRow(row: SalesOrderApi): {
     soDocumentId: row.so_document_id ?? null,
     dnDocumentId: row.dn_document_id ?? null,
   };
-  const m: ThreeWayMatch = mapThreeWayMatchFromApi(row.match);
+  const m: ThreeWayMatch = {
+    ...mapThreeWayMatchFromApi(row.match),
+    currency: (row.currency || "").trim().toUpperCase() || null,
+  };
   return {
     salesId: row.id,
     invoiceId: row.invoice_id,

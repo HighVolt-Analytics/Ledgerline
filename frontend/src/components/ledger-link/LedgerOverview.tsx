@@ -18,7 +18,7 @@ type LedgerOverviewProps = {
 export function LedgerOverview({
   recon,
   loading = false,
-  currency = "SGD",
+  currency = "",
   onViewInvoice,
 }: LedgerOverviewProps) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});

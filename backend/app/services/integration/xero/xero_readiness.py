@@ -50,7 +50,7 @@ async def get_xero_readiness_enriched(
 ) -> dict[str, Any]:
     from app.models.accounting_integration import AccountingProvider
     from app.services.integration.accounting_integration_service import get_integration
-    from app.services.integration.xero_sync_job_service import get_latest_sync_job
+    from app.services.integration.xero.xero_sync_job_service import get_latest_sync_job
 
     payload = await get_xero_readiness(db, tenant_id)
     integration = await get_integration(db, tenant_id, AccountingProvider.XERO.value)

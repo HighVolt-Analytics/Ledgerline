@@ -71,6 +71,36 @@ export const SKIPPABLE_STEP_IDS = new Set(
   PROCESSING_OVERRIDE_STEPS.map((s) => s.id)
 );
 
+/** Audit timeline stage names that map to a skippable override step. */
+export const AUDIT_STAGE_TO_SKIP_STEP: Record<string, ProcessingOverrideStepId> = {
+  "Image quality": "image_quality",
+  "OCR quality": "image_quality",
+  Classified: "classification",
+  Gate: "classification",
+  "DT mapped": "classification",
+  Bundle: "playbook",
+  Validated: "validation",
+  Mapped: "mapping_review",
+};
+
+const STAGE_MAPPED_SKIP_IDS = new Set(Object.values(AUDIT_STAGE_TO_SKIP_STEP));
+
+/** Override steps with no matching audit stage on the current path. */
+export const UNMATCHED_OVERRIDE_STEP_IDS: ProcessingOverrideStepId[] =
+  PROCESSING_OVERRIDE_STEPS.map((s) => s.id).filter((id) => !STAGE_MAPPED_SKIP_IDS.has(id));
+
+export function skipStepIdForAuditStage(
+  stage: string
+): ProcessingOverrideStepId | null {
+  return AUDIT_STAGE_TO_SKIP_STEP[stage] ?? null;
+}
+
+export function overrideStepDef(
+  id: ProcessingOverrideStepId
+): ProcessingOverrideStepDef | undefined {
+  return PROCESSING_OVERRIDE_STEPS.find((s) => s.id === id);
+}
+
 export function normaliseSkipSteps(
   raw: ProcessingOverrides | null | undefined
 ): ProcessingOverrideStepId[] {

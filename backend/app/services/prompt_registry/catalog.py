@@ -413,7 +413,7 @@ DECISION ORDER (mandatory for every page i):
 (3) LOOK AHEAD FOR TYPE CHANGE — when to CLOSE the current run:
     If upcoming (next non-blank, non-separator) is a different type → end current
     segment before that page; start the next segment there. Never glue invoice
-    page N to the following packing list / AWB / PoD.
+    page N to the following packing list / AWB / PoD / Item Receipt / GRN.
 
 Long packs = a SEQUENCE OF RUNS (start from (1) + extent from (2)/(3)).
 
@@ -448,6 +448,9 @@ H2. If no explicit header, structural signals:
     - Line items + qty/weights, NO prices → packing_list
     - Airline/carrier grid + HAWB/MAWB/BL → transport_doc
     - Received By + signature + tracking → grn / PoD / delivery (map to grn)
+    - ITEM RECEIPT / MATERIAL RECEIPT / WAREHOUSE RECEIPT / inventory receipt
+      (receipt number + qty received + vendor/warehouse, SOS/SAP/NetSuite style)
+      → grn even when the page also cites an invoice number
     - Bank details + "Please remit" → remittance
     - Delivery address + items, no pricing → delivery/grn-style
     - Pure numeric/tabular continuation with no title at all, immediately after
@@ -499,6 +502,9 @@ G2. PAGE-OF-N — "Page 2 of 3" / "Page : 2 of 3" (any document type) with share
 G3. CONTINUATION — no independent header, looks like continued table/lines,
     immediately after type T, with ≥1 shared linking id OR clear page-of-N OR
     matching column/table structure with no new title block → KEEP with T.
+    NEVER apply G3 across type families. ITEM RECEIPT / MATERIAL RECEIPT is never invoice continuation (E39): a warehouse/inventory receipt is not invoice or PO
+    continuation — even with a shared invoice number, matching line-item columns,
+    empty title_hint, or OCR-degraded header. Split (R10).
     If no shared id and no page-of-N and type unclear → do not invent a merge;
     prefer split only when a new primary title appears; else KEEP with low confidence
     (and note the uncertainty in reasoning — human-review analogue).
@@ -626,6 +632,10 @@ E37. Trailing pages with no window "upcoming" (end of pack) still require
 E38. First page of the whole pack (page 0) with no "previous" — evaluate purely
      on LOOK AHEAD per CORE METHOD; do not default to heading_kind="" just
      because look-back is unavailable.
+E39. Item Receipt / Material Receipt / warehouse receipt (SOS, SAP, NetSuite,
+     etc.) immediately after an invoice or PO, sharing the invoice/PO number →
+     SEPARATE grn segment. Empty title_hint does not make it a continuation.
+     Matching column structure + shared invoice ref is NOT a G3 KEEP (R10).
 
 ═══════════════════════════════════════════════
 FAILURE MODES (detect in reasoning; do not silently collapse)
@@ -693,9 +703,9 @@ HARD COVERAGE RULES
 4. Same-type multi-page continuation / Page X of Y with same primary number → one segment
    (all document types), UNLESS the counter resets/repeats (E31) indicating a reissue.
 5. Different primary type titles on successive pages → different segments.
-6. Supporting docs (packing list, COO, AWB/BL, GRN/POD, permit, credit note, remittance,
-   quote, proforma, timesheet, contract) MUST NOT merge into an invoice/PO solely because
-   they cite the same reference number.
+6. Supporting docs (packing list, COO, AWB/BL, GRN/POD, item/material/warehouse
+   receipt, permit, credit note, remittance, quote, proforma, timesheet, contract)
+   MUST NOT merge into an invoice/PO solely because they cite the same reference number.
 7. Never emit a blank-only / empty-only segment. OMIT blank and separator pages from ranges.
 8. Different issuing party / vendor letterhead is part of primary identity — never
    merge across a vendor change even on an identical template (E19, E22).

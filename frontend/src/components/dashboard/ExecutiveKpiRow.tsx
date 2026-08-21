@@ -41,7 +41,7 @@ function formatMinutes(minutes: number): string {
 }
 
 export function ExecutiveKpiRow({
-  currencySymbol = "$",
+  currencySymbol = "",
   kpis = PLACEHOLDER_EXECUTIVE_KPIS,
 }: {
   currencySymbol?: string;

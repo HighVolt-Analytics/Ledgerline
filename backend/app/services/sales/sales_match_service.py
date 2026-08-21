@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -25,11 +25,16 @@ from app.schemas.rule_book_config import RuleBookConfigPayload
 from app.schemas.sales import DeliveryNoteCreate, SalesOrderResponse, TwoWaySalesMatchResponse
 from app.schemas.uom_conversion import PurchaseMatchConfig
 from app.services.audit.audit_service import log_event
-from app.services.invoice.invoice_evaluation_service import ROUTE_SALES, parse_matched_rule_ids
+from app.services.invoice.invoice_evaluation_service import (
+    ROUTE_SALES,
+    load_posting_config_for_tenant,
+    parse_matched_rule_ids,
+)
 from app.services.matching.line_match_engine import (
     compute_line_match,
     sum_received_by_order_line,
 )
+from app.services.shared.currency import prefer_currency
 
 
 def _redistribute_header_receipt(
@@ -617,6 +622,10 @@ def sales_order_to_response(
         ledger=so.ledger,
         sub_ledger=so.sub_ledger,
         sales_rule_id=so.sales_rule_id,
+        currency=prefer_currency(
+            inv.currency if inv is not None else None,
+            so.so_currency,
+        ),
     )
 
 
@@ -657,7 +666,7 @@ async def list_sales_orders(
         )
     ).scalars().all()
 
-    config = await load_classification_config(db, tenant_id)
+    config = await load_posting_config_for_tenant(db, tenant_id)
     responses: list[SalesOrderResponse] = []
     seen_pairs: set[tuple[int, int]] = set()
     sos_with_rows: set[int] = set()
@@ -678,23 +687,33 @@ async def list_sales_orders(
         sos_with_rows.add(so.id)
         responses.append(sales_order_to_response(so, inv, config=config))
 
+    orphan_invoice_ids = [
+        so.invoice_id
+        for so in rows
+        if so.id not in sos_with_rows
+        and sales_order_has_document_anchor(so)
+        and so.invoice_id is not None
+    ]
+    orphan_invoices: dict[int, Invoice] = {}
+    if orphan_invoice_ids:
+        loaded = (
+            await db.execute(
+                select(Invoice)
+                .where(
+                    Invoice.id.in_(orphan_invoice_ids),
+                    Invoice.status.notin_(_HIDDEN_STATUSES),
+                )
+                .options(selectinload(Invoice.line_items))
+            )
+        ).scalars().all()
+        orphan_invoices = {inv.id: inv for inv in loaded}
+
     for so in rows:
         if so.id in sos_with_rows:
             continue
         if not sales_order_has_document_anchor(so):
             continue
-        inv = None
-        if so.invoice_id:
-            inv = (
-                await db.execute(
-                    select(Invoice)
-                    .where(
-                        Invoice.id == so.invoice_id,
-                        Invoice.status.notin_(_HIDDEN_STATUSES),
-                    )
-                    .options(selectinload(Invoice.line_items))
-                )
-            ).scalar_one_or_none()
+        inv = orphan_invoices.get(so.invoice_id) if so.invoice_id else None
         responses.append(sales_order_to_response(so, inv, config=config))
 
     return responses
@@ -723,18 +742,41 @@ async def list_two_way_sales_orphans(
         )
     ).scalars().all()
 
-    config = await load_classification_config(db, tenant_id)
+    config = await load_posting_config_for_tenant(db, tenant_id)
     match_cfg = config.purchase_match if config is not None else None
     results: list[TwoWaySalesMatchResponse] = []
     seen_invoice_ids: set[int] = set()
 
-    for inv in routed:
-        if resolve_match_mode(document_type_code=inv.document_type_code) != "two_way_dn_invoice":
-            continue
+    candidates = [
+        inv
+        for inv in routed
+        if resolve_match_mode(document_type_code=inv.document_type_code) == "two_way_dn_invoice"
+    ]
+    so_numbers = {
+        (inv.so_reference or "").strip()
+        for inv in candidates
+        if (inv.so_reference or "").strip()
+    }
+    existing_so_numbers: set[str] = set()
+    if so_numbers:
+        existing_so_numbers = {
+            row[0]
+            for row in (
+                await db.execute(
+                    select(SalesOrder.so_number).where(
+                        SalesOrder.tenant_id == tenant_id,
+                        SalesOrder.so_number.in_(so_numbers),
+                    )
+                )
+            ).all()
+            if row[0]
+        }
+
+    for inv in candidates:
         if inv.id in seen_invoice_ids:
             continue
-        so = await load_sales_order_for_invoice(db, inv)
-        if so is not None:
+        so_number = (inv.so_reference or "").strip()
+        if so_number and so_number in existing_so_numbers:
             continue
         ctx = await resolve_ar_match_context(db, inv, requested_mode="two_way_dn_invoice")
         if ctx.effective_mode != "two_way_dn_invoice" or ctx.dn_invoice is None:
@@ -770,6 +812,96 @@ async def list_two_way_sales_orphans(
 
 def filter_two_way_sales_rows(rows: list[SalesOrderResponse]) -> list[SalesOrderResponse]:
     return [row for row in rows if row.match_mode == "two_way_dn_invoice"]
+
+
+async def sales_workspace_kpis(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> tuple[int, int]:
+    """Uncapped Awaiting SO / Needs action counts for Sales Management KPIs."""
+    hidden = (InvoiceStatus.REJECTED, InvoiceStatus.DUPLICATE_SKIPPED)
+    base = [
+        Invoice.tenant_id == tenant_id,
+        Invoice.route_target == ROUTE_SALES,
+        Invoice.status.notin_(hidden),
+    ]
+    awaiting = int(
+        (
+            await db.execute(
+                select(func.count(Invoice.id)).where(
+                    *base,
+                    Invoice.evaluation_status == "awaiting_so",
+                )
+            )
+        ).scalar()
+        or 0
+    )
+
+    invoice_ids = {
+        row[0]
+        for row in (
+            await db.execute(
+                select(SalesOrder.invoice_id).where(
+                    SalesOrder.tenant_id == tenant_id,
+                    SalesOrder.invoice_id.isnot(None),
+                )
+            )
+        ).all()
+        if row[0] is not None
+    }
+    so_doc_ids = {
+        row[0]
+        for row in (
+            await db.execute(
+                select(SalesOrder.so_document_id).where(
+                    SalesOrder.tenant_id == tenant_id,
+                    SalesOrder.so_document_id.isnot(None),
+                )
+            )
+        ).all()
+        if row[0] is not None
+    }
+    dn_doc_ids = {
+        row[0]
+        for row in (
+            await db.execute(
+                select(DeliveryNote.dn_invoice_id).where(
+                    DeliveryNote.tenant_id == tenant_id,
+                    DeliveryNote.dn_invoice_id.isnot(None),
+                )
+            )
+        ).all()
+        if row[0] is not None
+    }
+
+    doc_type = func.lower(func.coalesce(Invoice.sales_document_type, ""))
+    so_clause = doc_type == "so"
+    if so_doc_ids:
+        so_clause = and_(so_clause, Invoice.id.notin_(so_doc_ids))
+    dn_clause = doc_type == "dn"
+    if dn_doc_ids:
+        dn_clause = and_(dn_clause, Invoice.id.notin_(dn_doc_ids))
+    other_clause = doc_type.notin_(("so", "dn"))
+    if invoice_ids:
+        other_clause = and_(other_clause, Invoice.id.notin_(invoice_ids))
+
+    needs_action = int(
+        (
+            await db.execute(
+                select(func.count(Invoice.id)).where(
+                    *base,
+                    or_(
+                        Invoice.evaluation_status == "awaiting_so",
+                        so_clause,
+                        dn_clause,
+                        other_clause,
+                    ),
+                )
+            )
+        ).scalar()
+        or 0
+    )
+    return awaiting, needs_action
 
 
 async def load_sales_order_for_invoice(

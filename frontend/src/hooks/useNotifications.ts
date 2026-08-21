@@ -13,7 +13,7 @@ export function useNotifications() {
   const query = useTenantQuery({
     queryKey: queryKeys.notifications(),
     queryFn: () => api.getNotifications(),
-    refetchInterval: 30_000,
+    refetchInterval: 90_000,
     enabled,
   });
 

@@ -70,11 +70,16 @@ async def test_dashboard_overview(
     assert body["stats"]["distinct_vendors"] == 1
     assert body["stats"]["docs_via_upload"] == 1
     assert body["stats"]["total_value_aud"] == "1000.00"
-    assert len(body["activity"]) >= 1
+    assert body["activity"] == []
+    assert body["anomalies"] == []
+    assert body["mailbox_breakdown"] == []
+    assert body["kpi_trends"] == {}
     assert body["top_vendors"][0]["vendor"] == "Acme Corp"
     assert len(body["cash_forecast"]) == 6
     seven_day = next(b for b in body["cash_forecast"] if b["label"] == "7 days")
-    assert Decimal(seven_day["amount"]) == convert_to_base(Decimal("1000.00"), "AUD")
+    assert Decimal(seven_day["amount"]) == convert_to_base(
+        Decimal("1000.00"), "AUD", base="AUD"
+    )
     assert len(body["invoice_volume_sparkline"]) >= 1
     assert "period" in body
     assert "mailbox_breakdown" in body
@@ -123,9 +128,9 @@ async def test_dashboard_activity_includes_duplicate(
     )
     await db_session.flush()
 
-    res = await client.get("/api/dashboard/overview?activity_limit=10")
+    res = await client.get("/api/dashboard/activity?limit=10")
     assert res.status_code == 200
-    activity = res.json()["data"]["activity"]
+    activity = res.json()["data"]
     dup_rows = [row for row in activity if row["event"] == "duplicate_skipped"]
     assert len(dup_rows) >= 1
     assert dup_rows[0]["summary"] is not None
@@ -206,7 +211,7 @@ async def test_total_value_counts_processed_only(
     assert len(body["top_vendors"]) == 1
     assert body["top_vendors"][0]["vendor"] == "Booked Co"
     assert Decimal(body["top_vendors"][0]["amount"]) == convert_to_base(
-        Decimal("1000.00"), "AUD"
+        Decimal("1000.00"), "AUD", base="AUD"
     )
     forecast_total = sum(
         Decimal(b["amount"]) for b in body["cash_forecast"]
@@ -346,13 +351,13 @@ async def test_dashboard_anomaly_label_uses_document_ref_not_db_invoice_id(
     db_session.add(inv)
     await db_session.flush()
 
-    overview = (await client.get("/api/dashboard/overview")).json()["data"]
-    row = next(
-        r for r in overview["anomalies"] if r.get("invoice_id") == inv.id
-    )
-    assert row["document_ref"] == "DOC-88"
-    assert row["description"].startswith("DOC-88 · INV-173")
-    assert not row["description"].startswith("INV-173 ·")
+    from app.services.reports.dashboard_service import fetch_anomalies
+
+    anomalies = await fetch_anomalies(db_session, tenant_id=TESTING_TENANT_UUID)
+    row = next(r for r in anomalies if r.invoice_id == inv.id)
+    assert row.document_ref == "DOC-88"
+    assert row.description.startswith("DOC-88 · INV-173")
+    assert not row.description.startswith("INV-173 ·")
 
 
 @pytest.mark.asyncio
@@ -373,11 +378,13 @@ async def test_dashboard_anomalies_sales_invoice_no_missing_po(
     )
     await db_session.flush()
 
-    overview = (await client.get("/api/dashboard/overview")).json()["data"]
+    from app.services.reports.dashboard_service import fetch_anomalies
+
+    anomalies = await fetch_anomalies(db_session, tenant_id=TESTING_TENANT_UUID)
     missing_po = [
-        row for row in overview["anomalies"] if row["tag"] == "Missing PO" and row["invoice_id"]
+        row for row in anomalies if row.tag == "Missing PO" and row.invoice_id
     ]
-    assert not any("INV-9001" in row["description"] for row in missing_po)
+    assert not any("INV-9001" in row.description for row in missing_po)
 
 
 @pytest.mark.asyncio
@@ -430,8 +437,10 @@ async def test_dashboard_anomalies_include_rule_book_routing(
     )
     await db_session.flush()
 
-    overview = (await client.get("/api/dashboard/overview")).json()["data"]
-    tags = {row["tag"] for row in overview["anomalies"]}
+    from app.services.reports.dashboard_service import fetch_anomalies
+
+    anomalies = await fetch_anomalies(db_session, tenant_id=TESTING_TENANT_UUID)
+    tags = {row.tag for row in anomalies}
     assert "Pending vendor" in tags
     assert "Needs review" in tags
 

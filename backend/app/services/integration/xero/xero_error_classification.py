@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from app.services.integration.xero_client import XeroApiError
+from app.services.integration.xero.xero_client import XeroApiError
 
 ERROR_TRANSIENT = "TRANSIENT"
 ERROR_RECOVERABLE = "RECOVERABLE"

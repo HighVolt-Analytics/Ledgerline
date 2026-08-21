@@ -14,7 +14,7 @@ from app.models.accounting_entity_mapping import MAPPING_SUPPLIER
 from app.models.xero_contact import MAPPING_MAPPED, XeroContact
 from app.services.integration.accounting_integration_service import require_xero_ready
 from app.services.integration.accounting_mapping_service import get_mapping, upsert_mapping
-from app.services.integration.xero_client import XeroApiError, XeroClient
+from app.services.integration.xero.xero_client import XeroApiError, XeroClient
 
 
 MatchOutcome = Literal["matched", "ambiguous", "none", "mapped"]

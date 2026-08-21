@@ -5,16 +5,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_db
 from app.schemas.common import ApiEnvelope
-from app.schemas.sales import DeliveryNoteCreate, SalesOrderResponse, TwoWaySalesMatchResponse
+from app.schemas.sales import DeliveryNoteCreate, SalesOrderResponse, SalesWorkspaceKpis
 from app.services.audit.audit_service import log_event
 from app.services.auth.privilege_service import require_privilege
 from app.services.approval.approval_quorum_service import ApprovalQuorumForbiddenError
 from app.services.sales.sales_match_service import (
     approve_sales_variance,
-    filter_two_way_sales_rows,
     list_sales_orders,
     list_two_way_sales_orphans,
     record_delivery_note,
+    sales_workspace_kpis,
 )
 
 router = APIRouter(prefix="/sales", tags=["sales"])
@@ -29,17 +29,31 @@ async def get_sales_orders(
     return ApiEnvelope(data=rows)
 
 
+@router.get("/kpis", response_model=ApiEnvelope[SalesWorkspaceKpis])
+async def get_sales_workspace_kpis(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[SalesWorkspaceKpis]:
+    awaiting, needs_action = await sales_workspace_kpis(db, ctx.tenant_id)
+    return ApiEnvelope(
+        data=SalesWorkspaceKpis(
+            awaiting_so_count=awaiting,
+            needs_action_count=needs_action,
+        )
+    )
+
+
 @router.get("/two-way", response_model=ApiEnvelope[dict])
 async def get_two_way_sales_matches(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[dict]:
-    all_rows = await list_sales_orders(db, ctx.tenant_id)
-    register_rows = filter_two_way_sales_rows(all_rows)
+    # Register two-way rows come from GET /sales. This endpoint only builds
+    # DN↔invoice orphans that are not on a sales-order register row.
     orphan_rows = await list_two_way_sales_orphans(db, ctx.tenant_id)
     return ApiEnvelope(
         data={
-            "register_rows": register_rows,
+            "register_rows": [],
             "orphan_rows": orphan_rows,
         }
     )

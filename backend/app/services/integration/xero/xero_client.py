@@ -11,7 +11,7 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.services.integration.xero_token_service import get_valid_access_token
+from app.services.integration.xero.xero_token_service import get_valid_access_token
 from app.utils.logger import correlation_id_ctx, get_logger
 
 logger = get_logger(__name__)

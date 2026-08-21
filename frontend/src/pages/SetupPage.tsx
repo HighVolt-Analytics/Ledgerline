@@ -64,8 +64,8 @@ export function SetupPage() {
 
   const [form, setForm] = useState<SignupFormFields>(EMPTY_SIGNUP_FIELDS);
   const [industry, setIndustry] = useState<Industry>("Hospitality");
-  const [countryCode, setCountryCode] = useState("AU");
-  const [currencyCode, setCurrencyCode] = useState("AUD");
+  const [countryCode, setCountryCode] = useState("");
+  const [currencyCode, setCurrencyCode] = useState("");
   const [currencyTouched, setCurrencyTouched] = useState(false);
   const [otp, setOtp] = useState("");
   const { countries, currencies } = useSetupCatalogs();
@@ -82,22 +82,20 @@ export function SetupPage() {
   const studioCompleteStarted = useRef<string | null>(null);
   const [confirmingMode, setConfirmingMode] = useState<"free" | "studio" | null>(null);
   const country =
-    countries.find((c) => c.code === countryCode) ??
-    countries[0] ?? {
-      code: "AU",
-      name: "Australia",
-      defaultCurrency: "AUD",
-      locale: "en-AU",
-      taxRate: 10 as number | null,
-      taxLabel: "GST",
-      dialCode: "+61",
+    countries.find((c) => c.code === countryCode) ?? {
+      code: countryCode,
+      name: countryCode || "Select country",
+      defaultCurrency: "",
+      locale: "",
+      taxRate: null as number | null,
+      taxLabel: "Tax",
+      dialCode: "",
     };
   const selectedCurrency =
-    currencies.find((c) => c.code === currencyCode) ??
-    currencies[0] ?? {
-      code: "AUD",
-      name: "Australian Dollar",
-      symbol: "A$",
+    currencies.find((c) => c.code === currencyCode) ?? {
+      code: currencyCode,
+      name: currencyCode || "Select currency",
+      symbol: "",
       decimalPlaces: 2,
     };
   const pricingRegion = pricingRegionForCountry(countryCode);
@@ -175,7 +173,7 @@ export function SetupPage() {
           const match = countries.find((c) => c.code === session.country);
           if (!currencyTouched) {
             setCurrencyCode(
-              session.currency || match?.defaultCurrency || "AUD"
+              session.currency || match?.defaultCurrency || ""
             );
           }
         }

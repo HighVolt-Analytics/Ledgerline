@@ -17,7 +17,7 @@ from app.models.tenant_payment_provider import (
     TenantPaymentProviderAccount,
 )
 from app.services.audit.audit_service import log_event
-from app.services.integration.xero_token_service import (
+from app.services.integration.xero.xero_token_service import (
     STATE_TTL_SECONDS,
     consume_oauth_jti,
 )

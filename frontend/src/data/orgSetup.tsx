@@ -75,10 +75,14 @@ export function countryByCode(code: string): CountryOption {
 }
 
 export function currencyByCode(code: string): CurrencyOption {
+  const token = (code || "").trim().toUpperCase();
   return (
-    CURRENCIES.find((c) => c.code === code) ??
-    CURRENCIES.find((c) => c.code === "SGD") ??
-    CURRENCIES[0]
+    CURRENCIES.find((c) => c.code === token) ?? {
+      code: token,
+      name: token || "Unknown",
+      symbol: "",
+      decimalPlaces: 2,
+    }
   );
 }
 

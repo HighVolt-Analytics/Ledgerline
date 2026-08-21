@@ -379,7 +379,7 @@ export function DashboardPage() {
   }
 
   const { stats, top_vendors, cash_forecast } = overview;
-  const baseCurrency = stats.base_currency || "SGD";
+  const baseCurrency = stats.base_currency || "";
   const fmt = (v: string | number | null | undefined) => money(v, baseCurrency, locale);
   const currencySym = currencySymbol(baseCurrency);
   const executiveKpis = mapExecutiveKpis(overview);

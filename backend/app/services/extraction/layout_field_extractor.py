@@ -43,13 +43,13 @@ _KV_LABELS: list[tuple[str, re.Pattern[str]]] = [
     ("currency", re.compile(r"(?i)^(?:currency|ccy|curr)\.?$")),
     ("cost_centre", re.compile(r"(?i)^(?:cost\s*cent(?:re|er)|project\s*code|cost\s*code|\bcc\b)\.?$")),
     *money_kv_label_patterns(),
-    ("grn_reference", re.compile(r"(?i)^(?:grn|goods\s*receipt|delivery\s*note)\s*(?:no|number|#)?\.?$")),
+    ("grn_reference", re.compile(r"(?i)^(?:grn|goods\s*receipt|item\s*receipt|material\s*receipt|delivery\s*note)\s*(?:no|number|#)?\.?$")),
 ]
 
 _FAMILY_PATTERNS: list[tuple[DocFamilyHint, re.Pattern[str]]] = [
     ("invoice", re.compile(r"(?i)\b(?:tax\s+invoice|commercial\s+invoice|invoice)\b")),
     ("po", re.compile(r"(?i)\bpurchase\s+order\b")),
-    ("grn", re.compile(r"(?i)\b(?:goods\s+receipt|delivery\s+(?:note|docket)|\bgrn\b)\b")),
+    ("grn", re.compile(r"(?i)\b(?:goods\s+receipt|item\s+receipt|material\s+receipt|warehouse\s+receipt|delivery\s+(?:note|docket)|\bgrn\b)\b")),
     ("contract", re.compile(r"(?i)\b(?:contract|agreement|master\s+service)\b")),
     ("quote", re.compile(r"(?i)\b(?:quotation|quote|estimate|proposal)\b")),
     ("credit_note", re.compile(r"(?i)\bcredit\s+note\b")),

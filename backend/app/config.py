@@ -238,7 +238,7 @@ class Settings(BaseSettings):
         validation_alias="PDF_SEGMENT_LLM_TIMEOUT_SECONDS",
     )
     pdf_segment_llm_prompt_version: str = Field(
-        default="v10",
+        default="v11",
         validation_alias="PDF_SEGMENT_LLM_PROMPT_VERSION",
     )
     max_upload_file_bytes: int = Field(

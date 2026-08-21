@@ -15,7 +15,7 @@ function totalsByCurrency(rows: LedgerExportRow[]): Record<string, number> {
 export function LedgerExportTable({
   title,
   rows,
-  currency = "SGD",
+  currency = "",
 }: {
   title: string;
   rows: LedgerExportRow[];

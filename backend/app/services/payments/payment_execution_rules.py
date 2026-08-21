@@ -34,13 +34,17 @@ def check_payment_manual_execution_limit(
     settings = get_settings()
     limit = Decimal(str(settings.payment_manual_execution_limit_usd))
     amount = Decimal(str(payment.amount or 0))
-    currency = (payment.currency or "USD").upper()
+    currency = (payment.currency or "").strip().upper()
     warnings: list[str] = []
 
     if amount > limit:
         return False, LIMIT_BLOCK_MESSAGE, warnings
 
-    if currency != "USD":
+    if not currency:
+        warnings.append(
+            f"Payment currency is missing; USD {limit} launch limit applied conservatively."
+        )
+    elif currency != "USD":
         warnings.append(
             f"No FX conversion available; USD {limit} launch limit applied conservatively "
             f"to {currency} {amount}."

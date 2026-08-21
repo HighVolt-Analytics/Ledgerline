@@ -18,7 +18,7 @@ class PaymentExecutionInstructionResponse(BaseModel):
     vendor_name: str | None = None
     vendor_payout_method_label: str | None = None
     amount: float
-    currency: str = "SGD"
+    currency: str = ""
     due_date: date | None = None
     execution_mode: str
     status: str
@@ -33,7 +33,7 @@ class PaymentExecutionInstructionExportResponse(BaseModel):
     vendor_name: str | None = None
     vendor_payout_method_label: str | None = None
     amount: float
-    currency: str = "SGD"
+    currency: str = ""
     due_date: date | None = None
     execution_mode: str
     status: str
@@ -67,7 +67,7 @@ class PaymentResponse(BaseModel):
     invoice_id: int
     vendor: str | None = None
     amount: float
-    currency: str = "SGD"
+    currency: str = ""
     status: str
     tab: str
     due_date: date | None = None
@@ -103,6 +103,7 @@ class WalletTransactionResponse(BaseModel):
 class WalletSummaryResponse(BaseModel):
     balance: float
     available: float
+    currency: str = ""
     last_top_up: str
     transactions: list[WalletTransactionResponse] = Field(default_factory=list)
 

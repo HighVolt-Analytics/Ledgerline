@@ -26,7 +26,7 @@ export function WalletCard({
   stripeLoading = false,
   stripeAvailableTotal = 0,
   stripePendingTotal = 0,
-  stripeCurrency = "SGD",
+  stripeCurrency,
   stripeLivemode,
 }: WalletCardProps) {
   const { data: wallet, isLoading, error } = useWalletSummary(!stripeConnected);
@@ -97,7 +97,7 @@ export function WalletCard({
     );
   }
 
-  const fmt = (v: number) => money(v, "SGD");
+  const fmt = (v: number) => money(v, wallet.currency);
 
   return (
     <Card

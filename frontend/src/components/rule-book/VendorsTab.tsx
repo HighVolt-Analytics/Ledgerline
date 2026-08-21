@@ -32,6 +32,8 @@ import {
 } from "@/hooks/useMasterData";
 import { cn } from "@/lib/cn";
 import { fmtAud } from "@/lib/v4MockData";
+import { normalizeCurrencyCode } from "@/lib/format";
+import { useInstitutionSettings } from "@/hooks/useInstitutionSettings";
 import type { VendorDetectionConfig, VendorMaster } from "@/lib/v4RuleBookTypes";
 import { FieldLabel } from "./FieldLabel";
 import { AccountBadge } from "./AccountBadge";
@@ -88,6 +90,8 @@ export function VendorsTab({
   initialSearchQuery?: string | null;
 }) {
   const { toast } = useToast();
+  const { data: institution } = useInstitutionSettings();
+  const booksCurrency = normalizeCurrencyCode(institution?.currency) ?? "";
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [bankMasked, setBankMasked] = useState(true);
   const [focusBankId, setFocusBankId] = useState<string | null>(null);
@@ -555,7 +559,7 @@ export function VendorsTab({
                           <AccountBadge account={v.defaultLedger} />
                         )}
                       </td>
-                      <td className="px-3 py-2 text-right tnum">{fmtAud(v.totalSpendYTD)}</td>
+                      <td className="px-3 py-2 text-right tnum">{fmtAud(v.totalSpendYTD, booksCurrency)}</td>
                       <td className="px-3 py-2 text-right tnum">{v.invoiceCount}</td>
                       <td className="px-3 py-2">
                         <ConfidenceBar value={v.matchConfidence ?? 0} />

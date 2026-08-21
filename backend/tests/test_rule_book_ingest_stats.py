@@ -77,6 +77,38 @@ async def test_load_ingest_stats_counts_current_month_only(
 
 
 @pytest.mark.asyncio
+async def test_load_ingest_stats_groups_in_sql(
+    db_session: AsyncSession,
+) -> None:
+    from sqlalchemy import event
+
+    db_session.add(
+        AuditLog(
+            tenant_id=TESTING_TENANT_UUID,
+            event="ingest_capture_matched",
+            detail={"rule_id": "ec-sql", "rule_name": "SQL"},
+        )
+    )
+    await db_session.flush()
+
+    statements: list[str] = []
+    sync_engine = db_session.bind.sync_engine
+
+    def _before(_conn, _cursor, statement, _parameters, _context, _executemany) -> None:
+        statements.append(str(statement))
+
+    event.listen(sync_engine, "before_cursor_execute", _before)
+    try:
+        await load_email_capture_ingest_stats(db_session, TESTING_TENANT_UUID)
+    finally:
+        event.remove(sync_engine, "before_cursor_execute", _before)
+
+    joined = " ".join(statements).lower()
+    assert "group by" in joined
+    assert "audit_logs" in joined
+
+
+@pytest.mark.asyncio
 async def test_attach_ingest_stats_overlays_config(db_session: AsyncSession) -> None:
     now = datetime(2026, 6, 20, 10, 0, tzinfo=timezone.utc)
     db_session.add(

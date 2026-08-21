@@ -329,7 +329,7 @@ def detect_recognition_signals(
         if heading_label and re.search(r"(?i)purchase\s+order", heading_label):
             signals.add("heading_po")
     if layout_hint == "grn" and not signals & SUPPORTING_GRN_SIGNALS:
-        if heading_label and re.search(r"(?i)(goods\s+receipt|delivery)", heading_label):
+        if heading_label and re.search(r"(?i)(goods\s+receipt|item\s+receipt|material\s+receipt|warehouse\s+receipt|delivery)", heading_label):
             signals.add("heading_grn")
 
     body_kind = infer_heading_kind(heading=heading_label, document_text=body)

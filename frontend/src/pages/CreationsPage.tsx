@@ -3,19 +3,20 @@ import { useSearchParams } from "react-router-dom";
 import { Building2, CircleUser, Loader2 } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { PageTabPanel, PageTabs } from "@/components/PageTabs";
-import {
-  CreationsEmployeesTabSkeleton,
-  CreationsVendorsTabSkeleton,
-} from "@/components/skeleton/PageSkeletons";
 import { Card } from "@/components/ui/card";
 import { CustomersTab } from "@/components/rule-book/CustomersTab";
 import { EmployeesTab } from "@/components/rule-book/EmployeesTab";
 import { VendorsTab } from "@/components/rule-book/VendorsTab";
 import { useToast } from "@/context/ToastContext";
 import { useAuth } from "@/context/AuthContext";
-import { useRuleBookConfig, useSaveRuleBookConfig } from "@/hooks/useRuleBookConfig";
-import type { RuleBookConfigState } from "@/lib/v4RuleBookTypes";
-import { shouldApplyRuleBookSaveResponse } from "@/lib/ruleBookSave";
+import {
+  useRuleBookVendorDetection,
+  useSaveRuleBookVendorDetection,
+} from "@/hooks/useRuleBookConfig";
+import {
+  DEFAULT_VENDOR_DETECTION_CONFIG,
+  type VendorDetectionConfig,
+} from "@/lib/v4RuleBookTypes";
 
 const CREATIONS_TABS = [
   { value: "vendors", label: "Vendors", testid: "tab-vendors", icon: Building2 },
@@ -38,17 +39,21 @@ export function CreationsPage() {
     }
     return "vendors";
   });
-  const [ruleBook, setRuleBook] = useState<RuleBookConfigState | null>(null);
+  const [detectionDraft, setDetectionDraft] = useState<VendorDetectionConfig | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "pending" | "saved" | "error">("idle");
-  const hydratedRef = useRef(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingSaveRef = useRef<RuleBookConfigState | null>(null);
+  const pendingSaveRef = useRef<VendorDetectionConfig | null>(null);
   const executeSaveRef = useRef<() => void>(() => {});
   const saveGenerationRef = useRef(0);
 
-  const tenantId = user?.tenant_id ?? null;
-  const { data, isLoading, isError, blocked, refetch } = useRuleBookConfig(Boolean(user));
-  const saveMutation = useSaveRuleBookConfig();
+  const {
+    data: detectionFromServer,
+    isError,
+    blocked,
+    refetch,
+  } = useRuleBookVendorDetection(Boolean(user) && tab === "vendors");
+  const saveMutation = useSaveRuleBookVendorDetection();
+  const detection = detectionDraft ?? detectionFromServer ?? DEFAULT_VENDOR_DETECTION_CONFIG;
 
   const cancelPendingSave = () => {
     if (saveTimerRef.current) {
@@ -59,11 +64,10 @@ export function CreationsPage() {
   };
 
   useEffect(() => {
-    hydratedRef.current = false;
-    setRuleBook(null);
+    setDetectionDraft(null);
     cancelPendingSave();
     setSaveState("idle");
-  }, [tenantId]);
+  }, [user?.tenant_id]);
 
   useEffect(() => {
     if (tabFromUrl && CREATIONS_TABS.some((row) => row.value === tabFromUrl)) {
@@ -72,23 +76,10 @@ export function CreationsPage() {
   }, [tabFromUrl]);
 
   useEffect(() => {
-    if (!data || hydratedRef.current) return;
-    setRuleBook(data);
-    hydratedRef.current = true;
-  }, [data, tenantId]);
-
-  useEffect(() => {
-    if (!user) {
-      hydratedRef.current = false;
-      setRuleBook(null);
-    }
-  }, [user]);
-
-  useEffect(() => {
-    if (blocked && !isLoading) {
+    if (blocked) {
       void refetch();
     }
-  }, [blocked, isLoading, refetch]);
+  }, [blocked, refetch]);
 
   const runSave = () => {
     const payload = pendingSaveRef.current;
@@ -96,11 +87,9 @@ export function CreationsPage() {
     saveGenerationRef.current += 1;
     const generation = saveGenerationRef.current;
     saveMutation.mutate(payload, {
-      onSuccess: ({ config }) => {
-        if (!shouldApplyRuleBookSaveResponse(generation, saveGenerationRef.current)) {
-          return;
-        }
-        setRuleBook(config);
+      onSuccess: (config) => {
+        if (generation !== saveGenerationRef.current) return;
+        setDetectionDraft(config);
         setSaveState("saved");
       },
       onError: (err) => {
@@ -116,7 +105,7 @@ export function CreationsPage() {
 
   executeSaveRef.current = runSave;
 
-  const flushSave = (next: RuleBookConfigState, options?: { immediate?: boolean }) => {
+  const flushSave = (next: VendorDetectionConfig, options?: { immediate?: boolean }) => {
     pendingSaveRef.current = next;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     setSaveState("pending");
@@ -144,14 +133,13 @@ export function CreationsPage() {
 
   const canEdit = user?.role === "admin";
 
-  const patch = (next: Partial<RuleBookConfigState>, options?: { immediate?: boolean }) => {
+  const patchDetection = (
+    next: VendorDetectionConfig,
+    options?: { immediate?: boolean }
+  ) => {
     if (!canEdit) return;
-    setRuleBook((prev) => {
-      if (!prev) return prev;
-      const merged = { ...prev, ...next };
-      flushSave(merged, options);
-      return merged;
-    });
+    setDetectionDraft(next);
+    flushSave(next, options);
   };
 
   if (!user) {
@@ -161,19 +149,6 @@ export function CreationsPage() {
       </div>
     );
   }
-
-  if (isError && !isLoading && !blocked) {
-    return (
-      <div>
-        <PageHeader title="Creations" subtitle="Could not load master data configuration." />
-        <Card className="p-6 text-sm text-muted-foreground">
-          Failed to load from the server. Check that the API is running and try again.
-        </Card>
-      </div>
-    );
-  }
-
-  const shellLoading = isLoading || blocked || !ruleBook;
 
   const saveLabel =
     saveState === "pending" || saveMutation.isPending
@@ -223,6 +198,12 @@ export function CreationsPage() {
         />
       </PageHeader>
 
+      {isError && tab === "vendors" ? (
+        <Card className="p-3 mb-5 text-sm text-muted-foreground">
+          Could not load vendor detection settings. Master list is still available.
+        </Card>
+      ) : null}
+
       {!canEdit ? (
         <Card
           className="p-3 mb-5 ds-warning-panel border text-sm"
@@ -233,31 +214,19 @@ export function CreationsPage() {
       ) : null}
 
       <div className={!canEdit ? "pointer-events-none opacity-90" : undefined}>
-        {shellLoading ? (
-          tab === "employees" ? (
-            <CreationsEmployeesTabSkeleton />
-          ) : tab === "vendors" ? (
-            <CreationsVendorsTabSkeleton />
-          ) : (
-            <CustomersTab defaultSection={customersSection} />
-          )
-        ) : (
-          <>
-            <PageTabPanel value="vendors" active={tab} className="mt-0">
-              <VendorsTab
-                detection={ruleBook.vendorDetectionConfig}
-                onDetectionChange={(vendorDetectionConfig) => patch({ vendorDetectionConfig })}
-                initialSearchQuery={tab === "vendors" ? mastersQ : null}
-              />
-            </PageTabPanel>
-            <PageTabPanel value="customers" active={tab} className="mt-0">
-              <CustomersTab defaultSection={customersSection} />
-            </PageTabPanel>
-            <PageTabPanel value="employees" active={tab} className="mt-0">
-              <EmployeesTab />
-            </PageTabPanel>
-          </>
-        )}
+        <PageTabPanel value="vendors" active={tab} className="mt-0">
+          <VendorsTab
+            detection={detection}
+            onDetectionChange={(vendorDetectionConfig) => patchDetection(vendorDetectionConfig)}
+            initialSearchQuery={tab === "vendors" ? mastersQ : null}
+          />
+        </PageTabPanel>
+        <PageTabPanel value="customers" active={tab} className="mt-0">
+          <CustomersTab defaultSection={customersSection} />
+        </PageTabPanel>
+        <PageTabPanel value="employees" active={tab} className="mt-0">
+          <EmployeesTab />
+        </PageTabPanel>
       </div>
     </div>
   );
