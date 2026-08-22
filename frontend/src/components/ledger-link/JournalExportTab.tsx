@@ -45,7 +45,9 @@ type ExportPreviewRow = {
   currency?: string;
 };
 
-const GROUPS: { key: keyof LedgerLinkExports; label: string }[] = [
+type LedgerExportGroupKey = Exclude<keyof LedgerLinkExports, "group_meta">;
+
+const GROUPS: { key: LedgerExportGroupKey; label: string }[] = [
   { key: "invoices", label: "Invoices" },
   { key: "bills", label: "Bills" },
   { key: "expenses", label: "Expenses" },

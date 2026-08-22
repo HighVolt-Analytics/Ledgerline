@@ -731,7 +731,7 @@ export function invoiceCanPublishToLedger(inv: Invoice): boolean {
 export type InvoiceSource = "email" | "upload" | "onedrive" | "whatsapp" | "viber";
 
 export function invoiceSourceKind(
-  inv: Pick<Invoice, "capture_source"> &
+  inv: { capture_source?: string | null } &
     Partial<Pick<Invoice, "connected_mailbox_id" | "email_sender">>
 ): InvoiceSource {
   const capture = (inv.capture_source ?? "").trim().toLowerCase();
