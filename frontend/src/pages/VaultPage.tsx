@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   ChevronDown,
   ChevronRight,
@@ -8,8 +9,7 @@ import {
   FolderOpen,
   Layers,
 } from "lucide-react";
-import { api } from "@/api/client";
-import type { DocumentSetRule, Invoice, VaultApiFile } from "@/api/types";
+import type { VaultApiFile, VaultDocumentSetInvoice } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
 import { LazyInvoiceDetailDrawer } from "@/components/LazyInvoiceDetailDrawer";
 import { ListSearchInput } from "@/components/ListSearchInput";
@@ -20,32 +20,30 @@ import { Card } from "@/components/ui/card";
 import { VaultPageSkeleton } from "@/components/skeleton/PageSkeletons";
 import { useAuth } from "@/context/AuthContext";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
-import {
-  API_PORT_HINT,
-  canRenderTenantOwnedUi,
-  captureTenantFetchScope,
-  formatTenantLoadError,
-  handleTenantScopedLoadFailure,
-  isTenantFetchAbortError,
-  isTenantFetchScopeCurrent,
-} from "@/lib/tenantSession";
-import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
+import { canRenderTenantOwnedUi } from "@/lib/tenantSession";
+import { useRuleBookDocumentTypes } from "@/hooks/useRuleBookConfig";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import {
   MappedDocumentTypeBadge,
   VisionHeadingBadge,
 } from "@/components/inbox/DocumentTypeDisplay";
-import { invoiceMatchesDocSet } from "@/lib/documentSets";
-import { ruleBookConfigFromApi } from "@/lib/ruleBookConfigApi";
-import type { DocumentSetRule as ConfigDocumentSet } from "@/lib/v4RuleBookTypes";
+import {
+  VAULT_POLL_MS,
+  useVaultDocumentSets,
+  useVaultFileByInvoice,
+  useVaultFiles,
+  useVaultTree,
+} from "@/hooks/useVault";
 import {
   invoiceSourceKind,
   invoiceSourceLabel,
 } from "@/lib/invoice";
+import { tenantQueryKey } from "@/lib/queryClient";
 import {
   accordionExpandedIds,
   filterVaultApiFiles,
   findVaultFileByInvoiceId,
+  findVaultNodeById,
   selectionBreadcrumb,
   selectionFromNode,
   selectionFromVaultFile,
@@ -56,11 +54,8 @@ import {
   type VaultTreeNode,
 } from "@/lib/vault";
 import { cn } from "@/lib/cn";
-import { invoiceMatchesListSearch, matchesListSearch } from "@/lib/listSearch";
+import { matchesListSearch } from "@/lib/listSearch";
 import { money, vaultDocLabel, vaultDocSubtitle } from "@/lib/format";
-
-const VAULT_POLL_MS = 30_000;
-const API_HINT = API_PORT_HINT;
 
 function SourceBadge({ source }: { source: ReturnType<typeof invoiceSourceKind> }) {
   return (
@@ -71,17 +66,6 @@ function SourceBadge({ source }: { source: ReturnType<typeof invoiceSourceKind> 
       {invoiceSourceLabel(source)}
     </Badge>
   );
-}
-
-type DocSetWithDocs = ConfigDocumentSet & { docs: Invoice[] };
-
-function toApiDocSet(set: ConfigDocumentSet): DocumentSetRule {
-  return {
-    id: set.id,
-    pattern: set.pattern,
-    set_name: set.setName,
-    isolated: set.isolated,
-  };
 }
 
 function VaultTreeItem({
@@ -171,23 +155,51 @@ function VaultTreeItem({
 
 type DrawerTab = "fields" | "audit";
 
+function fileSearchHaystack(file: VaultApiFile): Array<string | number | null | undefined> {
+  return [
+    file.vendor,
+    file.file_name,
+    file.purchase_document_type,
+    file.po_folder,
+    file.invoice_id,
+    file.invoice_no,
+    file.document_ref,
+    file.document_heading,
+  ];
+}
+
+function fileDocLabel(file: VaultApiFile): string {
+  return vaultDocLabel({ id: file.invoice_id, document_ref: file.document_ref });
+}
+
+function fileDocSubtitle(file: VaultApiFile): string {
+  return vaultDocSubtitle({
+    invoice_no: file.invoice_no ?? null,
+    invoice_date: file.invoice_date ?? null,
+  });
+}
+
+function setInvoiceLabel(doc: VaultDocumentSetInvoice): string {
+  return vaultDocLabel({ id: doc.id, document_ref: doc.document_ref });
+}
+
+function setInvoiceSubtitle(doc: VaultDocumentSetInvoice): string {
+  return vaultDocSubtitle({
+    invoice_no: doc.invoice_no ?? null,
+    invoice_date: doc.invoice_date ?? null,
+  });
+}
+
 export function VaultPage() {
   const { user } = useAuth();
-  const { data: ruleBook } = useRuleBookConfig();
+  const queryClient = useQueryClient();
+  const { data: documentTypes } = useRuleBookDocumentTypes();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [vaultData, setVaultData] = useState<Awaited<ReturnType<typeof api.getVaultTree>> | null>(
-    null
-  );
-  const [rows, setRows] = useState<Invoice[]>([]);
-  const [documentSets, setDocumentSets] = useState<ConfigDocumentSet[]>([]);
   const [tab, setTab] = useState<"files" | "sets">("files");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selection, setSelection] = useState<VaultSelection | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [warning, setWarning] = useState<string | null>(null);
   const [drawerId, setDrawerId] = useState<number | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerInitialTab, setDrawerInitialTab] = useState<DrawerTab>("fields");
@@ -197,94 +209,35 @@ export function VaultPage() {
   const tenantScope = user?.tenant_id ?? null;
   const scopeOk = canRenderTenantOwnedUi(tenantScope);
 
+  const {
+    data: vaultData,
+    isLoading: treeLoading,
+    isError: treeError,
+    error: treeErrorValue,
+    refetch: refetchTree,
+  } = useVaultTree();
+  const folderFilesEnabled = Boolean(selection?.book);
+  const {
+    data: folderFiles,
+    isLoading: folderFilesLoading,
+    refetch: refetchFolderFiles,
+  } = useVaultFiles(selection, folderFilesEnabled);
+  const {
+    data: documentSetPayload,
+    isLoading: setsLoading,
+    refetch: refetchSets,
+  } = useVaultDocumentSets(tab === "sets");
+
   useResetOnTenantChange(() => {
-    setVaultData(null);
-    setRows([]);
-    setDocumentSets([]);
     setSelectedId(null);
     setSelection(null);
     setExpanded(new Set());
-    setLoading(true);
-    setError(null);
-    setWarning(null);
     setDrawerId(null);
     setDrawerOpen(false);
     setDeepLinkNotice(null);
+    setSearchQuery("");
+    setTab("files");
   });
-
-  const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
-    if (!canRenderTenantOwnedUi(tenantScope)) return;
-
-    const scope = captureTenantFetchScope();
-    if (!options?.silent) {
-      setLoading(true);
-      setError(null);
-      setWarning(null);
-    }
-    const fresh = options?.fresh ?? !options?.silent;
-
-    const [vaultResult, invoicesResult, configResult] = await Promise.allSettled([
-      api.getVaultTree({ fresh }),
-      api.listInvoicesWithMeta({ page: "1", page_size: "100", route_target: "Vault" }),
-      api.getRuleBookConfig(),
-    ]);
-
-    if (!isTenantFetchScopeCurrent(scope)) {
-      if (!options?.silent) setLoading(false);
-      return;
-    }
-
-    const vaultRejected =
-      vaultResult.status === "rejected" ? vaultResult.reason : null;
-    const vaultScopeAbort = isTenantFetchAbortError(vaultRejected);
-
-    if (vaultResult.status === "fulfilled") {
-      setVaultData(vaultResult.value);
-    } else if (vaultScopeAbort) {
-      if (!options?.silent) {
-        handleTenantScopedLoadFailure(vaultRejected, {
-          retry: () => {
-            void load({ silent: true, fresh: true });
-          },
-        });
-      }
-    } else if (!options?.silent) {
-      setVaultData(null);
-      setError(
-        vaultRejected instanceof Error
-          ? formatTenantLoadError(vaultRejected.message, API_HINT)
-          : "Failed to load vault" + API_HINT
-      );
-    }
-
-    if (invoicesResult.status === "fulfilled") {
-      setRows(invoicesResult.value.data);
-    } else if (!options?.silent && !isTenantFetchAbortError(invoicesResult.reason)) {
-      setRows([]);
-      setWarning(
-        invoicesResult.reason instanceof Error
-          ? invoicesResult.reason.message
-          : "Failed to load invoices for document sets"
-      );
-    }
-
-    if (configResult.status === "fulfilled") {
-      setDocumentSets(ruleBookConfigFromApi(configResult.value).documentSets);
-    } else if (!options?.silent && !isTenantFetchAbortError(configResult.reason)) {
-      setDocumentSets([]);
-      setWarning((prev) =>
-        prev
-          ? `${prev}; rule book unavailable`
-          : "Rule book unavailable — document sets may be empty"
-      );
-    }
-
-    if (!options?.silent) setLoading(false);
-  }, [tenantScope]);
-
-  useEffect(() => {
-    void load();
-  }, [load, user?.tenant_id]);
 
   useEffect(() => {
     setSelectedId(null);
@@ -293,12 +246,11 @@ export function VaultPage() {
   }, [user?.tenant_id]);
 
   useVisibilityPolling(() => {
-    void load({ silent: true, fresh: true });
+    void refetchTree();
+    if (folderFilesEnabled) void refetchFolderFiles();
+    if (tab === "sets") void refetchSets();
   }, VAULT_POLL_MS);
 
-  const invoiceById = useMemo(() => new Map(rows.map((doc) => [doc.id, doc])), [rows]);
-
-  const vaultFiles = vaultData?.files ?? [];
   const folderTree = useMemo(() => toTreeNodes(vaultData?.tree ?? []), [vaultData]);
 
   useEffect(() => {
@@ -310,49 +262,46 @@ export function VaultPage() {
     setExpanded(new Set([orgNode.id]));
   }, [folderTree, selectedId]);
 
+  const vaultFiles = folderFilesEnabled ? (folderFiles?.files ?? []) : (vaultData?.files ?? []);
+  const selectedNode = useMemo(
+    () => findVaultNodeById(folderTree, selectedId),
+    [folderTree, selectedId]
+  );
+
   const visibleFiles = useMemo(
-    () => filterVaultApiFiles(vaultFiles, selection),
-    [vaultFiles, selection]
+    () => (folderFilesEnabled ? vaultFiles : filterVaultApiFiles(vaultFiles, selection)),
+    [vaultFiles, selection, folderFilesEnabled]
   );
 
   const filteredVisibleFiles = useMemo(() => {
     if (!searchQuery.trim()) return visibleFiles;
-    return visibleFiles.filter((file) => {
-      const doc = invoiceById.get(file.invoice_id);
-      if (doc && invoiceMatchesListSearch(doc, searchQuery)) return true;
-      return matchesListSearch(
-        searchQuery,
-        file.vendor,
-        file.file_name,
-        file.purchase_document_type,
-        file.po_folder,
-        file.invoice_id,
-        doc ? vaultDocLabel(doc) : null
-      );
-    });
-  }, [visibleFiles, invoiceById, searchQuery]);
+    return visibleFiles.filter((file) =>
+      matchesListSearch(searchQuery, ...fileSearchHaystack(file))
+    );
+  }, [visibleFiles, searchQuery]);
 
-  const documentSetCards = useMemo((): DocSetWithDocs[] => {
-    const sets = documentSets;
-    const assigned = new Set<number>();
-    return sets.map((set) => {
-      let docs = rows.filter((inv) => invoiceMatchesDocSet(inv, toApiDocSet(set).pattern));
-      if (set.isolated ?? false) {
-        docs = docs.filter((inv) => !assigned.has(inv.id));
-        for (const inv of docs) assigned.add(inv.id);
-      }
-      return { ...set, docs };
-    });
-  }, [documentSets, rows]);
+  const folderFileCount = searchQuery.trim()
+    ? filteredVisibleFiles.length
+    : (selectedNode?.count ?? folderFiles?.count ?? vaultData?.file_count ?? filteredVisibleFiles.length);
 
+  const documentSetCards = documentSetPayload?.sets ?? [];
   const filteredDocumentSetCards = useMemo(() => {
     if (!searchQuery.trim()) return documentSetCards;
     return documentSetCards
       .map((set) => ({
         ...set,
-        docs: set.docs.filter((doc) => invoiceMatchesListSearch(doc, searchQuery)),
+        invoices: set.invoices.filter((doc) =>
+          matchesListSearch(
+            searchQuery,
+            doc.vendor,
+            doc.invoice_no,
+            doc.document_ref,
+            doc.document_heading,
+            doc.id
+          )
+        ),
       }))
-      .filter((set) => set.docs.length > 0);
+      .filter((set) => set.invoices.length > 0 || matchesListSearch(searchQuery, set.set_name, set.pattern));
   }, [documentSetCards, searchQuery]);
 
   const breadcrumbs = useMemo(() => selectionBreadcrumb(selection), [selection]);
@@ -374,11 +323,24 @@ export function VaultPage() {
     setDrawerOpen(true);
   };
 
+  const refreshVault = () => {
+    void queryClient.invalidateQueries({ queryKey: tenantQueryKey(["vault"] as const) });
+  };
+
   const pendingInvoiceParam = searchParams.get("invoice");
   const pendingTabParam = searchParams.get("tab");
+  const pendingInvoiceId = Number(pendingInvoiceParam);
+  const deepLinkInvoiceId =
+    pendingInvoiceParam && Number.isFinite(pendingInvoiceId) && pendingInvoiceId > 0
+      ? pendingInvoiceId
+      : null;
+  const { data: deepLinkFiles, isFetched: deepLinkFetched } = useVaultFileByInvoice(
+    deepLinkInvoiceId,
+    Boolean(deepLinkInvoiceId) && Boolean(vaultData)
+  );
 
   useEffect(() => {
-    if (!pendingInvoiceParam || loading || !vaultData) return;
+    if (!pendingInvoiceParam || !vaultData) return;
 
     const clearDeepLinkParams = () => {
       const nextParams = new URLSearchParams(searchParams);
@@ -387,15 +349,17 @@ export function VaultPage() {
       setSearchParams(nextParams, { replace: true });
     };
 
-    const invoiceId = Number(pendingInvoiceParam);
-    if (!Number.isFinite(invoiceId) || invoiceId <= 0) {
+    if (deepLinkInvoiceId == null) {
       setDeepLinkNotice(`Invalid invoice id: ${pendingInvoiceParam}`);
       clearDeepLinkParams();
       return;
     }
 
     const drawerTab: DrawerTab = pendingTabParam === "audit" ? "audit" : "fields";
-    const file = findVaultFileByInvoiceId(vaultFiles, invoiceId);
+    const file =
+      findVaultFileByInvoiceId(vaultFiles, deepLinkInvoiceId) ??
+      deepLinkFiles?.files[0] ??
+      undefined;
 
     if (file) {
       setTab("files");
@@ -404,32 +368,28 @@ export function VaultPage() {
       setSelection(selectionFromVaultFile(file));
       setExpanded(new Set(vaultAncestorIds(nodeId)));
       setDeepLinkNotice(null);
-      openDrawer(invoiceId, { tab: drawerTab });
-    } else if (invoiceById.has(invoiceId)) {
-      setDeepLinkNotice(
-        "Document is not filed in the vault tree (missing stored file or rejected). Opening record anyway."
-      );
-      openDrawer(invoiceId, { tab: drawerTab });
-    } else if (rows.length === 0) {
+      openDrawer(deepLinkInvoiceId, { tab: drawerTab });
+      clearDeepLinkParams();
       return;
-    } else {
-      setDeepLinkNotice(`Invoice #${invoiceId} was not found.`);
     }
 
+    if (!deepLinkFetched) return;
+
+    setDeepLinkNotice(`Invoice #${deepLinkInvoiceId} was not found.`);
     clearDeepLinkParams();
   }, [
     pendingInvoiceParam,
     pendingTabParam,
-    loading,
     vaultData,
     vaultFiles,
-    invoiceById,
-    rows.length,
+    deepLinkFiles,
+    deepLinkFetched,
+    deepLinkInvoiceId,
     searchParams,
     setSearchParams,
   ]);
 
-  if (loading && !vaultData) {
+  if (treeLoading && !vaultData) {
     return (
       <div>
         <PageHeader title="Vault" subtitle={`Document vault for ${orgLabel}.`} />
@@ -447,13 +407,15 @@ export function VaultPage() {
     );
   }
 
-  if (error && !vaultData) {
+  if (treeError && !vaultData) {
     return (
       <Card className="p-6 border-destructive/30 bg-destructive/5 text-sm text-destructive">
-        {error}
+        {treeErrorValue instanceof Error ? treeErrorValue.message : "Failed to load vault"}
       </Card>
     );
   }
+
+  const treeEmpty = folderTree.length === 0 && (vaultData?.file_count ?? 0) === 0;
 
   return (
     <div>
@@ -462,18 +424,6 @@ export function VaultPage() {
       {deepLinkNotice && (
         <Card className="mb-4 ds-warning-panel border px-4 py-3 text-sm ds-warning-text">
           {deepLinkNotice}
-        </Card>
-      )}
-
-      {error && (
-        <Card className="p-3 mb-4 text-xs text-destructive border-destructive/30 bg-destructive/5">
-          {error}
-        </Card>
-      )}
-
-      {warning && !error && (
-        <Card className="p-3 mb-4 text-xs text-muted-foreground border-dashed">
-          {warning}
         </Card>
       )}
 
@@ -488,7 +438,7 @@ export function VaultPage() {
             { value: "sets", label: "Document sets", testid: "tab-sets" },
           ]}
         />
-        {vaultFiles.length > 0 ? (
+        {!treeEmpty ? (
           <ListSearchInput
             value={searchQuery}
             onChange={setSearchQuery}
@@ -499,9 +449,7 @@ export function VaultPage() {
         ) : null}
       </div>
 
-      {loading && vaultFiles.length === 0 ? (
-        <VaultPageSkeleton />
-      ) : vaultFiles.length === 0 ? (
+      {treeEmpty ? (
         <EmptyState
           title="Vault is empty"
           hint="Documents appear here once captured and stored — filed under org → vendor → year → month."
@@ -516,7 +464,9 @@ export function VaultPage() {
           }
         />
       ) : tab === "sets" ? (
-        filteredDocumentSetCards.length === 0 ? (
+        setsLoading && documentSetCards.length === 0 ? (
+          <VaultPageSkeleton />
+        ) : filteredDocumentSetCards.length === 0 ? (
           <Card className="px-8 py-14 text-center text-sm text-muted-foreground">
             <p className="py-2">
               {searchQuery.trim()
@@ -530,17 +480,17 @@ export function VaultPage() {
               <Card key={set.id} className="p-4" data-testid={`set-${set.id}`}>
                 <div className="flex items-center gap-2 mb-2">
                   <Layers className="h-4 w-4 text-primary shrink-0" />
-                  <h3 className="text-sm font-semibold truncate">{set.setName}</h3>
+                  <h3 className="text-sm font-semibold truncate">{set.set_name}</h3>
                   <Badge variant="outline" className="tnum ml-auto text-[10px]">
-                    {set.docs.length}
+                    {set.match_count}
                   </Badge>
                 </div>
                 <p className="text-xs text-muted-foreground mb-3 tnum">Pattern: {set.pattern}</p>
                 <div className="space-y-1.5">
-                  {set.docs.length === 0 ? (
+                  {set.invoices.length === 0 ? (
                     <p className="text-xs text-muted-foreground">No matched documents.</p>
                   ) : (
-                    set.docs.map((doc) => (
+                    set.invoices.map((doc) => (
                       <button
                         key={doc.id}
                         type="button"
@@ -551,18 +501,15 @@ export function VaultPage() {
                         <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                         <div className="min-w-0 flex-1 truncate">
                           <div className="text-sm font-medium truncate">
-                            {vaultDocLabel(doc)} · {doc.vendor ?? "Unknown vendor"}
+                            {setInvoiceLabel(doc)} · {doc.vendor ?? "Unknown vendor"}
                           </div>
                           <div className="text-xs text-muted-foreground truncate tnum">
-                            {vaultDocSubtitle(doc)}
+                            {setInvoiceSubtitle(doc)}
                           </div>
                         </div>
                         <SourceBadge source={invoiceSourceKind(doc)} />
                         <VisionHeadingBadge inv={doc} empty="" />
-                        <MappedDocumentTypeBadge
-                          inv={doc}
-                          documentTypes={ruleBook?.documentTypes}
-                        />
+                        <MappedDocumentTypeBadge inv={doc} documentTypes={documentTypes} />
                         <span className="tnum text-sm font-medium shrink-0">
                           {money(doc.total, doc.currency)}
                         </span>
@@ -612,11 +559,13 @@ export function VaultPage() {
                 </span>
               ))}
               <Badge variant="outline" className="tnum ml-auto shrink-0">
-                {filteredVisibleFiles.length} files
+                {folderFileCount} files
               </Badge>
             </div>
 
-            {filteredVisibleFiles.length === 0 ? (
+            {folderFilesEnabled && folderFilesLoading && vaultFiles.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-10">Loading files…</p>
+            ) : filteredVisibleFiles.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-10">
                 {searchQuery.trim()
                   ? "No documents match your search."
@@ -624,47 +573,35 @@ export function VaultPage() {
               </p>
             ) : (
               <div className="divide-y divide-border/60">
-                {filteredVisibleFiles.map((file: VaultApiFile) => {
-                  const doc = invoiceById.get(file.invoice_id);
-                  return (
-                    <button
-                      key={file.invoice_id}
-                      type="button"
-                      onClick={() => openDrawer(file.invoice_id)}
-                      className="w-full flex items-center gap-3 px-4 py-3 text-left hover-elevate"
-                      data-testid={`file-${file.invoice_id}`}
-                    >
-                      <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-medium truncate">
-                          {doc
-                            ? `${vaultDocLabel(doc)} · ${doc.vendor ?? file.vendor}`
-                            : file.vendor}
-                        </div>
-                        <div className="text-xs text-muted-foreground truncate tnum">
-                          {file.purchase_document_type
-                            ? `${file.purchase_document_type.toUpperCase()} · `
-                            : ""}
-                          {file.po_folder ? `${file.po_folder} · ` : ""}
-                          {doc ? vaultDocSubtitle(doc) : file.file_name}
-                        </div>
+                {filteredVisibleFiles.map((file: VaultApiFile) => (
+                  <button
+                    key={file.invoice_id}
+                    type="button"
+                    onClick={() => openDrawer(file.invoice_id)}
+                    className="w-full flex items-center gap-3 px-4 py-3 text-left hover-elevate"
+                    data-testid={`file-${file.invoice_id}`}
+                  >
+                    <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium truncate">
+                        {fileDocLabel(file)} · {file.vendor}
                       </div>
-                      {doc && (
-                        <>
-                          <SourceBadge source={invoiceSourceKind(doc)} />
-                          <VisionHeadingBadge inv={doc} empty="" />
-                          <MappedDocumentTypeBadge
-                            inv={doc}
-                            documentTypes={ruleBook?.documentTypes}
-                          />
-                          <span className="tnum text-sm font-medium shrink-0">
-                            {money(doc.total, doc.currency)}
-                          </span>
-                        </>
-                      )}
-                    </button>
-                  );
-                })}
+                      <div className="text-xs text-muted-foreground truncate tnum">
+                        {file.purchase_document_type
+                          ? `${file.purchase_document_type.toUpperCase()} · `
+                          : ""}
+                        {file.po_folder ? `${file.po_folder} · ` : ""}
+                        {fileDocSubtitle(file)}
+                      </div>
+                    </div>
+                    <SourceBadge source={invoiceSourceKind(file)} />
+                    <VisionHeadingBadge inv={file} empty="" />
+                    <MappedDocumentTypeBadge inv={file} documentTypes={documentTypes} />
+                    <span className="tnum text-sm font-medium shrink-0">
+                      {money(file.total, file.currency)}
+                    </span>
+                  </button>
+                ))}
               </div>
             )}
           </Card>
@@ -679,7 +616,7 @@ export function VaultPage() {
           setDrawerOpen(false);
           setDrawerId(null);
         }}
-        onUpdated={() => load({ fresh: true })}
+        onUpdated={refreshVault}
       />
     </div>
   );

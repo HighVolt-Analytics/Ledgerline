@@ -45,7 +45,6 @@ import { cn } from "@/lib/cn";
 const ROUTE_PREFETCH: Record<string, () => Promise<unknown>> = {
   "/": () => import("@/pages/DashboardPage"),
   "/upload": () => import("@/pages/UploadPage"),
-  "/dossiers": () => import("@/pages/DossiersPage"),
   "/creations": () => import("@/pages/CreationsPage"),
   "/approvals": () => import("@/pages/ApprovalsPage"),
   "/vault": () => import("@/pages/VaultPage"),
@@ -106,7 +105,6 @@ const WORKSPACE_GROUPS: NavGroup[] = [
     nested: false,
     items: [
       { to: "/upload", label: "Upload", icon: Upload, badge: "upload" },
-      { to: "/dossiers", label: "Processing", icon: FolderKanban, moduleKey: "dossiers" },
       { to: "/creations", label: "Creations", icon: Users },
       { to: "/approvals", label: "Approvals", icon: CheckCircle2, badge: "approvals" },
       { to: "/rules", label: "Rule Book", icon: BookOpen, moduleKey: "rule_book" },

@@ -39,7 +39,7 @@ async def test_ap_balance_nets_accrual_and_payment_settlement(
         return config
 
     monkeypatch.setattr(
-        "app.services.reports.subledger_balance_service.load_config_for_tenant",
+        "app.services.reports.subledger_balance_service.load_posting_config_for_tenant",
         _load_config,
     )
 
@@ -119,7 +119,7 @@ async def test_ap_balance_shows_open_amount_before_payment(
         return config
 
     monkeypatch.setattr(
-        "app.services.reports.subledger_balance_service.load_config_for_tenant",
+        "app.services.reports.subledger_balance_service.load_posting_config_for_tenant",
         _load_config,
     )
 
@@ -185,7 +185,7 @@ async def test_ap_unregistered_bucket(
         return config
 
     monkeypatch.setattr(
-        "app.services.reports.subledger_balance_service.load_config_for_tenant",
+        "app.services.reports.subledger_balance_service.load_posting_config_for_tenant",
         _load_config,
     )
 
@@ -241,7 +241,7 @@ async def test_ar_balance_nets_accrual_and_collection_settlement(
         return config
 
     monkeypatch.setattr(
-        "app.services.reports.subledger_balance_service.load_config_for_tenant",
+        "app.services.reports.subledger_balance_service.load_posting_config_for_tenant",
         _load_config,
     )
 

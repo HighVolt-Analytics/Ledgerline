@@ -730,7 +730,10 @@ export function invoiceCanPublishToLedger(inv: Invoice): boolean {
 
 export type InvoiceSource = "email" | "upload" | "onedrive" | "whatsapp" | "viber";
 
-export function invoiceSourceKind(inv: Invoice): InvoiceSource {
+export function invoiceSourceKind(
+  inv: Pick<Invoice, "capture_source"> &
+    Partial<Pick<Invoice, "connected_mailbox_id" | "email_sender">>
+): InvoiceSource {
   const capture = (inv.capture_source ?? "").trim().toLowerCase();
   // Explicit ingest channel always wins. Claimant/sender (email_sender) is identity,
   // not channel — e.g. Team Expenses uploads still capture_source=upload.

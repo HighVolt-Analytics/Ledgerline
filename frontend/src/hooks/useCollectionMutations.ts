@@ -11,6 +11,7 @@ export function useCollectionMutations() {
   const invalidate = useCallback(async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: queryKeys.collections() }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.collectionsWorkspaceKpis() }),
       queryClient.invalidateQueries({ queryKey: queryKeys.navBadges() }),
     ]);
   }, [queryClient]);

@@ -7,6 +7,7 @@ from decimal import Decimal
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only, noload
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.reports import (
@@ -24,6 +25,24 @@ from app.tenant_settings import tenant_country, tenant_currency
 
 _REPORTABLE_STATUSES = frozenset({InvoiceStatus.PROCESSED})
 _SUSPENSE_ACCOUNT = "Suspense Account"
+
+_ANALYTICS_INVOICE_LOAD = (
+    load_only(
+        Invoice.id,
+        Invoice.tenant_id,
+        Invoice.vendor,
+        Invoice.account_name,
+        Invoice.subtotal,
+        Invoice.gst,
+        Invoice.total,
+        Invoice.currency,
+        Invoice.invoice_date,
+        Invoice.created_at,
+        Invoice.status,
+    ),
+    noload(Invoice.line_items),
+    noload(Invoice.journal_entries),
+)
 
 
 def _effective_invoice_date():
@@ -89,11 +108,14 @@ async def _load_invoices(
     month_end: date | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    lean: bool = False,
 ) -> list[Invoice]:
     stmt = select(Invoice).where(
         Invoice.tenant_id == tenant_id,
         Invoice.status.in_(_REPORTABLE_STATUSES),
     )
+    if lean:
+        stmt = stmt.options(*_ANALYTICS_INVOICE_LOAD)
     effective = _effective_invoice_date()
     if month_start is not None and month_end is not None:
         stmt = stmt.where(effective >= month_start, effective <= month_end)
@@ -201,13 +223,21 @@ async def build_analytics(
     month_start, month_end, period_key = parse_period(month, today=today)
     base, tax_label = await _tenant_reporting_currency(db, tenant_id)
     invoices = await _load_invoices(
-        db, tenant_id=tenant_id, month_start=month_start, month_end=month_end
+        db,
+        tenant_id=tenant_id,
+        month_start=month_start,
+        month_end=month_end,
+        lean=True,
     )
     net, tax, gross = _totals(invoices, base=base)
 
     prior_start, prior_end, _ = _prior_month(month_start)
     prior_invoices = await _load_invoices(
-        db, tenant_id=tenant_id, month_start=prior_start, month_end=prior_end
+        db,
+        tenant_id=tenant_id,
+        month_start=prior_start,
+        month_end=prior_end,
+        lean=True,
     )
     prior_net, prior_tax, prior_gross = _totals(prior_invoices, base=base)
 

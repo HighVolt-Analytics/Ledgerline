@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -17,11 +17,12 @@ from app.schemas.payment import (
     PaymentExecutionInstructionResponse,
     PaymentResponse,
     PaymentStatusUpdate,
+    PaymentWorkspaceKpis,
     WalletSummaryResponse,
     WalletTransactionResponse,
 )
 from app.services.shared.currency import convert_to_base, prefer_currency
-from app.tenant_settings import tenant_currency
+from app.tenant_settings import tenant_currency, tenant_today
 _OPEN_STATUSES = (
     PaymentStatus.QUEUE,
     PaymentStatus.AWAITING,
@@ -261,26 +262,33 @@ async def list_payments(
     tenant_id: uuid.UUID,
     *,
     status: str | None = None,
+    limit: int | None = None,
 ) -> list[PaymentResponse]:
     from app.config import get_settings
     from app.services.payments.payment_execution_instruction_service import (
         _instruction_to_response,
-        _manual_eligible_from_checks,
         instructions_for_payments,
         tenant_execution_enabled,
     )
     from app.services.payments.payment_execution_readiness_service import (
-        _build_readiness_checks,
-        _default_payout_method,
-        _resolve_vendor_registry_id,
         derive_execution_eligibility,
+    )
+    from app.services.payments.payment_execution_rules import (
+        approval_ready,
+        check_payment_manual_execution_limit,
     )
     from app.services.payments.stripe_service import get_stripe_readiness_for_tenant
     from app.services.master_data.vendor_payout_method_service import payout_summary_for_payments
 
     stmt = select(Payment).where(Payment.tenant_id == tenant_id).order_by(Payment.created_at.desc())
     if status:
-        stmt = stmt.where(Payment.status == PaymentStatus(status))
+        try:
+            parsed = PaymentStatus(status)
+        except ValueError as exc:
+            raise ValueError(f"Invalid payment status: {status}") from exc
+        stmt = stmt.where(Payment.status == parsed)
+    if limit is not None:
+        stmt = stmt.limit(limit)
     rows = (await db.execute(stmt)).scalars().all()
 
     summaries = await payout_summary_for_payments(db, tenant_id, rows)
@@ -294,19 +302,17 @@ async def list_payments(
         manual_eligible = False
         manual_block_reason: str | None = None
         if row.status == PaymentStatus.SCHEDULED and instruction is None:
-            checks = await _build_readiness_checks(db, row, stripe=stripe)
-            vendor_registry_id = await _resolve_vendor_registry_id(db, row)
-            method = (
-                await _default_payout_method(db, tenant_id, vendor_registry_id)
-                if vendor_registry_id is not None
-                else None
-            )
-            manual_eligible, manual_block_reason = _manual_eligible_from_checks(
-                row,
-                checks=checks,
-                method=method,
-                tenant_enabled=tenant_enabled,
-            )
+            limit_ok, limit_reason, _ = check_payment_manual_execution_limit(row)
+            if not limit_ok:
+                manual_block_reason = limit_reason
+            else:
+                amount_ok = Decimal(str(row.amount or 0)) > 0
+                manual_eligible = (
+                    tenant_enabled
+                    and amount_ok
+                    and approval_ready(row)
+                    and summary.get("status") == "verified"
+                )
 
         eligibility_status, eligibility_reason = derive_execution_eligibility(
             row,
@@ -333,6 +339,84 @@ async def list_payments(
             )
         )
     return responses
+
+
+async def payment_workspace_kpis(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    tenant: Tenant | None = None,
+) -> PaymentWorkspaceKpis:
+    if tenant is None:
+        tenant = await db.get(Tenant, tenant_id)
+    today = tenant_today(tenant)
+    due_soon_until = today + timedelta(days=7)
+
+    status_rows = (
+        await db.execute(
+            select(Payment.status, func.count(Payment.id)).where(
+                Payment.tenant_id == tenant_id
+            ).group_by(Payment.status)
+        )
+    ).all()
+    by_status: dict[str, int] = {}
+    for status, count in status_rows:
+        key = status.value if isinstance(status, PaymentStatus) else str(status)
+        by_status[key] = int(count or 0)
+
+    outstanding_rows = (
+        await db.execute(
+            select(
+                Payment.currency,
+                func.coalesce(func.sum(Payment.amount), 0),
+            )
+            .where(
+                Payment.tenant_id == tenant_id,
+                Payment.status.in_(_OPEN_STATUSES),
+            )
+            .group_by(Payment.currency)
+        )
+    ).all()
+    outstanding_by_currency: dict[str, float] = {}
+    for currency, amount in outstanding_rows:
+        code = (currency or "").strip().upper()
+        outstanding_by_currency[code] = outstanding_by_currency.get(code, 0.0) + float(amount or 0)
+
+    overdue_count = (
+        await db.execute(
+            select(func.count(Payment.id)).where(
+                Payment.tenant_id == tenant_id,
+                Payment.status.in_(_OPEN_STATUSES),
+                Payment.due_date.is_not(None),
+                Payment.due_date < today,
+            )
+        )
+    ).scalar() or 0
+    due_soon_count = (
+        await db.execute(
+            select(func.count(Payment.id)).where(
+                Payment.tenant_id == tenant_id,
+                Payment.status.in_(_OPEN_STATUSES),
+                Payment.due_date.is_not(None),
+                Payment.due_date >= today,
+                Payment.due_date <= due_soon_until,
+            )
+        )
+    ).scalar() or 0
+
+    queue_count = by_status.get(PaymentStatus.QUEUE.value, 0)
+    awaiting_count = by_status.get(PaymentStatus.AWAITING.value, 0)
+    scheduled_count = by_status.get(PaymentStatus.SCHEDULED.value, 0)
+    return PaymentWorkspaceKpis(
+        open_count=queue_count + awaiting_count + scheduled_count,
+        overdue_count=int(overdue_count),
+        due_soon_count=int(due_soon_count),
+        queue_count=queue_count,
+        awaiting_count=awaiting_count,
+        scheduled_count=scheduled_count,
+        paid_count=by_status.get(PaymentStatus.PAID.value, 0),
+        failed_count=by_status.get(PaymentStatus.FAILED.value, 0),
+        outstanding_by_currency=outstanding_by_currency,
+    )
 
 
 async def update_payment_status(
@@ -367,27 +451,51 @@ async def update_payment_status(
 async def wallet_summary(db: AsyncSession, tenant_id: uuid.UUID) -> WalletSummaryResponse:
     tenant = await db.get(Tenant, tenant_id)
     reporting = tenant_currency(tenant)
-    rows = (
+
+    grouped = (
         await db.execute(
-            select(Payment)
+            select(
+                Payment.status,
+                Payment.currency,
+                func.coalesce(func.sum(Payment.amount), 0),
+                func.max(Payment.paid_date),
+            )
             .where(Payment.tenant_id == tenant_id)
-            .order_by(Payment.id.desc())
+            .group_by(Payment.status, Payment.currency)
         )
-    ).scalars().all()
+    ).all()
 
     paid_total = Decimal("0")
     open_total = Decimal("0")
     last_paid: datetime | None = None
-    transactions: list[WalletTransactionResponse] = []
+    for status, currency, amount, max_paid in grouped:
+        status_value = status.value if isinstance(status, PaymentStatus) else str(status)
+        code = prefer_currency(currency, reporting)
+        base_amount = convert_to_base(Decimal(str(amount or 0)), code, base=reporting)
+        if status_value == PaymentStatus.PAID.value:
+            paid_total += base_amount
+            if max_paid and (last_paid is None or max_paid > last_paid):
+                last_paid = max_paid
+        elif status_value in {item.value for item in _OPEN_STATUSES}:
+            open_total += base_amount
 
-    for row in rows:
+    recent = (
+        await db.execute(
+            select(Payment)
+            .where(
+                Payment.tenant_id == tenant_id,
+                Payment.status.in_((*_OPEN_STATUSES, PaymentStatus.PAID)),
+            )
+            .order_by(Payment.id.desc())
+            .limit(6)
+        )
+    ).scalars().all()
+    transactions: list[WalletTransactionResponse] = []
+    for row in recent:
         amount = Decimal(str(row.amount or 0))
         code = prefer_currency(row.currency, reporting)
         base_amount = convert_to_base(amount, code, base=reporting)
         if row.status == PaymentStatus.PAID:
-            paid_total += base_amount
-            if row.paid_date and (last_paid is None or row.paid_date > last_paid):
-                last_paid = row.paid_date
             transactions.append(
                 WalletTransactionResponse(
                     id=str(row.id),
@@ -395,8 +503,7 @@ async def wallet_summary(db: AsyncSession, tenant_id: uuid.UUID) -> WalletSummar
                     delta=-float(base_amount),
                 )
             )
-        elif row.status in _OPEN_STATUSES:
-            open_total += base_amount
+        else:
             transactions.append(
                 WalletTransactionResponse(
                     id=str(row.id),
@@ -413,7 +520,7 @@ async def wallet_summary(db: AsyncSession, tenant_id: uuid.UUID) -> WalletSummar
         available=round(available, 2),
         currency=reporting,
         last_top_up=last_top_up,
-        transactions=transactions[:6],
+        transactions=transactions,
     )
 
 

@@ -779,6 +779,29 @@ export interface CollectionApi {
   failure_reason: string | null;
 }
 
+export interface CollectionWorkspaceKpis {
+  open_count: number;
+  overdue_count: number;
+  due_soon_count: number;
+  queue_count: number;
+  awaiting_count: number;
+  received_count: number;
+  failed_count: number;
+  outstanding_by_currency: Record<string, number>;
+}
+
+export interface PaymentWorkspaceKpis {
+  open_count: number;
+  overdue_count: number;
+  due_soon_count: number;
+  queue_count: number;
+  awaiting_count: number;
+  scheduled_count: number;
+  paid_count: number;
+  failed_count: number;
+  outstanding_by_currency: Record<string, number>;
+}
+
 export interface CollectionMarkReceivedPayload {
   received_date?: string;
   note?: string;
@@ -2322,6 +2345,8 @@ export interface ReconciliationOverview {
   dr_by_currency?: Record<string, string | number>;
   cr_by_currency?: Record<string, string | number>;
   by_date: ReconDayOverviewRow[];
+  document_count?: number;
+  total_day_count?: number;
 }
 
 export interface VaultTreeNode {
@@ -2346,12 +2371,53 @@ export interface VaultApiFile {
   virtual_path: string;
   blob_path: string | null;
   has_stored_file: boolean;
+  document_ref?: string | null;
+  invoice_no?: string | null;
+  invoice_date?: string | null;
+  total?: string | number | null;
+  currency?: string;
+  capture_source?: string | null;
+  document_heading?: string | null;
+  document_type_code?: string | null;
 }
 
 export interface VaultTreeResponse {
   tree: VaultTreeNode[];
   files: VaultApiFile[];
   blob_enabled: boolean;
+  file_count?: number;
+}
+
+export interface VaultFilesResponse {
+  files: VaultApiFile[];
+  count: number;
+}
+
+export interface VaultDocumentSetInvoice {
+  id: number;
+  vendor?: string | null;
+  invoice_no?: string | null;
+  invoice_date?: string | null;
+  document_ref?: string | null;
+  total?: string | number | null;
+  currency?: string;
+  capture_source?: string | null;
+  document_heading?: string | null;
+  document_type_code?: string | null;
+  purchase_document_type?: string | null;
+}
+
+export interface VaultDocumentSetCard {
+  id: string;
+  pattern: string;
+  set_name: string;
+  isolated?: boolean;
+  match_count: number;
+  invoices: VaultDocumentSetInvoice[];
+}
+
+export interface VaultDocumentSetsResponse {
+  sets: VaultDocumentSetCard[];
 }
 
 export interface VaultMigrateResponse {
@@ -2433,12 +2499,18 @@ export interface LedgerExportRow {
   currency?: string;
 }
 
+export interface LedgerExportGroupMeta {
+  count: number;
+  totals_by_currency: Record<string, number>;
+}
+
 export interface LedgerLinkExports {
   invoices: LedgerExportRow[];
   bills: LedgerExportRow[];
   expenses: LedgerExportRow[];
   purchases: LedgerExportRow[];
   payments: LedgerExportRow[];
+  group_meta?: Record<string, LedgerExportGroupMeta>;
 }
 
 export interface LedgerLinkResponse {

@@ -772,6 +772,15 @@ export function documentTypesFromRuleBookApi(api: Pick<RuleBookConfig, "document
   );
 }
 
+export function documentSetsFromRuleBookApi(api: Pick<RuleBookConfig, "document_sets">) {
+  return (api.document_sets ?? []).map((set) => ({
+    id: set.id,
+    pattern: set.pattern,
+    setName: set.set_name,
+    isolated: set.isolated,
+  }));
+}
+
 export function expenseRulesFromRuleBookApi(
   api: Pick<RuleBookConfig, "expense_rules">
 ): ExpenseRule[] {
@@ -899,12 +908,7 @@ export function ruleBookConfigFromApi(api: RuleBookConfig): RuleBookConfigState 
         api.team_expense_posting?.default_advance_parent_ledger ?? "",
       settlementAccount: api.team_expense_posting?.settlement_account ?? "",
     },
-    documentSets: (api.document_sets ?? []).map((set) => ({
-      id: set.id,
-      pattern: set.pattern,
-      setName: set.set_name,
-      isolated: set.isolated,
-    })),
+    documentSets: documentSetsFromRuleBookApi(api),
   };
 }
 

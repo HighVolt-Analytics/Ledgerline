@@ -103,8 +103,15 @@ export function ReportsPage() {
 
   const { data: analytics, isLoading, error } = useReportsAnalytics(month);
   const subledgerAsOf = tenantTodayIso(timeZone);
-  const { data: apBalances, isLoading: apLoading } = useApBalances(subledgerAsOf);
-  const { data: arBalances, isLoading: arLoading } = useArBalances(subledgerAsOf);
+  const showPartyBalances = Boolean(analytics?.period_has_data);
+  const { data: apBalances, isLoading: apLoading } = useApBalances(
+    subledgerAsOf,
+    showPartyBalances
+  );
+  const { data: arBalances, isLoading: arLoading } = useArBalances(
+    subledgerAsOf,
+    showPartyBalances
+  );
 
   const currency = analytics?.base_currency ?? "";
   const taxLabel = analytics?.tax_label ?? "Tax";

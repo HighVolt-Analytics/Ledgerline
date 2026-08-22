@@ -82,20 +82,38 @@ export function JournalExportTab({
 
   const rows = useMemo(() => flattenExports(exports), [exports]);
   const totalsByCurrency = useMemo(() => {
+    const meta = exports?.group_meta;
+    if (meta && Object.keys(meta).length > 0) {
+      const out: Record<string, number> = {};
+      for (const group of GROUPS) {
+        const totals = meta[group.key]?.totals_by_currency ?? {};
+        for (const [code, amount] of Object.entries(totals)) {
+          out[code] = (out[code] ?? 0) + amount;
+        }
+      }
+      return out;
+    }
     const out: Record<string, number> = {};
     for (const row of rows) {
       const code = (row.currency || "").trim().toUpperCase() || "UNKNOWN";
       out[code] = (out[code] ?? 0) + row.amount;
     }
     return out;
-  }, [rows]);
+  }, [exports, rows]);
+  const exportCount = useMemo(() => {
+    const meta = exports?.group_meta;
+    if (meta && Object.keys(meta).length > 0) {
+      return GROUPS.reduce((sum, group) => sum + (meta[group.key]?.count ?? 0), 0);
+    }
+    return rows.length;
+  }, [exports, rows]);
   const totalLabel = useMemo(() => {
     const codes = Object.keys(totalsByCurrency);
     if (codes.length > 1) return formatMoneyByCurrencyMap(totalsByCurrency);
     const only = codes[0];
-    const amount = rows.reduce((s, r) => s + r.amount, 0);
+    const amount = Object.values(totalsByCurrency).reduce((sum, n) => sum + n, 0);
     return money(amount, only && only !== "UNKNOWN" ? only : currency);
-  }, [totalsByCurrency, rows, currency]);
+  }, [totalsByCurrency, currency]);
   const isXeroTarget = target === "Xero";
   const pending = isXeroTarget ? queue.length : 0;
   const readyCount = queue.filter((item) => item.valid).length;
@@ -240,7 +258,8 @@ export function JournalExportTab({
           </div>
           <div className="text-right text-sm">
             <div className="text-xs text-muted-foreground">
-              {rows.length} journal lines
+              {exportCount} journal lines
+              {rows.length < exportCount ? ` · showing ${rows.length}` : ""}
               {isXeroTarget
                 ? ` · ${pending} pending invoices · ${readyCount} ready`
                 : ""}

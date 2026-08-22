@@ -127,6 +127,32 @@ export function toTreeNodes(nodes: ApiVaultTreeNode[]): VaultTreeNode[] {
   }));
 }
 
+export function findVaultNodeById(
+  nodes: VaultTreeNode[],
+  id: string | null
+): VaultTreeNode | null {
+  if (!id) return null;
+  for (const node of nodes) {
+    if (node.id === id) return node;
+    const child = findVaultNodeById(node.children, id);
+    if (child) return child;
+  }
+  return null;
+}
+
+export function vaultSelectionQueryKey(selection: VaultSelection | null): string {
+  if (!selection) return "";
+  return [
+    selection.org,
+    selection.book ?? "",
+    selection.documentType ?? "",
+    selection.vendor ?? "",
+    selection.year ?? "",
+    selection.month ?? "",
+    selection.poFolder ?? "",
+  ].join("\0");
+}
+
 export function findVaultFileByInvoiceId(
   files: VaultApiFile[],
   invoiceId: number

@@ -8,15 +8,17 @@ import { PageTabPanel, PageTabs } from "@/components/PageTabs";
 import { CollectionRow } from "@/components/collections/CollectionRow";
 import { ListRowSkeleton } from "@/components/skeleton/PageSkeletons";
 import { useCollectionMutations } from "@/hooks/useCollectionMutations";
-import { useCollections } from "@/hooks/useCollections";
-import { useTenantTime } from "@/hooks/useTenantTime";
+import {
+  COLLECTIONS_PAGE_SIZE,
+  useCollectionWorkspaceKpis,
+  useCollections,
+} from "@/hooks/useCollections";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { apiCollectionToRecord } from "@/lib/collectionsQueue";
 import { formatMoneyByCurrencyMap } from "@/lib/format";
-import { collectionsKpis } from "@/lib/routePageAdapters";
 import type { CollectionTab } from "@/lib/v4MockData";
 
-const POLL_MS = 15_000;
+const POLL_MS = 90_000;
 
 const TABS: { value: CollectionTab; label: string; testid: string }[] = [
   { value: "queue", label: "Queue", testid: "tab-collections-queue" },
@@ -25,28 +27,44 @@ const TABS: { value: CollectionTab; label: string; testid: string }[] = [
   { value: "failed", label: "Failed", testid: "tab-collections-failed" },
 ];
 
+function tabCountFromKpis(
+  tab: CollectionTab,
+  kpis: { queue_count: number; awaiting_count: number; received_count: number; failed_count: number } | undefined
+): number | undefined {
+  if (kpis == null) return undefined;
+  if (tab === "queue") return kpis.queue_count;
+  if (tab === "awaiting") return kpis.awaiting_count;
+  if (tab === "received") return kpis.received_count;
+  return kpis.failed_count;
+}
+
 export function CollectionsPage() {
-  const { timeZone } = useTenantTime();
+  const [tab, setTab] = useState<CollectionTab>("queue");
+  const [drawerInvoiceId, setDrawerInvoiceId] = useState<number | null>(null);
   const {
     data: collectionRows = [],
     isLoading,
     isError,
     refetch,
     blocked: collectionsBlocked,
-  } = useCollections();
+  } = useCollections(tab);
+  const {
+    data: kpis,
+    isLoading: kpisLoading,
+    refetch: refetchKpis,
+  } = useCollectionWorkspaceKpis();
   const mutations = useCollectionMutations();
-  const [tab, setTab] = useState<CollectionTab>("queue");
-  const [drawerInvoiceId, setDrawerInvoiceId] = useState<number | null>(null);
 
   const collections = useMemo(
     () => (collectionsBlocked ? [] : collectionRows).map(apiCollectionToRecord),
     [collectionRows, collectionsBlocked]
   );
-  const kpis = collectionsKpis(collections, timeZone);
-  const tabRows = useMemo(() => collections.filter((c) => c.tab === tab), [collections, tab]);
+  const tabCount = tabCountFromKpis(tab, kpis);
+  const showKpiPlaceholder = kpisLoading || collectionsBlocked;
 
   useVisibilityPolling(() => {
     void refetch();
+    void refetchKpis();
   }, POLL_MS);
 
   useEffect(() => {
@@ -69,14 +87,26 @@ export function CollectionsPage() {
       />
 
       <div className="grid gap-3 grid-cols-2 lg:grid-cols-4 mb-5">
-        <KpiCard label="Open receivables" value={isLoading || collectionsBlocked ? "…" : kpis.count} testid="kpi-collections-open" />
+        <KpiCard
+          label="Open receivables"
+          value={showKpiPlaceholder ? "…" : (kpis?.open_count ?? 0)}
+          testid="kpi-collections-open"
+        />
         <KpiCard
           label="Outstanding"
-          value={isLoading ? "…" : formatMoneyByCurrencyMap(kpis.totalByCurrency)}
+          value={showKpiPlaceholder ? "…" : formatMoneyByCurrencyMap(kpis?.outstanding_by_currency ?? {})}
           testid="kpi-collections-total"
         />
-        <KpiCard label="Overdue" value={isLoading ? "…" : kpis.overdue} testid="kpi-collections-overdue" />
-        <KpiCard label="Due in 7 days" value={isLoading ? "…" : kpis.dueSoon} testid="kpi-collections-due-soon" />
+        <KpiCard
+          label="Overdue"
+          value={showKpiPlaceholder ? "…" : (kpis?.overdue_count ?? 0)}
+          testid="kpi-collections-overdue"
+        />
+        <KpiCard
+          label="Due in 7 days"
+          value={showKpiPlaceholder ? "…" : (kpis?.due_soon_count ?? 0)}
+          testid="kpi-collections-due-soon"
+        />
       </div>
 
       <PageTabs
@@ -84,7 +114,7 @@ export function CollectionsPage() {
         onChange={(v) => setTab(v as CollectionTab)}
         tabs={TABS.map((t) => ({
           value: t.value,
-          label: t.label,
+          label: kpis == null ? t.label : `${t.label} (${tabCountFromKpis(t.value, kpis) ?? 0})`,
           testid: t.testid,
         }))}
       />
@@ -98,7 +128,7 @@ export function CollectionsPage() {
           </Card>
         ) : isError && !collectionsBlocked ? (
           <div className="text-sm text-destructive py-8">Could not load collections.</div>
-        ) : tabRows.length === 0 ? (
+        ) : collections.length === 0 ? (
           <EmptyState
             title={`No ${tab} collections`}
             hint={
@@ -108,19 +138,27 @@ export function CollectionsPage() {
             }
           />
         ) : (
-          tabRows.map((row) => (
-            <CollectionRow
-              key={row.id}
-              row={row}
-              busy={mutations.busyId === Number(row.id)}
-              onOpenInvoice={() => setDrawerInvoiceId(Number(row.invoiceId))}
-              onMarkReceived={
-                tab === "queue" || tab === "awaiting"
-                  ? () => void mutations.markReceived(Number(row.id))
-                  : undefined
-              }
-            />
-          ))
+          <>
+            {collections.map((row) => (
+              <CollectionRow
+                key={row.id}
+                row={row}
+                busy={mutations.busyId === Number(row.id)}
+                onOpenInvoice={() => setDrawerInvoiceId(Number(row.invoiceId))}
+                onMarkReceived={
+                  tab === "queue" || tab === "awaiting"
+                    ? () => void mutations.markReceived(Number(row.id))
+                    : undefined
+                }
+              />
+            ))}
+            {tabCount != null && tabCount > collections.length ? (
+              <p className="text-xs text-muted-foreground px-1 pt-1">
+                Showing {collections.length} of {tabCount}
+                {tabCount > COLLECTIONS_PAGE_SIZE ? ` (first ${COLLECTIONS_PAGE_SIZE})` : ""}.
+              </p>
+            ) : null}
+          </>
         )}
       </PageTabPanel>
 
@@ -128,7 +166,10 @@ export function CollectionsPage() {
         invoiceId={drawerInvoiceId}
         open={drawerInvoiceId != null}
         onClose={() => setDrawerInvoiceId(null)}
-        onUpdated={() => void refetch()}
+        onUpdated={() => {
+          void refetch();
+          void refetchKpis();
+        }}
       />
     </div>
   );

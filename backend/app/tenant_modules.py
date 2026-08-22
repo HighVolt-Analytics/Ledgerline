@@ -47,12 +47,6 @@ TENANT_MODULE_CATALOG: tuple[TenantModuleDef, ...] = (
         group="Operations",
     ),
     TenantModuleDef(
-        key="dossiers",
-        label="Processing",
-        description="Document processing pipeline and approval chains.",
-        group="Operations",
-    ),
-    TenantModuleDef(
         key="vault",
         label="Vault",
         description="Stored invoice files and folder tree.",

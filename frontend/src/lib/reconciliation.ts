@@ -47,6 +47,8 @@ export type ReconSummary = {
   drByCurrency: Record<string, number>;
   crByCurrency: Record<string, number>;
   byDate: ReconDay[];
+  documentCount?: number;
+  totalDayCount?: number;
 };
 
 export type MockSampleLine = {
@@ -276,8 +278,8 @@ export function buildReconciliationFromApiInvoices(
   return buildReconciliation(rows);
 }
 
-export function mapReconciliationOverview(data: ReconciliationOverview): ReconSummary {
-  const byDate: ReconDay[] = data.by_date.map((day) => ({
+export function mapReconDay(day: ReconciliationOverview["by_date"][number]): ReconDay {
+  return {
     date: day.date,
     count: day.count,
     sumDr: toNum(day.sum_dr),
@@ -288,7 +290,7 @@ export function mapReconciliationOverview(data: ReconciliationOverview): ReconSu
     totalsByCurrency: mapCurrencyTotals(day.totals_by_currency),
     drByCurrency: mapCurrencyTotals(day.dr_by_currency),
     crByCurrency: mapCurrencyTotals(day.cr_by_currency),
-    invoices: day.invoices.map((inv) => ({
+    invoices: (day.invoices ?? []).map((inv) => ({
       id: inv.id,
       invoiceId: inv.invoice_id,
       vendor: inv.vendor,
@@ -300,7 +302,11 @@ export function mapReconciliationOverview(data: ReconciliationOverview): ReconSu
         credit: toNum(p.credit),
       })),
     })),
-  }));
+  };
+}
+
+export function mapReconciliationOverview(data: ReconciliationOverview): ReconSummary {
+  const byDate: ReconDay[] = data.by_date.map(mapReconDay);
 
   return {
     sumTotals: toNum(data.sum_totals),
@@ -313,6 +319,8 @@ export function mapReconciliationOverview(data: ReconciliationOverview): ReconSu
     drByCurrency: mapCurrencyTotals(data.dr_by_currency),
     crByCurrency: mapCurrencyTotals(data.cr_by_currency),
     byDate,
+    documentCount: data.document_count,
+    totalDayCount: data.total_day_count,
   };
 }
 
@@ -579,5 +587,6 @@ export function filterReconciliationByMonth(recon: ReconSummary, month: string):
 }
 
 export function documentCountForRecon(recon: ReconSummary): number {
+  if (recon.documentCount != null) return recon.documentCount;
   return recon.byDate.reduce((sum, day) => sum + day.count, 0);
 }

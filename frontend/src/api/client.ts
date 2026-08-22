@@ -57,6 +57,8 @@ import type {
   SalesDossierResponse,
   CollectionApi,
   CollectionMarkReceivedPayload,
+  CollectionWorkspaceKpis,
+  PaymentWorkspaceKpis,
   Customer,
   DashboardOverview,
   DashboardStats,
@@ -73,6 +75,8 @@ import type {
   Invoice,
   InvoiceDetails,
   LedgerLinkResponse,
+  LedgerLinkExports,
+  ReconDayOverviewRow,
   InvoiceUpdatePayload,
   Tenant,
   PlatformTenantSummary,
@@ -107,6 +111,8 @@ import type {
   VendorPayoutMethodCreate,
   VendorPayoutMethodUpdate,
   VaultTreeResponse,
+  VaultFilesResponse,
+  VaultDocumentSetsResponse,
   VaultMigrateResponse,
   WalletSummary,
   StripeAccount,
@@ -1732,10 +1738,48 @@ export const api = {
         body: JSON.stringify(body),
       }
     ),
-  getVaultTree: (options?: FreshRequestOptions) => {
-    const path = "/api/vault/tree";
+  getVaultTree: (options?: FreshRequestOptions & { includeFiles?: boolean; fileLimit?: number }) => {
+    const qs = new URLSearchParams();
+    if (options?.includeFiles === false) qs.set("include_files", "false");
+    if (options?.fileLimit != null) qs.set("file_limit", String(options.fileLimit));
+    const query = qs.toString();
+    const path = `/api/vault/tree${query ? `?${query}` : ""}`;
     if (options?.fresh) bustGetCache(path);
     return request<VaultTreeResponse>(path);
+  },
+  getVaultFiles: (
+    params?: {
+      invoiceId?: number;
+      org?: string;
+      book?: string;
+      documentType?: string;
+      vendor?: string;
+      year?: string;
+      month?: string;
+      poFolder?: string;
+      limit?: number;
+    },
+    options?: FreshRequestOptions
+  ) => {
+    const qs = new URLSearchParams();
+    if (params?.invoiceId != null) qs.set("invoice_id", String(params.invoiceId));
+    if (params?.org) qs.set("org", params.org);
+    if (params?.book) qs.set("book", params.book);
+    if (params?.documentType) qs.set("document_type", params.documentType);
+    if (params?.vendor) qs.set("vendor", params.vendor);
+    if (params?.year) qs.set("year", params.year);
+    if (params?.month) qs.set("month", params.month);
+    if (params?.poFolder) qs.set("po_folder", params.poFolder);
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    const query = qs.toString();
+    const path = `/api/vault/files${query ? `?${query}` : ""}`;
+    if (options?.fresh) bustGetCache(path);
+    return request<VaultFilesResponse>(path);
+  },
+  getVaultDocumentSets: (options?: FreshRequestOptions) => {
+    const path = "/api/vault/document-sets";
+    if (options?.fresh) bustGetCache(path);
+    return request<VaultDocumentSetsResponse>(path);
   },
   migrateVault: () =>
     request<VaultMigrateResponse>("/api/vault/migrate", { method: "POST" }),
@@ -1768,10 +1812,23 @@ export const api = {
     request<ReconciliationDayDetail>(`/api/reconciliation/daily/${reconDate}/detail`),
   getReconciliationOverview: () =>
     request<ReconciliationOverview>("/api/reconciliation/overview"),
-  getLedgerLink: (options?: FreshRequestOptions) => {
-    const path = "/api/ledger-link";
+  getLedgerLink: (options?: FreshRequestOptions & { fields?: "overview" | "exports" }) => {
+    const path = options?.fields ? `/api/ledger-link?fields=${options.fields}` : "/api/ledger-link";
     if (options?.fresh) bustGetCache(path);
     return request<LedgerLinkResponse>(path);
+  },
+  getLedgerLinkExports: (options?: FreshRequestOptions & { limit?: number }) => {
+    const params = new URLSearchParams();
+    if (options?.limit != null) params.set("limit", String(options.limit));
+    const qs = params.toString();
+    const path = qs ? `/api/ledger-link/exports?${qs}` : "/api/ledger-link/exports";
+    if (options?.fresh) bustGetCache(path);
+    return request<LedgerLinkExports>(path);
+  },
+  getLedgerLinkDay: (day: string, options?: FreshRequestOptions) => {
+    const path = `/api/ledger-link/days/${day}`;
+    if (options?.fresh) bustGetCache(path);
+    return request<ReconDayOverviewRow>(path);
   },
   getBilling: (options?: FreshRequestOptions) => {
     const path = "/api/billing";
@@ -2076,10 +2133,21 @@ export const api = {
     if (options?.fresh) bustGetCache(path);
     return request<SalesDossierResponse>(path);
   },
-  listCollections: (options?: FreshRequestOptions) => {
-    const path = "/api/collections";
+  listCollections: (
+    options?: FreshRequestOptions & { status?: string; limit?: number }
+  ) => {
+    const params = new URLSearchParams();
+    if (options?.status) params.set("status", options.status);
+    if (options?.limit != null) params.set("limit", String(options.limit));
+    const qs = params.toString();
+    const path = qs ? `/api/collections?${qs}` : "/api/collections";
     if (options?.fresh) bustGetCache(path);
     return request<CollectionApi[]>(path);
+  },
+  getCollectionWorkspaceKpis: (options?: FreshRequestOptions) => {
+    const path = "/api/collections/kpis";
+    if (options?.fresh) bustGetCache(path);
+    return request<CollectionWorkspaceKpis>(path);
   },
   markCollectionReceived: (collectionId: number, body?: CollectionMarkReceivedPayload) => {
     bustGetCacheByPrefix("/api/collections");
@@ -2132,10 +2200,22 @@ export const api = {
     if (options?.fresh) bustGetCache(path);
     return request<WalletSummary>(path);
   },
-  listPayments: (status?: string, options?: FreshRequestOptions) => {
-    const path = status ? `/api/payments?status=${encodeURIComponent(status)}` : "/api/payments";
+  listPayments: (
+    status?: string,
+    options?: FreshRequestOptions & { limit?: number }
+  ) => {
+    const params = new URLSearchParams();
+    if (status) params.set("status", status);
+    if (options?.limit != null) params.set("limit", String(options.limit));
+    const qs = params.toString();
+    const path = qs ? `/api/payments?${qs}` : "/api/payments";
     if (options?.fresh) bustGetCache(path);
     return request<PaymentApi[]>(path);
+  },
+  getPaymentWorkspaceKpis: (options?: FreshRequestOptions) => {
+    const path = "/api/payments/kpis";
+    if (options?.fresh) bustGetCache(path);
+    return request<PaymentWorkspaceKpis>(path);
   },
   updatePayment: (
     paymentId: number,

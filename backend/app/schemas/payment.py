@@ -87,6 +87,18 @@ class PaymentResponse(BaseModel):
     fx_variance: float | None = None
 
 
+class PaymentWorkspaceKpis(BaseModel):
+    open_count: int = 0
+    overdue_count: int = 0
+    due_soon_count: int = 0
+    queue_count: int = 0
+    awaiting_count: int = 0
+    scheduled_count: int = 0
+    paid_count: int = 0
+    failed_count: int = 0
+    outstanding_by_currency: dict[str, float] = Field(default_factory=dict)
+
+
 class PaymentStatusUpdate(BaseModel):
     status: str
     scheduled_date: date | None = None

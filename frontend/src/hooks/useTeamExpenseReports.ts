@@ -2,17 +2,19 @@ import { api } from "@/api/client";
 import { useTenantQuery } from "@/hooks/useTenantQuery";
 import { queryKeys } from "@/lib/queryClient";
 
-export function useTeamExpenseAdvanceSettlement() {
+export function useTeamExpenseAdvanceSettlement(enabled = true) {
   return useTenantQuery({
     queryKey: queryKeys.teAdvanceSettlement(),
     queryFn: () => api.getTeamExpenseAdvanceSettlement(),
+    enabled,
   });
 }
 
-export function useTeamExpenseBudgetUtilization() {
+export function useTeamExpenseBudgetUtilization(enabled = true) {
   return useTenantQuery({
     queryKey: queryKeys.teBudgetUtilization(),
     queryFn: () => api.getTeamExpenseBudgetUtilization(),
+    enabled,
   });
 }
 
@@ -40,12 +42,17 @@ export function useExpensesWorkspaceKpis(enabled = true) {
   });
 }
 
-export function useTeamExpenseExpenseSummary(dateFrom?: string, dateTo?: string) {
+export function useTeamExpenseExpenseSummary(
+  dateFrom?: string,
+  dateTo?: string,
+  enabled = true
+) {
   return useTenantQuery({
     queryKey: queryKeys.teExpenseSummary(dateFrom, dateTo),
     queryFn: () =>
       api.getTeamExpenseExpenseSummary(
         dateFrom || dateTo ? { dateFrom, dateTo } : undefined
       ),
+    enabled,
   });
 }

@@ -12,7 +12,7 @@ import { WalletCard } from "@/components/payments/WalletCard";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { TableSkeleton } from "@/components/skeleton/PageSkeletons";
-import { usePaymentMutations, usePayments, useAppSettings } from "@/hooks/usePayments";
+import { PAYMENTS_PAGE_SIZE, usePaymentMutations, usePaymentWorkspaceKpis, usePayments, useAppSettings } from "@/hooks/usePayments";
 import {
   useConnectStripe,
   useDisconnectStripe,
@@ -26,11 +26,10 @@ import {
   useStripeTransactions,
 } from "@/hooks/useStripe";
 import { useRefreshPayPalReadiness } from "@/hooks/usePayPal";
-import { useTenantTime } from "@/hooks/useTenantTime";
 import type { StripeAccount, StripeBalanceAmount, StripeReadinessResponse } from "@/api/types";
 import { formatMoneyByCurrencyMap, money } from "@/lib/format";
 import { cn } from "@/lib/cn";
-import { apiPaymentToRecord, paymentsKpis } from "@/lib/routePageAdapters";
+import { apiPaymentToRecord } from "@/lib/routePageAdapters";
 import { paymentTierLabel, type PaymentRecord, type PaymentTab } from "@/lib/v4MockData";
 
 const TABS: { value: PaymentTab; label: string; testid: string }[] = [
@@ -160,11 +159,16 @@ export function PaymentsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const stripeReturnHandled = useRef(false);
   const paypalReturnHandled = useRef(false);
-  const { timeZone } = useTenantTime();
+  const [tab, setTab] = useState<PaymentTab>("queue");
   const { data: paymentRows = [], isLoading: paymentsLoading, isError, blocked: paymentsBlocked } =
-    usePayments();
-  const { data: appSettings, blocked: settingsBlocked } = useAppSettings();
-  const isLoading = paymentsLoading || paymentsBlocked || settingsBlocked;
+    usePayments(tab);
+  const {
+    data: kpis,
+    isLoading: kpisLoading,
+  } = usePaymentWorkspaceKpis();
+  const { data: appSettings } = useAppSettings();
+  const isLoading = paymentsLoading || paymentsBlocked;
+  const showKpiPlaceholder = kpisLoading || paymentsBlocked;
   const paymentsExecutionEnabled = appSettings?.stripe_payments_execution_enabled ?? false;
   const manualExecutionEnabled =
     (appSettings?.payment_manual_execution_enabled ?? false) &&
@@ -186,7 +190,6 @@ export function PaymentsPage() {
   const refreshPayPalReadiness = useRefreshPayPalReadiness();
   const onboardingLink = useStripeOnboardingLink();
   const stripeOAuthUrl = useStripeOAuthUrl();
-  const [tab, setTab] = useState<PaymentTab>("queue");
   const [justPaidId, setJustPaidId] = useState<string | null>(null);
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<PaymentRecord | null>(null);
@@ -194,11 +197,16 @@ export function PaymentsPage() {
   const [paypalActionError, setPaypalActionError] = useState<string | null>(null);
 
   const payments = useMemo(() => paymentRows.map(apiPaymentToRecord), [paymentRows]);
-  const kpis = paymentsKpis(payments, timeZone);
-  const tabPayments = useMemo(
-    () => payments.filter((p) => p.tab === tab),
-    [payments, tab]
-  );
+  const tabCount =
+    tab === "queue"
+      ? kpis?.queue_count
+      : tab === "awaiting"
+        ? kpis?.awaiting_count
+        : tab === "scheduled"
+          ? kpis?.scheduled_count
+          : tab === "paid"
+            ? kpis?.paid_count
+            : kpis?.failed_count;
   const needsOnboarding = stripeAccount ? stripeNeedsOnboarding(stripeAccount) : false;
   const stripeWalletAvailable = sumStripeBalanceAmounts(
     stripeBalance?.available ?? []
@@ -373,21 +381,23 @@ export function PaymentsPage() {
       <div className="grid gap-3 grid-cols-1 lg:grid-cols-[1fr_1fr_1fr_1.4fr] mb-5">
         <KpiCard
           label="Open payables"
-          value={isLoading ? "…" : kpis.count}
+          value={showKpiPlaceholder ? "…" : (kpis?.open_count ?? 0)}
           testid="kpi-pay-ready"
           delta={{ dir: "up", text: "workflow queue", good: true }}
         />
         <KpiCard
           label="Due within 7 days"
-          value={isLoading ? "…" : kpis.dueSoon}
+          value={showKpiPlaceholder ? "…" : (kpis?.due_soon_count ?? 0)}
           testid="kpi-pay-awaiting"
           delta={
-            !isLoading && kpis.dueSoon > 0 ? { dir: "flat", text: "coming due" } : undefined
+            !showKpiPlaceholder && (kpis?.due_soon_count ?? 0) > 0
+              ? { dir: "flat", text: "coming due" }
+              : undefined
           }
         />
         <KpiCard
           label="Queue total"
-          value={isLoading ? "…" : formatMoneyByCurrencyMap(kpis.totalByCurrency)}
+          value={showKpiPlaceholder ? "…" : formatMoneyByCurrencyMap(kpis?.outstanding_by_currency ?? {})}
           testid="kpi-pay-paid"
         />
         <WalletCard
@@ -756,14 +766,34 @@ export function PaymentsPage() {
         </div>
       </Card>
 
-      <PageTabs value={tab} onChange={(v) => setTab(v as PaymentTab)} tabs={TABS} />
+      <PageTabs
+        value={tab}
+        onChange={(v) => setTab(v as PaymentTab)}
+        tabs={TABS.map((t) => ({
+          ...t,
+          label:
+            kpis == null
+              ? t.label
+              : `${t.label} (${
+                  t.value === "queue"
+                    ? kpis.queue_count
+                    : t.value === "awaiting"
+                      ? kpis.awaiting_count
+                      : t.value === "scheduled"
+                        ? kpis.scheduled_count
+                        : t.value === "paid"
+                          ? kpis.paid_count
+                          : kpis.failed_count
+                })`,
+        }))}
+      />
 
       <PageTabPanel value={tab} active={tab} className="mt-4">
         {isLoading ? (
           <TableSkeleton rows={7} columns={5} />
         ) : isError && !paymentsBlocked ? (
           <div className="text-sm text-destructive py-8">Could not load payments.</div>
-        ) : tabPayments.length === 0 ? (
+        ) : payments.length === 0 ? (
           <EmptyState
             className="mt-0 w-full max-w-none"
             title={`No ${tab} payments`}
@@ -771,7 +801,7 @@ export function PaymentsPage() {
           />
         ) : (
           <div className="space-y-2.5">
-            {tabPayments.map((payment) => (
+            {payments.map((payment) => (
               <PaymentRow
                 key={payment.id}
                 payment={payment}
@@ -785,6 +815,12 @@ export function PaymentsPage() {
                 onReceipt={() => setReceipt(payment)}
               />
             ))}
+            {tabCount != null && tabCount > payments.length ? (
+              <p className="text-xs text-muted-foreground px-1 pt-1">
+                Showing {payments.length} of {tabCount}
+                {tabCount > PAYMENTS_PAGE_SIZE ? ` (first ${PAYMENTS_PAGE_SIZE})` : ""}.
+              </p>
+            ) : null}
           </div>
         )}
       </PageTabPanel>

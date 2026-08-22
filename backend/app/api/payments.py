@@ -17,6 +17,7 @@ from app.schemas.payment import (
     PaymentMarkPaidManualRequest,
     PaymentResponse,
     PaymentStatusUpdate,
+    PaymentWorkspaceKpis,
     StripeAccountResponse,
     StripeBalanceAmountResponse,
     StripeBalanceResponse,
@@ -33,6 +34,7 @@ from app.services.audit.audit_service import log_event
 from app.services.payments.payment_service import (
     approve_payment,
     list_payments,
+    payment_workspace_kpis,
     update_payment_status,
     wallet_summary,
 )
@@ -399,6 +401,9 @@ async def get_stripe_transactions(
     )
 
 
+_LIST_LIMIT_MAX = 200
+
+
 @router.get("/wallet-summary", response_model=ApiEnvelope[WalletSummaryResponse])
 async def get_wallet_summary(
     db: AsyncSession = Depends(get_db),
@@ -408,13 +413,26 @@ async def get_wallet_summary(
     return ApiEnvelope(data=data)
 
 
+@router.get("/kpis", response_model=ApiEnvelope[PaymentWorkspaceKpis])
+async def get_payment_workspace_kpis(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[PaymentWorkspaceKpis]:
+    data = await payment_workspace_kpis(db, ctx.tenant_id, tenant=ctx.tenant)
+    return ApiEnvelope(data=data)
+
+
 @router.get("", response_model=ApiEnvelope[list[PaymentResponse]])
 async def get_payments(
     status: str | None = Query(None),
+    limit: int | None = Query(default=None, ge=1, le=_LIST_LIMIT_MAX),
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[list[PaymentResponse]]:
-    rows = await list_payments(db, ctx.tenant_id, status=status)
+    try:
+        rows = await list_payments(db, ctx.tenant_id, status=status, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     return ApiEnvelope(data=rows)
 
 

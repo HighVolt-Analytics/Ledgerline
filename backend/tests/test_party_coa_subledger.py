@@ -269,7 +269,7 @@ async def test_ap_balance_totals_ignore_pagination(
         return config
 
     monkeypatch.setattr(
-        "app.services.reports.subledger_balance_service.load_config_for_tenant",
+        "app.services.reports.subledger_balance_service.load_posting_config_for_tenant",
         _load_config,
     )
 

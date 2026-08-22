@@ -9,7 +9,7 @@ from typing import Any
 
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import noload, selectinload
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import EntryType, JournalEntry
@@ -30,7 +30,7 @@ from app.schemas.team_expense_reports import (
 )
 from app.services.audit.audit_service import audit_logs_for_invoices
 from app.services.dossier.document_ref_service import display_document_ref
-from app.services.invoice.invoice_evaluation_service import ROUTE_TEAM, load_config_for_tenant
+from app.services.invoice.invoice_evaluation_service import ROUTE_TEAM, load_posting_config_for_tenant
 from app.services.master_data.chart_of_accounts_service import (
     account_is_sub_ledger,
     parent_ledger_for_account,
@@ -41,7 +41,7 @@ from app.services.purchase.team_expense_advance_service import (
     employee_advance_account_code,
     employee_advance_activity_by_ids,
     employee_advance_balances_by_ids,
-    pending_claim_advance_reservation,
+    pending_claim_advance_reservations_by_employees,
 )
 from app.services.purchase.team_expense_spend_service import (
     current_period_keys,
@@ -113,12 +113,15 @@ async def build_advance_settlement_rows(
     session: AsyncSession,
     tenant_id: uuid.UUID,
 ) -> list[EmployeeAdvanceSettlementRow]:
-    config = await load_config_for_tenant(session, tenant_id)
+    config = await load_posting_config_for_tenant(session, tenant_id)
     employees = await list_employee_masters(
         session, tenant_id, include_advance_balances=False
     )
     activity = await employee_advance_activity_by_ids(
         session, tenant_id, config, employees
+    )
+    pending_by_id = await pending_claim_advance_reservations_by_employees(
+        session, tenant_id, employees
     )
 
     rows: list[EmployeeAdvanceSettlementRow] = []
@@ -127,7 +130,7 @@ async def build_advance_settlement_rows(
         taken, used, ledger = activity.get(
             emp_id, (Decimal("0"), Decimal("0"), Decimal("0"))
         )
-        pending = await pending_claim_advance_reservation(session, tenant_id, emp)
+        pending = pending_by_id.get(emp_id, Decimal("0"))
         available = ledger - pending
         if available < 0:
             available = Decimal("0")
@@ -173,7 +176,7 @@ async def build_budget_utilization_rows(
     outstanding Staff Advance float against the same period limits so managers see
     how much of the envelope is still free after cash already paid out as advances.
     """
-    config = await load_config_for_tenant(session, tenant_id)
+    config = await load_posting_config_for_tenant(session, tenant_id)
     employees = await list_employee_masters(
         session, tenant_id, include_advance_balances=False
     )
@@ -285,7 +288,7 @@ async def build_employee_expense_summary_rows(
     if date_from is not None and date_to is not None and date_from > date_to:
         raise ValueError("date_from must be on or before date_to")
 
-    config = await load_config_for_tenant(session, tenant_id)
+    config = await load_posting_config_for_tenant(session, tenant_id)
     coa = list(config.chart_of_accounts or [])
     employees = await list_employee_masters(
         session, tenant_id, include_advance_balances=False
@@ -293,7 +296,7 @@ async def build_employee_expense_summary_rows(
     effective = _effective_invoice_date()
     stmt = (
         select(Invoice)
-        .options(selectinload(Invoice.line_items))
+        .options(selectinload(Invoice.line_items), noload(Invoice.journal_entries))
         .where(
             Invoice.tenant_id == tenant_id,
             Invoice.route_target == ROUTE_TEAM,
@@ -497,7 +500,7 @@ async def build_employee_spend_detail_rows(
     y_end = min(y_end, today)
     period_keys = current_period_keys(today)
 
-    config = await load_config_for_tenant(session, tenant_id)
+    config = await load_posting_config_for_tenant(session, tenant_id)
     coa = list(config.chart_of_accounts or [])
     employees = await list_employee_masters(
         session, tenant_id, include_advance_balances=False
@@ -691,7 +694,7 @@ async def build_employee_advance_detail_rows(
     tenant_id: uuid.UUID,
 ) -> list[EmployeeAdvanceDetailRow]:
     """Movement ledger: one row per advance Took, one row per claim Used."""
-    config = await load_config_for_tenant(session, tenant_id)
+    config = await load_posting_config_for_tenant(session, tenant_id)
     employees = await list_employee_masters(
         session, tenant_id, include_advance_balances=False
     )

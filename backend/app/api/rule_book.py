@@ -155,6 +155,14 @@ async def _load_rule_book_document_types_only(
     return {"document_types": data.get("document_types") or []}
 
 
+async def _load_rule_book_document_sets_only(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> dict[str, Any]:
+    data = await _load_rule_book_raw_dict(db, tenant_id)
+    return {"document_sets": data.get("document_sets") or []}
+
+
 async def _load_rule_book_vendor_detection_only(
     db: AsyncSession,
     tenant_id: uuid.UUID,
@@ -217,7 +225,7 @@ async def _load_rule_book_team_expenses_only(
 async def get_rule_book_config(
     fields: str | None = Query(
         None,
-        description="Optional slice: document_types, vendor_detection, team_expense_posting, team_expenses, expense_rules, purchase_rules, sales_rules, editor, ingest_stats",
+        description="Optional slice: document_types, document_sets, vendor_detection, team_expense_posting, team_expenses, expense_rules, purchase_rules, sales_rules, editor, ingest_stats",
     ),
     ctx: AuthContext = Depends(get_auth_context),
     db: AsyncSession = Depends(get_db),
@@ -226,6 +234,8 @@ async def get_rule_book_config(
     token = (fields or "").strip()
     if token == "document_types":
         return ApiEnvelope(data=await _load_rule_book_document_types_only(db, ctx.tenant_id))
+    if token == "document_sets":
+        return ApiEnvelope(data=await _load_rule_book_document_sets_only(db, ctx.tenant_id))
     if token == "vendor_detection":
         return ApiEnvelope(data=await _load_rule_book_vendor_detection_only(db, ctx.tenant_id))
     if token == "team_expense_posting":

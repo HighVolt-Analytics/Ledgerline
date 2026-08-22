@@ -2,11 +2,22 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { useTenantQuery } from "@/hooks/useTenantQuery";
 import { queryKeys } from "@/lib/queryClient";
+import type { PaymentTab } from "@/lib/v4MockData";
 
-export function usePayments(enabled = true) {
+export const PAYMENTS_PAGE_SIZE = 50;
+
+export function usePayments(status: PaymentTab, enabled = true) {
   return useTenantQuery({
-    queryKey: queryKeys.payments(),
-    queryFn: () => api.listPayments(),
+    queryKey: queryKeys.payments(status),
+    queryFn: () => api.listPayments(status, { limit: PAYMENTS_PAGE_SIZE }),
+    enabled,
+  });
+}
+
+export function usePaymentWorkspaceKpis(enabled = true) {
+  return useTenantQuery({
+    queryKey: queryKeys.paymentsWorkspaceKpis(),
+    queryFn: () => api.getPaymentWorkspaceKpis(),
     enabled,
   });
 }
@@ -31,6 +42,7 @@ export function useApprovePayment() {
     mutationFn: (paymentId: number) => api.approvePayment(paymentId),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.payments() });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.paymentsWorkspaceKpis() });
       await queryClient.invalidateQueries({ queryKey: queryKeys.navBadges() });
     },
   });
@@ -42,6 +54,7 @@ export function useCreatePaymentExecutionInstruction() {
     mutationFn: (paymentId: number) => api.createPaymentExecutionInstruction(paymentId),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.payments() });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.paymentsWorkspaceKpis() });
       await queryClient.invalidateQueries({ queryKey: queryKeys.navBadges() });
     },
   });
@@ -59,6 +72,7 @@ export function useMarkPaymentPaidManual() {
     }) => api.markPaymentPaidManual(paymentId, body),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.payments() });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.paymentsWorkspaceKpis() });
       await queryClient.invalidateQueries({ queryKey: queryKeys.navBadges() });
     },
   });
@@ -69,6 +83,7 @@ export function usePaymentMutations() {
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: queryKeys.payments() });
+    queryClient.invalidateQueries({ queryKey: queryKeys.paymentsWorkspaceKpis() });
     queryClient.invalidateQueries({ queryKey: queryKeys.navBadges() });
   };
 

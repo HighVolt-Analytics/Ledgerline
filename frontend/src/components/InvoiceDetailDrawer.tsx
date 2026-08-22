@@ -33,18 +33,21 @@ import {
 } from "@/components/invoice-preview/DocumentSummaryPreview";
 import { InvoiceClassificationPanel } from "@/components/invoices/InvoiceClassificationPanel";
 import { DuplicateReviewBadge, EvaluationStatusBadge } from "@/components/inbox/EvaluationStatusBadge";
-import {
-  MappedDocumentTypeBadge,
-  VisionHeadingBadge,
-} from "@/components/inbox/DocumentTypeDisplay";
-import { PipelineDebugPanel } from "@/components/invoices/PipelineDebugPanel";
-import { DossierPipelineTimeline } from "@/components/dossiers/DossierPipelineTimeline";
+import { MappedDocumentTypeBadge, VisionHeadingBadge } from "@/components/inbox/DocumentTypeDisplay";
+import { DossierLinkedDocumentsPanel } from "@/components/dossiers/DossierLinkedDocumentsPanel";
+import { InvoiceDrawerProcessingSection } from "@/components/invoices/InvoiceDrawerProcessingSection";
 import { PageTabs } from "@/components/PageTabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { documentDisplayRef, normalizeCurrencyCode, vendorInvoiceNo } from "@/lib/format";
-import { fetchDossierById, type DossierSummaryWithInvoiceId } from "@/lib/dossierApi";
+import {
+  addDossierManualLink,
+  fetchDossierById,
+  removeDossierManualLink,
+  type DossierSummaryWithInvoiceId,
+} from "@/lib/dossierApi";
+import { useVaultFileByInvoice } from "@/hooks/useVault";
 import { useSetupCatalogs } from "@/hooks/useSetupCatalogs";
 import type { CurrencyOption } from "@/data/orgSetup";
 import {
@@ -83,7 +86,6 @@ import { matchEmployeeForSender } from "@/lib/routePageAdapters";
 import type { EmployeeMaster } from "@/lib/v4RuleBookTypes";
 import { LineGlAccountCell } from "@/components/invoices/LineGlAccountCell";
 import { effectiveMatchPolicy, isTwoWayMatchMode } from "@/lib/documentPlaybookConfig";
-import { ProcessingStepRunSkipControl } from "@/components/invoices/ProcessingStepRunSkipControl";
 import { InvoicePurchaseDossierSection } from "@/components/invoices/InvoicePurchaseDossierSection";
 import { InvoiceSalesDossierSection } from "@/components/invoices/InvoiceSalesDossierSection";
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
@@ -101,11 +103,9 @@ import {
 import {
   processingOverridesPatchFromDraft,
   processingOverridesPayload,
-  overrideStepDef,
   skipStepIdForAuditStage,
   skipStepsFromInvoice,
   toggleStepRunning,
-  UNMATCHED_OVERRIDE_STEP_IDS,
   type ProcessingOverrideStepId,
 } from "@/lib/processingOverrides";
 
@@ -120,7 +120,7 @@ import {
   filterPipelineStepsForPath,
 } from "@/lib/pipelineAuditPaths";
 
-const TABS = ["fields", "lines", "po", "tax", "audit", "pipeline"] as const;
+const TABS = ["fields", "lines", "po", "tax", "audit", "vault"] as const;
 export type InvoiceDrawerTab = (typeof TABS)[number];
 type Tab = InvoiceDrawerTab;
 
@@ -130,7 +130,7 @@ const TAB_LABELS: Record<Tab, string> = {
   po: "Match",
   tax: "Tax",
   audit: "Processing",
-  pipeline: "Pipeline (dev)",
+  vault: "Vault",
 };
 
 function canEdit(status: string): boolean {
@@ -960,12 +960,6 @@ function CurrencySelectRow({
   );
 }
 
-function pipelineDotClass(state: "done" | "pending" | "fail" | "skipped"): string {
-  if (state === "done") return "bg-[hsl(var(--chart-1))]";
-  if (state === "fail") return "bg-destructive";
-  return "bg-muted-foreground/40";
-}
-
 type InvoiceDetailDrawerProps = {
   invoiceId: number | null;
   open: boolean;
@@ -1112,6 +1106,7 @@ export function InvoiceDetailDrawer({
     setClassificationAudit(null);
     setDossier(null);
     setSalesDossier(null);
+    setDrawerDossier(null);
   }, [activeInvoiceId, tenantScope]);
 
   useEffect(() => {
@@ -1188,17 +1183,39 @@ export function InvoiceDetailDrawer({
   }, [inv, tab]);
 
   useEffect(() => {
-    if (!open || tab !== "pipeline" || !invoiceId) {
-      setDrawerDossier(null);
+    if (!open || (tab !== "vault" && tab !== "audit") || activeInvoiceId == null) {
+      if (tab !== "vault" && tab !== "audit") setDrawerDossier(null);
       return;
     }
-    const dossierKey = documentDisplayRef({ id: invoiceId });
+    const dossierKey = documentDisplayRef({
+      id: activeInvoiceId,
+      document_ref: inv?.document_ref,
+    });
     setDrawerDossierLoading(true);
-    void fetchDossierById(dossierKey)
+    void fetchDossierById(dossierKey, { fresh: true })
       .then((row) => setDrawerDossier(row))
       .catch(() => setDrawerDossier(null))
       .finally(() => setDrawerDossierLoading(false));
-  }, [open, tab, invoiceId]);
+  }, [open, tab, activeInvoiceId, inv?.document_ref]);
+
+  const reloadDrawerDossier = useCallback(() => {
+    if (activeInvoiceId == null) return;
+    const dossierKey = documentDisplayRef({
+      id: activeInvoiceId,
+      document_ref: inv?.document_ref,
+    });
+    setDrawerDossierLoading(true);
+    void fetchDossierById(dossierKey, { fresh: true })
+      .then((row) => setDrawerDossier(row))
+      .catch(() => setDrawerDossier(null))
+      .finally(() => setDrawerDossierLoading(false));
+  }, [activeInvoiceId, inv?.document_ref]);
+
+  const { data: vaultFilesForInvoice } = useVaultFileByInvoice(
+    tab === "vault" ? activeInvoiceId : null,
+    open && tab === "vault" && activeInvoiceId != null
+  );
+  const vaultFile = vaultFilesForInvoice?.files?.[0] ?? null;
 
   const reloadDossier = useCallback(() => {
     if (!inv) return;
@@ -1925,11 +1942,9 @@ export function InvoiceDetailDrawer({
                 <PageTabs
                   value={tab}
                   onChange={(v) => selectTab(v as Tab)}
-                  secondaryVariant="chevron"
                   tabs={TABS.map((t) => ({
                     value: t,
                     label: TAB_LABELS[t],
-                    secondary: t === "pipeline",
                   }))}
                 />
 
@@ -2289,200 +2304,79 @@ export function InvoiceDetailDrawer({
                 )}
 
                 {tab === "audit" && inv && (
-                  <div className="mt-4 space-y-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div
-                        className="inline-flex rounded-md border border-border p-0.5"
-                        role="tablist"
-                        aria-label="Processing path"
-                      >
-                        {(
-                          [
-                            ["understood", "Understood"],
-                            ["not_understood", "Not understood"],
-                          ] as const
-                        ).map(([value, label]) => (
-                          <button
-                            key={value}
-                            type="button"
-                            role="tab"
-                            aria-selected={auditPathTab === value}
-                            data-testid={`processing-path-${value}`}
-                            onClick={() => setAuditPathTab(value)}
-                            className={cn(
-                              "rounded px-2.5 py-1 text-xs font-medium transition-colors",
-                              auditPathTab === value
-                                ? "bg-primary text-primary-foreground"
-                                : "text-muted-foreground hover:text-foreground"
-                            )}
-                          >
-                            {label}
-                          </button>
-                        ))}
-                      </div>
-                      <p className="text-[11px] text-muted-foreground">
-                        {auditPathTab === "understood"
-                          ? pipelineActivePath === "understood"
-                            ? "Active path — capture → vault, then posting when continue runs."
-                            : "Vision path stages (may be inactive for this document)."
-                          : pipelineActivePath === "not_understood"
-                            ? "Active path — OCR / classify → validate → post."
-                            : "Legacy OCR path stages (may be inactive for this document)."}
-                      </p>
-                    </div>
-                    {processingOverridesEditable ? (
-                      <p className="text-xs text-muted-foreground">
-                        Toggle Run / Skip on a step to change what the next reprocess or approve
-                        will run. Save or use Approve / Reprocess to apply.
-                      </p>
-                    ) : null}
-                    {auditLoading ? (
-                      <p className="text-sm text-muted-foreground">Loading processing stages…</p>
-                    ) : (
-                      <>
-                        {filteredAuditSteps.length === 0 ? (
-                          <p className="text-sm text-muted-foreground">
-                            No pipeline stages on this path yet.
-                          </p>
-                        ) : null}
-                        <ol className="relative border-l border-border ml-2 space-y-4">
-                          {filteredAuditSteps.map((step) => {
-                            const skipId = skipStepIdForAuditStage(step.stage);
-                            const running = skipId
-                              ? !processingSkipSteps.includes(skipId)
-                              : true;
-                            return (
-                              <li
-                                key={step.stage}
-                                className={cn(
-                                  "ml-4 flex items-start justify-between gap-3",
-                                  skipId &&
-                                    highlightedSkipStepId === skipId &&
-                                    "rounded-md border border-destructive/40 bg-destructive/5 px-2 py-1.5 -ml-1"
-                                )}
-                              >
-                                <div className="min-w-0 flex-1">
-                                  <span
-                                    className={cn(
-                                      "absolute -left-[5px] h-2.5 w-2.5 rounded-full",
-                                      pipelineDotClass(step.state)
-                                    )}
-                                  />
-                                  <div className="text-sm font-medium">{step.stage}</div>
-                                  <div className="text-xs text-muted-foreground">
-                                    {step.when} · {step.detail}
-                                  </div>
-                                  {skipId && !running ? (
-                                    <p className="mt-1 text-xs font-medium ds-warning-text">
-                                      Skipped on reprocess
-                                    </p>
-                                  ) : null}
-                                </div>
-                                {skipId ? (
-                                  <ProcessingStepRunSkipControl
-                                    stepId={skipId}
-                                    label={step.stage}
-                                    running={running}
-                                    editable={processingOverridesEditable}
-                                    highlighted={highlightedSkipStepId === skipId}
-                                    controlKey={`${skipId}-${step.stage}`}
-                                    onToggle={
-                                      processingOverridesEditable && draft
-                                        ? (stepId, run) =>
-                                            setDraft({
-                                              ...draft,
-                                              skip_steps: toggleStepRunning(
-                                                draft.skip_steps,
-                                                stepId,
-                                                run
-                                              ),
-                                            })
-                                        : undefined
-                                    }
-                                  />
-                                ) : null}
-                              </li>
-                            );
-                          })}
-                          {UNMATCHED_OVERRIDE_STEP_IDS.map((stepId) => {
-                            const def = overrideStepDef(stepId);
-                            if (!def) return null;
-                            const running = !processingSkipSteps.includes(stepId);
-                            return (
-                              <li
-                                key={`override-${stepId}`}
-                                className={cn(
-                                  "ml-4 flex items-start justify-between gap-3",
-                                  highlightedSkipStepId === stepId &&
-                                    "rounded-md border border-destructive/40 bg-destructive/5 px-2 py-1.5 -ml-1"
-                                )}
-                              >
-                                <div className="min-w-0 flex-1">
-                                  <span
-                                    className={cn(
-                                      "absolute -left-[5px] h-2.5 w-2.5 rounded-full",
-                                      running ? "bg-muted-foreground/40" : "bg-amber-500"
-                                    )}
-                                  />
-                                  <div className="text-sm font-medium">{def.label}</div>
-                                  <div className="text-xs text-muted-foreground">{def.hint}</div>
-                                  {!running ? (
-                                    <p className="mt-1 text-xs font-medium ds-warning-text">
-                                      Skipped on reprocess
-                                    </p>
-                                  ) : null}
-                                </div>
-                                <ProcessingStepRunSkipControl
-                                  stepId={stepId}
-                                  label={def.label}
-                                  running={running}
-                                  editable={processingOverridesEditable}
-                                  highlighted={highlightedSkipStepId === stepId}
-                                  onToggle={
-                                    processingOverridesEditable && draft
-                                      ? (id, run) =>
-                                          setDraft({
-                                            ...draft,
-                                            skip_steps: toggleStepRunning(
-                                              draft.skip_steps,
-                                              id,
-                                              run
-                                            ),
-                                          })
-                                      : undefined
-                                  }
-                                />
-                              </li>
-                            );
-                          })}
-                        </ol>
-                      </>
-                    )}
-                  </div>
+                  <InvoiceDrawerProcessingSection
+                    dossier={drawerDossier}
+                    dossierLoading={drawerDossierLoading}
+                    invoicePipelineLoading={auditLoading}
+                    invoiceActivePath={pipelineActivePath}
+                    auditPathTab={auditPathTab}
+                    onAuditPathTabChange={setAuditPathTab}
+                    filteredInvoiceSteps={filteredAuditSteps}
+                    skipSteps={processingSkipSteps}
+                    overridesEditable={processingOverridesEditable}
+                    highlightedSkipStepId={highlightedSkipStepId}
+                    onToggleSkip={
+                      processingOverridesEditable && draft
+                        ? (stepId, run) =>
+                            setDraft({
+                              ...draft,
+                              skip_steps: toggleStepRunning(draft.skip_steps, stepId, run),
+                            })
+                        : undefined
+                    }
+                  />
                 )}
 
-                {tab === "pipeline" && inv && (
-                  <div className="mt-4 space-y-6">
-                    {drawerDossierLoading ? (
-                      <p className="text-sm text-muted-foreground">Loading dossier pipeline…</p>
-                    ) : drawerDossier ? (
-                      <DossierPipelineTimeline
-                        layout="drawer"
-                        pipeline={drawerDossier.pipeline}
-                        routeTarget={drawerDossier.routeTarget}
-                        pipelinePath={drawerDossier.pipelinePath}
-                      />
+                {tab === "vault" && inv && (
+                  <div className="mt-4 space-y-4" data-testid="invoice-drawer-vault-tab">
+                    {vaultFile ? (
+                      <div className="rounded-md border border-border bg-muted/30 px-3 py-2.5 space-y-1">
+                        <p className="text-xs font-medium text-foreground">Stored in vault</p>
+                        <p className="text-xs text-muted-foreground break-all tnum">
+                          {vaultFile.virtual_path || vaultFile.file_name}
+                        </p>
+                        {vaultFile.po_folder ? (
+                          <p className="text-[11px] text-muted-foreground">
+                            Bundle folder:{" "}
+                            <span className="font-medium text-foreground">{vaultFile.po_folder}</span>
+                          </p>
+                        ) : null}
+                      </div>
                     ) : (
-                      <p className="text-sm text-muted-foreground">
-                        No dossier pipeline is available for this document yet.
+                      <p className="text-xs text-muted-foreground">
+                        This document is not listed in the vault folder tree yet. Bundled supporting
+                        documents still appear below when a dossier exists.
                       </p>
                     )}
-                    <div className="border-t border-border pt-4">
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-                        Pipeline audit (dev)
-                      </p>
-                      <PipelineDebugPanel invoice={inv} />
-                    </div>
+
+                    {drawerDossierLoading ? (
+                      <p className="text-sm text-muted-foreground">Loading vault bundle…</p>
+                    ) : drawerDossier?.linkedDocuments ? (
+                      <DossierLinkedDocumentsPanel
+                        linked={drawerDossier.linkedDocuments}
+                        anchorInvoiceId={drawerDossier.invoiceId ?? inv.id}
+                        dossierId={drawerDossier.id}
+                        onOpenDocument={(id) => setViewId(id)}
+                        onAddManualLink={async (body) => {
+                          await addDossierManualLink(drawerDossier.id, body);
+                          reloadDrawerDossier();
+                          onUpdated?.();
+                        }}
+                        onRemoveManualLink={async (linkId) => {
+                          await removeDossierManualLink(drawerDossier.id, linkId);
+                          reloadDrawerDossier();
+                          onUpdated?.();
+                        }}
+                      />
+                    ) : (
+                      <div className="rounded-md border border-dashed border-border p-6 text-center">
+                        <p className="text-sm font-medium">No vault bundle yet</p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Supporting documents for this dossier will show here once the document is
+                          linked or vaulted.
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

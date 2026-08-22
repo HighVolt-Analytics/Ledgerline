@@ -4,6 +4,7 @@ import { useTenantQuery } from "@/hooks/useTenantQuery";
 import { queryKeys, tenantQueryKey } from "@/lib/queryClient";
 import {
   documentTypesFromRuleBookApi,
+  documentSetsFromRuleBookApi,
   expenseRulesFromRuleBookApi,
   purchaseRulesFromRuleBookApi,
   salesRulesFromRuleBookApi,
@@ -52,6 +53,15 @@ export function useRuleBookDocumentTypes(enabled = true) {
     queryKey: [...queryKeys.ruleBookConfig(), "document-types"],
     queryFn: async () =>
       documentTypesFromRuleBookApi(await api.getRuleBookConfig({ fields: "document_types" })),
+    enabled,
+  });
+}
+
+export function useRuleBookDocumentSets(enabled = true) {
+  return useTenantQuery({
+    queryKey: [...queryKeys.ruleBookConfig(), "document-sets"],
+    queryFn: async () =>
+      documentSetsFromRuleBookApi(await api.getRuleBookConfig({ fields: "document_sets" })),
     enabled,
   });
 }

@@ -106,12 +106,6 @@ const SalesManagementPage = lazy(() =>
     default: m.SalesManagementPage,
   }))
 );
-const DossiersPage = lazy(() =>
-  import("@/pages/DossiersPage").then((m) => ({ default: m.DossiersPage }))
-);
-const DossierDetailPage = lazy(() =>
-  import("@/pages/DossierDetailPage").then((m) => ({ default: m.DossierDetailPage }))
-);
 const CollectionsPage = lazy(() =>
   import("@/pages/CollectionsPage").then((m) => ({ default: m.CollectionsPage }))
 );
@@ -339,26 +333,8 @@ export default function App() {
                 </LazyPage>
               }
             />
-            <Route
-              path="dossiers"
-              element={
-                <ModuleRoute moduleKey="dossiers">
-                  <LazyPage>
-                    <DossiersPage />
-                  </LazyPage>
-                </ModuleRoute>
-              }
-            />
-            <Route
-              path="dossiers/:dossierId"
-              element={
-                <ModuleRoute moduleKey="dossiers">
-                  <LazyPage loaderVariant="dossier-detail">
-                    <DossierDetailPage />
-                  </LazyPage>
-                </ModuleRoute>
-              }
-            />
+            <Route path="dossiers" element={<Navigate to="/upload" replace />} />
+            <Route path="dossiers/:dossierId" element={<Navigate to="/upload" replace />} />
             <Route
               path="vendors"
               element={

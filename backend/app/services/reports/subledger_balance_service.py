@@ -20,7 +20,7 @@ from app.schemas.subledger import (
     SubledgerTotals,
     SubledgerUnregisteredBucket,
 )
-from app.services.invoice.invoice_evaluation_service import load_config_for_tenant
+from app.services.invoice.invoice_evaluation_service import load_posting_config_for_tenant
 from app.services.master_data.party_coa_subledger_service import control_account_codes_for_parent
 from app.services.reports.dashboard_service import _institution_today
 from app.services.rule_book.rule_book_mapper import (
@@ -54,7 +54,7 @@ async def fetch_ap_balances(
 ) -> SubledgerBalancesResponse:
     if as_of is None:
         as_of = await _institution_today(db, tenant_id)
-    config = await load_config_for_tenant(db, tenant_id)
+    config = await load_posting_config_for_tenant(db, tenant_id)
     payable = get_payable_account_mapping(config)
     control_codes = control_account_codes_for_parent(config, payable)
     base_currency = await _tenant_base_currency(db, tenant_id)
@@ -175,7 +175,7 @@ async def fetch_ar_balances(
 ) -> SubledgerBalancesResponse:
     if as_of is None:
         as_of = await _institution_today(db, tenant_id)
-    config = await load_config_for_tenant(db, tenant_id)
+    config = await load_posting_config_for_tenant(db, tenant_id)
     receivable = get_receivable_account_mapping(config)
     control_codes = control_account_codes_for_parent(config, receivable)
     base_currency = await _tenant_base_currency(db, tenant_id)

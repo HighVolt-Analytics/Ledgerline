@@ -7,7 +7,7 @@ import { LedgerExportTable } from "@/components/ledger-link/LedgerExportTable";
 import { LedgerOverview } from "@/components/ledger-link/LedgerOverview";
 import { PageLoader } from "@/components/PageLoader";
 import { useAuth } from "@/context/AuthContext";
-import { useLedgerLink } from "@/hooks/useLedgerLink";
+import { useLedgerLink, useLedgerLinkExports } from "@/hooks/useLedgerLink";
 import { mapReconciliationOverview } from "@/lib/reconciliation";
 
 const LL_TABS = [
@@ -25,13 +25,18 @@ export function LedgerLinkPage() {
   const [drawerInvoiceId, setDrawerInvoiceId] = useState<number | null>(null);
   const { user } = useAuth();
   const { data, isLoading, error } = useLedgerLink(Boolean(user));
+  const exportsEnabled = Boolean(user) && tab !== "overview";
+  const {
+    data: exports,
+    isLoading: exportsLoading,
+    error: exportsError,
+  } = useLedgerLinkExports(exportsEnabled);
 
   const recon = useMemo(
     () => (data?.overview ? mapReconciliationOverview(data.overview) : null),
     [data?.overview]
   );
   const currency = data?.overview.base_currency ?? "";
-  const exports = data?.exports;
 
   if (!user) {
     return (
@@ -89,22 +94,73 @@ export function LedgerLinkPage() {
         />
       </PageTabPanel>
       <PageTabPanel value="invoices" active={tab} className="mt-4">
-        <LedgerExportTable title="Invoices" rows={exports?.invoices ?? []} currency={currency} />
+        {exportsLoading && !exports ? (
+          <PageLoader variant="table" />
+        ) : exportsError ? (
+          <p className="text-sm text-destructive">Could not load invoice exports.</p>
+        ) : (
+          <LedgerExportTable
+            title="Invoices"
+            rows={exports?.invoices ?? []}
+            currency={currency}
+            meta={exports?.group_meta?.invoices}
+          />
+        )}
       </PageTabPanel>
       <PageTabPanel value="bills" active={tab} className="mt-4">
-        <LedgerExportTable title="Bills" rows={exports?.bills ?? []} currency={currency} />
+        {exportsLoading && !exports ? (
+          <PageLoader variant="table" />
+        ) : (
+          <LedgerExportTable
+            title="Bills"
+            rows={exports?.bills ?? []}
+            currency={currency}
+            meta={exports?.group_meta?.bills}
+          />
+        )}
       </PageTabPanel>
       <PageTabPanel value="expenses" active={tab} className="mt-4">
-        <LedgerExportTable title="Expenses" rows={exports?.expenses ?? []} currency={currency} />
+        {exportsLoading && !exports ? (
+          <PageLoader variant="table" />
+        ) : (
+          <LedgerExportTable
+            title="Expenses"
+            rows={exports?.expenses ?? []}
+            currency={currency}
+            meta={exports?.group_meta?.expenses}
+          />
+        )}
       </PageTabPanel>
       <PageTabPanel value="purchases" active={tab} className="mt-4">
-        <LedgerExportTable title="Purchases" rows={exports?.purchases ?? []} currency={currency} />
+        {exportsLoading && !exports ? (
+          <PageLoader variant="table" />
+        ) : (
+          <LedgerExportTable
+            title="Purchases"
+            rows={exports?.purchases ?? []}
+            currency={currency}
+            meta={exports?.group_meta?.purchases}
+          />
+        )}
       </PageTabPanel>
       <PageTabPanel value="payments" active={tab} className="mt-4">
-        <LedgerExportTable title="Payments" rows={exports?.payments ?? []} currency={currency} />
+        {exportsLoading && !exports ? (
+          <PageLoader variant="table" />
+        ) : (
+          <LedgerExportTable
+            title="Payments"
+            rows={exports?.payments ?? []}
+            currency={currency}
+            meta={exports?.group_meta?.payments}
+          />
+        )}
       </PageTabPanel>
       <PageTabPanel value="export" active={tab} className="mt-4">
-        <JournalExportTab exports={exports} currency={currency} />
+        {exportsLoading && !exports ? (
+          <PageLoader variant="table" />
+        ) : (
+          <JournalExportTab exports={exports} currency={currency} />
+        )}
       </PageTabPanel>
 
       <LazyInvoiceDetailDrawer

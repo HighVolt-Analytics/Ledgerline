@@ -1,4 +1,4 @@
-import type { LedgerExportRow } from "@/api/types";
+import type { LedgerExportGroupMeta, LedgerExportRow } from "@/api/types";
 import { Card } from "@/components/ui/card";
 import { formatMoneyByCurrencyMap, money } from "@/lib/format";
 import { ExportStatusBadge } from "./ExportStatusBadge";
@@ -16,18 +16,22 @@ export function LedgerExportTable({
   title,
   rows,
   currency = "",
+  meta,
 }: {
   title: string;
   rows: LedgerExportRow[];
   currency?: string;
+  meta?: LedgerExportGroupMeta;
 }) {
-  const byCurrency = totalsByCurrency(rows);
+  const byCurrency = meta?.totals_by_currency ?? totalsByCurrency(rows);
   const currencyCodes = Object.keys(byCurrency);
   const mixed = currencyCodes.length > 1;
+  const count = meta?.count ?? rows.length;
+  const amountTotal = Object.values(byCurrency).reduce((sum, n) => sum + n, 0);
   const totalLabel = mixed
     ? formatMoneyByCurrencyMap(byCurrency)
     : money(
-        rows.reduce((s, r) => s + r.amount, 0),
+        meta ? amountTotal : rows.reduce((s, r) => s + r.amount, 0),
         currencyCodes[0] && currencyCodes[0] !== "UNKNOWN" ? currencyCodes[0] : currency
       );
 
@@ -35,7 +39,7 @@ export function LedgerExportTable({
     <Card className="overflow-hidden">
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
         <span className="text-sm font-medium">
-          {title} · {rows.length} entries
+          {title} · {count} entries
         </span>
         <span className="text-sm text-muted-foreground tnum">Total {totalLabel}</span>
       </div>
@@ -76,6 +80,11 @@ export function LedgerExportTable({
           </tbody>
         </table>
       </div>
+      {count > rows.length ? (
+        <p className="px-4 py-2 text-xs text-muted-foreground border-t border-border">
+          Showing {rows.length} of {count} (most recent).
+        </p>
+      ) : null}
     </Card>
   );
 }

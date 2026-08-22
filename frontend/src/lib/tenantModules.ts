@@ -41,12 +41,6 @@ export const TENANT_MODULE_CATALOG: TenantModuleDef[] = [
     group: "Operations",
   },
   {
-    key: "dossiers",
-    label: "Processing",
-    description: "Document processing pipeline and approval chains.",
-    group: "Operations",
-  },
-  {
     key: "vault",
     label: "Vault",
     description: "Stored invoice files and folder tree.",
@@ -85,7 +79,6 @@ export const PATH_TO_MODULE: Record<string, string> = {
   "/expenses": "expenses",
   "/team-expenses": "team_expenses",
   "/rules": "rule_book",
-  "/dossiers": "dossiers",
   "/vault": "vault",
   "/payments": "payments",
   "/ledger-link": "ledger_link",

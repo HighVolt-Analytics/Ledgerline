@@ -188,7 +188,7 @@ async def test_vault_migrate_blob_disabled(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        "app.services.vault_service.blob_storage.is_blob_enabled",
+        "app.services.vault.vault_service.blob_storage.is_blob_enabled",
         lambda: False,
     )
     res = await client.post("/api/vault/migrate")

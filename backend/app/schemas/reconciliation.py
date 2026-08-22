@@ -105,6 +105,8 @@ class ReconciliationOverview(BaseModel):
     dr_by_currency: dict[str, Decimal] = Field(default_factory=dict)
     cr_by_currency: dict[str, Decimal] = Field(default_factory=dict)
     by_date: list[ReconDayOverviewRow]
+    document_count: int = 0
+    total_day_count: int = 0
 
 
 class StrandedJournalPurgeResponse(BaseModel):

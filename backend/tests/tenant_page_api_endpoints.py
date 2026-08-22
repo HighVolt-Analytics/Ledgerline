@@ -18,6 +18,8 @@ TENANT_PAGE_GET_PATHS: tuple[str, ...] = (
     "/api/mailboxes/requests",
     # Vault
     "/api/vault/tree",
+    "/api/vault/files",
+    "/api/vault/document-sets",
     # Approvals
     "/api/approvals",
     "/api/approvals/board",
@@ -58,12 +60,15 @@ TENANT_PAGE_GET_PATHS: tuple[str, ...] = (
     "/api/sales",
     "/api/sales/kpis",
     "/api/collections",
+    "/api/collections/kpis",
     "/api/payments",
+    "/api/payments/kpis",
     "/api/payments/wallet-summary",
     "/api/payments/stripe/readiness",
     "/api/payments/stripe/global-payouts/readiness",
     "/api/dossiers",
     "/api/ledger-link",
+    "/api/ledger-link/exports",
     "/api/billing",
     "/api/billing/usage?page=1&page_size=10",
     # Ops

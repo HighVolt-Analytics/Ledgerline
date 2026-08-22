@@ -1,23 +1,47 @@
 """Collections (AR) API."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_db
-from app.schemas.collection import CollectionMarkReceivedRequest, CollectionResponse
+from app.schemas.collection import (
+    CollectionMarkReceivedRequest,
+    CollectionResponse,
+    CollectionWorkspaceKpis,
+)
 from app.schemas.common import ApiEnvelope
 from app.services.audit.audit_service import log_event
-from app.services.integration.collection_service import list_collections, mark_collection_received
+from app.services.integration.collection_service import (
+    collection_workspace_kpis,
+    list_collections,
+    mark_collection_received,
+)
 
 router = APIRouter(prefix="/collections", tags=["collections"])
+
+_LIST_LIMIT_MAX = 200
+
+
+@router.get("/kpis", response_model=ApiEnvelope[CollectionWorkspaceKpis])
+async def get_collection_workspace_kpis(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[CollectionWorkspaceKpis]:
+    data = await collection_workspace_kpis(db, ctx.tenant_id, tenant=ctx.tenant)
+    return ApiEnvelope(data=data)
 
 
 @router.get("", response_model=ApiEnvelope[list[CollectionResponse]])
 async def get_collections(
+    status: str | None = Query(default=None),
+    limit: int | None = Query(default=None, ge=1, le=_LIST_LIMIT_MAX),
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[list[CollectionResponse]]:
-    rows = await list_collections(db, ctx.tenant_id)
+    try:
+        rows = await list_collections(db, ctx.tenant_id, status=status, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     return ApiEnvelope(data=rows)
 
 

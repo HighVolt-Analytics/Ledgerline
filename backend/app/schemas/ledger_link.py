@@ -19,12 +19,18 @@ class LedgerExportRowResponse(BaseModel):
     currency: str = ""
 
 
+class LedgerExportGroupMeta(BaseModel):
+    count: int = 0
+    totals_by_currency: dict[str, float] = Field(default_factory=dict)
+
+
 class LedgerLinkExports(BaseModel):
     invoices: list[LedgerExportRowResponse] = Field(default_factory=list)
     bills: list[LedgerExportRowResponse] = Field(default_factory=list)
     expenses: list[LedgerExportRowResponse] = Field(default_factory=list)
     purchases: list[LedgerExportRowResponse] = Field(default_factory=list)
     payments: list[LedgerExportRowResponse] = Field(default_factory=list)
+    group_meta: dict[str, LedgerExportGroupMeta] = Field(default_factory=dict)
 
 
 class LedgerLinkResponse(BaseModel):

@@ -170,16 +170,25 @@ def _is_claim_kind(raw_kind: str | None) -> bool:
     return normalize_team_expense_kind(cleaned) == TEAM_EXPENSE_KIND_CLAIM
 
 
-async def pending_claim_advance_reservation(
+async def pending_claim_advance_reservations_by_employees(
     session: AsyncSession,
     tenant_id: uuid.UUID,
-    employee: Any,
+    employees: Sequence[Any],
     *,
     exclude_invoice_id: int | None = None,
-) -> Decimal:
-    """Sum of open expense-claim totals for this employee (reserves float until posted)."""
+) -> dict[str, Decimal]:
+    """Open expense-claim totals keyed by employee master id (one scan)."""
     from app.services.purchase.team_expense_spend_service import normalize_employee_email
     from app.services.purchase.team_expense_validator import find_employee_by_sender
+
+    employees_list = [emp for emp in employees if emp is not None]
+    totals: dict[str, Decimal] = {}
+    for emp in employees_list:
+        emp_id = str(getattr(emp, "id", "") or "").strip()
+        if emp_id:
+            totals[emp_id] = Decimal("0")
+    if not employees_list:
+        return totals
 
     stmt = select(
         Invoice.id,
@@ -201,17 +210,40 @@ async def pending_claim_advance_reservation(
     if exclude_invoice_id is not None:
         stmt = stmt.where(Invoice.id != exclude_invoice_id)
 
-    total = Decimal("0")
     for _inv_id, amount, sender, emp_email, kind in (await session.execute(stmt)).all():
         if not _is_claim_kind(kind):
             continue
         identity = normalize_employee_email(emp_email) or sender
-        if find_employee_by_sender([employee], identity) is None:
+        matched = find_employee_by_sender(employees_list, identity)
+        if matched is None or amount is None:
             continue
-        if amount is None:
+        emp_id = str(getattr(matched, "id", "") or "").strip()
+        if not emp_id:
             continue
-        total += Decimal(str(amount))
-    return total if total > 0 else Decimal("0")
+        totals[emp_id] = totals.get(emp_id, Decimal("0")) + Decimal(str(amount))
+
+    return {
+        emp_id: (value if value > 0 else Decimal("0"))
+        for emp_id, value in totals.items()
+    }
+
+
+async def pending_claim_advance_reservation(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    employee: Any,
+    *,
+    exclude_invoice_id: int | None = None,
+) -> Decimal:
+    """Sum of open expense-claim totals for this employee (reserves float until posted)."""
+    emp_id = str(getattr(employee, "id", "") or "").strip()
+    by_id = await pending_claim_advance_reservations_by_employees(
+        session,
+        tenant_id,
+        [employee],
+        exclude_invoice_id=exclude_invoice_id,
+    )
+    return by_id.get(emp_id, Decimal("0"))
 
 
 # Back-compat alias used by reports/tests.

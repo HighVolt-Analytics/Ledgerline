@@ -231,7 +231,7 @@ app.include_router(paypal_payments.router, prefix="/api", dependencies=_module_d
 app.include_router(ledger_link.router, prefix="/api", dependencies=_module_deps("ledger_link"))
 app.include_router(billing.router, prefix="/api", dependencies=_api_deps)
 app.include_router(matrix.router, prefix="/api", dependencies=_api_deps)
-app.include_router(dossiers.router, prefix="/api", dependencies=_module_deps("dossiers"))
+app.include_router(dossiers.router, prefix="/api", dependencies=_api_deps)
 app.include_router(mailboxes.router, prefix="/api", dependencies=_api_deps)
 app.include_router(whatsapp.router, prefix="/api", dependencies=_api_deps)
 app.include_router(accounting_integrations.router, prefix="/api", dependencies=_api_deps)
