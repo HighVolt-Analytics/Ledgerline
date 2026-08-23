@@ -1,16 +1,14 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
-import { FolderArchive } from "lucide-react";
+import { AlertTriangle, Clock, FolderArchive } from "lucide-react";
 import type { MatrixRow } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
 import { ListSearchInput } from "@/components/ListSearchInput";
-import { VisionHeadingBadge } from "@/components/inbox/DocumentTypeDisplay";
+import { DocumentTypeChip } from "@/components/inbox/DocumentTypeChip";
 import { InboxGlAccountBadge } from "@/components/inbox/InboxGlAccountBadge";
 import { InboxSourceBadge } from "@/components/inbox/InboxSourceBadge";
-import { MatrixPaymentBadge } from "@/components/matrix/MatrixPaymentBadge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { CapturedDocumentsSkeleton } from "@/components/skeleton/PageSkeletons";
-import { StatusPill, pillTones } from "@/components/StatusPill";
 import { CounterpartyColumnHeaderLink } from "@/components/upload/CounterpartyCreationsLink";
 import { useAuth } from "@/context/AuthContext";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
@@ -30,10 +28,13 @@ import {
   vaultCellValue,
   type PipelineStatusLabel,
 } from "@/lib/allDocumentsSummary";
+import type { MatrixPaymentStatus } from "@/lib/v4MatrixMockData";
 import { cn } from "@/lib/cn";
 import { KLASS_NON_TRANSACTIONAL, KLASS_TRANSACTIONAL } from "@/lib/documentTypeKlass";
+import { storedDocumentTypeCode, visionDocumentTypeLabel } from "@/lib/documentTypeResolve";
 import { documentDisplayRef, money } from "@/lib/format";
 import { counterpartyName, glPostingApplicable, invoiceSourceKind } from "@/lib/invoice";
+import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
 import {
   fetchMatrixPage,
   sortMatrixRowsNewestFirst,
@@ -54,33 +55,78 @@ const InvoiceDetailDrawer = lazy(() =>
   }))
 );
 
+function TypeBadge({
+  inv,
+  documentTypes,
+}: {
+  inv: MatrixRow["invoice"];
+  documentTypes?: DocumentTypeDefinition[] | null;
+}) {
+  const vision = visionDocumentTypeLabel(inv);
+  if (!vision) {
+    return <span className="text-xs text-muted-foreground" />;
+  }
+  return (
+    <DocumentTypeChip
+      code={storedDocumentTypeCode(inv) || undefined}
+      label={vision}
+      display={vision}
+      title={vision}
+      purchaseKind={inv.purchase_document_type}
+      documentTypes={documentTypes}
+      className="max-w-[9.5rem] truncate font-normal"
+    />
+  );
+}
+
 function NatureBadge({ nature }: { nature: ReturnType<typeof documentNature> }) {
   if (!nature) return <span className="text-muted-foreground text-xs">—</span>;
   const transactional = nature === KLASS_TRANSACTIONAL;
   return (
-    <StatusPill
-      className={
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full px-2 py-[3px] text-[11px] font-normal leading-none tracking-[0.01em] whitespace-nowrap",
         transactional
-          ? "border-primary/30 bg-primary/10 text-primary"
-          : pillTones.muted
-      }
+          ? "bg-[rgb(0_122_255/0.10)] text-[rgb(0_92_191)] dark:bg-[rgb(10_132_255/0.18)] dark:text-[rgb(100_181_255)]"
+          : "bg-[rgb(142_142_147/0.14)] text-[rgb(72_72_74)] dark:bg-[rgb(142_142_147/0.22)] dark:text-[rgb(199_199_204)]"
+      )}
     >
       {nature === KLASS_NON_TRANSACTIONAL ? "Non-transactional" : "Transactional"}
-    </StatusPill>
+    </span>
   );
 }
 
+const STATUS_TEXT = "text-[11px] font-normal whitespace-nowrap";
+const STATUS_PENDING = "text-[var(--system-yellow-text)]";
+const STATUS_DONE = "text-[hsl(var(--success))]";
+
 function PipelineStatusBadge({ label }: { label: PipelineStatusLabel }) {
   if (label === "Done" || label === "Posted") {
-    return <StatusPill className={pillTones.ok}>{label}</StatusPill>;
+    return <span className={cn(STATUS_TEXT, STATUS_DONE)}>{label}</span>;
   }
   if (label === "Failed") {
-    return <StatusPill className={pillTones.bad}>{label}</StatusPill>;
+    return <span className={cn(STATUS_TEXT, "text-destructive")}>{label}</span>;
   }
   if (label === "Pending") {
-    return <StatusPill className={pillTones.amber}>{label}</StatusPill>;
+    return <span className={cn(STATUS_TEXT, STATUS_PENDING)}>{label}</span>;
   }
-  return <span className="text-muted-foreground text-xs">{label}</span>;
+  return <span className="text-muted-foreground text-xs font-normal">{label}</span>;
+}
+
+function PaymentStatusText({ status }: { status: MatrixPaymentStatus }) {
+  if (status === "Paid" || status === "Payment Approved") {
+    return <span className={cn(STATUS_TEXT, STATUS_DONE)}>{status}</span>;
+  }
+  if (status === "Awaiting Payment") {
+    return <span className={cn(STATUS_TEXT, STATUS_PENDING)}>{status}</span>;
+  }
+  if (status === "Failed") {
+    return <span className={cn(STATUS_TEXT, "text-destructive")}>{status}</span>;
+  }
+  if (status === "On Hold") {
+    return <span className={cn(STATUS_TEXT, STATUS_PENDING)}>{status}</span>;
+  }
+  return <span className="text-muted-foreground text-xs font-normal">—</span>;
 }
 
 function ActionCell({
@@ -94,7 +140,7 @@ function ActionCell({
 }) {
   if (!primary) {
     return (
-      <span className="text-muted-foreground text-xs" data-testid={testId}>
+      <span className="text-muted-foreground text-xs font-normal" data-testid={testId}>
         —
       </span>
     );
@@ -102,11 +148,22 @@ function ActionCell({
   const title = all
     .map((issue) => (issue.detail ? `${issue.label}: ${issue.detail}` : issue.label))
     .join("\n");
+  const anomaly = primary.label === "Anomaly Detected";
+  const awaitingApproval =
+    primary.label === "Awaiting approval" || primary.label === "Approval pending";
   return (
-    <span title={title} data-testid={testId} className="inline-flex max-w-full">
-      <StatusPill className={pillTones.amber}>
-        <span className="truncate max-w-[10rem]">{primary.label}</span>
-      </StatusPill>
+    <span
+      title={title}
+      data-testid={testId}
+      className={cn(
+        "inline-flex items-center gap-1 max-w-full text-[11px] font-normal",
+        anomaly && "text-destructive",
+        awaitingApproval && STATUS_PENDING
+      )}
+    >
+      {anomaly ? <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden /> : null}
+      {awaitingApproval ? <Clock className="h-3 w-3 shrink-0" aria-hidden /> : null}
+      <span className="truncate max-w-[10rem]">{primary.label}</span>
     </span>
   );
 }
@@ -311,7 +368,7 @@ export function AllDocumentsSummaryTable({
         </div>
 
         <div className="overflow-x-auto">
-          <table className={cn("w-full text-sm", showUploadSource ? "min-w-[72rem]" : "min-w-[66rem]")}>
+          <table className={cn("w-full text-sm font-normal", showUploadSource ? "min-w-[72rem]" : "min-w-[66rem]")}>
             <thead>
               <tr className="border-b border-border bg-muted/30 text-left text-xs text-muted-foreground">
                 <th className="px-3 py-2 font-medium">Document</th>
@@ -325,7 +382,7 @@ export function AllDocumentsSummaryTable({
                 <th className="px-3 py-2 font-medium">Nature</th>
                 <th className="px-3 py-2 font-medium">Doc date</th>
                 <th className="px-3 py-2 font-medium">Ledger</th>
-                <th className="px-3 py-2 font-medium text-right">Amount</th>
+                <th className="px-3 py-2 font-medium">Amount</th>
                 <th className="px-3 py-2 font-medium">Approval</th>
                 <th className="px-3 py-2 font-medium">Posting</th>
                 <th className="px-3 py-2 font-medium">Payment</th>
@@ -371,7 +428,7 @@ export function AllDocumentsSummaryTable({
                     data-testid={`all-docs-row-${docRef}`}
                   >
                     <td className="px-3 py-2.5 align-top min-w-[8rem]">
-                      <div className="font-medium tnum">{docRef}</div>
+                      <div className="font-normal tnum">{docRef}</div>
                       {inv.invoice_no ? (
                         <div className="text-xs text-muted-foreground truncate tnum">
                           {inv.invoice_no}
@@ -384,10 +441,10 @@ export function AllDocumentsSummaryTable({
                       </td>
                     ) : null}
                     <td className="px-3 py-2.5 align-top max-w-[10rem]">
-                      <VisionHeadingBadge inv={inv} empty="" />
+                      <TypeBadge inv={inv} documentTypes={documentTypes} />
                     </td>
                     <td className="px-3 py-2.5 align-top max-w-[10rem]">
-                      <span className="truncate block">{counterpartyName(inv)}</span>
+                      <span className="truncate block font-medium">{counterpartyName(inv)}</span>
                     </td>
                     <td className="px-3 py-2.5 align-top">
                       <NatureBadge nature={nature} />
@@ -401,7 +458,7 @@ export function AllDocumentsSummaryTable({
                         glPostingApplicable={glPostingApplicable(inv, documentTypes)}
                       />
                     </td>
-                    <td className="px-3 py-2.5 align-top text-right tnum whitespace-nowrap font-medium">
+                    <td className="px-3 py-2.5 align-top tnum whitespace-nowrap font-normal">
                       {money(inv.total, inv.currency)}
                     </td>
                     <td className="px-3 py-2.5 align-top">
@@ -411,7 +468,7 @@ export function AllDocumentsSummaryTable({
                       <PipelineStatusBadge label={posting} />
                     </td>
                     <td className="px-3 py-2.5 align-top">
-                      <MatrixPaymentBadge status={pay} />
+                      <PaymentStatusText status={pay} />
                     </td>
                     <td className="px-3 py-2.5 align-top max-w-[11rem]">
                       <ActionCell
