@@ -49,7 +49,7 @@ export function RuleBookPostingSection() {
         </div>
       ) : null}
       <Suspense fallback={<PageLoader variant="rules" />}>
-        <div className="space-y-5">
+        <div className="flex flex-col gap-8">
           <PostingDefaultsPanel
             defaults={ruleBook.postingDefaults}
             onChange={(postingDefaults) => patch({ postingDefaults })}

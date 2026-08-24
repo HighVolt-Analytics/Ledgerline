@@ -1,9 +1,9 @@
 import { useCallback } from "react";
+import { EmptyState } from "@/components/EmptyState";
 import { SalesDetailContent } from "@/components/sales/SalesDetailPanel";
 import type { SalesDossierResponse } from "@/api/types";
 import { useSalesMutations } from "@/hooks/useSalesMutations";
 import { salesDetailFromDossier, type SalesDossierWithSummary } from "@/lib/salesDossierDetail";
-import { isSalesManagementRoute } from "@/lib/documentBundleConfig";
 
 type InvoiceSalesDossierSectionProps = {
   dossier: SalesDossierResponse | null;
@@ -22,7 +22,6 @@ export function InvoiceSalesDossierSection({
   customer,
   item,
   twoWay = false,
-  routeTarget,
   onOpenSibling,
   onMutated,
 }: InvoiceSalesDossierSectionProps) {
@@ -38,19 +37,15 @@ export function InvoiceSalesDossierSection({
 
   if (!dossier?.so_reference) {
     return (
-      <div className="mt-4 rounded-md border border-dashed border-border p-6 text-center">
-        <p className="text-sm font-medium">No sales order linked</p>
-        <p className="text-xs text-muted-foreground mt-1">
-          {twoWay
+      <EmptyState
+        className="mt-4"
+        title="No match found"
+        hint={
+          twoWay
             ? "2-way match links a delivery note and invoice on the same invoice number. An SO reference is optional."
-            : "Full 3-way match needs SO and DN on the same SO reference. The SO can be auto-registered from the commercial invoice."}
-        </p>
-        {isSalesManagementRoute(routeTarget) ? (
-          <p className="text-xs text-muted-foreground mt-2">
-            Tab: <span className="font-medium text-foreground">Match</span>
-          </p>
-        ) : null}
-      </div>
+            : "Full 3-way match needs SO and DN on the same SO reference. The SO can be auto-registered from the commercial invoice."
+        }
+      />
     );
   }
 
@@ -61,13 +56,11 @@ export function InvoiceSalesDossierSection({
 
   if (!detail) {
     return (
-      <div className="mt-4 rounded-md border border-dashed border-border p-6 text-center">
-        <p className="text-sm font-medium">Sales register not linked yet</p>
-        <p className="text-xs text-muted-foreground mt-1 tnum">{dossier.so_reference}</p>
-        <p className="text-xs text-muted-foreground mt-2">
-          Upload supporting documents on this SO reference, or reprocess the invoice after siblings arrive to upgrade the match tier.
-        </p>
-      </div>
+      <EmptyState
+        className="mt-4"
+        title="No match found"
+        hint="Upload supporting documents on this SO reference, or reprocess the invoice after siblings arrive to upgrade the match tier."
+      />
     );
   }
 

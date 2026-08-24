@@ -153,10 +153,6 @@ export function ConnectMailboxDialog({
           </div>
         ) : (
           <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Enter the mailbox owner&apos;s email. They will receive a request to authorize
-              LedgerLink to read invoice attachments from that mailbox.
-            </p>
             <div>
               <label className="text-xs font-medium text-muted-foreground">Mailbox email</label>
               <Input

@@ -1013,6 +1013,8 @@ export function InvoiceDetailDrawer({
   const [actionBusy, setActionBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<InvoiceEditDraft | null>(null);
+  const [processingSkipDraft, setProcessingSkipDraft] = useState<ProcessingOverrideStepId[]>([]);
+  const [gateSkipInvoiceId, setGateSkipInvoiceId] = useState<number | null>(null);
   const startInEditAppliedRef = useRef<number | null>(null);
   const [attachBusy, setAttachBusy] = useState(false);
   const [previewMode, setPreviewMode] = useState<PreviewPaneMode>("original");
@@ -1264,6 +1266,8 @@ export function InvoiceDetailDrawer({
     if (!open) {
       setEditing(false);
       setDraft(null);
+      setProcessingSkipDraft([]);
+      setGateSkipInvoiceId(null);
       startInEditAppliedRef.current = null;
     }
   }, [open]);
@@ -1271,6 +1275,8 @@ export function InvoiceDetailDrawer({
   useEffect(() => {
     setEditing(false);
     setDraft(null);
+    setProcessingSkipDraft([]);
+    setGateSkipInvoiceId(null);
     startInEditAppliedRef.current = null;
     // A pipeline/save started on another invoice must not leave this one stuck busy.
     setActionBusy(false);
@@ -1290,7 +1296,12 @@ export function InvoiceDetailDrawer({
     ) {
       startInEditAppliedRef.current = inv.id;
       setEditing(true);
-      setDraft(draftFromInvoice(inv));
+      const next = draftFromInvoice(inv);
+      next.skip_steps =
+        gateSkipInvoiceId === inv.id
+          ? processingSkipDraft
+          : skipStepsFromInvoice(inv.processing_overrides);
+      setDraft(next);
       // Keep initialTab / current tab (do not force Fields).
     }
   }, [inv?.id, startInEditMode, open]);
@@ -1433,12 +1444,26 @@ export function InvoiceDetailDrawer({
   const processingSkipSteps = useMemo((): ProcessingOverrideStepId[] => {
     if (!inv) return [];
     if (editing && draft) return draft.skip_steps;
+    if (gateSkipInvoiceId === inv.id) return processingSkipDraft;
     return skipStepsFromInvoice(inv.processing_overrides);
-  }, [inv, editing, draft]);
+  }, [inv, editing, draft, gateSkipInvoiceId, processingSkipDraft]);
 
-  const processingOverridesEditable = Boolean(
-    inv && editing && draft && canEdit(inv.status)
-  );
+  const processingOverridesEditable = Boolean(inv);
+
+  function currentGateSkipSteps(invoice: InvoiceDetails): ProcessingOverrideStepId[] {
+    if (editing && draft) return draft.skip_steps;
+    if (gateSkipInvoiceId === invoice.id) return processingSkipDraft;
+    return skipStepsFromInvoice(invoice.processing_overrides);
+  }
+
+  function gateOverridesUpdate(invoice: InvoiceDetails) {
+    const patch = processingOverridesPatchFromDraft(
+      currentGateSkipSteps(invoice),
+      invoice.processing_overrides
+    );
+    if (patch === undefined) return undefined;
+    return { processing_overrides: patch };
+  }
 
   const highlightedSkipStepId = useMemo((): ProcessingOverrideStepId | null => {
     const failedStage =
@@ -1567,14 +1592,27 @@ export function InvoiceDetailDrawer({
   function startEditing() {
     if (!inv || !canEdit(inv.status)) return;
     setEditing(true);
-    setDraft(draftFromInvoice(inv, extractionFieldKeys));
+    const next = draftFromInvoice(inv, extractionFieldKeys);
+    next.skip_steps =
+      gateSkipInvoiceId === inv.id
+        ? processingSkipDraft
+        : skipStepsFromInvoice(inv.processing_overrides);
+    setDraft(next);
     // Stay on the current tab (e.g. Line items) so Edit doesn't jump to Fields.
   }
 
   function ensureLineItemsEditMode() {
     if (!inv || !canEdit(inv.status)) return;
     setEditing(true);
-    setDraft((current) => current ?? draftFromInvoice(inv, extractionFieldKeys));
+    setDraft((current) => {
+      if (current) return current;
+      const next = draftFromInvoice(inv, extractionFieldKeys);
+      next.skip_steps =
+        gateSkipInvoiceId === inv.id
+          ? processingSkipDraft
+          : skipStepsFromInvoice(inv.processing_overrides);
+      return next;
+    });
   }
 
   function selectTab(next: Tab) {
@@ -1671,6 +1709,9 @@ export function InvoiceDetailDrawer({
           setEditing(false);
           setDraft(null);
         }
+      } else {
+        const gatesPatch = gateOverridesUpdate(inv);
+        if (gatesPatch) await api.updateInvoice(targetId, gatesPatch);
       }
       await reprocessAndWatch(targetId, async () => {
         onUpdated?.();
@@ -1717,7 +1758,8 @@ export function InvoiceDetailDrawer({
       return;
     }
 
-    const pendingEdits = draft ? payloadFromDraft(draft, fresh) : undefined;
+    const pendingEdits =
+      (draft ? payloadFromDraft(draft, fresh) : undefined) ?? gateOverridesUpdate(fresh);
 
     pipelineBusyIdRef.current = targetId;
     setActionBusy(true);
@@ -1779,7 +1821,8 @@ export function InvoiceDetailDrawer({
       return;
     }
 
-    const pendingEdits = draft ? payloadFromDraft(draft, fresh) : undefined;
+    const pendingEdits =
+      (draft ? payloadFromDraft(draft, fresh) : undefined) ?? gateOverridesUpdate(fresh);
 
     pipelineBusyIdRef.current = targetId;
     setActionBusy(true);
@@ -2317,15 +2360,21 @@ export function InvoiceDetailDrawer({
                     skipSteps={processingSkipSteps}
                     overridesEditable={processingOverridesEditable}
                     highlightedSkipStepId={highlightedSkipStepId}
-                    onToggleSkip={
-                      processingOverridesEditable && draft
-                        ? (stepId, run) =>
-                            setDraft({
-                              ...draft,
-                              skip_steps: toggleStepRunning(draft.skip_steps, stepId, run),
-                            })
-                        : undefined
-                    }
+                    onToggleSkip={(stepId, run) => {
+                      if (editing && draft) {
+                        setDraft({
+                          ...draft,
+                          skip_steps: toggleStepRunning(draft.skip_steps, stepId, run),
+                        });
+                        return;
+                      }
+                      const current =
+                        gateSkipInvoiceId === inv.id
+                          ? processingSkipDraft
+                          : skipStepsFromInvoice(inv.processing_overrides);
+                      setGateSkipInvoiceId(inv.id);
+                      setProcessingSkipDraft(toggleStepRunning(current, stepId, run));
+                    }}
                   />
                 )}
 

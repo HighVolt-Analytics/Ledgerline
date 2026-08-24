@@ -176,9 +176,8 @@ export function InvoiceDrawerProcessingSection({
             Reprocess gates
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            {overridesEditable
-              ? "Turn off a gate to skip it on the next Save, Approve, or Reprocess."
-              : "Gates that will run or skip on the next reprocess. Click Edit to change them."}
+            Gates default to on. Turn one off to skip it; the change applies when you Save, Confirm, or
+            Reprocess.
           </p>
         </div>
         <ul className="space-y-2">
@@ -189,16 +188,13 @@ export function InvoiceDrawerProcessingSection({
               <li
                 key={step.id}
                 className={cn(
-                  "flex items-start justify-between gap-3 rounded-md border border-border px-3 py-2.5",
+                  "grid grid-cols-[minmax(0,1fr)_auto] items-stretch gap-3 rounded-md border border-border px-3 py-2",
                   highlighted && "border-destructive/40 bg-destructive/5"
                 )}
               >
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium text-foreground">{step.label}</div>
-                  <p className="mt-0.5 text-xs text-muted-foreground">{step.hint}</p>
-                  {!running ? (
-                    <p className="mt-1 text-xs font-medium ds-warning-text">Skipped on reprocess</p>
-                  ) : null}
+                <div className="flex min-w-0 flex-col justify-center">
+                  <div className="text-sm font-medium leading-snug text-foreground">{step.label}</div>
+                  <p className="text-xs leading-snug text-muted-foreground">{step.hint}</p>
                 </div>
                 <ProcessingStepRunSkipControl
                   stepId={step.id}

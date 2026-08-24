@@ -1,9 +1,9 @@
 import { useCallback } from "react";
+import { EmptyState } from "@/components/EmptyState";
 import { PurchaseDetailContent } from "@/components/purchases/PurchaseDetailPanel";
 import type { PurchaseDossier } from "@/api/types";
 import { usePurchaseMutations } from "@/hooks/usePurchaseMutations";
 import { purchaseDetailFromDossier, type PurchaseDossierWithSummary } from "@/lib/purchaseDossierDetail";
-import { isPurchaseManagementRoute } from "@/lib/documentBundleConfig";
 
 type InvoicePurchaseDossierSectionProps = {
   dossier: PurchaseDossier | null;
@@ -22,7 +22,6 @@ export function InvoicePurchaseDossierSection({
   vendor,
   item,
   twoWay = false,
-  routeTarget,
   onOpenSibling,
   onMutated,
 }: InvoicePurchaseDossierSectionProps) {
@@ -38,19 +37,15 @@ export function InvoicePurchaseDossierSection({
 
   if (!dossier?.po_reference) {
     return (
-      <div className="mt-4 rounded-md border border-dashed border-border p-6 text-center">
-        <p className="text-sm font-medium">No purchase order linked</p>
-        <p className="text-xs text-muted-foreground mt-1">
-          {twoWay
+      <EmptyState
+        className="mt-4"
+        title="No match found"
+        hint={
+          twoWay
             ? "2-way service-entry match needs a PO reference and service entry evidence on the same PO."
-            : "Upload PO and GRN documents on the same PO reference for 3-way match."}
-        </p>
-        {isPurchaseManagementRoute(routeTarget) ? (
-          <p className="text-xs text-muted-foreground mt-2">
-            Tab: <span className="font-medium text-foreground">Match</span>
-          </p>
-        ) : null}
-      </div>
+            : "Upload PO and GRN documents on the same PO reference for 3-way match."
+        }
+      />
     );
   }
 
@@ -61,13 +56,11 @@ export function InvoicePurchaseDossierSection({
 
   if (!detail) {
     return (
-      <div className="mt-4 rounded-md border border-dashed border-border p-6 text-center">
-        <p className="text-sm font-medium">Purchase register not linked yet</p>
-        <p className="text-xs text-muted-foreground mt-1 tnum">{dossier.po_reference}</p>
-        <p className="text-xs text-muted-foreground mt-2">
-          Upload a classified PO copy on this reference, or record a GRN below once the register exists.
-        </p>
-      </div>
+      <EmptyState
+        className="mt-4"
+        title="No match found"
+        hint={`Upload a classified PO copy on ${dossier.po_reference}, or record a GRN once the register exists.`}
+      />
     );
   }
 
