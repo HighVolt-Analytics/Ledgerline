@@ -16,6 +16,7 @@ import {
   isSummaryLineDescription,
   isVisionHeaderPipelineSummary,
   lineItemColumnsForPreview,
+  lineItemGridTemplateColumns,
   parseDocumentTaxRatePercent,
   previewFilename,
   resolveDocumentTaxRatePercent,
@@ -1045,5 +1046,18 @@ describe("additionalExtractedFieldKeys", () => {
     } as InvoiceDetails;
 
     expect(additionalExtractedFieldKeys(inv, ["vendor", "total"])).toEqual([]);
+  });
+});
+
+describe("lineItemGridTemplateColumns", () => {
+  it("places Main GL and Sub GL as adjacent columns on the same row", () => {
+    const template = lineItemGridTemplateColumns(
+      { showQty: true, showUnitPrice: true, showAmount: true },
+      true,
+      true
+    );
+    expect(template).toBe(
+      "minmax(11rem, 1fr) 5.5rem 8.5rem 8.5rem minmax(16rem, 20rem) minmax(16rem, 20rem) 2.75rem"
+    );
   });
 });

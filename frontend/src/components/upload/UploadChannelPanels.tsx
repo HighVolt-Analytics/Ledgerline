@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Calendar, Mail, Pause, Play, RefreshCw, Trash2 } from "lucide-react";
+import { Calendar, EllipsisVertical, Mail, Pause, Play, RefreshCw, Trash2 } from "lucide-react";
 import { api } from "@/api/client";
 import type { ConnectedMailbox, ViberConnection, WhatsappConnection } from "@/api/types";
 import { ActionChip } from "@/components/ActionChip";
@@ -61,6 +61,124 @@ function statusBadgeClass(status: string, active = true): string {
   return "text-muted-foreground border-border";
 }
 
+function MailboxOverflowMenu({
+  email,
+  isAdmin,
+  importBusy,
+  fetching,
+  pollable,
+  showReconnect,
+  onImport,
+  onFetch,
+  onRemove,
+  onReconnect,
+}: {
+  email: string;
+  isAdmin: boolean;
+  importBusy: boolean;
+  fetching: boolean;
+  pollable: boolean;
+  showReconnect: boolean;
+  onImport: () => void;
+  onFetch: () => void;
+  onRemove: () => void;
+  onReconnect: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDoc(e: MouseEvent) {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative shrink-0">
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-7 w-7"
+        aria-label={`More actions for ${email}`}
+        aria-expanded={open}
+        data-testid={`button-mailbox-more-${email}`}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <EllipsisVertical className="h-4 w-4" />
+      </Button>
+      {open ? (
+        <div
+          className="absolute right-0 top-full z-30 mt-1 min-w-[9.5rem] rounded-md border border-border bg-card py-1 shadow-md"
+          role="menu"
+        >
+          {showReconnect ? (
+            <button
+              type="button"
+              role="menuitem"
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-muted disabled:opacity-50"
+              data-testid={`button-reconnect-${email}`}
+              disabled={importBusy || fetching}
+              onClick={() => {
+                setOpen(false);
+                onReconnect();
+              }}
+            >
+              <Mail className="h-3.5 w-3.5 shrink-0" />
+              Reconnect
+            </button>
+          ) : null}
+          <button
+            type="button"
+            role="menuitem"
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-muted disabled:opacity-50"
+            data-testid={`button-import-${email}`}
+            disabled={importBusy || fetching || !pollable}
+            onClick={() => {
+              setOpen(false);
+              onImport();
+            }}
+          >
+            <Calendar className="h-3.5 w-3.5 shrink-0" />
+            Import
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-muted disabled:opacity-50"
+            data-testid={`button-fetch-${email}`}
+            disabled={fetching || importBusy || !pollable}
+            onClick={() => {
+              setOpen(false);
+              onFetch();
+            }}
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5 shrink-0", fetching && "animate-spin")} />
+            Fetch
+          </button>
+          {isAdmin ? (
+            <button
+              type="button"
+              role="menuitem"
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-destructive hover:bg-muted disabled:opacity-50"
+              data-testid={`button-remove-${email}`}
+              onClick={() => {
+                setOpen(false);
+                onRemove();
+              }}
+            >
+              <Trash2 className="h-3.5 w-3.5 shrink-0" />
+              Delete
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 type EmailPanelProps = {
   mailboxes: ConnectedMailbox[];
   docsPerMailbox: Map<number, number>;
@@ -95,7 +213,7 @@ export function UploadEmailChannelPanel({
   if (mailboxes.length === 0) {
     if (loading) return null;
     return (
-      <Card className="p-4 mb-5 text-sm text-muted-foreground">
+      <Card className="p-4 mb-3 text-sm text-muted-foreground">
         No mailboxes connected yet.{" "}
         {isAdmin ? (
           <>
@@ -122,19 +240,30 @@ export function UploadEmailChannelPanel({
   }
 
   return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 mb-5">
+    <div className="flex flex-col gap-2 mb-3">
       {mailboxes.map((mb) => {
         const docCount = docsPerMailbox.get(mb.id) ?? 0;
         return (
-          <Card key={mb.id} className="p-4 min-w-0" data-testid={`card-mailbox-${mb.email}`}>
-            <div className="flex items-start justify-between gap-2 min-w-0">
-              <div className="flex items-center gap-2 min-w-0 flex-1">
+          <Card key={mb.id} className="px-3 py-2.5 min-w-0" data-testid={`card-mailbox-${mb.email}`}>
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="flex items-center gap-3 min-w-0 flex-1">
                 <Mail className="h-4 w-4 text-primary shrink-0" />
                 <div className="min-w-0">
-                  <p className="font-medium text-sm truncate">{mailboxNickname(mb)}</p>
-                  <p className="text-xs text-muted-foreground truncate tnum">{mb.email}</p>
+                  <p className="font-medium text-[14px] leading-snug truncate">{mailboxNickname(mb)}</p>
+                  <p className="text-[13px] leading-snug text-muted-foreground truncate tnum">{mb.email}</p>
+                  <p className="text-[12px] leading-snug text-muted-foreground truncate">
+                    {mailboxProvider(mb)} · {relativeTime(mb.last_poll_at)}
+                  </p>
                 </div>
               </div>
+              {mb.connection_status === "error" && mb.last_error ? (
+                <p
+                  className="hidden sm:block max-w-[12rem] text-xs text-destructive truncate"
+                  title={mb.last_error}
+                >
+                  {mb.last_error}
+                </p>
+              ) : null}
               <span
                 className={cn(
                   "inline-flex items-center rounded-md border px-2.5 py-0.5 text-[10px] font-semibold shrink-0",
@@ -143,69 +272,31 @@ export function UploadEmailChannelPanel({
               >
                 {connectionStatusLabel(mb.connection_status, mb.is_active)}
               </span>
-            </div>
-            <div className="flex items-center justify-between gap-2 mt-3 text-xs text-muted-foreground min-w-0">
-              <span className="truncate">
-                {mailboxProvider(mb)} · {relativeTime(mb.last_poll_at)}
+              <span className="tnum text-xs text-foreground shrink-0 whitespace-nowrap">
+                {docCount} docs
               </span>
-              <span className="tnum shrink-0">{docCount} docs</span>
-            </div>
-            {mb.connection_status === "error" && mb.last_error ? (
-              <p className="mt-2 text-xs text-destructive line-clamp-3" title={mb.last_error}>
-                {mb.last_error}
-              </p>
-            ) : null}
-            <div className="mt-3 flex items-center gap-1.5 min-w-0">
-              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-                {mb.connection_status === "error" && isAdmin ? (
-                  <ActionChip
-                    tone="approve"
-                    icon={Mail}
-                    label="Reconnect"
-                    testId={`button-reconnect-${mb.email}`}
-                    disabled={importBusy || fetching === mb.email}
-                    onClick={() => onReconnect(mb)}
-                  />
-                ) : null}
-                <ActionChip
-                  tone="edit"
-                  icon={Calendar}
-                  label="Import"
-                  testId={`button-import-${mb.email}`}
-                  disabled={importBusy || fetching === mb.email || !isPollable(mb)}
-                  onClick={() => onImport(mb)}
-                />
-                <ActionChip
-                  tone="post"
-                  icon={RefreshCw}
-                  label="Fetch"
-                  testId={`button-fetch-${mb.email}`}
-                  disabled={fetching === mb.email || importBusy || !isPollable(mb)}
-                  iconClassName={fetching === mb.email ? "animate-spin" : undefined}
-                  onClick={() => onFetch(mb)}
-                />
-                {isAdmin ? (
-                  <ActionChip
-                    tone={mb.is_active ? "pending" : "approve"}
-                    icon={mb.is_active ? Pause : Play}
-                    label={mb.is_active ? "Pause" : "Resume"}
-                    testId={`button-toggle-${mb.email}`}
-                    onClick={() => onToggle(mb)}
-                  />
-                ) : null}
-              </div>
+              <span className="h-4 w-px shrink-0 bg-border" aria-hidden />
               {isAdmin ? (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 shrink-0 text-destructive"
-                  data-testid={`button-remove-${mb.email}`}
-                  onClick={() => onRemove(mb)}
-                  aria-label={`Remove ${mb.email}`}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
+                <ActionChip
+                  tone={mb.is_active ? "pending" : "approve"}
+                  icon={mb.is_active ? Pause : Play}
+                  label={mb.is_active ? "Pause" : "Resume"}
+                  testId={`button-toggle-${mb.email}`}
+                  onClick={() => onToggle(mb)}
+                />
               ) : null}
+              <MailboxOverflowMenu
+                email={mb.email}
+                isAdmin={isAdmin}
+                importBusy={importBusy}
+                fetching={fetching === mb.email}
+                pollable={isPollable(mb)}
+                showReconnect={mb.connection_status === "error" && isAdmin}
+                onImport={() => onImport(mb)}
+                onFetch={() => onFetch(mb)}
+                onRemove={() => onRemove(mb)}
+                onReconnect={() => onReconnect(mb)}
+              />
             </div>
           </Card>
         );
@@ -334,7 +425,7 @@ export function UploadWhatsappChannelPanel({ docCount }: { docCount: number }) {
 
   if (connections.length === 0) {
     return (
-      <Card className="p-4 mb-5 text-sm text-muted-foreground">
+      <Card className="p-4 mb-3 text-sm text-muted-foreground">
         No WhatsApp numbers connected yet.{" "}
         {isAdmin ? (
           <>
@@ -379,7 +470,7 @@ export function UploadWhatsappChannelPanel({ docCount }: { docCount: number }) {
   }
 
   return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 mb-5">
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 mb-3">
       {connections.map((conn) => (
         <MessagingChannelCard
           key={conn.id}
@@ -466,7 +557,7 @@ export function UploadViberChannelPanel({ docCount }: { docCount: number }) {
 
   if (connections.length === 0) {
     return (
-      <Card className="p-4 mb-5 text-sm text-muted-foreground">
+      <Card className="p-4 mb-3 text-sm text-muted-foreground">
         No Viber bots connected yet.{" "}
         {isAdmin ? (
           <>
@@ -490,7 +581,7 @@ export function UploadViberChannelPanel({ docCount }: { docCount: number }) {
   }
 
   return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 mb-5">
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 mb-3">
       {connections.map((conn) => (
         <MessagingChannelCard
           key={conn.id}

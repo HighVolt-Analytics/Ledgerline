@@ -17,3 +17,7 @@ class MatrixListRequest(BaseModel):
         None,
         description="all | anomalies | awaiting | paid | pending | failed",
     )
+    approval_board_column: str | None = Field(
+        None,
+        description="Comma-separated: review, processing, approved, rejected",
+    )

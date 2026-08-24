@@ -169,6 +169,7 @@ export function Select({
           else openMenu();
         }}
         onKeyDown={onTriggerKeyDown}
+        title={selected?.label ?? placeholder}
         className={cn(triggerBase, triggerSize[size], className)}
       >
         <span className={cn("truncate text-left", !selected && "text-muted-foreground")}>
@@ -238,6 +239,7 @@ export function Select({
                         aria-selected={isSelected}
                         data-selected={isSelected ? "true" : undefined}
                         className={cn("app-dropdown-option", size === "md" && "app-dropdown-option--md")}
+                        title={option.label}
                         onMouseDown={(event) => event.preventDefault()}
                         onClick={() => {
                           onValueChange(option.value);

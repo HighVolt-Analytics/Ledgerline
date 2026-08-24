@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Literal
 
+from sqlalchemy import and_, case, func, or_
+
 from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.invoice import EvaluationStatus
 from app.services.invoice.invoice_evaluation_service import (
@@ -131,3 +133,53 @@ def approval_board_column(inv: Invoice) -> ApprovalBoardColumn:
         return "processing"
 
     return "review"
+
+
+def approval_board_column_expr():
+    """SQL CASE matching approval_board_column() (without extracted-field legacy)."""
+    eval_l = func.lower(func.coalesce(Invoice.evaluation_status, ""))
+    classified = and_(
+        Invoice.document_type_code.isnot(None),
+        func.trim(Invoice.document_type_code) != "",
+    )
+    rejected = Invoice.status.in_(tuple(REJECTED_STATUSES))
+    processed = Invoice.status == InvoiceStatus.PROCESSED
+    vaulted = eval_l == EVAL_VISION_VAULTED
+    header = eval_l == EVAL_VISION_HEADER_REVIEW
+    pre_class = eval_l.in_(
+        (
+            EvaluationStatus.AWAITING_CLASSIFICATION.value,
+            EvaluationStatus.NEEDS_RESCAN.value,
+        )
+    )
+    pipeline = Invoice.status.in_(tuple(PIPELINE_STATUSES))
+    pending_appr = eval_l == EvaluationStatus.PENDING_APPROVAL.value
+    exception = Invoice.status == InvoiceStatus.EXCEPTION
+    return case(
+        (rejected, "rejected"),
+        (processed, "approved"),
+        (vaulted, "approved"),
+        (and_(header, classified), "processing"),
+        (header, "review"),
+        (pre_class, "review"),
+        (and_(exception, ~classified), "review"),
+        (pipeline, "processing"),
+        (and_(exception, or_(classified, pending_appr)), "processing"),
+        else_="review",
+    )
+
+
+def apply_approval_board_column(query, column: str | None):
+    valid = {"review", "processing", "approved", "rejected"}
+    tokens = [
+        part.strip().lower()
+        for part in (column or "").split(",")
+        if part.strip()
+    ]
+    tokens = [token for token in tokens if token in valid]
+    if not tokens or set(tokens) == valid:
+        return query
+    expr = approval_board_column_expr()
+    if len(tokens) == 1:
+        return query.where(expr == tokens[0])
+    return query.where(expr.in_(tokens))

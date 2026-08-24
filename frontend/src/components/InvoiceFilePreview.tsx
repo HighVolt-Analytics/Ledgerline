@@ -285,7 +285,7 @@ export function InvoicePreviewModeToggle({
 
   return (
     <PageTabs
-      className="mb-3 w-full"
+      className="w-full"
       value={mode}
       onChange={(v) => onChange(v as PreviewPaneMode)}
       data-testid="invoice-preview-mode-tabs"

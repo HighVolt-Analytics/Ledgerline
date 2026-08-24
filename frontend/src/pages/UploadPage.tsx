@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
-import { CloudUpload, Plus, RefreshCw } from "lucide-react";
+import { CloudUpload, Plus } from "lucide-react";
 import { api } from "@/api/client";
 import type { ConnectedMailbox, MailboxBackfillJob } from "@/api/types";
 import { ConnectMailboxDialog } from "@/components/ConnectMailboxDialog";
@@ -14,9 +14,16 @@ import { PageTabs } from "@/components/PageTabs";
 import { AllDocumentsSummaryTable } from "@/components/upload/AllDocumentsSummaryTable";
 import { AllDocumentsDetailedTable } from "@/components/upload/AllDocumentsDetailedTable";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { UploadApprovalFilter } from "@/components/upload/UploadApprovalFilter";
 import { parseUploadChannelTab, type AllDocumentsChannelTab } from "@/lib/allDocumentsSummary";
+import {
+  EMPTY_UPLOAD_APPROVAL_COUNTS,
+  parseUploadApprovalFilter,
+  serializeUploadApprovalFilter,
+  type UploadApprovalBoardCounts,
+  type UploadApprovalStatusKey,
+} from "@/lib/uploadApprovalFilter";
 import { fetchMatrixPage } from "@/lib/matrixApi";
 import { invalidateUploadInvoiceList } from "@/hooks/useUploadInvoiceList";
 import {
@@ -39,16 +46,20 @@ import {
 import { UploadDropZone } from "@/components/upload/UploadDropZone";
 
 type ChannelTab = AllDocumentsChannelTab;
-type ViewTab = "summary" | "detailed";
+type ViewTab = "summary" | "detailed" | "setup";
 
 function parseChannelTab(value: string | null): ChannelTab {
   return parseUploadChannelTab(value);
 }
 
-function parseViewTab(searchParams: URLSearchParams): ViewTab {
-  if (searchParams.get("view") === "detailed" || searchParams.get("tab") === "detailed") {
-    return "detailed";
-  }
+function channelHasSetupTab(channel: ChannelTab): boolean {
+  return channel === "email" || channel === "whatsapp" || channel === "viber";
+}
+
+function parseViewTab(searchParams: URLSearchParams, channel: ChannelTab): ViewTab {
+  const view = searchParams.get("view") ?? searchParams.get("tab");
+  if (view === "detailed") return "detailed";
+  if (view === "setup" && channelHasSetupTab(channel)) return "setup";
   return "summary";
 }
 
@@ -89,9 +100,12 @@ export function UploadPage() {
   const isAdmin = user?.role === "admin";
   const [searchParams, setSearchParams] = useSearchParams();
   const channelTab = parseChannelTab(searchParams.get("channel"));
-  const viewTab = parseViewTab(searchParams);
-  const [matrixFlagged, setMatrixFlagged] = useState(0);
-  const [allDocsCount, setAllDocsCount] = useState(0);
+  const viewTab = parseViewTab(searchParams, channelTab);
+  const showSetupTab = channelHasSetupTab(channelTab);
+  const approvalFilter = parseUploadApprovalFilter(searchParams.get("approval"));
+  const [boardCounts, setBoardCounts] = useState<UploadApprovalBoardCounts>(
+    EMPTY_UPLOAD_APPROVAL_COUNTS
+  );
   const matrixRefreshRef = useRef<(() => void) | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const {
@@ -145,14 +159,17 @@ export function UploadPage() {
   }, [mailboxes]);
 
   useEffect(() => {
-    setAllDocsCount(0);
-    setMatrixFlagged(0);
+    setBoardCounts(EMPTY_UPLOAD_APPROVAL_COUNTS);
   }, [channelTab]);
 
   const setChannelTab = (tab: ChannelTab) => {
     const next = new URLSearchParams(searchParams);
     if (tab === "all") next.delete("channel");
     else next.set("channel", tab);
+    next.delete("tab");
+    if (!channelHasSetupTab(tab) && (next.get("view") === "setup" || viewTab === "setup")) {
+      next.delete("view");
+    }
     setSearchParams(next, { replace: true });
   };
 
@@ -160,7 +177,16 @@ export function UploadPage() {
     const next = new URLSearchParams(searchParams);
     next.delete("tab");
     if (tab === "detailed") next.set("view", "detailed");
+    else if (tab === "setup") next.set("view", "setup");
     else next.delete("view");
+    setSearchParams(next, { replace: true });
+  };
+
+  const setApprovalFilter = (value: UploadApprovalStatusKey[]) => {
+    const next = new URLSearchParams(searchParams);
+    const serialized = serializeUploadApprovalFilter(value);
+    if (!serialized) next.delete("approval");
+    else next.set("approval", serialized);
     setSearchParams(next, { replace: true });
   };
 
@@ -380,39 +406,39 @@ export function UploadPage() {
     await runUpload(selected);
   }
 
+  const setupPanel =
+    channelTab === "email" ? (
+      <UploadEmailChannelPanel
+        mailboxes={mailboxes}
+        docsPerMailbox={docsPerMailbox}
+        isAdmin={Boolean(isAdmin)}
+        loading={loading}
+        fetching={fetching}
+        importBusy={importBusy}
+        onAddMailbox={() => setAddOpen(true)}
+        onImport={setImportMailbox}
+        onFetch={(mb) => void fetchMailbox(mb)}
+        onToggle={toggleMailboxActive}
+        onRemove={removeMailbox}
+        onReconnect={(mb) => void reconnectMailbox(mb)}
+        isPollable={isMailboxPollable}
+      />
+    ) : channelTab === "whatsapp" ? (
+      <UploadWhatsappChannelPanel docCount={boardCounts.all} />
+    ) : channelTab === "viber" ? (
+      <UploadViberChannelPanel docCount={boardCounts.all} />
+    ) : null;
+
   const headerActions =
     channelTab === "email" && isAdmin ? (
       <Button data-testid="button-add-mailbox" onClick={() => setAddOpen(true)}>
         <Plus className="h-4 w-4 mr-1.5 shrink-0" />
         Add mailbox
       </Button>
-    ) : (
-      <div className="flex items-center gap-2">
-        {channelTab === "all" ? (
-          <Button
-            variant="surface"
-            size="sm"
-            data-testid="button-all-docs-upload"
-            onClick={() => setChannelTab("upload")}
-          >
-            <CloudUpload className="h-4 w-4 mr-1" />
-            Upload files
-          </Button>
-        ) : null}
-        <Button
-          variant="surface"
-          size="sm"
-          data-testid="button-matrix-refresh"
-          onClick={() => matrixRefreshRef.current?.()}
-        >
-          <RefreshCw className="h-4 w-4 mr-1" />
-          Refresh
-        </Button>
-      </div>
-    );
+    ) : undefined;
 
   const workspaceShell = (content: ReactNode) => (
-    <div>
+    <div className="upload-workspace">
       <PageHeader
         actions={headerActions}
         headline={
@@ -474,28 +500,6 @@ export function UploadPage() {
           />
         }
       />
-      {channelTab === "email" ? (
-        <UploadEmailChannelPanel
-          mailboxes={mailboxes}
-          docsPerMailbox={docsPerMailbox}
-          isAdmin={Boolean(isAdmin)}
-          loading={loading}
-          fetching={fetching}
-          importBusy={importBusy}
-          onAddMailbox={() => setAddOpen(true)}
-          onImport={setImportMailbox}
-          onFetch={(mb) => void fetchMailbox(mb)}
-          onToggle={toggleMailboxActive}
-          onRemove={removeMailbox}
-          onReconnect={(mb) => void reconnectMailbox(mb)}
-          isPollable={isMailboxPollable}
-        />
-      ) : channelTab === "whatsapp" ? (
-        <UploadWhatsappChannelPanel docCount={allDocsCount} />
-      ) : channelTab === "viber" ? (
-        <UploadViberChannelPanel docCount={allDocsCount} />
-      ) : null}
-
       {channelTab === "upload" ? (
         <>
           <UploadDropZone
@@ -537,42 +541,42 @@ export function UploadPage() {
             : "scanning mailbox"}
         </Card>
       ) : null}
-      <PageTabs
-        className="mb-5"
-        value={viewTab}
-        onChange={(value) => setViewTab(value as ViewTab)}
-        data-testid="upload-view-tabs"
-        tabs={[
-          {
-            value: "summary",
-            testid: "tab-upload-summary",
-            label: (
-              <>
-                Summary
-                {matrixFlagged > 0 ? (
-                  <Badge variant="destructive" className="ml-1.5 tnum font-normal">
-                    {matrixFlagged}
-                  </Badge>
-                ) : null}
-              </>
-            ),
-          },
-          {
-            value: "detailed",
-            testid: "tab-upload-detailed",
-            label: (
-              <>
-                Detailed
-                {allDocsCount > 0 ? (
-                  <Badge variant="secondary" className="ml-1.5 tnum font-normal">
-                    {allDocsCount}
-                  </Badge>
-                ) : null}
-              </>
-            ),
-          },
-        ]}
-      />
+      <div className="upload-workspace__view-row">
+        <PageTabs
+          className="mb-0"
+          value={viewTab}
+          onChange={(value) => setViewTab(value as ViewTab)}
+          data-testid="upload-view-tabs"
+          tabs={[
+            {
+              value: "summary",
+              testid: "tab-upload-summary",
+              label: "Summary",
+            },
+            {
+              value: "detailed",
+              testid: "tab-upload-detailed",
+              label: "Detailed",
+            },
+            ...(showSetupTab
+              ? [
+                  {
+                    value: "setup",
+                    testid: "tab-upload-setup",
+                    label: "Setup",
+                  },
+                ]
+              : []),
+          ]}
+        />
+        {viewTab !== "setup" ? (
+          <UploadApprovalFilter
+            value={approvalFilter}
+            onChange={setApprovalFilter}
+            counts={boardCounts}
+          />
+        ) : null}
+      </div>
       {content}
 
       <ConnectMailboxDialog
@@ -627,15 +631,15 @@ export function UploadPage() {
           : "No Viber documents yet";
 
   return workspaceShell(
-    viewTab === "summary" ? (
+    viewTab === "setup" ? (
+      setupPanel
+    ) : viewTab === "summary" ? (
       <AllDocumentsSummaryTable
         captureSource={channelCaptureSource}
         showUploadSource={showUploadSourceColumn}
         title={channelDocsTitle}
         emptyTitle={emptyTitle}
         emptyHint={emptyHint}
-        onFlaggedCount={setMatrixFlagged}
-        onDocumentCount={setAllDocsCount}
         onGoUpload={
           channelTab === "all" || channelTab === "upload"
             ? () => setChannelTab("upload")
@@ -644,6 +648,8 @@ export function UploadPage() {
         refreshRef={matrixRefreshRef}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
+        approvalBoardColumns={approvalFilter}
+        onBoardCounts={setBoardCounts}
       />
     ) : (
       <AllDocumentsDetailedTable
@@ -652,8 +658,6 @@ export function UploadPage() {
         title={channelDocsTitle}
         emptyTitle={emptyTitle}
         emptyHint={emptyHint}
-        onFlaggedCount={setMatrixFlagged}
-        onDocumentCount={setAllDocsCount}
         onGoUpload={
           channelTab === "all" || channelTab === "upload"
             ? () => setChannelTab("upload")
@@ -662,6 +666,8 @@ export function UploadPage() {
         refreshRef={matrixRefreshRef}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
+        approvalBoardColumns={approvalFilter}
+        onBoardCounts={setBoardCounts}
       />
     )
   );

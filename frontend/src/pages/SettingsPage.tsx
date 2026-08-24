@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { api } from "@/api/client";
+import { RuleBookDocumentTypesSection } from "@/components/rule-book/RuleBookDocumentTypesSection";
 import { ApprovalPolicyPrivileges } from "@/components/settings/ApprovalPolicyPrivileges";
 import { ChartOfAccountsPanel } from "@/components/settings/ChartOfAccountsPanel";
 import { OrgAiBriefPanel } from "@/components/settings/OrgAiBriefPanel";
@@ -19,25 +20,18 @@ import { notifyOnboardingStatusRefresh } from "@/components/onboarding/Onboardin
 import { cn } from "@/lib/cn";
 import { queryKeys } from "@/lib/queryClient";
 import { INDUSTRIES } from "@/lib/settingsData";
+import { SETTINGS_TABS, type SettingsTabId } from "@/lib/settingsTabs";
 import { useSetupCatalogs } from "@/hooks/useSetupCatalogs";
-
-const TABS = [
-  { id: "profile", label: "Profile", testid: "tab-profile" },
-  { id: "ai-documents", label: "AI & documents", testid: "tab-ai-documents" },
-  { id: "team", label: "Team", testid: "tab-team" },
-  { id: "policy", label: "Policy & privileges", testid: "tab-policy" },
-  { id: "coa", label: "Chart of accounts", testid: "tab-coa" },
-] as const;
 
 export function SettingsPage() {
   const { user, refreshUser } = useAuth();
   const tenantScope = user?.tenant_id ?? null;
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get("tab");
-  const initialTab = TABS.find((t) => t.id === tabParam)?.id ?? "profile";
-  const [tab, setTab] = useState<(typeof TABS)[number]["id"]>(initialTab);
+  const initialTab = SETTINGS_TABS.find((t) => t.id === tabParam)?.id ?? "profile";
+  const [tab, setTab] = useState<SettingsTabId>(initialTab);
   const [saved, setSaved] = useState(false);
   const [aiBriefSaved, setAiBriefSaved] = useState(false);
   const [coaSaved, setCoaSaved] = useState(false);
@@ -76,7 +70,7 @@ export function SettingsPage() {
   });
 
   useEffect(() => {
-    const next = TABS.find((t) => t.id === tabParam)?.id ?? "profile";
+    const next = SETTINGS_TABS.find((t) => t.id === tabParam)?.id ?? "profile";
     setTab(next);
   }, [tabParam]);
   useEffect(() => {
@@ -263,16 +257,25 @@ export function SettingsPage() {
 
       <PageHeader
         title="Settings"
-        subtitle="Organisation profile, AI document brief, team, approval policy, and chart of accounts."
+        subtitle="Organisation profile, AI document brief, team, approval policy, chart of accounts, and Rule Book."
       />
 
       <div className="app-underline-tabs mb-4" role="tablist" aria-label="Settings sections">
-        {TABS.map((t) => (
+        {SETTINGS_TABS.map((t) => (
           <button
             key={t.id}
             type="button"
             data-testid={t.testid}
-            onClick={() => setTab(t.id)}
+            onClick={() => {
+              setSearchParams(
+                (prev) => {
+                  const next = new URLSearchParams(prev);
+                  next.set("tab", t.id);
+                  return next;
+                },
+                { replace: true }
+              );
+            }}
             className={cn(
               "app-underline-tabs__tab",
               tab === t.id && "app-underline-tabs__tab--active"
@@ -433,6 +436,8 @@ export function SettingsPage() {
           />
         </>
       )}
+
+      {tab === "rule-book" && <RuleBookDocumentTypesSection />}
 
       {tab === "team" && <TenantMembersSection />}
       {tab === "policy" && <ApprovalPolicyPrivileges />}

@@ -78,7 +78,7 @@ export function InvoiceClassificationPanel({
     return (
       <section className="ai-class-panel" aria-label="Document type">
         <div className="ai-class-panel__head">
-          <h3 className="ai-class-panel__title">Document type</h3>
+          <h3 className="ai-class-panel__title ai-class-panel__title--quiet">Document type</h3>
         </div>
         <p className="ai-class-panel__note ai-class-panel__note--warn">
           Catalogue document type is not mapped yet. Select one to extract fields and continue.
@@ -139,18 +139,14 @@ export function InvoiceClassificationPanel({
   return (
     <section className="ai-class-panel" aria-label="AI classification">
       <div className="ai-class-panel__head">
-        <h3 className="ai-class-panel__title">AI classification</h3>
+        <h3 className="ai-class-panel__title">
+          AI classification - {confirmedName}
+        </h3>
       </div>
 
-      <div className="ai-class-summary">
-        <div className="ai-class-summary__main">
-          <div className="ai-class-summary__name">{confirmedName}</div>
-          {compactStatus ? (
-            <div className="ai-class-summary__status">{compactStatus}</div>
-          ) : null}
-        </div>
-        <div className="ai-class-summary__conf tnum">{confirmedConf}</div>
-      </div>
+      {compactStatus ? (
+        <div className="ai-class-summary__status">{compactStatus}</div>
+      ) : null}
 
       {showActions ? (
         <div className="ai-class-panel__actions">
@@ -185,14 +181,17 @@ export function InvoiceClassificationPanel({
         </div>
       ) : null}
 
-      <button
-        type="button"
-        className="ai-class-toggle"
-        aria-expanded={detailsOpen}
-        onClick={() => setDetailsOpen((open) => !open)}
-      >
-        {detailsOpen ? "Hide classification details ↑" : "View classification details ↓"}
-      </button>
+      <div className="ai-class-toolbar">
+        <button
+          type="button"
+          className="ai-class-toggle"
+          aria-expanded={detailsOpen}
+          onClick={() => setDetailsOpen((open) => !open)}
+        >
+          {detailsOpen ? "Hide details" : "View details"}
+        </button>
+        <div className="ai-class-summary__conf tnum">{confirmedConf}</div>
+      </div>
 
       {detailsOpen ? (
         <div className="ai-class-details">

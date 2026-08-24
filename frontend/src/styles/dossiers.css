@@ -1015,6 +1015,31 @@
   text-transform: none;
 }
 
+.dossier-kpi-card--compact {
+  padding: 0.5rem 0.7rem;
+  min-height: 0;
+}
+
+.dossier-kpi-fail-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.dossier-kpi-fail-row .dossier-kpi-fail-head__title {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dossier-kpi-action-btn--inline {
+  width: auto;
+  flex-shrink: 0;
+}
+
 .dossier-kpi-fail-head__detail {
   margin: 0.25rem 0 0;
   font-size: 0.6875rem;
@@ -1059,6 +1084,12 @@
 .dossier-kpi-action-btn {
   width: 100%;
   justify-content: center;
+}
+
+.dossier-kpi-fail-row .dossier-kpi-action-btn,
+.dossier-kpi-action-btn--inline {
+  width: auto;
+  flex-shrink: 0;
 }
 
 .dossier-conf-row {

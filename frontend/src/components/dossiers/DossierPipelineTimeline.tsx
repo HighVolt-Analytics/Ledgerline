@@ -565,26 +565,25 @@ export function DossierPipelineTimeline({
       pipeline.length <= UNDERSTOOD_DOSSIER_STAGE_IDS.size &&
       pipeline.every((step) => UNDERSTOOD_DOSSIER_STAGE_IDS.has(step.stageId)));
 
-  const [openPhases, setOpenPhases] = useState(() => {
-    if (understoodCompact) {
-      return new Set(DOSSIER_PIPELINE_PHASES.map((phase) => phase.id));
-    }
-    return defaultOpenPhases(byStage);
-  });
-  const [openStages, setOpenStages] = useState(() => {
-    if (understoodCompact) {
-      return new Set(pipeline.map((step) => step.stageId));
-    }
-    return defaultOpenStages(byStage);
-  });
+  const [openPhases, setOpenPhases] = useState<Set<DossierPipelinePhaseId>>(
+    () => (layout === "drawer" ? new Set() : understoodCompact
+      ? new Set(DOSSIER_PIPELINE_PHASES.map((phase) => phase.id))
+      : defaultOpenPhases(byStage))
+  );
+  const [openStages, setOpenStages] = useState<Set<DossierPipelineStageId>>(
+    () => (layout === "drawer" ? new Set() : understoodCompact
+      ? new Set(pipeline.map((step) => step.stageId))
+      : defaultOpenStages(byStage))
+  );
   const [openCompletedGroups, setOpenCompletedGroups] = useState<Set<DossierPipelinePhaseId>>(
-    () => new Set(understoodCompact ? DOSSIER_PIPELINE_PHASES.map((p) => p.id) : [])
+    () => new Set(layout === "drawer" ? [] : understoodCompact ? DOSSIER_PIPELINE_PHASES.map((p) => p.id) : [])
   );
   const stageRefs = useRef<Partial<Record<DossierPipelineStageId, HTMLElement | null>>>({});
 
   const phases = useMemo(() => dossierPipelinePhases(pipeline), [pipeline]);
 
   useEffect(() => {
+    if (layout === "drawer") return;
     const map = new Map(pipeline.map((step) => [step.stageId, step]));
     const compact =
       pipelinePath === "understood" ||
@@ -600,7 +599,7 @@ export function DossierPipelineTimeline({
     setOpenPhases(defaultOpenPhases(map));
     setOpenStages(defaultOpenStages(map));
     setOpenCompletedGroups(new Set());
-  }, [pipeline, pipelinePath]);
+  }, [pipeline, pipelinePath, layout]);
 
   const focusPhase = useCallback((phaseId: DossierPipelinePhaseId, openPanel = true) => {
     if (openPanel) {

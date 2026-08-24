@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
+import { Link } from "react-router-dom";
 import {
   Check,
   Clock,
@@ -40,7 +41,7 @@ import { PageTabs } from "@/components/PageTabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { documentDisplayRef, normalizeCurrencyCode, vendorInvoiceNo } from "@/lib/format";
+import { documentDisplayRef, normalizeCurrencyCode } from "@/lib/format";
 import {
   addDossierManualLink,
   fetchDossierById,
@@ -48,14 +49,16 @@ import {
   type DossierSummaryWithInvoiceId,
 } from "@/lib/dossierApi";
 import { useVaultFileByInvoice } from "@/hooks/useVault";
+import { vaultInvoiceLink } from "@/lib/vault";
 import { useSetupCatalogs } from "@/hooks/useSetupCatalogs";
 import type { CurrencyOption } from "@/data/orgSetup";
 import {
   additionalExtractedFieldKeys,
-  lineItemGridTemplateColumns,
   resolvePreviewLineItems,
   countPreviewLineItems,
   isVisionHeaderPipelineSummary,
+  previewFilename,
+  lineItemGridTemplateColumns,
   type LineItemColumnVisibility,
   type PreviewLineItem,
 } from "@/lib/invoicePreview";
@@ -135,6 +138,13 @@ const TAB_LABELS: Record<Tab, string> = {
 
 function canEdit(status: string): boolean {
   return ["exception", "duplicate_skipped", "rejected"].includes(status);
+}
+
+function drawerDocumentName(inv: InvoiceDetails): string {
+  const filename = previewFilename(inv);
+  if (filename && filename !== "document") return filename;
+  const party = counterpartyName(inv).trim();
+  return party && party !== "—" ? party : filename;
 }
 
 function extractionFieldDisplayLabel(
@@ -346,34 +356,32 @@ function FieldRow({
         canEdit ? "invoice-drawer-field--editable" : "invoice-drawer-field--readonly"
       )}
     >
-      <div className="invoice-drawer-field__meta">
-        <label className="invoice-drawer-field__label">{label}</label>
-        {!canEdit && confidence != null ? <ConfidenceDot value={confidence} /> : null}
-      </div>
-      <div className="min-w-0 space-y-1">
-        {canEdit ? (
+      <label className="invoice-drawer-field__label font-normal">{label}</label>
+      {canEdit ? (
+        <div className="invoice-drawer-field__control">
           <Input
             value={value}
             placeholder={placeholder}
             onChange={(e) => onChange?.(e.target.value)}
             className={cn(
-              "invoice-drawer-field__input tnum",
+              "invoice-drawer-field__input tnum font-normal",
               bold && "invoice-drawer-field__input--emphasis"
             )}
           />
-        ) : (
-          <div
-            className={cn(
-              "invoice-drawer-field__value tnum",
-              bold && "invoice-drawer-field__value--emphasis",
-              !value && "invoice-drawer-field__value--empty"
-            )}
-          >
-            {value || "—"}
-          </div>
-        )}
-        {hint ? <p className="invoice-drawer-field__hint">{hint}</p> : null}
-      </div>
+        </div>
+      ) : (
+        <div
+          className={cn(
+            "invoice-drawer-field__value tnum font-normal",
+            bold && "invoice-drawer-field__value--emphasis",
+            !value && "invoice-drawer-field__value--empty"
+          )}
+        >
+          <span className="min-w-0">{value || "—"}</span>
+          {confidence != null ? <ConfidenceDot value={confidence} /> : null}
+        </div>
+      )}
+      {hint ? <p className="invoice-drawer-field__hint">{hint}</p> : null}
     </div>
   );
 }
@@ -606,25 +614,69 @@ function LineItemsDrawerGrid({
   onDraftChange?: (items: LineItemDraft[]) => void;
   emptyMessage: string;
 }) {
+  const { showQty, showUnitPrice, showAmount } = columns;
+  const itemCount = editable ? (draftItems?.length ?? 0) : (previewItems?.length ?? 0);
   const rowStyle = {
     gridTemplateColumns: lineItemGridTemplateColumns(columns, withActions, showGlAccount),
   };
-  const { showQty, showUnitPrice, showAmount } = columns;
-  const itemCount = editable ? (draftItems?.length ?? 0) : (previewItems?.length ?? 0);
+
+  function patchDraft(index: number, patch: Partial<LineItemDraft>) {
+    if (!draftItems || !onDraftChange) return;
+    const next = [...draftItems];
+    next[index] = { ...draftItems[index], ...patch };
+    onDraftChange(next);
+  }
+
+  function glLine(line: LineItemDraft | PreviewLineItem, index: number, isEdit: boolean) {
+    const item = (
+      "invoice_id" in line
+        ? line
+        : {
+            id: line.id ?? -(index + 1),
+            invoice_id: inv?.id ?? 0,
+            description: line.description,
+            qty: line.qty,
+            unit_price: line.unit_price,
+            amount: line.amount,
+            tax_amount: null,
+            parent_ledger: line.parent_ledger || null,
+            sub_ledger: line.sub_ledger || null,
+          }
+    ) as LineItem;
+    return (
+      <LineGlAccountCell
+        line={item}
+        parentLedger={parentLedger || line.parent_ledger || inv?.account_name || ""}
+        postingApplies={postingApplies}
+        asRowColumns
+        editable={isEdit}
+        onGlChange={
+          isEdit && onDraftChange && draftItems
+            ? ({ parent_ledger, sub_ledger }) => {
+                const next = [...draftItems];
+                next[index] = { ...draftItems[index], parent_ledger, sub_ledger };
+                onDraftChange(next);
+              }
+            : undefined
+        }
+      />
+    );
+  }
 
   return (
-    <div className="overflow-x-auto rounded-md border border-border">
+    <div className="invoice-drawer-lines-scroll overflow-x-auto rounded-md border border-border">
       <div className="invoice-drawer-lines-edit text-sm">
         <div
           className="invoice-drawer-lines-edit-row invoice-drawer-lines-edit-row--head text-xs text-muted-foreground bg-muted/50"
           style={rowStyle}
         >
           <span className="px-3 py-2 font-medium">Description</span>
-          {showQty && <span className="px-2 py-2 font-medium text-right">Qty</span>}
-          {showUnitPrice && <span className="px-2 py-2 font-medium text-right">Unit</span>}
-          {showAmount && <span className="px-2 py-2 font-medium text-right">Total</span>}
-          {showGlAccount && <span className="px-3 py-2 font-medium">GL account</span>}
-          {withActions && <span className="sr-only">Remove row</span>}
+          {showQty ? <span className="px-2 py-2 font-medium">Qty</span> : null}
+          {showUnitPrice ? <span className="px-2 py-2 font-medium">Unit</span> : null}
+          {showAmount ? <span className="px-2 py-2 font-medium">Total</span> : null}
+          {showGlAccount ? <span className="px-2 py-2 font-medium">Main GL</span> : null}
+          {showGlAccount ? <span className="px-2 py-2 font-medium">Sub GL</span> : null}
+          {withActions ? <span className="sr-only">Remove row</span> : null}
         </div>
         {itemCount === 0 ? (
           <div className="px-3 py-6 text-center text-sm text-muted-foreground border-t border-border">
@@ -640,82 +692,43 @@ function LineItemsDrawerGrid({
               <div className="px-2 py-2">
                 <Input
                   value={line.description}
-                  onChange={(e) => {
-                    const next = [...draftItems];
-                    next[index] = { ...line, description: e.target.value };
-                    onDraftChange(next);
-                  }}
-                  className="h-8 w-full min-w-0 text-sm block"
+                  onChange={(e) => patchDraft(index, { description: e.target.value })}
+                  title={line.description}
+                  className="h-8 w-full min-w-0 text-sm text-left block"
                 />
               </div>
-              {showQty && (
+              {showQty ? (
                 <div className="px-2 py-2">
                   <Input
                     value={line.qty}
-                    onChange={(e) => {
-                      const next = [...draftItems];
-                      next[index] = { ...line, qty: e.target.value };
-                      onDraftChange(next);
-                    }}
-                    className="h-8 w-full min-w-0 text-sm text-right tnum block"
+                    onChange={(e) => patchDraft(index, { qty: e.target.value })}
+                    className="h-8 w-full min-w-0 text-sm text-left tnum block"
                     inputMode="decimal"
-                  />
-                </div>
-              )}
-              {showUnitPrice && (
-                <div className="px-2 py-2">
-                  <Input
-                    value={line.unit_price}
-                    onChange={(e) => {
-                      const next = [...draftItems];
-                      next[index] = { ...line, unit_price: e.target.value };
-                      onDraftChange(next);
-                    }}
-                    className="h-8 w-full min-w-0 text-sm text-right tnum block"
-                    inputMode="decimal"
-                  />
-                </div>
-              )}
-              {showAmount && (
-                <div className="px-2 py-2">
-                  <Input
-                    value={line.amount}
-                    onChange={(e) => {
-                      const next = [...draftItems];
-                      next[index] = { ...line, amount: e.target.value };
-                      onDraftChange(next);
-                    }}
-                    className="h-8 w-full min-w-0 text-sm text-right tnum block"
-                    inputMode="decimal"
-                  />
-                </div>
-              )}
-              {showGlAccount ? (
-                <div className="px-3 py-2 align-top">
-                  <LineGlAccountCell
-                    line={{
-                      id: line.id ?? -(index + 1),
-                      invoice_id: inv?.id ?? 0,
-                      description: line.description,
-                      qty: line.qty,
-                      unit_price: line.unit_price,
-                      amount: line.amount,
-                      tax_amount: null,
-                      parent_ledger: line.parent_ledger || null,
-                      sub_ledger: line.sub_ledger || null,
-                    }}
-                    parentLedger={parentLedger}
-                    postingApplies={postingApplies}
-                    editable
-                    onGlChange={({ parent_ledger, sub_ledger }) => {
-                      const next = [...draftItems];
-                      next[index] = { ...line, parent_ledger, sub_ledger };
-                      onDraftChange(next);
-                    }}
                   />
                 </div>
               ) : null}
-              {withActions && (
+              {showUnitPrice ? (
+                <div className="px-2 py-2">
+                  <Input
+                    value={line.unit_price}
+                    onChange={(e) => patchDraft(index, { unit_price: e.target.value })}
+                    className="h-8 w-full min-w-0 text-sm text-left tnum block"
+                    inputMode="decimal"
+                  />
+                </div>
+              ) : null}
+              {showAmount ? (
+                <div className="px-2 py-2">
+                  <Input
+                    value={line.amount}
+                    onChange={(e) => patchDraft(index, { amount: e.target.value })}
+                    className="h-8 w-full min-w-0 text-sm text-left tnum block"
+                    inputMode="decimal"
+                  />
+                </div>
+              ) : null}
+              {showGlAccount ? glLine(line, index, true) : null}
+              {withActions ? (
                 <div className="px-1 py-2 flex justify-center">
                   <Button
                     type="button"
@@ -728,11 +741,11 @@ function LineItemsDrawerGrid({
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 </div>
-              )}
+              ) : null}
             </div>
           ))
         ) : (
-          previewItems?.map((line) => (
+          previewItems?.map((line, index) => (
             <div
               key={line.id}
               className="invoice-drawer-lines-edit-row border-t border-border"
@@ -743,48 +756,41 @@ function LineItemsDrawerGrid({
                   value={line.description ?? ""}
                   readOnly
                   tabIndex={-1}
-                  className="h-8 w-full min-w-0 text-sm block"
+                  title={line.description ?? ""}
+                  className="h-8 w-full min-w-0 text-sm text-left block"
                 />
               </div>
-              {showQty && (
+              {showQty ? (
                 <div className="px-2 py-2">
                   <Input
                     value={line.displayQty ?? ""}
                     readOnly
                     tabIndex={-1}
-                    className="h-8 w-full min-w-0 text-sm text-right tnum block"
+                    className="h-8 w-full min-w-0 text-sm text-left tnum block"
                   />
                 </div>
-              )}
-              {showUnitPrice && (
+              ) : null}
+              {showUnitPrice ? (
                 <div className="px-2 py-2">
                   <Input
                     value={line.displayUnitPrice ?? ""}
                     readOnly
                     tabIndex={-1}
-                    className="h-8 w-full min-w-0 text-sm text-right tnum block"
+                    className="h-8 w-full min-w-0 text-sm text-left tnum block"
                   />
                 </div>
-              )}
-              {showAmount && (
+              ) : null}
+              {showAmount ? (
                 <div className="px-2 py-2">
                   <Input
                     value={line.displayAmount ?? ""}
                     readOnly
                     tabIndex={-1}
-                    className="h-8 w-full min-w-0 text-sm text-right tnum block"
+                    className="h-8 w-full min-w-0 text-sm text-left tnum block"
                   />
                 </div>
-              )}
-              {showGlAccount && inv && (
-                <div className="px-3 py-2 align-top">
-                  <LineGlAccountCell
-                    line={line}
-                    parentLedger={parentLedger || line.parent_ledger || inv.account_name || ""}
-                    postingApplies={postingApplies}
-                  />
-                </div>
-              )}
+              ) : null}
+              {showGlAccount && inv ? glLine(line, index, false) : null}
             </div>
           ))
         )}
@@ -859,20 +865,26 @@ function TeamEmployeeOrgSection({ employee }: { employee: EmployeeMaster }) {
       data-testid="team-employee-org-section"
     >
       <div className="flex items-baseline justify-between gap-2">
-        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <h4 className="invoice-drawer-field-section__title">
           Organisation
         </h4>
-        <span className="text-xs text-muted-foreground truncate">
+        <span className="text-xs font-normal text-muted-foreground truncate">
           From employee master · {employee.name}
         </span>
       </div>
-      <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+      <div className="invoice-drawer-field-section__grid">
         {rows.map((row) => (
-          <div key={row.label} className="min-w-0">
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-              {row.label}
+          <div key={row.label} className="invoice-drawer-field invoice-drawer-field--readonly">
+            <div className="invoice-drawer-field__label font-normal">{row.label}</div>
+            <div
+              className={cn(
+                "invoice-drawer-field__value tnum font-normal",
+                !row.value.trim() && "invoice-drawer-field__value--empty"
+              )}
+              title={row.value.trim() || undefined}
+            >
+              {row.value.trim() || "—"}
             </div>
-            <div className="text-xs truncate">{row.value.trim() || "—"}</div>
           </div>
         ))}
       </div>
@@ -915,17 +927,15 @@ function CurrencySelectRow({
   return (
     <div
       className={cn(
-        "invoice-drawer-field invoice-drawer-field--wide",
+        "invoice-drawer-field",
         isEditable ? "invoice-drawer-field--editable" : "invoice-drawer-field--readonly"
       )}
     >
-      <div className="invoice-drawer-field__meta">
-        <label className="invoice-drawer-field__label">
-          Currency{required ? " *" : ""}
-        </label>
-      </div>
-      <div className="min-w-0 space-y-1">
-        {isEditable ? (
+      <label className="invoice-drawer-field__label">
+        Currency{required ? " *" : ""}
+      </label>
+      {isEditable ? (
+        <div className="invoice-drawer-field__control">
           <Select
             value={selected}
             disabled={disabled}
@@ -938,24 +948,24 @@ function CurrencySelectRow({
                 : "Select currency"
             }
             className={cn(
-              "invoice-drawer-field__input w-full",
+              "invoice-drawer-field__input w-full min-w-0 !flex",
               required && !selected && "border-destructive"
             )}
             data-testid="invoice-currency-select"
           />
-        ) : (
-          <div className="invoice-drawer-field__value tnum">{selected || "—"}</div>
-        )}
-        {required && !selected ? (
-          <p className="invoice-drawer-field__hint invoice-drawer-field__hint--error">
-            Currency could not be extracted — select one for this invoice.
-          </p>
-        ) : symbolHint && !selected ? (
-          <p className="invoice-drawer-field__hint">
-            Detected symbol {symbolHint}; confirm the ISO currency code.
-          </p>
-        ) : null}
-      </div>
+        </div>
+      ) : (
+        <div className="invoice-drawer-field__value tnum">{selected || "—"}</div>
+      )}
+      {required && !selected ? (
+        <p className="invoice-drawer-field__hint invoice-drawer-field__hint--error">
+          Currency could not be extracted — select one for this invoice.
+        </p>
+      ) : symbolHint && !selected ? (
+        <p className="invoice-drawer-field__hint">
+          Detected symbol {symbolHint}; confirm the ISO currency code.
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -1476,7 +1486,6 @@ export function InvoiceDetailDrawer({
       ? formatMoney(v, displayCurrency, undefined, currencySymbolHint)
       : "—";
   const sourceKind = inv?.email_sender ? "email" : "upload";
-  const docNumber = inv ? (vendorInvoiceNo(inv) ?? documentDisplayRef(inv)) : "—";
 
   async function reloadInvoice(expectedId?: number) {
     const id = expectedId ?? activeInvoiceIdRef.current;
@@ -1843,14 +1852,7 @@ export function InvoiceDetailDrawer({
           <>
             <div className="invoice-drawer-header">
               <div className="invoice-drawer-header__main min-w-0 pr-4">
-                <h2 className="invoice-drawer-header__title">{counterpartyName(inv)}</h2>
-                <div className="invoice-drawer-header__secondary">
-                  <span className="invoice-drawer-header__id tnum">{documentDisplayRef(inv)}</span>
-                  <span className="invoice-drawer-header__id tnum">{docNumber}</span>
-                </div>
-                <p className="invoice-drawer-header__meta tnum">
-                  {inv.invoice_no ?? "—"} · {inv.invoice_date ?? "—"} · {fmt(inv.total)}
-                </p>
+                <h2 className="invoice-drawer-header__title">{drawerDocumentName(inv)}</h2>
                 <div className="invoice-drawer-header__status">
                   {inv ? <VisionHeadingBadge inv={inv} empty="" /> : null}
                   {inv ? (
@@ -1891,7 +1893,7 @@ export function InvoiceDetailDrawer({
               className="invoice-drawer-body"
               style={{ overscrollBehavior: "contain" }}
             >
-              <div className="invoice-drawer-preview-pane bg-muted/40 border-b md:border-b-0 md:border-r border-border p-3 flex flex-col min-h-0">
+              <div className="invoice-drawer-preview-pane bg-muted/40 border-b md:border-b-0 md:border-r border-border flex flex-col min-h-0">
                 <InvoicePreviewModeToggle
                   mode={previewMode}
                   onChange={setPreviewMode}
@@ -2287,7 +2289,7 @@ export function InvoiceDetailDrawer({
                       <span className="tnum">{fmt(editing && draft ? draft.gst : inv.gst)}</span>
                     </div>
                     <div className="border-t border-border my-2" />
-                    <div className="flex justify-between font-semibold">
+                    <div className="flex justify-between font-normal">
                       <span>Total (inc-tax)</span>
                       <span className="tnum">{fmt(editing && draft ? draft.total : inv.total)}</span>
                     </div>
@@ -2331,10 +2333,17 @@ export function InvoiceDetailDrawer({
                   <div className="mt-4 space-y-4" data-testid="invoice-drawer-vault-tab">
                     {vaultFile ? (
                       <div className="rounded-md border border-border bg-muted/30 px-3 py-2.5 space-y-1">
-                        <p className="text-xs font-medium text-foreground">Stored in vault</p>
-                        <p className="text-xs text-muted-foreground break-all tnum">
-                          {vaultFile.virtual_path || vaultFile.file_name}
-                        </p>
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-xs font-medium text-foreground">Stored in vault</p>
+                          <Link
+                            to={vaultInvoiceLink(inv.id)}
+                            className="text-xs font-medium text-primary hover:underline shrink-0"
+                            data-testid="invoice-drawer-vault-view-link"
+                            onClick={onClose}
+                          >
+                            VIEW
+                          </Link>
+                        </div>
                         {vaultFile.po_folder ? (
                           <p className="text-[11px] text-muted-foreground">
                             Bundle folder:{" "}

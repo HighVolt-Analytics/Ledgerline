@@ -14,6 +14,10 @@ from app.models.invoice import Invoice, InvoiceStatus
 from app.models.payment import Payment, PaymentStatus
 from app.schemas.matrix_api import MatrixListRequest
 from app.schemas.pipeline import MatrixConflictRow, MatrixRowResponse
+from app.services.approval.approval_board_service import (
+    apply_approval_board_column,
+    approval_board_column_expr,
+)
 from app.services.invoice.invoice_related_query_service import (
     audit_logs_for_invoice_ids,
     payments_for_invoice_ids,
@@ -753,6 +757,10 @@ class MatrixListResult:
     duplicates: int = 0
     awaiting: int = 0
     paid_this_month: int = 0
+    review_count: int = 0
+    processing_count: int = 0
+    approved_count: int = 0
+    rejected_count: int = 0
 
 
 def _scoped_invoice_query(tenant_id: uuid.UUID, params: MatrixListRequest):
@@ -779,6 +787,8 @@ def _scoped_invoice_query(tenant_id: uuid.UUID, params: MatrixListRequest):
     count_stmt = _apply_search(count_stmt, params.q)
     stmt = _apply_matrix_filter(stmt, params.matrix_filter, tenant_id=tenant_id)
     count_stmt = _apply_matrix_filter(count_stmt, params.matrix_filter, tenant_id=tenant_id)
+    stmt = apply_approval_board_column(stmt, params.approval_board_column)
+    count_stmt = apply_approval_board_column(count_stmt, params.approval_board_column)
     return stmt, count_stmt
 
 
@@ -789,6 +799,7 @@ def _params_have_list_filters(params: MatrixListRequest) -> bool:
         or (params.evaluation_status or "").strip()
         or (params.q or "").strip()
         or (params.matrix_filter or "").strip()
+        or (params.approval_board_column or "").strip()
     )
 
 
@@ -863,6 +874,27 @@ async def _matrix_summary(
     return flagged, int(duplicates), int(awaiting), int(paid)
 
 
+async def _approval_board_counts(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    params: MatrixListRequest,
+) -> dict[str, int]:
+    col = approval_board_column_expr()
+    stmt = select(col.label("board"), func.count(Invoice.id)).where(
+        Invoice.tenant_id == tenant_id
+    )
+    stmt = _apply_capture_source(stmt, params.capture_source)
+    stmt = _apply_search(stmt, params.q)
+    stmt = stmt.group_by(col)
+    counts = {"review": 0, "processing": 0, "approved": 0, "rejected": 0}
+    for board, n in (await db.execute(stmt)).all():
+        key = str(board or "")
+        if key in counts:
+            counts[key] = int(n or 0)
+    return counts
+
+
 async def fetch_document_matrix(
     db: AsyncSession,
     *,
@@ -899,6 +931,9 @@ async def fetch_document_matrix(
         db, tenant_id, invoice_ids
     )
     flagged, duplicates, awaiting, paid = await _matrix_summary(
+        db, tenant_id=tenant_id, params=params
+    )
+    board_counts = await _approval_board_counts(
         db, tenant_id=tenant_id, params=params
     )
 
@@ -966,4 +1001,8 @@ async def fetch_document_matrix(
         duplicates=duplicates,
         awaiting=awaiting,
         paid_this_month=paid,
+        review_count=board_counts["review"],
+        processing_count=board_counts["processing"],
+        approved_count=board_counts["approved"],
+        rejected_count=board_counts["rejected"],
     )

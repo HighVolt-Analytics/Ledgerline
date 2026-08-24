@@ -2,18 +2,25 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type
 import type { MatrixRow } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
 import { ListSearchInput } from "@/components/ListSearchInput";
-import {
-  MappedDocumentTypeBadge,
-  VisionHeadingBadge,
-} from "@/components/inbox/DocumentTypeDisplay";
+import { MappedDocumentTypeBadge } from "@/components/inbox/DocumentTypeDisplay";
 import { InboxGlAccountBadge } from "@/components/inbox/InboxGlAccountBadge";
 import { InboxSourceBadge } from "@/components/inbox/InboxSourceBadge";
-import { MatrixPaymentBadge } from "@/components/matrix/MatrixPaymentBadge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { CapturedDocumentsSkeleton } from "@/components/skeleton/PageSkeletons";
-import { StatusPill, pillTones } from "@/components/StatusPill";
 import { CounterpartyColumnHeaderLink } from "@/components/upload/CounterpartyCreationsLink";
+import {
+  DuplicatePossibleBadge,
+  NatureBadge,
+  PaymentStatusPill,
+  PipelineStatusBadge,
+  TypeBadge,
+} from "@/components/upload/allDocumentsTablePills";
+import {
+  UploadCellClip,
+  UploadCellText,
+  UploadDetailedColGroup,
+} from "@/components/upload/UploadCellText";
 import { useAuth } from "@/context/AuthContext";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import { useRuleBookDocumentTypes } from "@/hooks/useRuleBookConfig";
@@ -21,20 +28,20 @@ import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { UPLOAD_POLL_FAST_MS, UPLOAD_POLL_MS } from "@/lib/uploadPolling";
 import {
-  authSyncPillClass,
   duplicateCellValue,
   lineItemCellValue,
   normalizeAuthSyncLabel,
+  authSyncPillClass,
 } from "@/lib/allDocumentsDetailed";
 import {
   documentNature,
   formatDocDate,
   postingStatusLabel,
   toMatrixPaymentStatus,
-  type PipelineStatusLabel,
 } from "@/lib/allDocumentsSummary";
+import { StatusPill } from "@/components/StatusPill";
 import { documentDisplayRef, money } from "@/lib/format";
-import { counterpartyName, glPostingApplicable, invoiceSourceKind } from "@/lib/invoice";
+import { counterpartyName, glPostingApplicable, invoiceSourceKind, invoiceSourceLabel } from "@/lib/invoice";
 import {
   fetchMatrixPage,
   sortMatrixRowsNewestFirst,
@@ -48,6 +55,7 @@ import {
   handleTenantScopedLoadFailure,
   isTenantFetchScopeCurrent,
 } from "@/lib/tenantSession";
+import type { UploadApprovalBoardCounts } from "@/lib/uploadApprovalFilter";
 
 const InvoiceDetailDrawer = lazy(() =>
   import("@/components/InvoiceDetailDrawer").then((m) => ({
@@ -55,20 +63,15 @@ const InvoiceDetailDrawer = lazy(() =>
   }))
 );
 
-function PipelineStatusBadge({ label }: { label: PipelineStatusLabel }) {
-  if (label === "Done" || label === "Posted") {
-    return <StatusPill className={pillTones.ok}>{label}</StatusPill>;
-  }
-  if (label === "Failed") {
-    return <StatusPill className={pillTones.bad}>{label}</StatusPill>;
-  }
-  if (label === "Pending") {
-    return <StatusPill className={pillTones.amber}>{label}</StatusPill>;
-  }
-  return <span className="text-muted-foreground text-xs">{label}</span>;
-}
-
-function AuthSyncBadge({ label, testId }: { label?: string | null; testId?: string }) {
+function AuthSyncBadge({
+  label,
+  testId,
+  quietPending,
+}: {
+  label?: string | null;
+  testId?: string;
+  quietPending?: boolean;
+}) {
   const normalized = normalizeAuthSyncLabel(label);
   if (normalized === "—") {
     return (
@@ -77,9 +80,18 @@ function AuthSyncBadge({ label, testId }: { label?: string | null; testId?: stri
       </span>
     );
   }
+  if (quietPending && normalized === "Pending") {
+    return (
+      <span data-testid={testId} className="inline-flex" title={normalized}>
+        <StatusPill className="font-normal border-border bg-muted/50 all-docs-status-pending" title={normalized}>
+          {normalized}
+        </StatusPill>
+      </span>
+    );
+  }
   return (
-    <span data-testid={testId} className="inline-flex">
-      <StatusPill className={authSyncPillClass(normalized)}>{normalized}</StatusPill>
+    <span data-testid={testId} className={authSyncPillClass(normalized)} title={normalized}>
+      {normalized}
     </span>
   );
 }
@@ -96,6 +108,8 @@ export function AllDocumentsDetailedTable({
   title = "All documents",
   emptyTitle = "No documents yet",
   emptyHint = "Upload files or capture documents from Email, WhatsApp, or Viber.",
+  approvalBoardColumns = [],
+  onBoardCounts,
 }: {
   onFlaggedCount?: (count: number) => void;
   onDocumentCount?: (count: number) => void;
@@ -108,6 +122,8 @@ export function AllDocumentsDetailedTable({
   title?: string;
   emptyTitle?: string;
   emptyHint?: string;
+  approvalBoardColumns?: Array<"review" | "processing" | "approved" | "rejected">;
+  onBoardCounts?: (counts: UploadApprovalBoardCounts) => void;
 }) {
   const { user } = useAuth();
   const tenantScope = user?.tenant_id ?? null;
@@ -115,7 +131,6 @@ export function AllDocumentsDetailedTable({
   const loadSeq = useRef(0);
   const loadInFlightRef = useRef(false);
   const [matrixData, setMatrixData] = useState<MatrixRow[]>([]);
-  const [flagged, setFlagged] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [filteredTotal, setFilteredTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -128,6 +143,8 @@ export function AllDocumentsDetailedTable({
   const searchQuery = controlledSearch ?? localSearch;
   const setSearchQuery = onSearchChange ?? setLocalSearch;
   const debouncedSearch = useDebouncedValue(searchQuery.trim());
+  const quietAuthPending =
+    captureSource === "email" || captureSource === "whatsapp" || captureSource === "viber";
 
   useResetOnTenantChange(() => {
     loadSeq.current += 1;
@@ -148,8 +165,11 @@ export function AllDocumentsDetailedTable({
     const params: Record<string, string> = {};
     if (captureSource) params.capture_source = captureSource;
     if (debouncedSearch) params.q = debouncedSearch;
+    if (approvalBoardColumns.length > 0) {
+      params.approval_board_column = approvalBoardColumns.join(",");
+    }
     return params;
-  }, [captureSource, debouncedSearch]);
+  }, [captureSource, debouncedSearch, approvalBoardColumns]);
 
   const load = useCallback(
     async (options?: { silent?: boolean; fresh?: boolean }) => {
@@ -169,9 +189,9 @@ export function AllDocumentsDetailedTable({
         setMatrixData(result.rows);
         setTotalPages(result.pages);
         setFilteredTotal(result.total);
-        setFlagged(result.summary.flagged);
         onFlaggedCount?.(result.summary.flagged);
         onDocumentCount?.(result.total);
+        onBoardCounts?.(result.boardCounts);
       } catch (e) {
         if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
         if (
@@ -196,7 +216,7 @@ export function AllDocumentsDetailedTable({
         }
       }
     },
-    [tenantScope, page, matrixQueryParams, onFlaggedCount, onDocumentCount]
+    [tenantScope, page, matrixQueryParams, onFlaggedCount, onDocumentCount, onBoardCounts]
   );
 
   useEffect(() => {
@@ -205,7 +225,7 @@ export function AllDocumentsDetailedTable({
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, captureSource]);
+    }, [debouncedSearch, captureSource, approvalBoardColumns]);
 
   useEffect(() => {
     if (!refreshRef) return;
@@ -272,8 +292,7 @@ export function AllDocumentsDetailedTable({
           <h3 className="text-sm font-semibold shrink-0">
             {title}
             <span className="text-muted-foreground tnum font-normal ml-2">
-              ({filteredTotal}
-              {flagged > 0 ? ` · ${flagged} flagged` : ""})
+              ({filteredTotal})
             </span>
           </h3>
           <ListSearchInput
@@ -285,7 +304,7 @@ export function AllDocumentsDetailedTable({
           />
         </div>
 
-        <div className="md:hidden divide-y divide-border">
+        <div className="all-docs-pills md:hidden divide-y divide-border">
           {rows.map((matrixRow) => {
             const inv = matrixRow.invoice;
             const docRef = documentDisplayRef(inv);
@@ -305,32 +324,37 @@ export function AllDocumentsDetailedTable({
                   <div className="min-w-0 flex-1">
                     <div className="font-medium tnum">{docRef}</div>
                     <div className="mt-1">
-                      <VisionHeadingBadge inv={inv} empty="" />
+                      <TypeBadge inv={inv} documentTypes={documentTypes} />
                     </div>
-                    <div className="text-sm truncate mt-0.5">{counterpartyName(inv)}</div>
+                    <div className="text-sm all-docs-clip mt-0.5" title={counterpartyName(inv)}>
+                      {counterpartyName(inv)}
+                    </div>
                     <div className="text-[11px] text-muted-foreground mt-1 flex flex-wrap gap-2">
                       {showUploadSource ? (
                         <InboxSourceBadge kind={invoiceSourceKind(inv)} />
                       ) : null}
-                      {dup.kind !== "empty" ? (
-                        <span className="text-amber-700 dark:text-amber-400">
+                      {dup.kind === "possible" ? (
+                        <span className="text-[#b05374] dark:text-[#e7b6c3]">
                           Dup: {dup.label}
                         </span>
+                      ) : dup.kind === "conflict" ? (
+                        <span>Dup: {dup.label}</span>
                       ) : null}
                     </div>
                   </div>
-                  <div className="shrink-0 text-right tnum font-medium text-sm">
+                  <div className="shrink-0 tnum font-normal text-sm">
                     {money(inv.total, inv.currency)}
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5 mt-2">
                   <MappedDocumentTypeBadge inv={inv} documentTypes={documentTypes} />
+                  <NatureBadge nature={nature} />
                   <InboxGlAccountBadge
                     account={inv.account_name}
                     glPostingApplicable={glPostingApplicable(inv, documentTypes)}
                   />
                   <PipelineStatusBadge label={posting} />
-                  <AuthSyncBadge label={matrixRow.acc_sync} />
+                  <AuthSyncBadge label={matrixRow.acc_sync} quietPending={quietAuthPending} />
                 </div>
               </button>
             );
@@ -339,32 +363,33 @@ export function AllDocumentsDetailedTable({
 
         <div className="hidden md:block overflow-x-auto">
           <table
-            className={
-              showUploadSource ? "w-full text-sm min-w-[86rem]" : "w-full text-sm min-w-[80rem]"
-            }
+            className="all-docs-pills all-docs-table-fixed text-sm"
+            style={{ tableLayout: "fixed", width: showUploadSource ? "107rem" : "101rem" }}
           >
+            <UploadDetailedColGroup showSource={showUploadSource} />
             <thead>
               <tr className="border-b border-border bg-muted/30 text-left text-xs text-muted-foreground">
-                <th className="px-3 py-2 font-medium">Document</th>
+                <th className="px-2 py-1.5 font-medium" title="Document">Document</th>
                 {showUploadSource ? (
-                  <th className="px-3 py-2 font-medium">Upload source</th>
+                  <th className="px-2 py-1.5 font-medium" title="Upload source">Upload source</th>
                 ) : null}
-                <th className="px-3 py-2 font-medium">Duplicate</th>
-                <th className="px-3 py-2 font-medium">Type</th>
-                <th className="px-3 py-2 font-medium">Route</th>
-                <th className="px-3 py-2 font-medium">Invoice no.</th>
-                <th className="px-3 py-2 font-medium">
+                <th className="px-2 py-1.5 font-medium" title="Duplicate">Duplicate</th>
+                <th className="px-2 py-1.5 font-medium" title="Type">Type</th>
+                <th className="px-2 py-1.5 font-medium" title="Route">Route</th>
+                <th className="px-2 py-1.5 font-medium" title="Nature">Nature</th>
+                <th className="px-2 py-1.5 font-medium" title="Invoice no.">Invoice no.</th>
+                <th className="px-2 py-1.5 font-medium" title="Counterparty">
                   <CounterpartyColumnHeaderLink label="Counterparty" />
                 </th>
-                <th className="px-3 py-2 font-medium">Doc date</th>
-                <th className="px-3 py-2 font-medium text-right">Currency + amount</th>
-                <th className="px-3 py-2 font-medium text-right">Line item</th>
-                <th className="px-3 py-2 font-medium">Ledger</th>
-                <th className="px-3 py-2 font-medium">Advance Auth</th>
-                <th className="px-3 py-2 font-medium">Budget auth</th>
-                <th className="px-3 py-2 font-medium">Posting</th>
-                <th className="px-3 py-2 font-medium">Payment auth</th>
-                <th className="px-3 py-2 font-medium">Acc sync</th>
+                <th className="px-2 py-1.5 font-medium" title="Doc date">Doc date</th>
+                <th className="px-2 py-1.5 font-medium" title="Currency + amount">Currency + amount</th>
+                <th className="px-2 py-1.5 font-medium text-right" title="Line item">Line item</th>
+                <th className="px-2 py-1.5 font-medium" title="Ledger">Ledger</th>
+                <th className="px-2 py-1.5 font-medium" title="Advance Auth">Advance Auth</th>
+                <th className="px-2 py-1.5 font-medium" title="Budget auth">Budget auth</th>
+                <th className="px-2 py-1.5 font-medium" title="Posting">Posting</th>
+                <th className="px-2 py-1.5 font-medium" title="Payment auth">Payment auth</th>
+                <th className="px-2 py-1.5 font-medium" title="Acc sync">Acc sync</th>
               </tr>
             </thead>
             <tbody>
@@ -392,66 +417,92 @@ export function AllDocumentsDetailedTable({
                     }}
                     data-testid={`all-docs-detailed-row-${docRef}`}
                   >
-                    <td className="px-3 py-2.5 align-top min-w-[7rem]">
-                      <div className="font-medium tnum">{docRef}</div>
+                    <td className="px-2 py-2">
+                      <UploadCellText value={docRef} className="font-medium tnum" />
                     </td>
                     {showUploadSource ? (
-                      <td className="px-3 py-2.5 align-top">
-                        <InboxSourceBadge kind={invoiceSourceKind(inv)} />
+                      <td className="px-2 py-2">
+                        <UploadCellClip title={invoiceSourceLabel(invoiceSourceKind(inv))}>
+                          <InboxSourceBadge kind={invoiceSourceKind(inv)} />
+                        </UploadCellClip>
                       </td>
                     ) : null}
-                    <td className="px-3 py-2.5 align-top">
+                    <td className="px-2 py-2">
                       {dup.kind === "empty" ? (
                         <span className="text-muted-foreground text-xs">—</span>
                       ) : dup.kind === "possible" ? (
-                        <StatusPill className={pillTones.amber}>{dup.label}</StatusPill>
+                        <UploadCellClip title={dup.label}>
+                          <DuplicatePossibleBadge label={dup.label} />
+                        </UploadCellClip>
                       ) : (
-                        <span className="tnum text-xs font-medium" title="Conflicting document">
-                          {dup.label}
-                        </span>
+                        <UploadCellText value={dup.label} className="tnum text-xs font-medium" />
                       )}
                     </td>
-                    <td className="px-3 py-2.5 align-top max-w-[9rem]">
-                      <VisionHeadingBadge inv={inv} empty="" />
+                    <td className="px-2 py-2">
+                      <UploadCellClip>
+                        <TypeBadge inv={inv} documentTypes={documentTypes} />
+                      </UploadCellClip>
                     </td>
-                    <td className="px-3 py-2.5 align-top">
-                      <MappedDocumentTypeBadge inv={inv} documentTypes={documentTypes} />
+                    <td className="px-2 py-2">
+                      <UploadCellClip>
+                        <MappedDocumentTypeBadge inv={inv} documentTypes={documentTypes} />
+                      </UploadCellClip>
                     </td>
-                    <td className="px-3 py-2.5 align-top tnum text-xs whitespace-nowrap">
-                      {inv.invoice_no?.trim() || "—"}
+                    <td className="px-2 py-2">
+                      <UploadCellClip title={nature ?? undefined}>
+                        <NatureBadge nature={nature} />
+                      </UploadCellClip>
                     </td>
-                    <td className="px-3 py-2.5 align-top max-w-[9rem]">
-                      <span className="truncate block">{counterpartyName(inv)}</span>
+                    <td className="px-2 py-2">
+                      <UploadCellText value={inv.invoice_no?.trim() || "—"} className="tnum text-xs" />
                     </td>
-                    <td className="px-3 py-2.5 align-top tnum text-xs whitespace-nowrap">
-                      {formatDocDate(inv.invoice_date)}
+                    <td className="px-2 py-2">
+                      <UploadCellText value={counterpartyName(inv)} />
                     </td>
-                    <td className="px-3 py-2.5 align-top text-right tnum whitespace-nowrap font-medium">
-                      {money(inv.total, inv.currency)}
+                    <td className="px-2 py-2">
+                      <UploadCellText value={formatDocDate(inv.invoice_date)} className="tnum text-xs" />
                     </td>
-                    <td className="px-3 py-2.5 align-top text-right tnum text-xs">
-                      {lineItemCellValue(matrixRow)}
+                    <td className="px-2 py-2">
+                      <UploadCellText value={money(inv.total, inv.currency)} className="tnum font-normal" />
                     </td>
-                    <td className="px-3 py-2.5 align-top max-w-[8rem]">
-                      <InboxGlAccountBadge
-                        account={inv.account_name}
-                        glPostingApplicable={glPostingApplicable(inv, documentTypes)}
-                      />
+                    <td className="px-2 py-2 text-right">
+                      <UploadCellText value={lineItemCellValue(matrixRow)} className="tnum text-xs" />
                     </td>
-                    <td className="px-3 py-2.5 align-top">
-                      <AuthSyncBadge label={matrixRow.advance_auth} />
+                    <td className="px-2 py-2">
+                      <UploadCellClip title={inv.account_name}>
+                        <InboxGlAccountBadge
+                          account={inv.account_name}
+                          glPostingApplicable={glPostingApplicable(inv, documentTypes)}
+                        />
+                      </UploadCellClip>
                     </td>
-                    <td className="px-3 py-2.5 align-top">
-                      <AuthSyncBadge label={matrixRow.budget_auth} />
+                    <td className="px-2 py-2">
+                      <UploadCellClip title={normalizeAuthSyncLabel(matrixRow.advance_auth)}>
+                        <AuthSyncBadge label={matrixRow.advance_auth} />
+                      </UploadCellClip>
                     </td>
-                    <td className="px-3 py-2.5 align-top">
-                      <PipelineStatusBadge label={posting} />
+                    <td className="px-2 py-2">
+                      <UploadCellClip title={normalizeAuthSyncLabel(matrixRow.budget_auth)}>
+                        <AuthSyncBadge label={matrixRow.budget_auth} />
+                      </UploadCellClip>
                     </td>
-                    <td className="px-3 py-2.5 align-top">
-                      <MatrixPaymentBadge status={payment} />
+                    <td className="px-2 py-2">
+                      <UploadCellClip title={posting}>
+                        <PipelineStatusBadge label={posting} />
+                      </UploadCellClip>
                     </td>
-                    <td className="px-3 py-2.5 align-top">
-                      <AuthSyncBadge label={matrixRow.acc_sync} />
+                    <td className="px-2 py-2">
+                      <UploadCellClip title={payment}>
+                        <PaymentStatusPill status={payment} />
+                      </UploadCellClip>
+                    </td>
+                    <td className="px-2 py-2">
+                      <UploadCellClip title={normalizeAuthSyncLabel(matrixRow.acc_sync)}>
+                        <AuthSyncBadge
+                          label={matrixRow.acc_sync}
+                          quietPending={quietAuthPending}
+                        />
+                      </UploadCellClip>
                     </td>
                   </tr>
                 );

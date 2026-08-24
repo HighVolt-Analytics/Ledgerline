@@ -12,6 +12,7 @@ import {
   relativeNotificationTime,
 } from "@/lib/notifications";
 import { cn } from "@/lib/cn";
+import { kpiModuleIconClass } from "@/lib/kpiModuleColors";
 
 type NotificationBellProps = {
   collapsed?: boolean;
@@ -133,7 +134,9 @@ export function NotificationBell({ collapsed = false }: NotificationBellProps) {
         onClick={() => setOpen(true)}
       >
         <span className="primary-sidebar__notifications-icon-wrap">
-          <Bell className="primary-sidebar__topic-icon" aria-hidden />
+          <span className={cn("sidebar-icon-tile", kpiModuleIconClass("rose"))} aria-hidden>
+            <Bell className="primary-sidebar__topic-icon" />
+          </span>
           {badgeLabel ? (
             <span className="primary-sidebar__notifications-badge" aria-hidden>
               {badgeLabel}

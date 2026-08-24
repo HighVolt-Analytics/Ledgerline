@@ -537,7 +537,7 @@ export function TeamExpensesPage() {
           {categories.length === 0 ? (
             <EmptyState
               title="No team expense rules"
-              hint="Configure posting and document types in the Rule Book. Team expense categories come from matched document routing."
+              hint="Configure posting and document types in Organisation settings → Rule Book. Team expense categories come from matched document routing."
             />
           ) : (
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

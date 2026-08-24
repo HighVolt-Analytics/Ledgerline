@@ -62,6 +62,7 @@ export function InvoiceDrawerProcessingSection({
         <div className="space-y-4">
           <DossierPipelineStatusKpi
             dossier={dossier}
+            compact
             onJumpToFailure={
               firstFail
                 ? () => {

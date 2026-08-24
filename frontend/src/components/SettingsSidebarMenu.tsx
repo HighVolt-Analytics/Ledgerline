@@ -120,7 +120,9 @@ export function SettingsSidebarMenu({
         data-sidebar-tip={collapsed ? "Settings" : undefined}
         onClick={handleTriggerClick}
       >
-        <Settings className="primary-sidebar__topic-icon" />
+        <span className="sidebar-icon-tile sidebar-icon-tile--muted" aria-hidden>
+          <Settings className="primary-sidebar__topic-icon" />
+        </span>
         {!collapsed && <span className="primary-sidebar__topic-label">Settings</span>}
         {!collapsed && (
           <ChevronRight

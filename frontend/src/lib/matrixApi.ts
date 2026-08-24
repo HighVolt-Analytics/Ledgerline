@@ -1,7 +1,8 @@
 import { api } from "@/api/client";
 import type { MatrixRow } from "@/api/types";
-import { MATRIX_STAGES, type MatrixCell, type MatrixStage } from "@/lib/matrix";
 import { sortInvoicesNewestFirst } from "@/lib/invoices";
+import { MATRIX_STAGES, type MatrixCell, type MatrixStage } from "@/lib/matrix";
+import { boardCountsFromMeta, type UploadApprovalBoardCounts } from "@/lib/uploadApprovalFilter";
 
 export const MATRIX_PAGE_SIZE = 10;
 
@@ -27,6 +28,7 @@ export type MatrixPageResult = {
   total: number;
   pages: number;
   summary: MatrixSummary;
+  boardCounts: UploadApprovalBoardCounts;
 };
 
 type MatrixFetchKey = string;
@@ -78,6 +80,7 @@ export async function fetchMatrixPage(
       total: res.meta?.total ?? res.data.length,
       pages: Math.max(1, res.meta?.pages ?? 1),
       summary: summaryFromMeta(res.meta ?? {}),
+      boardCounts: boardCountsFromMeta(res.meta),
     };
   })();
 

@@ -1014,7 +1014,9 @@ export function lineItemGridTemplateColumns(
   if (columns.showQty) parts.push("5.5rem");
   if (columns.showUnitPrice) parts.push("8.5rem");
   if (columns.showAmount) parts.push("8.5rem");
-  if (showGlAccount) parts.push("minmax(11rem, 13rem)");
+  if (showGlAccount) {
+    parts.push("minmax(16rem, 20rem)", "minmax(16rem, 20rem)");
+  }
   if (withActions) parts.push("2.75rem");
   return parts.join(" ");
 }

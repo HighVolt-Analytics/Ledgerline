@@ -19,9 +19,9 @@
   --input: 72 10% 84%;
   --input-background: 0 0% 100%; /* white field surface on canvas/card */
 
-  /* Typography */
-  --font-body: Helvetica, Arial, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-headline: "Grotesk S SH", system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Typography — Satoshi (Fontshare) */
+  --font-body: "Satoshi", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-headline: "Satoshi", system-ui, -apple-system, "Segoe UI", sans-serif;
 
   /* Primary sidebar + whole-screen canvas */
   --sidebar: 72 14% 93%; /* #EFF0EB */

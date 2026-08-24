@@ -1,15 +1,26 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
-import { AlertTriangle, Clock, FolderArchive } from "lucide-react";
+import { FolderArchive } from "lucide-react";
 import type { MatrixRow } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
 import { ListSearchInput } from "@/components/ListSearchInput";
-import { DocumentTypeChip } from "@/components/inbox/DocumentTypeChip";
 import { InboxGlAccountBadge } from "@/components/inbox/InboxGlAccountBadge";
 import { InboxSourceBadge } from "@/components/inbox/InboxSourceBadge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { CapturedDocumentsSkeleton } from "@/components/skeleton/PageSkeletons";
 import { CounterpartyColumnHeaderLink } from "@/components/upload/CounterpartyCreationsLink";
+import {
+  ActionCell,
+  NatureBadge,
+  PaymentStatusPill,
+  PipelineStatusBadge,
+  TypeBadge,
+} from "@/components/upload/allDocumentsTablePills";
+import {
+  UploadCellClip,
+  UploadCellText,
+  UploadSummaryColGroup,
+} from "@/components/upload/UploadCellText";
 import { useAuth } from "@/context/AuthContext";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import { useRuleBookDocumentTypes } from "@/hooks/useRuleBookConfig";
@@ -26,15 +37,9 @@ import {
   toMatrixFlagType,
   toMatrixPaymentStatus,
   vaultCellValue,
-  type PipelineStatusLabel,
 } from "@/lib/allDocumentsSummary";
-import type { MatrixPaymentStatus } from "@/lib/v4MatrixMockData";
-import { cn } from "@/lib/cn";
-import { KLASS_NON_TRANSACTIONAL, KLASS_TRANSACTIONAL } from "@/lib/documentTypeKlass";
-import { storedDocumentTypeCode, visionDocumentTypeLabel } from "@/lib/documentTypeResolve";
 import { documentDisplayRef, money } from "@/lib/format";
-import { counterpartyName, glPostingApplicable, invoiceSourceKind } from "@/lib/invoice";
-import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
+import { counterpartyName, glPostingApplicable, invoiceSourceKind, invoiceSourceLabel } from "@/lib/invoice";
 import {
   fetchMatrixPage,
   sortMatrixRowsNewestFirst,
@@ -48,125 +53,13 @@ import {
   handleTenantScopedLoadFailure,
   isTenantFetchScopeCurrent,
 } from "@/lib/tenantSession";
+import type { UploadApprovalBoardCounts } from "@/lib/uploadApprovalFilter";
 
 const InvoiceDetailDrawer = lazy(() =>
   import("@/components/InvoiceDetailDrawer").then((m) => ({
     default: m.InvoiceDetailDrawer,
   }))
 );
-
-function TypeBadge({
-  inv,
-  documentTypes,
-}: {
-  inv: MatrixRow["invoice"];
-  documentTypes?: DocumentTypeDefinition[] | null;
-}) {
-  const vision = visionDocumentTypeLabel(inv);
-  if (!vision) {
-    return <span className="text-xs text-muted-foreground" />;
-  }
-  return (
-    <DocumentTypeChip
-      code={storedDocumentTypeCode(inv) || undefined}
-      label={vision}
-      display={vision}
-      title={vision}
-      purchaseKind={inv.purchase_document_type}
-      documentTypes={documentTypes}
-      className="max-w-[9.5rem] truncate font-normal"
-    />
-  );
-}
-
-function NatureBadge({ nature }: { nature: ReturnType<typeof documentNature> }) {
-  if (!nature) return <span className="text-muted-foreground text-xs">—</span>;
-  const transactional = nature === KLASS_TRANSACTIONAL;
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full px-2 py-[3px] text-[11px] font-normal leading-none tracking-[0.01em] whitespace-nowrap",
-        transactional
-          ? "bg-[rgb(0_122_255/0.10)] text-[rgb(0_92_191)] dark:bg-[rgb(10_132_255/0.18)] dark:text-[rgb(100_181_255)]"
-          : "bg-[rgb(142_142_147/0.14)] text-[rgb(72_72_74)] dark:bg-[rgb(142_142_147/0.22)] dark:text-[rgb(199_199_204)]"
-      )}
-    >
-      {nature === KLASS_NON_TRANSACTIONAL ? "Non-transactional" : "Transactional"}
-    </span>
-  );
-}
-
-const STATUS_TEXT = "text-[11px] font-normal whitespace-nowrap";
-const STATUS_PENDING = "text-[var(--system-yellow-text)]";
-const STATUS_DONE = "text-[hsl(var(--success))]";
-
-function PipelineStatusBadge({ label }: { label: PipelineStatusLabel }) {
-  if (label === "Done" || label === "Posted") {
-    return <span className={cn(STATUS_TEXT, STATUS_DONE)}>{label}</span>;
-  }
-  if (label === "Failed") {
-    return <span className={cn(STATUS_TEXT, "text-destructive")}>{label}</span>;
-  }
-  if (label === "Pending") {
-    return <span className={cn(STATUS_TEXT, STATUS_PENDING)}>{label}</span>;
-  }
-  return <span className="text-muted-foreground text-xs font-normal">{label}</span>;
-}
-
-function PaymentStatusText({ status }: { status: MatrixPaymentStatus }) {
-  if (status === "Paid" || status === "Payment Approved") {
-    return <span className={cn(STATUS_TEXT, STATUS_DONE)}>{status}</span>;
-  }
-  if (status === "Awaiting Payment") {
-    return <span className={cn(STATUS_TEXT, STATUS_PENDING)}>{status}</span>;
-  }
-  if (status === "Failed") {
-    return <span className={cn(STATUS_TEXT, "text-destructive")}>{status}</span>;
-  }
-  if (status === "On Hold") {
-    return <span className={cn(STATUS_TEXT, STATUS_PENDING)}>{status}</span>;
-  }
-  return <span className="text-muted-foreground text-xs font-normal">—</span>;
-}
-
-function ActionCell({
-  primary,
-  all,
-  testId,
-}: {
-  primary: { label: string; detail?: string } | null;
-  all: { label: string; detail?: string }[];
-  testId?: string;
-}) {
-  if (!primary) {
-    return (
-      <span className="text-muted-foreground text-xs font-normal" data-testid={testId}>
-        —
-      </span>
-    );
-  }
-  const title = all
-    .map((issue) => (issue.detail ? `${issue.label}: ${issue.detail}` : issue.label))
-    .join("\n");
-  const anomaly = primary.label === "Anomaly Detected";
-  const awaitingApproval =
-    primary.label === "Awaiting approval" || primary.label === "Approval pending";
-  return (
-    <span
-      title={title}
-      data-testid={testId}
-      className={cn(
-        "inline-flex items-center gap-1 max-w-full text-[11px] font-normal",
-        anomaly && "text-destructive",
-        awaitingApproval && STATUS_PENDING
-      )}
-    >
-      {anomaly ? <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden /> : null}
-      {awaitingApproval ? <Clock className="h-3 w-3 shrink-0" aria-hidden /> : null}
-      <span className="truncate max-w-[10rem]">{primary.label}</span>
-    </span>
-  );
-}
 
 export function AllDocumentsSummaryTable({
   onFlaggedCount,
@@ -180,6 +73,8 @@ export function AllDocumentsSummaryTable({
   title = "All documents",
   emptyTitle = "No documents yet",
   emptyHint = "Upload files or capture documents from Email, WhatsApp, or Viber.",
+  approvalBoardColumns = [],
+  onBoardCounts,
 }: {
   onFlaggedCount?: (count: number) => void;
   onDocumentCount?: (count: number) => void;
@@ -194,6 +89,8 @@ export function AllDocumentsSummaryTable({
   title?: string;
   emptyTitle?: string;
   emptyHint?: string;
+  approvalBoardColumns?: Array<"review" | "processing" | "approved" | "rejected">;
+  onBoardCounts?: (counts: UploadApprovalBoardCounts) => void;
 }) {
   const { user } = useAuth();
   const tenantScope = user?.tenant_id ?? null;
@@ -201,7 +98,6 @@ export function AllDocumentsSummaryTable({
   const loadSeq = useRef(0);
   const loadInFlightRef = useRef(false);
   const [matrixData, setMatrixData] = useState<MatrixRow[]>([]);
-  const [flagged, setFlagged] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [filteredTotal, setFilteredTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -234,8 +130,11 @@ export function AllDocumentsSummaryTable({
     const params: Record<string, string> = {};
     if (captureSource) params.capture_source = captureSource;
     if (debouncedSearch) params.q = debouncedSearch;
+    if (approvalBoardColumns.length > 0) {
+      params.approval_board_column = approvalBoardColumns.join(",");
+    }
     return params;
-  }, [captureSource, debouncedSearch]);
+  }, [captureSource, debouncedSearch, approvalBoardColumns]);
 
   const load = useCallback(
     async (options?: { silent?: boolean; fresh?: boolean }) => {
@@ -255,9 +154,9 @@ export function AllDocumentsSummaryTable({
         setMatrixData(result.rows);
         setTotalPages(result.pages);
         setFilteredTotal(result.total);
-        setFlagged(result.summary.flagged);
         onFlaggedCount?.(result.summary.flagged);
         onDocumentCount?.(result.total);
+        onBoardCounts?.(result.boardCounts);
       } catch (e) {
         if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
         if (
@@ -282,7 +181,7 @@ export function AllDocumentsSummaryTable({
         }
       }
     },
-    [tenantScope, page, matrixQueryParams, onFlaggedCount, onDocumentCount]
+    [tenantScope, page, matrixQueryParams, onFlaggedCount, onDocumentCount, onBoardCounts]
   );
 
   useEffect(() => {
@@ -291,7 +190,7 @@ export function AllDocumentsSummaryTable({
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, captureSource]);
+  }, [debouncedSearch, captureSource, approvalBoardColumns]);
 
   useEffect(() => {
     if (!refreshRef) return;
@@ -354,8 +253,7 @@ export function AllDocumentsSummaryTable({
           <h3 className="text-sm font-semibold shrink-0">
             {title}
             <span className="text-muted-foreground tnum font-normal ml-2">
-              ({filteredTotal}
-              {flagged > 0 ? ` · ${flagged} flagged` : ""})
+              ({filteredTotal})
             </span>
           </h3>
           <ListSearchInput
@@ -368,26 +266,27 @@ export function AllDocumentsSummaryTable({
         </div>
 
         <div className="overflow-x-auto">
-          <table className={cn("w-full text-sm font-normal", showUploadSource ? "min-w-[72rem]" : "min-w-[66rem]")}>
+          <table className={`all-docs-pills all-docs-table w-full text-sm font-normal ${showUploadSource ? "all-docs-table--summary-source" : "all-docs-table--summary"}`}>
+            <UploadSummaryColGroup showSource={showUploadSource} />
             <thead>
               <tr className="border-b border-border bg-muted/30 text-left text-xs text-muted-foreground">
-                <th className="px-3 py-2 font-medium">Document</th>
+                <th className="px-3 py-1.5 font-medium" title="Document">Document</th>
                 {showUploadSource ? (
-                  <th className="px-3 py-2 font-medium">Upload source</th>
+                  <th className="px-3 py-1.5 font-medium" title="Upload source">Upload source</th>
                 ) : null}
-                <th className="px-3 py-2 font-medium">Type</th>
-                <th className="px-3 py-2 font-medium">
+                <th className="px-3 py-1.5 font-medium" title="Type">Type</th>
+                <th className="px-3 py-1.5 font-medium" title="Counterparty">
                   <CounterpartyColumnHeaderLink label="Counterparty" />
                 </th>
-                <th className="px-3 py-2 font-medium">Nature</th>
-                <th className="px-3 py-2 font-medium">Doc date</th>
-                <th className="px-3 py-2 font-medium">Ledger</th>
-                <th className="px-3 py-2 font-medium">Amount</th>
-                <th className="px-3 py-2 font-medium">Approval</th>
-                <th className="px-3 py-2 font-medium">Posting</th>
-                <th className="px-3 py-2 font-medium">Payment</th>
-                <th className="px-3 py-2 font-medium">Action</th>
-                <th className="px-3 py-2 font-medium">Vault</th>
+                <th className="px-3 py-1.5 font-medium" title="Nature">Nature</th>
+                <th className="px-3 py-1.5 font-medium" title="Doc date">Doc date</th>
+                <th className="px-3 py-1.5 font-medium" title="Ledger">Ledger</th>
+                <th className="px-3 py-1.5 font-medium" title="Amount">Amount</th>
+                <th className="px-3 py-1.5 font-medium" title="Approval">Approval</th>
+                <th className="px-3 py-1.5 font-medium" title="Posting">Posting</th>
+                <th className="px-3 py-1.5 font-medium" title="Payment">Payment</th>
+                <th className="px-3 py-1.5 font-medium" title="Action">Action</th>
+                <th className="px-3 py-1.5 font-medium" title="Vault">Vault</th>
               </tr>
             </thead>
             <tbody>
@@ -427,77 +326,91 @@ export function AllDocumentsSummaryTable({
                     }}
                     data-testid={`all-docs-row-${docRef}`}
                   >
-                    <td className="px-3 py-2.5 align-top min-w-[8rem]">
-                      <div className="font-normal tnum">{docRef}</div>
+                    <td className="px-3 py-2">
+                      <UploadCellText value={docRef} className="tnum" />
                       {inv.invoice_no ? (
-                        <div className="text-xs text-muted-foreground truncate tnum">
-                          {inv.invoice_no}
-                        </div>
+                        <UploadCellText
+                          value={inv.invoice_no}
+                          className="text-xs text-muted-foreground tnum"
+                        />
                       ) : null}
                     </td>
                     {showUploadSource ? (
-                      <td className="px-3 py-2.5 align-top">
-                        <InboxSourceBadge kind={invoiceSourceKind(inv)} />
+                      <td className="px-3 py-2">
+                        <UploadCellClip title={invoiceSourceLabel(invoiceSourceKind(inv))}>
+                          <InboxSourceBadge kind={invoiceSourceKind(inv)} />
+                        </UploadCellClip>
                       </td>
                     ) : null}
-                    <td className="px-3 py-2.5 align-top max-w-[10rem]">
-                      <TypeBadge inv={inv} documentTypes={documentTypes} />
+                    <td className="px-3 py-2">
+                      <UploadCellClip>
+                        <TypeBadge inv={inv} documentTypes={documentTypes} />
+                      </UploadCellClip>
                     </td>
-                    <td className="px-3 py-2.5 align-top max-w-[10rem]">
-                      <span className="truncate block font-medium">{counterpartyName(inv)}</span>
+                    <td className="px-3 py-2">
+                      <UploadCellText value={counterpartyName(inv)} className="font-medium" />
                     </td>
-                    <td className="px-3 py-2.5 align-top">
-                      <NatureBadge nature={nature} />
+                    <td className="px-3 py-2">
+                      <UploadCellClip title={nature ?? undefined}>
+                        <NatureBadge nature={nature} />
+                      </UploadCellClip>
                     </td>
-                    <td className="px-3 py-2.5 align-top tnum text-xs whitespace-nowrap">
-                      {formatDocDate(inv.invoice_date)}
+                    <td className="px-3 py-2">
+                      <UploadCellText value={formatDocDate(inv.invoice_date)} className="tnum text-xs" />
                     </td>
-                    <td className="px-3 py-2.5 align-top max-w-[9rem]">
-                      <InboxGlAccountBadge
-                        account={inv.account_name}
-                        glPostingApplicable={glPostingApplicable(inv, documentTypes)}
-                      />
+                    <td className="px-3 py-2">
+                      <UploadCellClip title={inv.account_name}>
+                        <InboxGlAccountBadge
+                          account={inv.account_name}
+                          glPostingApplicable={glPostingApplicable(inv, documentTypes)}
+                        />
+                      </UploadCellClip>
                     </td>
-                    <td className="px-3 py-2.5 align-top tnum whitespace-nowrap font-normal">
-                      {money(inv.total, inv.currency)}
+                    <td className="px-3 py-2">
+                      <UploadCellText value={money(inv.total, inv.currency)} className="tnum font-normal" />
                     </td>
-                    <td className="px-3 py-2.5 align-top">
-                      <PipelineStatusBadge label={approval} />
+                    <td className="px-3 py-2">
+                      <UploadCellClip title={approval}>
+                        <PipelineStatusBadge label={approval} />
+                      </UploadCellClip>
                     </td>
-                    <td className="px-3 py-2.5 align-top">
-                      <PipelineStatusBadge label={posting} />
+                    <td className="px-3 py-2">
+                      <UploadCellClip title={posting}>
+                        <PipelineStatusBadge label={posting} />
+                      </UploadCellClip>
                     </td>
-                    <td className="px-3 py-2.5 align-top">
-                      <PaymentStatusText status={pay} />
+                    <td className="px-3 py-2">
+                      <UploadCellClip title={pay}>
+                        <PaymentStatusPill status={pay} />
+                      </UploadCellClip>
                     </td>
-                    <td className="px-3 py-2.5 align-top max-w-[11rem]">
+                    <td className="px-3 py-2">
                       <ActionCell
                         primary={action.primary}
                         all={action.all}
                         testId={`all-docs-action-${docRef}`}
                       />
                     </td>
-                    <td className="px-3 py-2.5 align-top">
+                    <td className="px-3 py-2">
                       {vault.kind === "empty" ? (
                         <span className="text-muted-foreground text-xs">—</span>
                       ) : (
                         <span
-                          className={cn(
-                            "inline-flex items-center gap-1 text-xs",
+                          className={
                             vault.kind === "vaulted"
-                              ? "text-muted-foreground"
-                              : "text-foreground"
-                          )}
+                              ? "inline-flex items-center gap-1 text-xs min-w-0 max-w-full text-muted-foreground"
+                              : "inline-flex items-center gap-1 text-xs min-w-0 max-w-full text-foreground"
+                          }
                           title={
                             vault.kind === "po"
                               ? `PO bundle: ${vault.label}`
                               : vault.kind === "so"
                                 ? `SO bundle: ${vault.label}`
-                                : "Stored in vault"
+                                : vault.label
                           }
                         >
                           <FolderArchive className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                          <span className="truncate max-w-[7rem]">{vault.label}</span>
+                          <span className="all-docs-clip">{vault.label}</span>
                         </span>
                       )}
                     </td>

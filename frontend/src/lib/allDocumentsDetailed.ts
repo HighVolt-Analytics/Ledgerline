@@ -3,7 +3,8 @@
  */
 import type { MatrixRow } from "@/api/types";
 import { isInvoicePipelineActive } from "@/lib/uploadColumnState";
-import { pillTones } from "@/components/StatusPill";
+import { cn } from "@/lib/cn";
+import { approvalStatusChipClass, kpiStatusChipClass } from "@/lib/kpiModuleColors";
 
 export type AuthSyncLabel = "Done" | "Pending" | "Failed" | "Synced" | "—" | string;
 
@@ -36,8 +37,10 @@ export function normalizeAuthSyncLabel(raw: string | null | undefined): AuthSync
 }
 
 export function authSyncPillClass(label: AuthSyncLabel): string {
-  if (label === "Done" || label === "Synced") return pillTones.ok;
-  if (label === "Failed") return pillTones.bad;
-  if (label === "Pending") return pillTones.amber;
-  return pillTones.muted;
+  if (label === "Done" || label === "Synced") {
+    return cn(kpiStatusChipClass("green"), "!rounded-full");
+  }
+  if (label === "Failed") return cn(approvalStatusChipClass("reject"), "!rounded-full");
+  if (label === "Pending") return cn(approvalStatusChipClass("pending"), "!rounded-full");
+  return cn(approvalStatusChipClass("muted"), "!rounded-full");
 }

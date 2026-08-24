@@ -20,31 +20,20 @@ import { cn } from "@/lib/cn";
 
 
 type PipelineStatusKpiProps = {
-
   dossier: DossierSummary;
-
   onOpenInvoice?: () => void;
-
   onJumpToFailure?: () => void;
-
+  compact?: boolean;
 };
 
-
-
 const KPI_ACTION_CLASS =
-
   "h-6 px-2 text-[10px] font-medium leading-none shadow-none";
 
-
-
 export function DossierPipelineStatusKpi({
-
   dossier,
-
   onOpenInvoice,
-
   onJumpToFailure,
-
+  compact = false,
 }: PipelineStatusKpiProps) {
 
   const blocker = dossierBlockerFromSummary(dossier);
@@ -77,98 +66,65 @@ export function DossierPipelineStatusKpi({
 
     return (
       <div
-        className={cn("dossier-kpi-card", isFailed && "dossier-kpi-card--fail")}
+        className={cn(
+          "dossier-kpi-card",
+          isFailed && "dossier-kpi-card--fail",
+          compact && "dossier-kpi-card--compact"
+        )}
         data-testid="dossier-pipeline-status-kpi"
       >
-        <div className="dossier-kpi-fail-head">
+        <div className="dossier-kpi-fail-row">
           <AlertTriangle
             className={cn(
-              "h-3.5 w-3.5 shrink-0 mt-0.5",
+              "h-3.5 w-3.5 shrink-0",
               isFailed ? "text-destructive" : "ds-warning-icon"
             )}
             aria-hidden
           />
-          <div className="min-w-0">
-            <p
-              className={cn(
-                "dossier-kpi-fail-head__title",
-                !isFailed && "dossier-kpi-fail-head__title--plain"
-              )}
-            >
-              {title}
-            </p>
-            <p className="dossier-kpi-fail-head__detail dossier-kpi-sub--clamp">{blocker.reason}</p>
-          </div>
-        </div>
-
-        {blocker.remediation ? (
-
-          <p className="dossier-kpi-sub dossier-kpi-sub--clamp">
-
-            <span className="font-medium text-foreground/90">What to do: </span>
-
-            {blocker.remediation}
-
+          <p
+            className={cn(
+              "dossier-kpi-fail-head__title",
+              !isFailed && "dossier-kpi-fail-head__title--plain"
+            )}
+          >
+            {title}
           </p>
-
-        ) : null}
-
-        <div className="dossier-kpi-actions dossier-kpi-actions--parallel">
-
           {onJumpToFailure ? (
-
             <Button
-
               type="button"
-
               variant="outline"
-
               size="sm"
-
               className={cn(
-
                 KPI_ACTION_CLASS,
-
-                "dossier-kpi-action-btn border-border bg-card text-foreground hover:bg-muted/40"
-
+                "dossier-kpi-action-btn dossier-kpi-action-btn--inline border-border bg-card text-foreground hover:bg-muted/40"
               )}
-
               onClick={onJumpToFailure}
-
             >
-
               {jumpLabel}
-
             </Button>
-
           ) : null}
-
           {dossier.invoiceId && onOpenInvoice ? (
-
             <Button
-
               type="button"
-
               variant="default"
-
               size="sm"
-
-              className={cn(KPI_ACTION_CLASS, "dossier-kpi-action-btn")}
-
+              className={cn(KPI_ACTION_CLASS, "dossier-kpi-action-btn dossier-kpi-action-btn--inline")}
               onClick={onOpenInvoice}
-
             >
-
               Open invoice
-
             </Button>
-
           ) : null}
-
         </div>
-
+        {blocker.reason ? (
+          <p className="dossier-kpi-fail-head__detail">{blocker.reason}</p>
+        ) : null}
+        {blocker.remediation ? (
+          <p className="dossier-kpi-sub">
+            <span className="font-medium text-foreground/90">What to do: </span>
+            {blocker.remediation}
+          </p>
+        ) : null}
       </div>
-
     );
 
   }

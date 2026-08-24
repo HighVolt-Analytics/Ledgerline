@@ -28,6 +28,9 @@ async def document_matrix(
     capture_source: Annotated[str | None, Query()] = None,
     q: Annotated[str | None, Query()] = None,
     matrix_filter: Annotated[str | None, Query()] = None,
+    approval_board_column: Annotated[
+        str | None, Query(description="Filter by approvals board column")
+    ] = None,
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[list[MatrixRowResponse]]:
@@ -41,6 +44,7 @@ async def document_matrix(
         capture_source=capture_source,
         q=q,
         matrix_filter=matrix_filter,
+        approval_board_column=approval_board_column,
     )
     result = await fetch_document_matrix(db, tenant_id=ctx.tenant_id, params=params)
     return ApiEnvelope(
@@ -54,5 +58,9 @@ async def document_matrix(
             matrix_duplicates=result.duplicates,
             matrix_awaiting=result.awaiting,
             matrix_paid_this_month=result.paid_this_month,
+            approval_review_count=result.review_count,
+            approval_processing_count=result.processing_count,
+            approval_approved_count=result.approved_count,
+            approval_rejected_count=result.rejected_count,
         ),
     )

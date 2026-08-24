@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { cn } from "@/lib/cn";
 
 const BASE =
@@ -15,6 +15,20 @@ export const pillTones = {
     "bg-[hsl(145_63%_42%/0.16)] text-[hsl(145_55%_34%)] dark:text-[hsl(145_55%_60%)] border-transparent",
 } as const;
 
-export function StatusPill({ className, children }: { className?: string; children: ReactNode }) {
-  return <span className={cn(BASE, className)}>{children}</span>;
+export function StatusPill({
+  className,
+  children,
+  style,
+  title,
+}: {
+  className?: string;
+  children: ReactNode;
+  style?: CSSProperties;
+  title?: string;
+}) {
+  return (
+    <span className={cn(BASE, className)} style={style} title={title}>
+      {children}
+    </span>
+  );
 }

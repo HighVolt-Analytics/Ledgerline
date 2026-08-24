@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Navigate, useSearchParams } from "react-router-dom";
 import { Building2, CircleUser, Loader2 } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { PageTabPanel, PageTabs } from "@/components/PageTabs";
@@ -141,6 +141,10 @@ export function CreationsPage() {
     setDetectionDraft(next);
     flushSave(next, options);
   };
+
+  if (tabFromUrl === "document-types") {
+    return <Navigate to="/settings?tab=rule-book" replace />;
+  }
 
   if (!user) {
     return (

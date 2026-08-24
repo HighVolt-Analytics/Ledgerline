@@ -27,16 +27,17 @@ export function InboxGlAccountBadge({
     <Badge
       variant="outline"
       className={cn(
-        "font-normal inline-flex items-center gap-1",
+        "font-normal inline-flex items-center gap-1 max-w-full min-w-0",
         isSuspense
           ? "border-[rgb(var(--system-yellow-rgb)/0.35)] text-foreground"
           : "border-border text-foreground"
       )}
+      title={account}
     >
       {isSuspense ? (
         <AlertTriangle className="h-3 w-3 text-destructive shrink-0" aria-hidden />
       ) : null}
-      {account}
+      <span className="truncate">{account}</span>
     </Badge>
   );
 }

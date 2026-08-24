@@ -41,6 +41,7 @@ import {
 } from "@/components/onboarding/OnboardingChecklist";
 import { getAccessToken } from "@/lib/authSession";
 import { cn } from "@/lib/cn";
+import { kpiModuleIconClass, type KpiModuleColor } from "@/lib/kpiModuleColors";
 
 const ROUTE_PREFETCH: Record<string, () => Promise<unknown>> = {
   "/": () => import("@/pages/DashboardPage"),
@@ -71,10 +72,22 @@ function prefetchRoute(path: string): void {
   if (load) void load();
 }
 
+type SidebarExtraTone = "sky" | "amber" | "indigo";
+type SidebarIconTone = KpiModuleColor | SidebarExtraTone | "muted";
+
+function sidebarIconTileClass(tone: SidebarIconTone): string {
+  if (tone === "muted") return "sidebar-icon-tile--muted";
+  if (tone === "sky" || tone === "amber" || tone === "indigo") {
+    return `sidebar-icon-tile--${tone}`;
+  }
+  return kpiModuleIconClass(tone);
+}
+
 type NavItem = {
   to: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
+  iconTone: SidebarIconTone;
   badge?:
     | "upload"
     | "approvals"
@@ -93,10 +106,31 @@ type NavGroup = {
   nested?: boolean;
 };
 
+function SidebarIconTile({
+  tone,
+  children,
+}: {
+  tone: SidebarIconTone;
+  children: React.ReactNode;
+}) {
+  return (
+    <span
+      className={cn(
+        "sidebar-icon-tile",
+        sidebarIconTileClass(tone)
+      )}
+      aria-hidden
+    >
+      {children}
+    </span>
+  );
+}
+
 const DASHBOARD_ITEM: NavItem = {
   to: "/",
   label: "Dashboard",
   icon: DashboardIcon,
+  iconTone: "violet",
 };
 
 const WORKSPACE_GROUPS: NavGroup[] = [
@@ -104,10 +138,10 @@ const WORKSPACE_GROUPS: NavGroup[] = [
     label: "",
     nested: false,
     items: [
-      { to: "/upload", label: "Upload", icon: Upload, badge: "upload" },
-      { to: "/creations", label: "Creations", icon: Users },
-      { to: "/approvals", label: "Approvals", icon: CheckCircle2, badge: "approvals" },
-      { to: "/rules", label: "Rule Book", icon: BookOpen, moduleKey: "rule_book" },
+      { to: "/upload", label: "Upload", icon: Upload, badge: "upload", iconTone: "sky" },
+      { to: "/creations", label: "Creations", icon: Users, iconTone: "rose" },
+      { to: "/approvals", label: "Approvals", icon: CheckCircle2, badge: "approvals", iconTone: "rust" },
+      { to: "/rules", label: "Rule Book", icon: BookOpen, moduleKey: "rule_book", iconTone: "violet" },
     ],
   },
 ];
@@ -117,10 +151,10 @@ const OPERATIONS_GROUPS: NavGroup[] = [
     label: "",
     nested: false,
     items: [
-      { to: "/team-expenses", label: "Team Expenses", icon: Receipt, badge: "team_expenses", moduleKey: "team_expenses" },
-      { to: "/expenses", label: "Expenses Management", icon: Coins, badge: "business_expenses", moduleKey: "expenses" },
-      { to: "/purchases", label: "Purchase Management", icon: ShoppingCart, moduleKey: "purchase" },
-      { to: "/sales", label: "Sales Management", icon: TrendingUp, badge: "sales", moduleKey: "sales" },
+      { to: "/team-expenses", label: "Team Expenses", icon: Receipt, badge: "team_expenses", moduleKey: "team_expenses", iconTone: "rose" },
+      { to: "/expenses", label: "Expenses Management", icon: Coins, badge: "business_expenses", moduleKey: "expenses", iconTone: "amber" },
+      { to: "/purchases", label: "Purchase Management", icon: ShoppingCart, moduleKey: "purchase", iconTone: "blue" },
+      { to: "/sales", label: "Sales Management", icon: TrendingUp, badge: "sales", moduleKey: "sales", iconTone: "indigo" },
     ],
   },
 ];
@@ -130,16 +164,16 @@ const FINANCE_GROUPS: NavGroup[] = [
     label: "Receivables",
     nested: true,
     items: [
-      { to: "/collections", label: "Collections", icon: Coins, badge: "collections", moduleKey: "sales" },
-      { to: "/ledger-link", label: "Accounting", icon: Link2, moduleKey: "ledger_link" },
+      { to: "/collections", label: "Collections", icon: Coins, badge: "collections", moduleKey: "sales", iconTone: "sky" },
+      { to: "/ledger-link", label: "Accounting", icon: Link2, moduleKey: "ledger_link", iconTone: "indigo" },
     ],
   },
   {
     label: "Treasury",
     nested: true,
     items: [
-      { to: "/payments", label: "Payments", icon: Wallet, badge: "payments", moduleKey: "payments" },
-      { to: "/vault", label: "Vault", icon: Vault, moduleKey: "vault" },
+      { to: "/payments", label: "Payments", icon: Wallet, badge: "payments", moduleKey: "payments", iconTone: "rust" },
+      { to: "/vault", label: "Vault", icon: Vault, moduleKey: "vault", iconTone: "violet" },
     ],
   },
 ];
@@ -149,6 +183,7 @@ const REPORTS_ITEM: NavItem = {
   label: "Reports",
   icon: BarChart3,
   moduleKey: "reports",
+  iconTone: "indigo",
 };
 
 const SETTINGS_GROUPS: NavGroup[] = [
@@ -156,9 +191,9 @@ const SETTINGS_GROUPS: NavGroup[] = [
     label: "",
     nested: false,
     items: [
-      { to: "/integrations", label: "Integrations", icon: Plug },
-      { to: "/billing", label: "Billing & Credits", icon: CreditCard },
-      { to: "/settings", label: "Organisation", icon: Settings },
+      { to: "/integrations", label: "Integrations", icon: Plug, iconTone: "blue" },
+      { to: "/billing", label: "Billing & Credits", icon: CreditCard, iconTone: "amber" },
+      { to: "/settings", label: "Organisation", icon: Settings, iconTone: "muted" },
     ],
   },
 ];
@@ -167,13 +202,14 @@ type PrimarySection = {
   id: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
+  iconTone: SidebarIconTone;
   groups: NavGroup[];
 };
 
 const MAIN_PRIMARY_SECTIONS: PrimarySection[] = [
-  { id: "workspace", label: "Workspace", icon: LayoutGrid, groups: WORKSPACE_GROUPS },
-  { id: "operations", label: "Operations", icon: FolderKanban, groups: OPERATIONS_GROUPS },
-  { id: "finance", label: "Finance", icon: Wallet, groups: FINANCE_GROUPS },
+  { id: "workspace", label: "Workspace", icon: LayoutGrid, groups: WORKSPACE_GROUPS, iconTone: "blue" },
+  { id: "operations", label: "Operations", icon: FolderKanban, groups: OPERATIONS_GROUPS, iconTone: "rust" },
+  { id: "finance", label: "Finance", icon: Wallet, groups: FINANCE_GROUPS, iconTone: "amber" },
 ];
 
 const SETTINGS_SECTION: PrimarySection = {
@@ -181,15 +217,16 @@ const SETTINGS_SECTION: PrimarySection = {
   label: "Settings",
   icon: Settings,
   groups: SETTINGS_GROUPS,
+  iconTone: "muted",
 };
 
 const ALL_SECTIONS: PrimarySection[] = [...MAIN_PRIMARY_SECTIONS, SETTINGS_SECTION];
 
 const MOBILE_NAV: NavItem[] = [
-  { to: "/", label: "Dashboard", icon: DashboardIcon },
-  { to: "/upload", label: "Upload", icon: Upload, badge: "upload" },
-  { to: "/approvals", label: "Approvals", icon: CheckCircle2, badge: "approvals" },
-  { to: "/settings", label: "Settings", icon: Settings },
+  { to: "/", label: "Dashboard", icon: DashboardIcon, iconTone: "violet" },
+  { to: "/upload", label: "Upload", icon: Upload, badge: "upload", iconTone: "sky" },
+  { to: "/approvals", label: "Approvals", icon: CheckCircle2, badge: "approvals", iconTone: "rust" },
+  { to: "/settings", label: "Settings", icon: Settings, iconTone: "muted" },
 ];
 
 const SIDEBAR_PIN_STORAGE_KEY = "ledgerline_sidebar_pinned";
@@ -439,7 +476,9 @@ export function Layout() {
           iconOnly && "primary-sidebar__nav-item--icon-only"
         )}
       >
-        <ItemIcon className="primary-sidebar__nav-item-icon" aria-hidden />
+        <SidebarIconTile tone={item.iconTone}>
+          <ItemIcon className="primary-sidebar__nav-item-icon" aria-hidden />
+        </SidebarIconTile>
         {!iconOnly && (
           <>
             <span className="primary-sidebar__nav-item-label">{item.label}</span>
@@ -544,13 +583,15 @@ export function Layout() {
               isNavItemActive(pathname, DASHBOARD_ITEM.to) && "primary-sidebar__topic--active"
             )}
           >
-            <DASHBOARD_ITEM.icon className="primary-sidebar__topic-icon" aria-hidden />
+            <SidebarIconTile tone={DASHBOARD_ITEM.iconTone}>
+              <DASHBOARD_ITEM.icon className="primary-sidebar__topic-icon" aria-hidden />
+            </SidebarIconTile>
             {!iconOnly && (
               <span className="primary-sidebar__topic-label">{DASHBOARD_ITEM.label}</span>
             )}
           </NavLink>
         )}
-        {visiblePrimarySections.map(({ id, label, icon: Icon, groups }) => (
+        {visiblePrimarySections.map(({ id, label, icon: Icon, iconTone, groups }) => (
           <div key={id} className="primary-sidebar__section">
             <button
               type="button"
@@ -566,7 +607,9 @@ export function Layout() {
               data-sidebar-tip={iconOnly ? label : undefined}
               data-testid={`nav-section-${id}`}
             >
-              <Icon className="primary-sidebar__topic-icon" />
+              <SidebarIconTile tone={iconTone}>
+                <Icon className="primary-sidebar__topic-icon" />
+              </SidebarIconTile>
               {!iconOnly && (
                 <>
                   <span className="primary-sidebar__topic-label truncate">{label}</span>
@@ -583,7 +626,7 @@ export function Layout() {
             {!iconOnly &&
               shouldShowSectionSubnav(id) &&
               renderPrimarySubnav(
-                visibleGroupsForSection({ id, label, icon: Icon, groups }, canShowNavItem),
+                visibleGroupsForSection({ id, label, icon: Icon, iconTone, groups }, canShowNavItem),
                 false
               )}
           </div>
@@ -601,7 +644,9 @@ export function Layout() {
               isNavItemActive(pathname, REPORTS_ITEM.to) && "primary-sidebar__topic--active"
             )}
           >
-            <REPORTS_ITEM.icon className="primary-sidebar__topic-icon" aria-hidden />
+            <SidebarIconTile tone={REPORTS_ITEM.iconTone}>
+              <REPORTS_ITEM.icon className="primary-sidebar__topic-icon" aria-hidden />
+            </SidebarIconTile>
             {!iconOnly && (
               <span className="primary-sidebar__topic-label">{REPORTS_ITEM.label}</span>
             )}
@@ -623,7 +668,9 @@ export function Layout() {
           aria-expanded={searchOpen}
           onClick={() => setSearchOpen(true)}
         >
-          <Search className="primary-sidebar__topic-icon" />
+          <SidebarIconTile tone="muted">
+            <Search className="primary-sidebar__topic-icon" />
+          </SidebarIconTile>
           {!iconOnly && <span className="primary-sidebar__topic-label">Search</span>}
         </button>
         <SettingsSidebarMenu

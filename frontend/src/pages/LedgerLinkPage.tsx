@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { LazyInvoiceDetailDrawer } from "@/components/LazyInvoiceDetailDrawer";
 import { PageHeader } from "@/components/PageHeader";
 import { PageTabPanel, PageTabs } from "@/components/PageTabs";
@@ -6,6 +7,7 @@ import { JournalExportTab } from "@/components/ledger-link/JournalExportTab";
 import { LedgerExportTable } from "@/components/ledger-link/LedgerExportTable";
 import { LedgerOverview } from "@/components/ledger-link/LedgerOverview";
 import { PageLoader } from "@/components/PageLoader";
+import { RuleBookPostingSection } from "@/components/rule-book/RuleBookPostingSection";
 import { useAuth } from "@/context/AuthContext";
 import { useLedgerLink, useLedgerLinkExports } from "@/hooks/useLedgerLink";
 import { mapReconciliationOverview } from "@/lib/reconciliation";
@@ -18,14 +20,19 @@ const LL_TABS = [
   { value: "purchases", label: "Purchases", testid: "tab-ll-purchases" },
   { value: "payments", label: "Payments", testid: "tab-ll-payments" },
   { value: "export", label: "Journal Export", testid: "tab-ll-export" },
+  { value: "posting", label: "Posting", testid: "tab-posting" },
 ];
 
 export function LedgerLinkPage() {
-  const [tab, setTab] = useState("overview");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabFromUrl = searchParams.get("tab");
+  const [tab, setTab] = useState(() =>
+    tabFromUrl && LL_TABS.some((row) => row.value === tabFromUrl) ? tabFromUrl : "overview"
+  );
   const [drawerInvoiceId, setDrawerInvoiceId] = useState<number | null>(null);
   const { user } = useAuth();
-  const { data, isLoading, error } = useLedgerLink(Boolean(user));
-  const exportsEnabled = Boolean(user) && tab !== "overview";
+  const { data, isLoading, error } = useLedgerLink(Boolean(user) && tab !== "posting");
+  const exportsEnabled = Boolean(user) && tab !== "overview" && tab !== "posting";
   const {
     data: exports,
     isLoading: exportsLoading,
@@ -37,6 +44,20 @@ export function LedgerLinkPage() {
     [data?.overview]
   );
   const currency = data?.overview.base_currency ?? "";
+  const postingOnly = tab === "posting";
+
+  useEffect(() => {
+    if (tabFromUrl && LL_TABS.some((row) => row.value === tabFromUrl)) {
+      setTab(tabFromUrl);
+    }
+  }, [tabFromUrl]);
+
+  const changeTab = (next: string) => {
+    setTab(next);
+    const params = new URLSearchParams(searchParams);
+    params.set("tab", next);
+    setSearchParams(params, { replace: true });
+  };
 
   if (!user) {
     return (
@@ -50,7 +71,7 @@ export function LedgerLinkPage() {
     );
   }
 
-  if (isLoading && !data) {
+  if (!postingOnly && isLoading && !data) {
     return (
       <div>
         <PageHeader
@@ -62,7 +83,7 @@ export function LedgerLinkPage() {
     );
   }
 
-  if (error) {
+  if (!postingOnly && error) {
     return (
       <div>
         <PageHeader
@@ -82,7 +103,7 @@ export function LedgerLinkPage() {
         title="Accounting"
         subtitle="Reconcile double-entry postings, then export or push to your accounting system."
       >
-        <PageTabs value={tab} onChange={setTab} className="flex-wrap h-auto" tabs={LL_TABS} />
+        <PageTabs value={tab} onChange={changeTab} className="flex-wrap h-auto" tabs={LL_TABS} />
       </PageHeader>
 
       <PageTabPanel value="overview" active={tab} className="mt-4">
@@ -161,6 +182,9 @@ export function LedgerLinkPage() {
         ) : (
           <JournalExportTab exports={exports} currency={currency} />
         )}
+      </PageTabPanel>
+      <PageTabPanel value="posting" active={tab} className="mt-4">
+        <RuleBookPostingSection />
       </PageTabPanel>
 
       <LazyInvoiceDetailDrawer
