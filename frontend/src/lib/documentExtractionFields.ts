@@ -12,7 +12,7 @@ export type ExtractionFieldOption = { key: string; label: string };
 export const EXTRACTION_FIELD_OPTIONS = [
   { key: "vendor", label: "Vendor" },
   { key: "employee_name", label: "Employee name" },
-  { key: "abn", label: "Tax ID / ABN" },
+  { key: "abn", label: "Business registration number" },
   { key: "invoice_no", label: "Invoice number" },
   { key: "proforma_invoice_no", label: "Proforma invoice number" },
   { key: "invoice_date", label: "Invoice date" },
@@ -275,6 +275,9 @@ export function extractionFieldLabel(key: string): string {
   if (LABEL_BY_KEY[key as ExtractionFieldKey]) {
     return LABEL_BY_KEY[key as ExtractionFieldKey];
   }
+  if (key === "seller_abn") return "Seller business registration number";
+  if (key === "buyer_abn") return "Buyer business registration number";
+  if (key === "has_abn") return "Has business registration number";
   return key
     .split("_")
     .filter(Boolean)

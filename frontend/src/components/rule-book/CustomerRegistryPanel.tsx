@@ -122,50 +122,43 @@ export function CustomerRegistryPanel() {
   if (loading) {
     return (
       <Card className="p-8 text-center text-sm text-muted-foreground" data-testid="customer-registry-loading">
-        Loading capture registry…
+        Loading…
       </Card>
     );
   }
 
   return (
     <div className="space-y-4" data-testid="customer-registry-panel">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-muted-foreground max-w-2xl">
-          Match inbound sales documents by email sender or domain. Use this for capture routing;
-          GL defaults and billing live under Customer masters.
-        </p>
-        <div className="flex items-center gap-2">
-          <Button size="sm" variant="surface" onClick={() => void load({ fresh: true })}>
-            <RefreshCw className="h-4 w-4 mr-1" />
-            Refresh
-          </Button>
-          <Button
-            size="sm"
-            onClick={() => {
-              setEditCustomer(null);
-              setFormOpen(true);
-            }}
-          >
-            <Plus className="h-4 w-4 mr-1" />
-            Add registry entry
-          </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative min-w-0 flex-1">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search…"
+            className="pl-9 h-9 w-full"
+            data-testid="input-customers-search"
+          />
         </div>
+        <Button size="sm" variant="surface" onClick={() => void load({ fresh: true })}>
+          <RefreshCw className="h-4 w-4 mr-1" />
+          Refresh
+        </Button>
+        <Button
+          size="sm"
+          onClick={() => {
+            setEditCustomer(null);
+            setFormOpen(true);
+          }}
+        >
+          <Plus className="h-4 w-4 mr-1" />
+          Add registry entry
+        </Button>
       </div>
 
       {error ? (
         <Card className="p-3 text-sm text-destructive border-destructive/30">{error}</Card>
       ) : null}
-
-      <div className="relative max-w-sm">
-        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-        <Input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search capture registry…"
-          className="pl-9 h-9"
-          data-testid="input-customers-search"
-        />
-      </div>
 
       {filtered.length === 0 ? (
         <EmptyState
@@ -191,7 +184,7 @@ export function CustomerRegistryPanel() {
               <tr className="text-left text-xs text-muted-foreground border-b border-border">
                 <th className="px-4 py-2 font-medium">Customer</th>
                 <th className="px-3 py-2 font-medium">Sender pattern</th>
-                <th className="px-3 py-2 font-medium">ABN</th>
+                <th className="px-3 py-2 font-medium">Business registration number</th>
                 <th className="px-3 py-2 font-medium text-right">Invoices</th>
                 <th className="px-3 py-2 font-medium text-right">Revenue</th>
                 <th className="px-3 py-2 font-medium">Status</th>

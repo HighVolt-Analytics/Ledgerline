@@ -221,7 +221,7 @@ def _write_invoices_sheet(ws: Worksheet, invoices: list[Invoice], config: RuleBo
     headers = [
         "ID",
         "Vendor",
-        "ABN",
+        "Business registration number",
         "Invoice No",
         "Invoice Date",
         "Due Date",

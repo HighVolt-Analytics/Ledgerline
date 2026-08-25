@@ -1,12 +1,15 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { CloudUpload, Plus } from "lucide-react";
 import { api } from "@/api/client";
 import type { ConnectedMailbox, MailboxBackfillJob } from "@/api/types";
 import { ConnectMailboxDialog } from "@/components/ConnectMailboxDialog";
+import { IngestionTab } from "@/components/rule-book/IngestionTab";
 import { useAuth } from "@/context/AuthContext";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import { useMailboxes } from "@/hooks/useMailboxes";
+import { useRuleBookIngestStats } from "@/hooks/useRuleBookConfig";
+import { useRuleBookDraft } from "@/hooks/useRuleBookDraft";
 import { canRenderTenantOwnedUi } from "@/lib/tenantSession";
 import { MailboxImportDialog } from "@/components/mailboxes/MailboxImportDialog";
 import { PageHeader } from "@/components/PageHeader";
@@ -44,9 +47,64 @@ import {
   watchInvoiceIdsForVendorHold,
 } from "@/lib/bulkUpload";
 import { UploadDropZone } from "@/components/upload/UploadDropZone";
+import { PageLoader } from "@/components/PageLoader";
+import { canAccessModulePath } from "@/lib/tenantModules";
+import { useTenantModules } from "@/hooks/useTenantModules";
+
+const TeamExpensesPage = lazy(() =>
+  import("@/pages/TeamExpensesPage").then((m) => ({ default: m.TeamExpensesPage }))
+);
+const ExpensesManagementPage = lazy(() =>
+  import("@/pages/ExpensesManagementPage").then((m) => ({
+    default: m.ExpensesManagementPage,
+  }))
+);
+const PurchaseManagementPage = lazy(() =>
+  import("@/pages/PurchaseManagementPage").then((m) => ({
+    default: m.PurchaseManagementPage,
+  }))
+);
+const SalesManagementPage = lazy(() =>
+  import("@/pages/SalesManagementPage").then((m) => ({
+    default: m.SalesManagementPage,
+  }))
+);
 
 type ChannelTab = AllDocumentsChannelTab;
-type ViewTab = "summary" | "detailed" | "setup";
+
+const OPERATIONS_VIEW_TABS = [
+  {
+    value: "team-expenses",
+    label: "Team Expenses",
+    moduleKey: "team_expenses",
+    testid: "tab-upload-team-expenses",
+  },
+  {
+    value: "expenses",
+    label: "Expenses Management",
+    moduleKey: "expenses",
+    testid: "tab-upload-expenses",
+  },
+  {
+    value: "purchases",
+    label: "Purchase Management",
+    moduleKey: "purchase",
+    testid: "tab-upload-purchases",
+  },
+  {
+    value: "sales",
+    label: "Sales Management",
+    moduleKey: "sales",
+    testid: "tab-upload-sales",
+  },
+] as const;
+
+type OperationsViewTab = (typeof OPERATIONS_VIEW_TABS)[number]["value"];
+type ViewTab = "summary" | "detailed" | "setup" | OperationsViewTab;
+
+function isOperationsViewTab(value: string | null): value is OperationsViewTab {
+  return OPERATIONS_VIEW_TABS.some((tab) => tab.value === value);
+}
 
 function parseChannelTab(value: string | null): ChannelTab {
   return parseUploadChannelTab(value);
@@ -60,7 +118,19 @@ function parseViewTab(searchParams: URLSearchParams, channel: ChannelTab): ViewT
   const view = searchParams.get("view") ?? searchParams.get("tab");
   if (view === "detailed") return "detailed";
   if (view === "setup" && channelHasSetupTab(channel)) return "setup";
+  if (isOperationsViewTab(view) && channel === "all") return view;
   return "summary";
+}
+
+function OperationsWorkspace({ view }: { view: OperationsViewTab }) {
+  return (
+    <Suspense fallback={<PageLoader variant="kpi-tabs" />}>
+      {view === "team-expenses" ? <TeamExpensesPage embedded /> : null}
+      {view === "expenses" ? <ExpensesManagementPage embedded /> : null}
+      {view === "purchases" ? <PurchaseManagementPage embedded /> : null}
+      {view === "sales" ? <SalesManagementPage embedded /> : null}
+    </Suspense>
+  );
 }
 
 const PROCESSING_WAIT_MS = 120_000;
@@ -98,10 +168,15 @@ export function UploadPage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const isAdmin = user?.role === "admin";
+  const enabledModules = useTenantModules();
+  const operationsTabs = OPERATIONS_VIEW_TABS.filter((tab) =>
+    canAccessModulePath(`/${tab.value}`, enabledModules, tab.moduleKey)
+  );
   const [searchParams, setSearchParams] = useSearchParams();
   const channelTab = parseChannelTab(searchParams.get("channel"));
   const viewTab = parseViewTab(searchParams, channelTab);
   const showSetupTab = channelHasSetupTab(channelTab);
+  const showOperationsTabs = channelTab === "all";
   const approvalFilter = parseUploadApprovalFilter(searchParams.get("approval"));
   const [boardCounts, setBoardCounts] = useState<UploadApprovalBoardCounts>(
     EMPTY_UPLOAD_APPROVAL_COUNTS
@@ -124,6 +199,27 @@ export function UploadPage() {
     setSearchQuery((current) => (current === q ? current : q));
   }, [searchParams]);
   const [addOpen, setAddOpen] = useState(false);
+  const ingestDraftEnabled = Boolean(user) && (addOpen || channelTab === "email");
+  const {
+    ruleBook,
+    isLoading: ingestLoading,
+    canEdit: canEditIngest,
+    patch: patchIngest,
+  } = useRuleBookDraft(ingestDraftEnabled);
+  const { data: ingestStats } = useRuleBookIngestStats(ingestDraftEnabled);
+  const ingestionRules = useMemo(() => {
+    const rules = ruleBook?.emailCaptureRules ?? [];
+    if (!ingestStats) return rules;
+    return rules.map((rule) => {
+      const row = ingestStats[rule.id];
+      if (!row) return rule;
+      return {
+        ...rule,
+        matchedCount: row.matched_count,
+        lastMatched: row.last_matched,
+      };
+    });
+  }, [ingestStats, ruleBook?.emailCaptureRules]);
   const [fetching, setFetching] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadFiles, setUploadFiles] = useState<File[]>([]);
@@ -170,6 +266,9 @@ export function UploadPage() {
     if (!channelHasSetupTab(tab) && (next.get("view") === "setup" || viewTab === "setup")) {
       next.delete("view");
     }
+    if (tab !== "all" && isOperationsViewTab(viewTab)) {
+      next.delete("view");
+    }
     setSearchParams(next, { replace: true });
   };
 
@@ -178,6 +277,7 @@ export function UploadPage() {
     next.delete("tab");
     if (tab === "detailed") next.set("view", "detailed");
     else if (tab === "setup") next.set("view", "setup");
+    else if (isOperationsViewTab(tab)) next.set("view", tab);
     else next.delete("view");
     setSearchParams(next, { replace: true });
   };
@@ -429,18 +529,9 @@ export function UploadPage() {
       <UploadViberChannelPanel docCount={boardCounts.all} />
     ) : null;
 
-  const headerActions =
-    channelTab === "email" && isAdmin ? (
-      <Button data-testid="button-add-mailbox" onClick={() => setAddOpen(true)}>
-        <Plus className="h-4 w-4 mr-1.5 shrink-0" />
-        Add mailbox
-      </Button>
-    ) : undefined;
-
   const workspaceShell = (content: ReactNode) => (
     <div className="upload-workspace">
       <PageHeader
-        actions={headerActions}
         headline={
           <PageTabs
             value={channelTab}
@@ -558,6 +649,13 @@ export function UploadPage() {
               testid: "tab-upload-detailed",
               label: "Detailed",
             },
+            ...(showOperationsTabs
+              ? operationsTabs.map((tab) => ({
+                  value: tab.value,
+                  testid: tab.testid,
+                  label: tab.label,
+                }))
+              : []),
             ...(showSetupTab
               ? [
                   {
@@ -569,7 +667,12 @@ export function UploadPage() {
               : []),
           ]}
         />
-        {viewTab !== "setup" ? (
+        {viewTab === "setup" && channelTab === "email" && isAdmin ? (
+          <Button data-testid="button-add-mailbox" onClick={() => setAddOpen(true)}>
+            <Plus className="h-4 w-4 mr-1.5 shrink-0" />
+            Add mailbox
+          </Button>
+        ) : viewTab !== "setup" && !isOperationsViewTab(viewTab) ? (
           <UploadApprovalFilter
             value={approvalFilter}
             onChange={setApprovalFilter}
@@ -583,6 +686,19 @@ export function UploadPage() {
         open={addOpen}
         onClose={() => setAddOpen(false)}
         onSendInvite={sendMailboxInvite}
+        ingestion={
+          <div className={!canEditIngest ? "pointer-events-none opacity-90" : undefined}>
+            {ingestLoading && !ruleBook ? (
+              <p className="text-sm text-muted-foreground">Loading ingestion rules…</p>
+            ) : (
+              <IngestionTab
+                compact
+                rules={ingestionRules}
+                onChange={(emailCaptureRules) => patchIngest({ emailCaptureRules })}
+              />
+            )}
+          </div>
+        }
       />
       <MailboxImportDialog
         open={importMailbox != null}
@@ -633,6 +749,8 @@ export function UploadPage() {
   return workspaceShell(
     viewTab === "setup" ? (
       setupPanel
+    ) : isOperationsViewTab(viewTab) ? (
+      <OperationsWorkspace view={viewTab} />
     ) : viewTab === "summary" ? (
       <AllDocumentsSummaryTable
         captureSource={channelCaptureSource}

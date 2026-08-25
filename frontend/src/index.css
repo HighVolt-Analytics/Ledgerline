@@ -469,7 +469,7 @@ body::-webkit-scrollbar-button,
   transform: translateX(1.25rem);
 }
 
-/* Rule book sliders — v4 track (secondary) + primary fill + bordered thumb */
+/* Rule book sliders — grey idle track; black (light) / white (dark) fill + knob */
 input[type="range"].app-slider-input {
   margin: 0;
   appearance: none;
@@ -480,15 +480,35 @@ input[type="range"].app-slider-input {
 
 input[type="range"].app-slider-input::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 1.25rem;
-  height: 1.25rem;
+  width: 0.625rem;
+  height: 0.625rem;
 }
 
 input[type="range"].app-slider-input::-moz-range-thumb {
-  width: 1.25rem;
-  height: 1.25rem;
+  width: 0.625rem;
+  height: 0.625rem;
   border: none;
   background: transparent;
+}
+
+.app-slider-track {
+  background-color: #b0b0b0;
+}
+
+.app-slider-track-fill,
+.app-slider-thumb {
+  background-color: #000;
+  border: none;
+  box-shadow: none;
+}
+
+.dark .app-slider-track {
+  background-color: #6e6e6e;
+}
+
+.dark .app-slider-track-fill,
+.dark .app-slider-thumb {
+  background-color: #fff;
 }
 
 /* Numeric inputs — digits left, steppers pinned right, visible on hover only */
@@ -1335,6 +1355,243 @@ input.app-numeric-input {
 .invoice-drawer-field__hint--error {
   color: hsl(var(--destructive));
   font-weight: 400;
+}
+
+.connect-mailbox-dialog-root,
+.vendor-registration-dialog-root {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 1rem;
+}
+
+.connect-mailbox-dialog,
+.vendor-registration-dialog {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  width: min(42rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 0.5rem;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--background));
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+}
+
+.vendor-registration-dialog {
+  width: min(56rem, calc(100vw - 2rem));
+}
+
+.connect-mailbox-dialog__body,
+.vendor-registration-dialog__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 1.25rem 1.25rem;
+}
+
+.vendor-registration-dialog__footer {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  border-top: 1px solid hsl(var(--border));
+  padding: 0.75rem 1.25rem 1.25rem;
+}
+
+.connect-mailbox-form-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+  column-gap: 0.75rem;
+  row-gap: 0.75rem;
+}
+
+.connect-mailbox-form-grid__wide {
+  grid-column: 1 / -1;
+}
+
+.connect-mailbox-form-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.25rem;
+}
+
+.connect-mailbox-form-field > span {
+  display: block;
+  height: 1rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: hsl(var(--muted-foreground));
+}
+
+.connect-mailbox-ingest {
+  margin-top: 0.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid hsl(var(--border));
+}
+
+.condition-builder {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.condition-builder--nested {
+  padding-left: 0.5rem;
+  border-left: 1px solid hsl(var(--border));
+}
+
+.condition-builder__line {
+  display: grid;
+  grid-template-columns: 2.25rem minmax(0, 1fr);
+  align-items: start;
+  column-gap: 0.375rem;
+  min-width: 0;
+}
+
+.condition-builder__op,
+.condition-builder__op-gap {
+  display: inline-flex;
+  width: 2.25rem;
+  height: 2rem;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.condition-builder__op {
+  border: none;
+  background: none;
+  padding: 0;
+  color: hsl(var(--muted-foreground));
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.condition-builder__op:hover:not(:disabled) {
+  color: hsl(var(--foreground));
+}
+
+.condition-builder__op:disabled {
+  cursor: default;
+}
+
+.condition-builder__row {
+  display: grid;
+  grid-template-columns: 6.25rem 6.5rem minmax(0, 1fr) 1.75rem;
+  align-items: center;
+  column-gap: 0.375rem;
+  min-width: 0;
+}
+
+.condition-builder__row > * {
+  box-sizing: border-box;
+  min-width: 0;
+  height: 2rem;
+}
+
+.condition-builder__row > .condition-builder__select {
+  display: flex;
+  width: 100%;
+  height: 2rem;
+  padding-left: 0.5rem;
+  padding-right: 0.375rem;
+  font-size: 0.75rem;
+}
+
+.condition-builder__value {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  border-radius: 0.375rem;
+  border: 1px solid hsl(var(--border));
+  background-color: hsl(var(--input-background));
+  padding: 0 0.5rem;
+  color: hsl(var(--foreground));
+  font-size: 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  line-height: 1.25;
+}
+
+.condition-builder__value:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px hsl(var(--ring));
+}
+
+.condition-builder__value::placeholder {
+  color: hsl(var(--muted-foreground));
+}
+
+.condition-builder__icon-btn {
+  display: inline-flex;
+  width: 2rem;
+  align-items: center;
+  justify-content: center;
+  justify-self: end;
+  border: none;
+  border-radius: 0.375rem;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  padding: 0;
+  line-height: 0;
+  cursor: pointer;
+}
+
+.condition-builder__icon-btn:hover {
+  color: hsl(var(--destructive));
+}
+
+.condition-builder__icon-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px hsl(var(--ring));
+}
+
+.condition-builder__icon-btn svg {
+  width: 0.8125rem;
+  height: 0.8125rem;
+}
+
+.condition-builder__add {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 1.5rem;
+}
+
+.condition-builder__add-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  color: hsl(var(--muted-foreground));
+  font-size: 0.75rem;
+  line-height: 1.5rem;
+  cursor: pointer;
+}
+
+.condition-builder__add-btn:hover {
+  color: hsl(var(--foreground));
+}
+
+.condition-builder__add-btn--muted:hover {
+  color: hsl(var(--destructive));
 }
 
 .invoice-drawer-confidence {

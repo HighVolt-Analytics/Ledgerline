@@ -1,20 +1,17 @@
 import { Fragment, useMemo, useState } from "react";
 import {
-  AlertCircle,
-  Check,
   ChevronDown,
   ChevronRight,
   Loader2,
   Mail,
-  MessageCircle,
   Plus,
   Upload,
   UserCircle,
-  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { CreationsEmployeesTabSkeleton, InlineTableSkeleton } from "@/components/skeleton/PageSkeletons";
+import { PageTabPanel, PageTabs } from "@/components/PageTabs";
+import { CreationsEmployeesTabSkeleton } from "@/components/skeleton/PageSkeletons";
 import { useToast } from "@/context/ToastContext";
 import { api } from "@/api/client";
 import {
@@ -26,20 +23,27 @@ import {
   useUpdateEmployeeMaster,
 } from "@/hooks/useMasterData";
 import { useRuleBookTeamExpensePosting } from "@/hooks/useRuleBookConfig";
-import { useTenantQuery } from "@/hooks/useTenantQuery";
 import { ledgerExistsInCoa } from "@/lib/coaAccountOptions";
 import { useChartOfAccounts } from "@/hooks/useChartOfAccounts";
-import { useInstitutionSettings } from "@/hooks/useInstitutionSettings";
 import { cn } from "@/lib/cn";
-import { queryKeys } from "@/lib/queryClient";
-import { fetchRoutedInvoices } from "@/lib/routedInvoices";
-import { recentClaimValidationsFromInvoices } from "@/lib/routePageAdapters";
-import { fmtAud } from "@/lib/v4MockData";
-import { normalizeCurrencyCode } from "@/lib/format";
 import type { EmployeeMaster } from "@/lib/v4RuleBookTypes";
-import { ChannelBadge } from "@/components/team-expenses/ExpenseBadges";
 import { EmployeeDetailPanel } from "./EmployeeDetailPanel";
 import { EmployeeImportDialog } from "./EmployeeImportDialog";
+
+const EMPLOYEE_SECTIONS = [
+  { value: "pending", label: "Pending", testid: "tab-employees-pending" },
+  { value: "list", label: "Employee list", testid: "tab-employees-list" },
+] as const;
+
+type EmployeeSection = (typeof EMPLOYEE_SECTIONS)[number]["value"];
+
+function cellText(value?: string | null) {
+  return value?.trim() ?? "";
+}
+
+function isPendingEmployee(emp: EmployeeMaster) {
+  return emp.status === "Pending verification";
+}
 
 function StatusDot({ status }: { status: string }) {
   const tone: Record<string, string> = {
@@ -57,7 +61,9 @@ function StatusDot({ status }: { status: string }) {
 
 export function EmployeesTab() {
   const { toast } = useToast();
+  const [section, setSection] = useState<EmployeeSection>("list");
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [pinToTopId, setPinToTopId] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [bankMasked, setBankMasked] = useState(true);
   const [drafts, setDrafts] = useState<Record<string, EmployeeMaster>>({});
@@ -65,18 +71,7 @@ export function EmployeesTab() {
 
   const { data: employees = [], isLoading } = useEmployeeMasters();
   const { data: posting } = useRuleBookTeamExpensePosting(!isLoading);
-  const { data: institution } = useInstitutionSettings();
-  const booksCurrency = normalizeCurrencyCode(institution?.currency) ?? "";
   const { data: coaAccounts = [] } = useChartOfAccounts(!isLoading);
-  const { data: teamClaims = [], isLoading: claimsLoading } = useTenantQuery({
-    queryKey: [...queryKeys.routedInvoices("Team Expenses"), "recent", 10],
-    queryFn: () => fetchRoutedInvoices("Team Expenses", {}, { pageSize: 10, maxPages: 1 }),
-    enabled: !isLoading,
-  });
-  const recentClaimValidations = useMemo(
-    () => recentClaimValidationsFromInvoices(teamClaims, employees, 10),
-    [teamClaims, employees]
-  );
   const createMutation = useCreateEmployeeMaster();
   const updateMutation = useUpdateEmployeeMaster();
   const deleteMutation = useDeleteEmployeeMaster();
@@ -157,6 +152,7 @@ export function EmployeesTab() {
     }
     clearDraft(id);
     setExpandedId(null);
+    if (pinToTopId === id) setPinToTopId(null);
   };
 
   const openEmployee = (id: string) => {
@@ -184,6 +180,8 @@ export function EmployeesTab() {
       },
       {
         onSuccess: (created) => {
+          setSection("list");
+          setPinToTopId(created.id);
           setDrafts((prev) => ({ ...prev, [created.id]: created }));
           setExpandedId(created.id);
           toast({ title: "Employee created", description: "Edit details, then click Save employee." });
@@ -204,6 +202,7 @@ export function EmployeesTab() {
       onSuccess: () => {
         clearDraft(id);
         if (expandedId === id) setExpandedId(null);
+        if (pinToTopId === id) setPinToTopId(null);
         toast({ title: "Employee removed" });
       },
       onError: (err) =>
@@ -215,77 +214,53 @@ export function EmployeesTab() {
     });
   };
 
-  if (isLoading) {
-    return <CreationsEmployeesTabSkeleton />;
-  }
+  const listedEmployees = useMemo(() => {
+    const rows = employees.filter((emp) => !isPendingEmployee(emp) || emp.id === pinToTopId);
+    if (!pinToTopId) return rows;
+    const idx = rows.findIndex((emp) => emp.id === pinToTopId);
+    if (idx <= 0) return rows;
+    return [rows[idx]!, ...rows.slice(0, idx), ...rows.slice(idx + 1)];
+  }, [employees, pinToTopId]);
 
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <p className="text-sm text-muted-foreground max-w-2xl">
-          Define employees who can submit claims via WhatsApp or email, with spending limits and bank
-          accounts
-          for reimbursement. Edit fields locally, then click Save employee.
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setImportOpen(true)}
-            data-testid="button-import-employees"
-          >
-            <Upload className="h-4 w-4 mr-1" /> Import
-          </Button>
-          <Button
-            size="sm"
-            onClick={addEmployee}
-            disabled={createMutation.isPending}
-            data-testid="button-new-employee"
-          >
-            <Plus className="h-4 w-4 mr-1" /> New Employee
-          </Button>
-        </div>
-      </div>
+  const pendingEmployees = useMemo(
+    () => employees.filter((emp) => isPendingEmployee(emp) && emp.id !== pinToTopId),
+    [employees, pinToTopId]
+  );
 
-      <EmployeeImportDialog
-        open={importOpen}
-        busy={importMutation.isPending}
-        onClose={() => setImportOpen(false)}
-        onDownloadTemplate={(mode) => api.downloadEmployeeImportTemplate(mode)}
-        onPreview={(mode, file) => importMutation.mutateAsync({ mode, file, dryRun: true })}
-        onImport={async (mode, file) => {
-          const result = await importMutation.mutateAsync({ mode, file, dryRun: false });
-          toast({
-            title: "Import complete",
-            description: `${result.created} created, ${result.updated} updated`,
-          });
-          return result;
-        }}
-      />
-
-      <Card className="p-0 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-xs text-muted-foreground border-b border-border text-left">
-                <th className="px-3 py-2 font-medium">Employee</th>
-                <th className="px-3 py-2 font-medium">WhatsApp</th>
-                <th className="px-3 py-2 font-medium">Email</th>
-                <th className="px-3 py-2 font-medium">Status</th>
-                <th className="px-3 py-2 font-medium w-28">MTD spend</th>
-                <th className="px-3 py-2 font-medium w-28">Net advance</th>
-                <th className="px-3 py-2 font-medium">Last claim</th>
+  const renderEmployeeTable = (rows: EmployeeMaster[], emptyLabel: string) => (
+    <Card className="p-0 overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-xs text-muted-foreground border-b border-border text-left">
+              <th className="px-3 py-2 font-medium">Employee</th>
+              <th className="px-3 py-2 font-medium">WhatsApp</th>
+              <th className="px-3 py-2 font-medium">Email</th>
+              <th className="px-3 py-2 font-medium">Department</th>
+              <th className="px-3 py-2 font-medium">Location</th>
+              <th className="px-3 py-2 font-medium">Supervisor 1</th>
+              <th className="px-3 py-2 font-medium">Supervisor 2</th>
+              <th className="px-3 py-2 font-medium">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={8} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                  {emptyLabel}
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {employees.map((emp) => {
+            ) : (
+              rows.map((emp) => {
                 const open = expandedId === emp.id;
                 const draft = getDraft(emp);
                 const dirty = dirtyIds.has(emp.id);
+                const display = dirty ? draft : emp;
+                const role = display.role?.trim();
                 return (
                   <Fragment key={emp.id}>
                     <tr
-                      className="row-band border-b border-border/60 cursor-pointer hover:bg-muted/40"
+                      className="row-band border-b border-border/60 last:border-0 cursor-pointer hover:bg-muted/40"
                       onClick={() => {
                         if (open) closeEmployee(emp.id);
                         else openEmployee(emp.id);
@@ -301,7 +276,7 @@ export function EmployeesTab() {
                           )}
                           <UserCircle className="h-4 w-4 text-muted-foreground shrink-0" />
                           <span className="font-medium">
-                            {dirty ? draft.name : emp.name}
+                            {display.name}
                             {dirty && (
                               <span className="ml-2 text-[10px] ds-warning-text">
                                 unsaved
@@ -309,38 +284,27 @@ export function EmployeesTab() {
                             )}
                           </span>
                         </div>
-                        <span className="text-[11px] text-muted-foreground ml-9">
-                          {(() => {
-                            const row = dirty ? draft : emp;
-                            const designation = row.role || "";
-                            const dept = row.department || "";
-                            if (dept && designation) return `${dept} · ${designation}`;
-                            return designation || dept || "—";
-                          })()}
-                        </span>
+                        {role ? (
+                          <span className="text-[11px] text-muted-foreground ml-9">{role}</span>
+                        ) : null}
                       </td>
                       <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">
-                        {dirty ? draft.whatsappNumber : emp.whatsappNumber}
+                        {cellText(display.whatsappNumber)}
                       </td>
                       <td className="px-3 py-2 text-xs text-muted-foreground max-w-[180px] truncate">
-                        {(dirty ? draft.email : emp.email) || "—"}
+                        {cellText(display.email)}
                       </td>
+                      <td className="px-3 py-2 text-xs">{cellText(display.department)}</td>
+                      <td className="px-3 py-2 text-xs">{cellText(display.location)}</td>
+                      <td className="px-3 py-2 text-xs">{cellText(display.supervisor1)}</td>
+                      <td className="px-3 py-2 text-xs">{cellText(display.supervisor2)}</td>
                       <td className="px-3 py-2">
-                        <StatusDot status={dirty ? draft.status : emp.status} />
-                      </td>
-                      <td className="px-3 py-2 text-xs tnum whitespace-nowrap">
-                        {fmtAud(emp.mtdSpent, booksCurrency)}
-                      </td>
-                      <td className="px-3 py-2 text-xs tnum whitespace-nowrap">
-                        {fmtAud(emp.advanceBalance ?? 0, booksCurrency)}
-                      </td>
-                      <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
-                        {emp.lastClaim}
+                        <StatusDot status={display.status} />
                       </td>
                     </tr>
                     {open && (
                       <tr>
-                        <td colSpan={7} className="p-0 border-b border-border">
+                        <td colSpan={8} className="p-0 border-b border-border">
                           <EmployeeDetailPanel
                             emp={draft}
                             onChange={(patch) => patchDraft(emp.id, patch)}
@@ -413,71 +377,73 @@ export function EmployeesTab() {
                     )}
                   </Fragment>
                 );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
 
-      <Card className="p-0 overflow-hidden" data-testid="recent-claim-validations">
-        <div className="p-3 border-b border-border">
-          <h3 className="text-sm font-semibold">Recent claim validations</h3>
+  if (isLoading) {
+    return <CreationsEmployeesTabSkeleton />;
+  }
+
+  return (
+    <div className="space-y-4">
+      <PageTabs
+        value={section}
+        onChange={(value) => setSection(value as EmployeeSection)}
+        data-testid="employees-section-tabs"
+        tabs={EMPLOYEE_SECTIONS.map((row) => ({
+          value: row.value,
+          label: row.label,
+          testid: row.testid,
+          secondary: true,
+        }))}
+      />
+
+      <EmployeeImportDialog
+        open={importOpen}
+        busy={importMutation.isPending}
+        onClose={() => setImportOpen(false)}
+        onDownloadTemplate={(mode) => api.downloadEmployeeImportTemplate(mode)}
+        onPreview={(mode, file) => importMutation.mutateAsync({ mode, file, dryRun: true })}
+        onImport={async (mode, file) => {
+          const result = await importMutation.mutateAsync({ mode, file, dryRun: false });
+          toast({
+            title: "Import complete",
+            description: `${result.created} created, ${result.updated} updated`,
+          });
+          return result;
+        }}
+      />
+
+      <PageTabPanel value="pending" active={section} className="mt-0 space-y-4">
+        {renderEmployeeTable(pendingEmployees, "No employees pending verification.")}
+      </PageTabPanel>
+
+      <PageTabPanel value="list" active={section} className="mt-0 space-y-4">
+        <div className="flex justify-end flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setImportOpen(true)}
+            data-testid="button-import-employees"
+          >
+            <Upload className="h-4 w-4 mr-1" /> Import
+          </Button>
+          <Button
+            size="sm"
+            onClick={addEmployee}
+            disabled={createMutation.isPending}
+            data-testid="button-new-employee"
+          >
+            <Plus className="h-4 w-4 mr-1" /> New Employee
+          </Button>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-xs text-muted-foreground border-b border-border text-left">
-                <th className="px-3 py-2 font-medium">Employee</th>
-                <th className="px-3 py-2 font-medium text-right">Amount</th>
-                <th className="px-3 py-2 font-medium">Channel</th>
-                <th className="px-3 py-2 font-medium">Outcome</th>
-              </tr>
-            </thead>
-            <tbody>
-              {claimsLoading ? (
-                <tr>
-                  <td colSpan={4} className="p-0">
-                    <InlineTableSkeleton rows={3} columns={4} />
-                  </td>
-                </tr>
-              ) : recentClaimValidations.length === 0 ? (
-                <tr>
-                  <td colSpan={4} className="px-3 py-4 text-center text-xs text-muted-foreground">
-                    No recent claims for this organisation.
-                  </td>
-                </tr>
-              ) : (
-                recentClaimValidations.map((claim) => (
-                  <tr key={claim.id} className="row-band border-b border-border/60">
-                    <td className="px-3 py-2 font-medium">{claim.employee}</td>
-                    <td className="px-3 py-2 text-right tnum">{fmtAud(claim.amount, claim.currency)}</td>
-                    <td className="px-3 py-2">
-                      <span className="inline-flex items-center gap-1">
-                        <MessageCircle className="h-3.5 w-3.5 text-muted-foreground" />
-                        <ChannelBadge channel={claim.channel} />
-                      </span>
-                    </td>
-                    <td className="px-3 py-2">
-                      <div className="flex items-center gap-1.5">
-                        {claim.outcome === "approved" && (
-                          <Check className="h-4 w-4 text-[hsl(var(--chart-1))]" />
-                        )}
-                        {claim.outcome === "warning" && (
-                          <AlertCircle className="h-4 w-4 ds-warning-icon" />
-                        )}
-                        {claim.outcome === "rejected" && (
-                          <X className="h-4 w-4 text-destructive" />
-                        )}
-                        <span className="text-xs text-muted-foreground">{claim.reason}</span>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+        {renderEmployeeTable(listedEmployees, "No employees in the list yet.")}
+      </PageTabPanel>
     </div>
   );
 }

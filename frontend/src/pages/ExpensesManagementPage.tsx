@@ -25,7 +25,7 @@ const ROUTE_TARGET = "Expenses Management";
 const CLAIM_POLL_MS = 90_000;
 const CLAIM_PAGE_SIZE = 50;
 
-export function ExpensesManagementPage() {
+export function ExpensesManagementPage({ embedded = false }: { embedded?: boolean }) {
   const { data: routed = [], isLoading, refetch } = useRoutedInvoices(
     ROUTE_TARGET,
     true,
@@ -113,10 +113,12 @@ export function ExpensesManagementPage() {
         </div>
       )}
 
-      <PageHeader
-        title="Expenses Management"
-        subtitle="Non-PO business expenses — utilities, subscriptions, and professional services routed by expense rules."
-      />
+      {embedded ? null : (
+        <PageHeader
+          title="Expenses Management"
+          subtitle="Non-PO business expenses — utilities, subscriptions, and professional services routed by expense rules."
+        />
+      )}
 
       <BusinessExpenseCaptureStrip
         activeRuleCount={activeRuleCount}

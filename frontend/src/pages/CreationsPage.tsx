@@ -149,7 +149,7 @@ export function CreationsPage() {
   if (!user) {
     return (
       <div>
-        <PageHeader title="Creations" subtitle="Sign in to manage vendors, customers, and employees." />
+        <PageHeader title="Contacts" subtitle="Sign in to manage vendors, customers, and employees." />
       </div>
     );
   }
@@ -175,10 +175,9 @@ export function CreationsPage() {
     ) : undefined;
 
   return (
-    <div>
+    <div className="contacts-page">
       <PageHeader
-        title="Creations"
-        subtitle="Manage vendors, customers, and employees."
+        title="Contacts"
         actions={saveStatus}
       >
         <PageTabs

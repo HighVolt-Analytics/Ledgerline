@@ -73,7 +73,7 @@ export function CustomerFormDialog({
       return;
     }
     if (abn && !/^\d{11}$/.test(abn)) {
-      setError("ABN must be 11 digits.");
+      setError("Business registration number must be 11 digits.");
       return;
     }
     setSaving(true);
@@ -148,7 +148,7 @@ export function CustomerFormDialog({
             />
           </div>
           <div>
-            <label className="text-xs text-muted-foreground">ABN (optional)</label>
+            <label className="text-xs text-muted-foreground">Business registration number (optional)</label>
             <Input
               value={abn}
               onChange={(e) => setAbn(e.target.value.replace(/\D/g, "").slice(0, 11))}

@@ -37,7 +37,7 @@ function salesRowKey(salesId: number, invoiceId: number | null) {
   return `${salesId}-${invoiceId ?? "none"}`;
 }
 
-export function SalesManagementPage() {
+export function SalesManagementPage({ embedded = false }: { embedded?: boolean }) {
   const [registerTab, setRegisterTab] = useState<SalesRegisterTab>("register");
   const {
     data: salesRows = [],
@@ -156,10 +156,12 @@ export function SalesManagementPage() {
         </div>
       )}
 
-      <PageHeader
-        title="Sales Management"
-        subtitle="SO → DN → Invoice matching (3-way or 2-way per playbook). Variances route for tiered approval before collections."
-      />
+      {embedded ? null : (
+        <PageHeader
+          title="Sales Management"
+          subtitle="SO → DN → Invoice matching (3-way or 2-way per playbook). Variances route for tiered approval before collections."
+        />
+      )}
 
       <SalesCaptureStrip activeRuleCount={activeRuleCount} />
 

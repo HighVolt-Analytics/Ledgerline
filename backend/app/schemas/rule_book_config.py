@@ -169,6 +169,7 @@ class VendorMaster(BaseModel):
     invoice_count: int = Field(default=0, ge=0)
     match_confidence: float = Field(default=0, ge=0, le=100)
     contact_email: str = ""
+    contact_phone: str = ""
     confirmation_sent_at: datetime | None = None
     confirmed_at: datetime | None = None
 

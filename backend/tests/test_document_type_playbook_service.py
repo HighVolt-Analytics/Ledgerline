@@ -38,7 +38,7 @@ def _definition(**kwargs) -> DocumentTypeDefinition:
         recognition_mode="signals", recognition_signals=["heading_invoice"], llm_prompt="",
         routeTarget="Purchase Management",
         extraction=[
-            "Vendor name & tax ID / ABN",
+            "Vendor name & business registration number",
             "Vendor invoice number, invoice date",
             "PO number(s)",
         ],

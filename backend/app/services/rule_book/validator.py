@@ -186,7 +186,7 @@ async def vr05_abn(
         return ValidationResult("VR05", False, f"{label} missing")
 
     if kind == "abn":
-        detail = "Invalid ABN checksum" if use_checksum else "ABN must be 11 digits"
+        detail = f"Invalid {label} checksum" if use_checksum else f"{label} must be 11 digits"
         return ValidationResult("VR05", False, f"{detail}: {data.abn}")
     return ValidationResult("VR05", False, f"Invalid {label}: {candidate or gstin}")
 

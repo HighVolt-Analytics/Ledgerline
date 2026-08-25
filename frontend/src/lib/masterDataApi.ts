@@ -121,6 +121,7 @@ export function vendorMasterToCreateBody(vendor: Partial<VendorMaster>) {
     invoiceCount: vendor.invoiceCount ?? 0,
     matchConfidence: vendor.matchConfidence ?? 0,
     contactEmail: vendor.contactEmail ?? "",
+    contactPhone: vendor.contactPhone ?? "",
   });
   const { id, ...body } = api;
   return { ...body, master_id: id || undefined };
@@ -158,6 +159,7 @@ export function vendorMasterToUpdateBody(patch: Partial<VendorMaster>): Record<s
   if (patch.invoiceCount != null) out.invoice_count = patch.invoiceCount;
   if (patch.matchConfidence != null) out.match_confidence = patch.matchConfidence;
   if (patch.contactEmail != null) out.contact_email = patch.contactEmail;
+  if (patch.contactPhone != null) out.contact_phone = patch.contactPhone;
   return out;
 }
 

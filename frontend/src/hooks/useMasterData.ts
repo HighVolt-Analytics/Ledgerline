@@ -82,9 +82,10 @@ function patchVendorInCache(
 }
 
 function appendVendorInCache(queryClient: ReturnType<typeof useQueryClient>, created: VendorMaster) {
-  queryClient.setQueryData<VendorMaster[]>(queryKeys.vendorMasters(), (rows) =>
-    rows ? [...rows, created] : [created]
-  );
+  queryClient.setQueryData<VendorMaster[]>(queryKeys.vendorMasters(), (rows) => {
+    if (!rows) return [created];
+    return [created, ...rows.filter((row) => row.id !== created.id)];
+  });
 }
 
 function removeVendorFromCache(queryClient: ReturnType<typeof useQueryClient>, id: string) {
@@ -215,7 +216,7 @@ export function useCreateEmployeeMaster() {
     },
     onSuccess: (created) => {
       queryClient.setQueryData<EmployeeMaster[]>(queryKeys.employeeMasters(), (rows) =>
-        rows ? [...rows, created] : [created]
+        rows ? [created, ...rows] : [created]
       );
     },
   });

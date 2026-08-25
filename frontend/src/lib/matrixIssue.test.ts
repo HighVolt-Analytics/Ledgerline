@@ -151,7 +151,7 @@ describe("matrixIssueFixHint", () => {
     expect(hint).not.toBe(issue!.message);
   });
 
-  it("pairs pending_vendor to Creations → Vendors", () => {
+  it("pairs pending_vendor to Contacts → Vendors", () => {
     const invoice = inv({
       evaluation_status: "pending_vendor",
       route_target: "Purchase Management",

@@ -40,7 +40,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Workspace",
     items: [
       { to: "/upload", label: "Upload", icon: Upload, badge: "upload" },
-      { to: "/creations", label: "Creations", icon: Users },
+      { to: "/creations", label: "Contacts", icon: Users },
       { to: "/approvals", label: "Approvals", icon: CheckCircle2, badge: "approvals" },
       { to: "/rules", label: "Rule Book", icon: BookOpen, moduleKey: "rule_book" },
     ],

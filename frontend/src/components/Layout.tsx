@@ -139,7 +139,7 @@ const WORKSPACE_GROUPS: NavGroup[] = [
     nested: false,
     items: [
       { to: "/upload", label: "Upload", icon: Upload, badge: "upload", iconTone: "sky" },
-      { to: "/creations", label: "Creations", icon: Users, iconTone: "rose" },
+      { to: "/creations", label: "Contacts", icon: Users, iconTone: "rose" },
       { to: "/approvals", label: "Approvals", icon: CheckCircle2, badge: "approvals", iconTone: "rust" },
       { to: "/rules", label: "Rule Book", icon: BookOpen, moduleKey: "rule_book", iconTone: "violet" },
     ],

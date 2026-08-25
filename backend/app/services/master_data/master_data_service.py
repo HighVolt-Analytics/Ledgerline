@@ -76,6 +76,7 @@ def vendor_record_to_schema(row: VendorMasterRecord) -> VendorMasterResponse:
         invoice_count=row.invoice_count or 0,
         match_confidence=row.match_confidence or 0,
         contact_email=row.contact_email or "",
+        contact_phone=row.contact_phone or "",
         confirmation_sent_at=row.confirmation_sent_at,
         confirmed_at=row.confirmed_at,
     )
@@ -190,6 +191,8 @@ async def import_masters_from_config_file(db: AsyncSession, tenant_id: uuid.UUID
                 total_spend_ytd=float(item.get("total_spend_ytd") or 0),
                 invoice_count=int(item.get("invoice_count") or 0),
                 match_confidence=float(item.get("match_confidence") or 0),
+                contact_email=str(item.get("contact_email") or ""),
+                contact_phone=str(item.get("contact_phone") or ""),
             )
         )
 
@@ -418,6 +421,7 @@ async def create_vendor_master(
         invoice_count=body.invoice_count,
         match_confidence=body.match_confidence,
         contact_email=(body.contact_email or "").strip(),
+        contact_phone=(body.contact_phone or "").strip(),
     )
     db.add(row)
     await db.flush()
@@ -438,6 +442,10 @@ async def update_vendor_master(
     patch = body.model_dump(exclude_unset=True)
     if "abn" in patch and patch["abn"] is not None:
         patch["abn"] = _normalize_abn(patch["abn"])
+    if "contact_phone" in patch and patch["contact_phone"] is not None:
+        patch["contact_phone"] = str(patch["contact_phone"]).strip()
+    if "contact_email" in patch and patch["contact_email"] is not None:
+        patch["contact_email"] = str(patch["contact_email"]).strip()
     for key, value in patch.items():
         if key in {"billing_address", "bank"} and value is not None:
             if hasattr(value, "model_dump"):

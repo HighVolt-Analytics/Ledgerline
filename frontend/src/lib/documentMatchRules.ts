@@ -84,7 +84,7 @@ export const MATCH_RULE_FIELD_GROUPS: MatchRuleFieldGroup[] = [
     label: "Extracted values",
     fields: [
       { key: "vendor", label: "Vendor" },
-      { key: "abn", label: "Tax ID / ABN" },
+      { key: "abn", label: "Business registration number" },
       { key: "invoice_no", label: "Invoice number" },
       { key: "po_reference", label: "PO reference" },
       { key: "invoice_date", label: "Invoice date", description: "ISO date when extracted" },
@@ -113,7 +113,7 @@ export const MATCH_RULE_FIELD_GROUPS: MatchRuleFieldGroup[] = [
       { key: "has_po_reference", label: "Has PO reference" },
       { key: "has_invoice_no", label: "Has invoice number" },
       { key: "has_total", label: "Has total amount" },
-      { key: "has_abn", label: "Has tax ID / ABN" },
+      { key: "has_abn", label: "Has business registration number" },
       { key: "has_vendor", label: "Has vendor" },
       { key: "has_invoice_date", label: "Has invoice date" },
       { key: "has_due_date", label: "Has due date" },

@@ -204,11 +204,11 @@ function fixFromEvaluationStatus(inv: Invoice): string | null {
   }
   if (status === "pending_vendor") {
     return isSalesRoute(inv)
-      ? "Creations → Customers — register customer, then reprocess"
-      : "Creations → Vendors — register vendor, then reprocess";
+      ? "Contacts → Customers — register customer, then reprocess"
+      : "Contacts → Vendors — register vendor, then reprocess";
   }
   if (status === "unmatched_expense_vendor") {
-    return "Creations → Vendors — register vendor if needed, then reprocess";
+    return "Contacts → Vendors — register vendor if needed, then reprocess";
   }
   if (status === "awaiting_po") {
     return "Purchase register — link or upload the PO, then reprocess";
@@ -284,11 +284,11 @@ function fixFromIssueMessage(message: string, inv: Invoice): string | null {
     text.includes("unknown expense vendor")
   ) {
     return isSalesRoute(inv)
-      ? "Creations → Customers — register customer, then reprocess"
-      : "Creations → Vendors — register vendor, then reprocess";
+      ? "Contacts → Customers — register customer, then reprocess"
+      : "Contacts → Vendors — register vendor, then reprocess";
   }
   if (text.includes("customer") && (text.includes("match") || text.includes("not in master"))) {
-    return "Creations → Customers — register customer, then reprocess";
+    return "Contacts → Customers — register customer, then reprocess";
   }
   if (
     text.includes("suspense") ||

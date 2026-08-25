@@ -198,7 +198,10 @@ export function formatQty(v: string | number | null | undefined): string {
   );
 }
 
-/** Australian ABN / tax ID — `XX XXX XXX XXX`. */
+/** User-facing label for company/tax registration IDs (not Australia-only). */
+export const BUSINESS_REGISTRATION_NUMBER_LABEL = "Business registration number";
+
+/** 11-digit tax IDs grouped as `XX XXX XXX XXX`; other values shown as entered. */
 export function formatTaxId(value: string | null | undefined): string {
   if (!value?.trim()) return "—";
   const digits = value.replace(/\D/g, "");

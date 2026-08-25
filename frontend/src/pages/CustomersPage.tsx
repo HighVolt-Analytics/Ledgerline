@@ -1,6 +1,6 @@
 import { Navigate, useLocation } from "react-router-dom";
 
-/** Legacy route — customer setup lives in Creations → Customers. */
+/** Legacy route — customer setup lives in Contacts → Customers. */
 export function CustomersPage() {
   const location = useLocation();
   const params = new URLSearchParams(location.search);

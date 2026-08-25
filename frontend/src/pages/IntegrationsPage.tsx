@@ -1282,7 +1282,7 @@ export function IntegrationsPage() {
             <h2 className="text-sm font-semibold">WhatsApp Business</h2>
             <p className="text-xs text-muted-foreground">
               Connect a business number so employees can submit expense receipts via WhatsApp.
-              Identity is matched by phone number in Creations → Employees.
+              Identity is matched by phone number in Contacts → Employees.
             </p>
           </div>
           <MessageCircle className="h-5 w-5 text-muted-foreground" />
@@ -1440,7 +1440,7 @@ export function IntegrationsPage() {
             <h2 className="text-sm font-semibold">Viber</h2>
             <p className="text-xs text-muted-foreground">
               Connect your Viber Public Account bot so employees can submit expense receipts via
-              Viber. Identity is matched by Viber user ID or phone in Creations → Employees.
+              Viber. Identity is matched by Viber user ID or phone in Contacts → Employees.
             </p>
           </div>
           <MessageCircle className="h-5 w-5 text-muted-foreground" />

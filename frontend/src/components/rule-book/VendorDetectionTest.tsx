@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, FlaskConical } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/cn";
+import { BUSINESS_REGISTRATION_NUMBER_LABEL } from "@/lib/format";
 import { detectVendorFromSample } from "@/lib/v4RuleBookLogic";
 import type { VendorDetectionConfig, VendorMaster } from "@/lib/v4RuleBookTypes";
 import { ConfidenceBar } from "./ConfidenceBar";
@@ -66,7 +67,7 @@ export function VendorDetectionTest({
                 className="h-8 text-xs"
               />
             </FieldLabel>
-            <FieldLabel label="ABN">
+            <FieldLabel label={BUSINESS_REGISTRATION_NUMBER_LABEL}>
               <Input
                 value={sample.abn}
                 onChange={(e) => setSample({ ...sample, abn: e.target.value })}

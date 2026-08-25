@@ -33,6 +33,7 @@ _EXTRACTION_FIELD_HINTS: tuple[tuple[str, str], ...] = (
     ("vendor", "vendor"),
     ("abn", "abn"),
     ("tax id", "abn"),
+    ("business registration", "abn"),
     ("line item", "line_items"),
     ("subtotal", "subtotal"),
     ("total", "total"),

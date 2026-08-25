@@ -4,6 +4,7 @@ import { Select, toSelectOptions } from "@/components/ui/select";
 import { useCoaAccountOptions } from "@/hooks/useCoaAccountOptions";
 import { mergeCoaOptionsWithSavedValue } from "@/lib/coaAccountOptions";
 import type { CustomerMaster } from "@/lib/v4RuleBookTypes";
+import { BUSINESS_REGISTRATION_NUMBER_LABEL } from "@/lib/format";
 import { FieldLabel } from "./FieldLabel";
 import {
   reconcileSubLedgerOnLedgerChange,
@@ -57,7 +58,7 @@ export function CustomerDetailPanel({
             className="h-8 text-xs"
           />
         </FieldLabel>
-        <FieldLabel label="ABN / Tax ID">
+        <FieldLabel label={BUSINESS_REGISTRATION_NUMBER_LABEL}>
           <Input
             value={customer.abn}
             onChange={(e) => onChange({ abn: e.target.value })}

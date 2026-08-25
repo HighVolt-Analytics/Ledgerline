@@ -50,7 +50,7 @@ export function Slider({
   return (
     <div
       className={cn(
-        "relative flex w-full touch-none select-none items-center",
+        "relative flex h-4 w-full touch-none select-none items-center",
         disabled && "pointer-events-none opacity-50",
         className
       )}
@@ -58,7 +58,7 @@ export function Slider({
     >
       <div
         ref={trackRef}
-        className="relative h-2 w-full grow overflow-hidden rounded-full bg-secondary"
+        className="app-slider-track relative h-px w-full grow rounded-full"
         onPointerDown={(e) => {
           if (disabled) return;
           e.currentTarget.setPointerCapture(e.pointerId);
@@ -74,7 +74,7 @@ export function Slider({
           }
         }}
       >
-        <div className="absolute h-full bg-primary" style={{ width: `${pct}%` }} />
+        <div className="app-slider-track-fill absolute h-full rounded-full" style={{ width: `${pct}%` }} />
       </div>
       <input
         id={inputId}
@@ -91,8 +91,8 @@ export function Slider({
         className="app-slider-input peer absolute inset-0 z-10 h-full w-full cursor-pointer"
       />
       <div
-        className="pointer-events-none absolute top-1/2 z-0 h-5 w-5 -translate-y-1/2 rounded-full border-2 border-primary bg-background shadow-sm transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-background"
-        style={{ left: `calc(${pct}% - 10px)` }}
+        className="app-slider-thumb pointer-events-none absolute top-1/2 z-0 h-2.5 w-2.5 -translate-y-1/2 rounded-full transition-colors peer-focus-visible:ring-1 peer-focus-visible:ring-ring/60"
+        style={{ left: `calc(${pct}% - 5px)` }}
       />
     </div>
   );

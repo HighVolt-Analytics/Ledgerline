@@ -15,7 +15,6 @@ import {
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/context/ToastContext";
@@ -32,32 +31,42 @@ import {
 } from "@/hooks/useMasterData";
 import { cn } from "@/lib/cn";
 import { fmtAud } from "@/lib/v4MockData";
-import { normalizeCurrencyCode } from "@/lib/format";
+import { BUSINESS_REGISTRATION_NUMBER_LABEL, normalizeCurrencyCode } from "@/lib/format";
 import { useInstitutionSettings } from "@/hooks/useInstitutionSettings";
+import type { PendingVendorRecord } from "@/lib/masterDataApi";
 import type { VendorDetectionConfig, VendorMaster } from "@/lib/v4RuleBookTypes";
-import { FieldLabel } from "./FieldLabel";
+import { PageTabPanel, PageTabs } from "@/components/PageTabs";
 import { AccountBadge } from "./AccountBadge";
 import { ConfidenceBar } from "./ConfidenceBar";
 import { VendorDetailPanel } from "./VendorDetailPanel";
 import { VendorDetectionTest } from "./VendorDetectionTest";
+import {
+  VendorRegistrationDialog,
+  vendorDraftFromPending,
+} from "./VendorRegistrationDialog";
+
+const VENDOR_SECTIONS = [
+  { value: "pending", label: "Pending", testid: "tab-vendors-pending" },
+  { value: "list", label: "Vendor list", testid: "tab-vendors-list" },
+] as const;
+
+type VendorSection = (typeof VENDOR_SECTIONS)[number]["value"];
+
+type VendorRegistrationState =
+  | { kind: "pending"; pendingId: number; draft: VendorMaster; sourceInvoiceId?: number }
+  | { kind: "vendor"; vendorId: string; draft: VendorMaster };
 
 function maskAccount(num: string) {
   if (!num) return "—";
   return num.length <= 4 ? num : `•••• ${num.slice(-4)}`;
 }
 
-function formatBankSummary(vendor: VendorMaster, showBank: boolean) {
+function formatAccountNumber(vendor: VendorMaster, showBank: boolean) {
   if (!vendor.bank.accountNumber) {
     return <span className="text-muted-foreground">—</span>;
   }
-  const bsb = vendor.bank.bsb ? `${vendor.bank.bsb} · ` : "";
   const account = showBank ? vendor.bank.accountNumber : maskAccount(vendor.bank.accountNumber);
-  return (
-    <span className="font-mono text-xs whitespace-nowrap">
-      {bsb}
-      {account}
-    </span>
-  );
+  return <span className="font-mono text-xs whitespace-nowrap">{account}</span>;
 }
 
 function normalizeAbn(value: string): string {
@@ -93,13 +102,14 @@ export function VendorsTab({
   const { data: institution } = useInstitutionSettings();
   const booksCurrency = normalizeCurrencyCode(institution?.currency) ?? "";
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [pinToTopId, setPinToTopId] = useState<string | null>(null);
   const [bankMasked, setBankMasked] = useState(true);
   const [focusBankId, setFocusBankId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, VendorMaster>>({});
   const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set());
-  const [quickName, setQuickName] = useState("");
-  const [quickAbn, setQuickAbn] = useState("");
   const [linkMasterByPendingId, setLinkMasterByPendingId] = useState<Record<number, string>>({});
+  const [section, setSection] = useState<VendorSection>("pending");
+  const [registration, setRegistration] = useState<VendorRegistrationState | null>(null);
 
   const { data: vendors = [], isLoading } = useVendorMasters();
   const { data: pendingQueue = [] } = usePendingVendors();
@@ -140,15 +150,23 @@ export function VendorsTab({
   const listSearch = initialSearchQuery?.trim().toLowerCase() ?? "";
 
   const visibleVendors = useMemo(() => {
-    if (!listSearch) return activeVendors;
-    return activeVendors.filter((vendor) => {
-      const haystack = [vendor.name, vendor.abn, ...vendor.aliases]
+    const matchesSearch = (vendor: VendorMaster) => {
+      if (!listSearch) return true;
+      const haystack = [vendor.name, vendor.abn, vendor.contactPhone, ...vendor.aliases]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
       return haystack.includes(listSearch);
-    });
-  }, [activeVendors, listSearch]);
+    };
+
+    const rows = activeVendors.filter((vendor) => vendor.id === pinToTopId || matchesSearch(vendor));
+    if (!pinToTopId) return rows;
+    const idx = rows.findIndex((vendor) => vendor.id === pinToTopId);
+    if (idx > 0) return [rows[idx]!, ...rows.slice(0, idx), ...rows.slice(idx + 1)];
+    if (idx === 0) return rows;
+    const pinned = vendors.find((vendor) => vendor.id === pinToTopId);
+    return pinned ? [pinned, ...rows] : rows;
+  }, [activeVendors, listSearch, pinToTopId, vendors]);
 
   useEffect(() => {
     if (!listSearch || visibleVendors.length === 0) return;
@@ -216,19 +234,15 @@ export function VendorsTab({
     clearDraft(id);
     setExpandedId(null);
     setFocusBankId(null);
+    if (pinToTopId === id) setPinToTopId(null);
   };
 
-  const quickAddVendor = () => {
-    const name = quickName.trim();
-    if (!name) {
-      toast({ title: "Enter a vendor name", variant: "destructive" });
-      return;
-    }
+  const addVendor = () => {
     createMutation.mutate(
       {
-        name,
+        name: "New vendor",
         aliases: [],
-        abn: normalizeAbn(quickAbn),
+        abn: "",
         billingAddress: { street: "", suburb: "", postcode: "", country: "" },
         bank: { accountNumber: "", accountName: "", bankName: "" },
         defaultLedger: "Marketing Expense",
@@ -236,12 +250,13 @@ export function VendorsTab({
       },
       {
         onSuccess: (created) => {
-          setQuickName("");
-          setQuickAbn("");
-          openVendor(created.id);
+          setSection("list");
+          setPinToTopId(created.id);
+          setDrafts((prev) => ({ ...prev, [created.id]: created }));
+          setExpandedId(created.id);
           toast({
             title: "Vendor created",
-            description: "Add bank details if needed, then click Save vendor.",
+            description: "Edit details, then click Save vendor.",
           });
         },
         onError: (err) =>
@@ -252,11 +267,6 @@ export function VendorsTab({
           }),
       }
     );
-  };
-
-  const addVendor = () => {
-    setQuickName("New vendor");
-    setQuickAbn("");
   };
 
   const completePendingRegistration = (
@@ -273,6 +283,8 @@ export function VendorsTab({
       },
       {
         onSuccess: (vendor) => {
+          setSection("list");
+          setPinToTopId(vendor.id);
           openVendor(vendor.id, true);
           setLinkMasterByPendingId((prev) => {
             const next = { ...prev };
@@ -296,6 +308,100 @@ export function VendorsTab({
     );
   };
 
+  const openPendingRegistration = (item: PendingVendorRecord) => {
+    setRegistration({
+      kind: "pending",
+      pendingId: item.id,
+      draft: vendorDraftFromPending(item),
+      sourceInvoiceId: item.sourceInvoiceId,
+    });
+  };
+
+  const openVendorRegistration = (vendor: VendorMaster) => {
+    const draft = getDraft(vendor);
+    setRegistration({
+      kind: "vendor",
+      vendorId: vendor.id,
+      draft:
+        draft.status === "Pending registration"
+          ? { ...draft, status: "Active" }
+          : draft,
+    });
+  };
+
+  const saveRegistration = (draft: VendorMaster) => {
+    const name = draft.name.trim();
+    if (!name) {
+      toast({
+        title: "Vendor name is required",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!registration) return;
+    const patch = { ...draft, name, abn: normalizeAbn(draft.abn) };
+
+    if (registration.kind === "pending") {
+      createMutation.mutate(
+        { ...patch, id: "" },
+        {
+          onSuccess: (created) => {
+            promoteMutation.mutate(
+              {
+                pendingId: registration.pendingId,
+                body: { masterId: created.id, name: created.name },
+              },
+              {
+                onSuccess: () => {
+                  setRegistration(null);
+                  setLinkMasterByPendingId((prev) => {
+                    const next = { ...prev };
+                    delete next[registration.pendingId];
+                    return next;
+                  });
+                  toast({
+                    title: "Vendor registered",
+                    description: created.name,
+                  });
+                },
+                onError: (err) =>
+                  toast({
+                    title: "Could not register vendor",
+                    description: err instanceof Error ? err.message : "Registration failed",
+                    variant: "destructive",
+                  }),
+              }
+            );
+          },
+          onError: (err) =>
+            toast({
+              title: "Could not create vendor",
+              description: err instanceof Error ? err.message : "Create failed",
+              variant: "destructive",
+            }),
+        }
+      );
+      return;
+    }
+
+    updateMutation.mutate(
+      { id: registration.vendorId, patch },
+      {
+        onSuccess: () => {
+          clearDraft(registration.vendorId);
+          setRegistration(null);
+          toast({ title: "Vendor saved" });
+        },
+        onError: (err) =>
+          toast({
+            title: "Could not save vendor",
+            description: err instanceof Error ? err.message : "Save failed",
+            variant: "destructive",
+          }),
+      }
+    );
+  };
+
   const removeVendor = (vendor: VendorMaster) => {
     if (
       !window.confirm(
@@ -308,6 +414,7 @@ export function VendorsTab({
       onSuccess: () => {
         clearDraft(vendor.id);
         if (expandedId === vendor.id) setExpandedId(null);
+        if (pinToTopId === vendor.id) setPinToTopId(null);
         toast({ title: "Vendor removed" });
       },
       onError: (err) =>
@@ -337,93 +444,19 @@ export function VendorsTab({
 
   return (
     <div className="space-y-4">
-      <Card className="p-3 text-sm text-muted-foreground">
-        <strong>Vendor masters</strong> drive detection, VR12 registration holds, and GL defaults.
-        For email routing and payout methods, use the standalone{" "}
-        <strong>Vendors</strong> page (capture registry).
-      </Card>
-      <p className="text-sm text-muted-foreground max-w-2xl">
-        Auto-detect known vendors from inbound documents using four weighted signals. Unknown vendors
-        are flagged for registration. Bank details power the Payments module.
-      </p>
+      <PageTabs
+        value={section}
+        onChange={(value) => setSection(value as VendorSection)}
+        data-testid="vendors-section-tabs"
+        tabs={VENDOR_SECTIONS.map((row) => ({
+          value: row.value,
+          label: row.label,
+          testid: row.testid,
+          secondary: true,
+        }))}
+      />
 
-      <Card className="p-4">
-        <div className="flex items-center gap-2 mb-3">
-          <Settings className="h-4 w-4 text-primary" />
-          <h3 className="text-sm font-semibold">Detection configuration</h3>
-        </div>
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {(["name", "abn", "bank", "address"] as const).map((key) => (
-            <div key={key}>
-              <div className="flex items-center justify-between text-xs mb-1.5">
-                <span className="font-medium capitalize">{key} weight</span>
-                <span className="tnum text-muted-foreground">{detection.weights[key]}</span>
-              </div>
-              <Slider
-                value={detection.weights[key]}
-                min={0}
-                max={100}
-                step={5}
-                onValueChange={(next) =>
-                  onDetectionChange({
-                    ...detection,
-                    weights: { ...detection.weights, [key]: next },
-                  })
-                }
-                data-testid={`weight-${key}`}
-              />
-            </div>
-          ))}
-        </div>
-        <div className="flex flex-wrap items-center gap-4 mt-4 pt-3 border-t border-border">
-          <div className="flex-1 min-w-[200px]">
-            <div className="flex items-center justify-between text-xs mb-1.5">
-              <span className="font-medium">Auto-match threshold</span>
-              <span className="tnum text-muted-foreground">{detection.threshold}%</span>
-            </div>
-            <Slider
-              value={detection.threshold}
-              min={0}
-              max={100}
-              step={5}
-              onValueChange={(next) =>
-                onDetectionChange({ ...detection, threshold: next })
-              }
-              data-testid="threshold-slider"
-            />
-          </div>
-          <div className="text-xs">
-            <span className="text-muted-foreground">Weights sum: </span>
-            <span
-              className={cn(
-                "tnum font-semibold",
-                weightSum === 100 ? "text-[hsl(var(--chart-1))]" : "text-destructive"
-              )}
-            >
-              {weightSum}
-            </span>
-            {weightSum !== 100 && (
-              <span className="text-destructive ml-1">(must equal 100)</span>
-            )}
-          </div>
-          <Button
-            size="sm"
-            data-testid="save-detection-config"
-            onClick={() =>
-              toast({
-                title: "Detection config saved",
-                description:
-                  weightSum === 100
-                    ? "Weights and threshold updated."
-                    : "Warning: weights do not sum to 100.",
-              })
-            }
-          >
-            Save
-          </Button>
-        </div>
-      </Card>
-
+      <PageTabPanel value="list" active={section} className="mt-0">
       <Card className="p-0 overflow-hidden">
         <div className="flex items-center justify-between gap-2 p-3 border-b border-border flex-wrap">
           <h3 className="text-sm font-semibold">Vendor master ({vendors.length})</h3>
@@ -438,77 +471,45 @@ export function VendorsTab({
             </button>
             <Button
               size="sm"
-              variant="outline"
               onClick={addVendor}
               disabled={createMutation.isPending}
-              data-testid="button-new-vendor"
+              data-testid="button-add-vendor"
             >
-              <Plus className="h-4 w-4 mr-1" /> New Vendor
+              {createMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <>
+                  <Plus className="h-4 w-4 mr-1" /> Add vendor
+                </>
+              )}
             </Button>
           </div>
-        </div>
-        <div className="flex flex-wrap items-end gap-2 p-3 border-b border-border bg-muted/10">
-          <div className="min-w-[200px] flex-1">
-            <FieldLabel label="Quick add — name">
-              <Input
-                value={quickName}
-                onChange={(e) => setQuickName(e.target.value)}
-                placeholder="Sysco Foods Australia Pty Ltd"
-                className="h-8 text-sm"
-                data-testid="quick-vendor-name"
-              />
-            </FieldLabel>
-          </div>
-          <div className="min-w-[160px]">
-            <FieldLabel label="ABN">
-              <Input
-                value={quickAbn}
-                onChange={(e) => setQuickAbn(e.target.value)}
-                placeholder="51824753556"
-                className="h-8 text-xs font-mono"
-                data-testid="quick-vendor-abn"
-              />
-            </FieldLabel>
-          </div>
-          <Button
-            size="sm"
-            onClick={quickAddVendor}
-            disabled={createMutation.isPending || !quickName.trim()}
-            data-testid="button-quick-add-vendor"
-          >
-            {createMutation.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <>
-                <Plus className="h-4 w-4 mr-1" /> Add vendor
-              </>
-            )}
-          </Button>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="text-xs text-muted-foreground border-b border-border text-left">
                 <th className="px-3 py-2 font-medium">Vendor</th>
-                <th className="px-3 py-2 font-medium">Status</th>
-                <th className="px-3 py-2 font-medium">Bank</th>
+                <th className="px-3 py-2 font-medium">Phone</th>
+                <th className="px-3 py-2 font-medium">Bank account number</th>
                 <th className="px-3 py-2 font-medium">Default ledger</th>
+                <th className="px-3 py-2 font-medium">Status</th>
                 <th className="px-3 py-2 font-medium text-right">YTD spend</th>
                 <th className="px-3 py-2 font-medium text-right">Inv</th>
-                <th className="px-3 py-2 font-medium">Last match</th>
+                <th className="px-3 py-2 font-medium text-left">Last match</th>
               </tr>
             </thead>
             <tbody>
               {visibleVendors.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                  <td colSpan={8} className="px-3 py-8 text-center text-sm text-muted-foreground">
                     {listSearch
                       ? `No vendors match “${initialSearchQuery?.trim()}”.`
                       : (
                         <>
-                          No vendors yet. Click <span className="font-medium text-foreground">New Vendor</span>{" "}
-                          to register one before sending invoices, or complete registration from the queue
-                          below when a document is held.
+                          No vendors yet. Click <span className="font-medium text-foreground">Add vendor</span>{" "}
+                          to register one before sending invoices, or complete registration from Pending
+                          when a document is held.
                         </>
                       )}
                   </td>
@@ -545,13 +546,15 @@ export function VendorsTab({
                           </span>
                         </div>
                         <span className="text-[11px] text-muted-foreground font-mono ml-5">
-                          ABN {v.abn}
+                          {BUSINESS_REGISTRATION_NUMBER_LABEL} {v.abn}
                         </span>
                       </td>
-                      <td className="px-3 py-2">
-                        <StatusDot status={v.status} />
+                      <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">
+                        {(dirty ? draft.contactPhone : v.contactPhone) || (
+                          <span className="text-muted-foreground">—</span>
+                        )}
                       </td>
-                      <td className="px-3 py-2">{formatBankSummary(v, !bankMasked)}</td>
+                      <td className="px-3 py-2">{formatAccountNumber(dirty ? draft : v, !bankMasked)}</td>
                       <td className="px-3 py-2">
                         {v.defaultLedger === "—" ? (
                           <span className="text-muted-foreground">—</span>
@@ -559,15 +562,18 @@ export function VendorsTab({
                           <AccountBadge account={v.defaultLedger} />
                         )}
                       </td>
+                      <td className="px-3 py-2">
+                        <StatusDot status={dirty ? draft.status : v.status} />
+                      </td>
                       <td className="px-3 py-2 text-right tnum">{fmtAud(v.totalSpendYTD, booksCurrency)}</td>
                       <td className="px-3 py-2 text-right tnum">{v.invoiceCount}</td>
-                      <td className="px-3 py-2">
+                      <td className="px-3 py-2 text-left">
                         <ConfidenceBar value={v.matchConfidence ?? 0} />
                       </td>
                     </tr>
                     {open && (
                       <tr>
-                        <td colSpan={7} className="p-0 border-b border-border">
+                        <td colSpan={8} className="p-0 border-b border-border">
                           <VendorDetailPanel
                             vendor={draft}
                             onChange={(patch) => patchDraft(v.id, patch)}
@@ -647,14 +653,16 @@ export function VendorsTab({
           </table>
         </div>
       </Card>
+      </PageTabPanel>
 
+      <PageTabPanel value="pending" active={section} className="mt-0 space-y-4">
       <Card
         className="p-4 border-destructive/30 bg-destructive/5"
         data-testid="pending-vendor-queue"
       >
         <div className="flex items-center gap-2 mb-3">
           <AlertCircle className="h-4 w-4 text-destructive" />
-          <h3 className="text-sm font-semibold">Pending vendor registration queue</h3>
+          <h3 className="text-sm font-semibold">Pending registration queue</h3>
         </div>
         {pendingQueue.length === 0 && registrationPending.length === 0 ? (
           <p className="text-xs text-muted-foreground">No vendors pending registration.</p>
@@ -669,7 +677,7 @@ export function VendorsTab({
                   <div className="text-sm font-medium">{item.detectedName}</div>
                   <div className="text-xs text-muted-foreground">
                     Detected on invoice · match confidence {item.confidence}% (below threshold)
-                    {item.detectedAbn ? ` · ABN ${item.detectedAbn}` : ""}
+                    {item.detectedAbn ? ` · ${BUSINESS_REGISTRATION_NUMBER_LABEL} ${item.detectedAbn}` : ""}
                     {item.sourceInvoiceId ? (
                       <>
                         {" · "}
@@ -719,8 +727,8 @@ export function VendorsTab({
                   ) : null}
                   <Button
                     size="sm"
-                    disabled={promoteMutation.isPending}
-                    onClick={() => completePendingRegistration(item.id, item.detectedName)}
+                    disabled={promoteMutation.isPending || createMutation.isPending}
+                    onClick={() => openPendingRegistration(item)}
                     data-testid={`complete-registration-pending-${item.id}`}
                   >
                     <ClipboardCheck className="h-4 w-4 mr-1" />
@@ -758,7 +766,7 @@ export function VendorsTab({
                   ) : null}
                   <Button
                     size="sm"
-                    onClick={() => openVendor(v.id, true)}
+                    onClick={() => openVendorRegistration(v)}
                     data-testid={`complete-registration-${v.id}`}
                   >
                     <ClipboardCheck className="h-4 w-4 mr-1" />
@@ -781,7 +789,98 @@ export function VendorsTab({
         )}
       </Card>
 
+      <Card className="p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <Settings className="h-4 w-4 text-primary" />
+          <h3 className="text-sm font-semibold">Detection configuration</h3>
+        </div>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {(["name", "abn", "bank", "address"] as const).map((key) => (
+            <div key={key}>
+              <div className="flex items-center justify-between text-xs mb-1.5">
+                <span className={key === "abn" ? "font-medium" : "font-medium capitalize"}>
+                  {key === "abn" ? BUSINESS_REGISTRATION_NUMBER_LABEL : key} weight
+                </span>
+                <span className="tnum text-muted-foreground">{detection.weights[key]}</span>
+              </div>
+              <Slider
+                value={detection.weights[key]}
+                min={0}
+                max={100}
+                step={5}
+                onValueChange={(next) =>
+                  onDetectionChange({
+                    ...detection,
+                    weights: { ...detection.weights, [key]: next },
+                  })
+                }
+                data-testid={`weight-${key}`}
+              />
+            </div>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-4 mt-4 pt-3 border-t border-border">
+          <div className="flex-1 min-w-[200px]">
+            <div className="flex items-center justify-between text-xs mb-1.5">
+              <span className="font-medium">Auto-match threshold</span>
+              <span className="tnum text-muted-foreground">{detection.threshold}%</span>
+            </div>
+            <Slider
+              value={detection.threshold}
+              min={0}
+              max={100}
+              step={5}
+              onValueChange={(next) =>
+                onDetectionChange({ ...detection, threshold: next })
+              }
+              data-testid="threshold-slider"
+            />
+          </div>
+          <div className="text-xs">
+            <span className="text-muted-foreground">Weights sum: </span>
+            <span
+              className={cn(
+                "tnum font-semibold",
+                weightSum === 100 ? "text-[hsl(var(--chart-1))]" : "text-destructive"
+              )}
+            >
+              {weightSum}
+            </span>
+            {weightSum !== 100 && (
+              <span className="text-destructive ml-1">(must equal 100)</span>
+            )}
+          </div>
+          <Button
+            size="sm"
+            data-testid="save-detection-config"
+            onClick={() =>
+              toast({
+                title: "Detection config saved",
+                description:
+                  weightSum === 100
+                    ? "Weights and threshold updated."
+                    : "Warning: weights do not sum to 100.",
+              })
+            }
+          >
+            Save
+          </Button>
+        </div>
+      </Card>
+
       <VendorDetectionTest vendors={vendors} config={detection} />
+      </PageTabPanel>
+
+      <VendorRegistrationDialog
+        open={registration != null}
+        initialVendor={registration?.draft ?? null}
+        sourceInvoiceId={registration?.kind === "pending" ? registration.sourceInvoiceId : undefined}
+        onClose={() => setRegistration(null)}
+        onSave={saveRegistration}
+        saving={
+          createMutation.isPending || promoteMutation.isPending || updateMutation.isPending
+        }
+      />
     </div>
   );
 }

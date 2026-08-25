@@ -1698,6 +1698,15 @@
   padding-top: 1rem;
 }
 
+.contacts-page > .page-top-sticky .page-header {
+  padding-bottom: 6px;
+  border-bottom: none;
+}
+
+.contacts-page > .page-top-sticky .page-top-sticky__below {
+  padding-top: 0.4rem;
+}
+
 .page-header:has(.page-header__headline-tabs) {
   border-bottom: none;
   padding-bottom: 0;

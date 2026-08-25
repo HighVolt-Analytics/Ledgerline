@@ -182,7 +182,7 @@ function VendorForm({
           onChange={(v) => set("contact_email", v)}
         />
         <Field label="Aliases (comma-separated)" value={aliasesText} onChange={onAliasesChange} />
-        <Field label="ABN / Tax ID" value={fields.abn ?? ""} onChange={(v) => set("abn", v)} />
+        <Field label="Business registration number" value={fields.abn ?? ""} onChange={(v) => set("abn", v)} />
         <Field
           label="Payment terms"
           value={fields.payment_terms ?? ""}

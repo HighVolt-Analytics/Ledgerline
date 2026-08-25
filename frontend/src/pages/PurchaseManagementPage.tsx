@@ -33,7 +33,7 @@ function purchaseRowKey(purchaseId: number, invoiceId: number | null) {
   return `${purchaseId}-${invoiceId ?? "none"}`;
 }
 
-export function PurchaseManagementPage() {
+export function PurchaseManagementPage({ embedded = false }: { embedded?: boolean }) {
   const [registerTab, setRegisterTab] = useState<PurchaseRegisterTab>("register");
   const {
     data: purchaseRows = [],
@@ -134,10 +134,12 @@ export function PurchaseManagementPage() {
         </div>
       )}
 
-      <PageHeader
-        title="Purchase Management"
-        subtitle="PO → GRN → Invoice matching (3-way or 2-way per playbook). Variances are routed for tiered approval before payment."
-      />
+      {embedded ? null : (
+        <PageHeader
+          title="Purchase Management"
+          subtitle="PO → GRN → Invoice matching (3-way or 2-way per playbook). Variances are routed for tiered approval before payment."
+        />
+      )}
 
       <PurchaseCaptureStrip activeRuleCount={activeRuleCount} enabled={!purchasesLoading} />
 

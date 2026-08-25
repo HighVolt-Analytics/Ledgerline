@@ -45,7 +45,7 @@ function initials(name: string) {
     .toUpperCase();
 }
 
-export function TeamExpensesPage() {
+export function TeamExpensesPage({ embedded = false }: { embedded?: boolean }) {
   const { data: routed = [], isLoading, refetch } = useRoutedInvoices(
     ROUTE_TARGET,
     true,
@@ -213,10 +213,12 @@ export function TeamExpensesPage() {
         </div>
       )}
 
-      <PageHeader
-        title="Team Expenses"
-        subtitle="Employee claims captured from messaging channels, approved against GL account budgets, posted to the ledger."
-      />
+      {embedded ? null : (
+        <PageHeader
+          title="Team Expenses"
+          subtitle="Employee claims captured from messaging channels, approved against GL account budgets, posted to the ledger."
+        />
+      )}
 
       <div
         className="mb-4 inline-flex flex-wrap gap-1 rounded-lg border border-border bg-card p-1"

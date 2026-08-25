@@ -5,6 +5,7 @@ import { useCoaAccountOptions } from "@/hooks/useCoaAccountOptions";
 import { cn } from "@/lib/cn";
 import { mergeCoaOptionsWithSavedValue } from "@/lib/coaAccountOptions";
 import type { VendorMaster } from "@/lib/v4RuleBookTypes";
+import { BUSINESS_REGISTRATION_NUMBER_LABEL } from "@/lib/format";
 import { BankDetailsSection } from "./BankDetailsSection";
 import { FieldLabel } from "./FieldLabel";
 import {
@@ -32,12 +33,16 @@ export function VendorDetailPanel({
   masked,
   onToggleMask,
   focusBank,
+  showConfirmation = true,
+  className,
 }: {
   vendor: VendorMaster;
   onChange: (patch: Partial<VendorMaster>) => void;
   masked: boolean;
   onToggleMask?: () => void;
   focusBank?: boolean;
+  showConfirmation?: boolean;
+  className?: string;
 }) {
   const {
     allAccounts,
@@ -50,13 +55,15 @@ export function VendorDetailPanel({
 
   return (
     <div
-      className={cn("bg-muted/20 p-4 space-y-4", focusBank && "ring-1 ring-primary/30")}
+      className={cn("bg-muted/20 p-4 space-y-4", focusBank && "ring-1 ring-primary/30", className)}
       data-testid={`vendor-detail-${vendor.id}`}
     >
-      <p className="text-[11px] text-muted-foreground">
-        Confirmation email last sent {formatConfirmationStamp(vendor.confirmationSentAt)} ·
-        confirmed {formatConfirmationStamp(vendor.confirmedAt)}
-      </p>
+      {showConfirmation ? (
+        <p className="text-[11px] text-muted-foreground">
+          Confirmation email last sent {formatConfirmationStamp(vendor.confirmationSentAt)} ·
+          confirmed {formatConfirmationStamp(vendor.confirmedAt)}
+        </p>
+      ) : null}
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
         <FieldLabel label="Name">
           <Input
@@ -70,6 +77,14 @@ export function VendorDetailPanel({
             value={vendor.contactEmail}
             onChange={(e) => onChange({ contactEmail: e.target.value })}
             placeholder="accounts@vendor.com"
+            className="h-8 text-xs font-mono"
+          />
+        </FieldLabel>
+        <FieldLabel label="Phone">
+          <Input
+            value={vendor.contactPhone}
+            onChange={(e) => onChange({ contactPhone: e.target.value })}
+            placeholder="+61 2 0000 0000"
             className="h-8 text-xs font-mono"
           />
         </FieldLabel>
@@ -87,7 +102,7 @@ export function VendorDetailPanel({
             className="h-8 text-xs"
           />
         </FieldLabel>
-        <FieldLabel label="ABN / Tax ID">
+        <FieldLabel label={BUSINESS_REGISTRATION_NUMBER_LABEL}>
           <Input
             value={vendor.abn}
             onChange={(e) => onChange({ abn: e.target.value })}

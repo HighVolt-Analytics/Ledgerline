@@ -32,6 +32,7 @@ class VendorMasterCreate(BaseModel):
     invoice_count: int = Field(default=0, ge=0)
     match_confidence: float = Field(default=0, ge=0, le=100)
     contact_email: str = ""
+    contact_phone: str = ""
 
 
 class VendorMasterUpdate(BaseModel):
@@ -49,6 +50,7 @@ class VendorMasterUpdate(BaseModel):
     invoice_count: int | None = Field(None, ge=0)
     match_confidence: float | None = Field(None, ge=0, le=100)
     contact_email: str | None = None
+    contact_phone: str | None = None
 
 
 class VendorMasterResponse(VendorMaster):

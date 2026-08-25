@@ -36,6 +36,7 @@ class VendorMasterRecord(Base):
     invoice_count: Mapped[int] = mapped_column(Integer, default=0)
     match_confidence: Mapped[float] = mapped_column(Float, default=0)
     contact_email: Mapped[str] = mapped_column(String(255), default="")
+    contact_phone: Mapped[str] = mapped_column(String(64), default="")
     confirmation_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(

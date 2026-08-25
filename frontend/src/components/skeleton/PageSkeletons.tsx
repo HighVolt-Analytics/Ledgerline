@@ -685,21 +685,16 @@ export function CreationsVendorsTabSkeleton() {
 export function CreationsEmployeesTabSkeleton() {
   return (
     <div className="space-y-4" data-testid="employees-tab-skeleton" aria-busy aria-label="Loading employees">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Skeleton className="h-4 w-full max-w-2xl" />
-        <div className="flex gap-2">
-          <Skeleton pill className="h-8 w-24" />
-          <Skeleton pill className="h-8 w-32" />
-        </div>
+      <div className="flex gap-3">
+        <Skeleton className="h-8 w-36" />
+        <Skeleton className="h-8 w-32" />
+      </div>
+      <div className="flex justify-end gap-2">
+        <Skeleton pill className="h-8 w-24" />
+        <Skeleton pill className="h-8 w-32" />
       </div>
       <Card className="overflow-hidden p-0">
-        <InlineTableSkeleton rows={6} columns={6} />
-      </Card>
-      <Card className="overflow-hidden p-0">
-        <div className="border-b border-border/60 p-3">
-          <Skeleton className="h-4 w-44" />
-        </div>
-        <InlineTableSkeleton rows={4} columns={4} />
+        <InlineTableSkeleton rows={6} columns={8} />
       </Card>
     </div>
   );

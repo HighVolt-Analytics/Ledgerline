@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Copy, X } from "lucide-react";
 import type { MailboxConnectionRequestAction } from "@/api/types";
 import { Button } from "@/components/ui/button";
@@ -12,12 +12,14 @@ type ConnectMailboxDialogProps = {
     display_name?: string;
     message?: string;
   }) => Promise<MailboxConnectionRequestAction>;
+  ingestion?: ReactNode;
 };
 
 export function ConnectMailboxDialog({
   open,
   onClose,
   onSendInvite,
+  ingestion,
 }: ConnectMailboxDialogProps) {
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -42,11 +44,16 @@ export function ConnectMailboxDialog({
 
   useEffect(() => {
     if (!open) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener("keydown", onKey);
+    };
   }, [open, onClose]);
 
   if (!open) return null;
@@ -81,7 +88,7 @@ export function ConnectMailboxDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="connect-mailbox-dialog-root">
       <button
         type="button"
         className="absolute inset-0 bg-black/80"
@@ -92,10 +99,10 @@ export function ConnectMailboxDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="connect-mailbox-title"
-        className="relative z-10 w-full max-w-md rounded-lg border border-border bg-background p-6 shadow-lg"
+        className="connect-mailbox-dialog"
         data-testid="dialog-connect-mailbox"
       >
-        <div className="flex items-start justify-between gap-4 mb-4">
+        <div className="flex shrink-0 items-center justify-between gap-4 px-5 pt-5 pb-3">
           <h2 id="connect-mailbox-title" className="text-lg font-semibold leading-none">
             Add mailbox
           </h2>
@@ -109,94 +116,103 @@ export function ConnectMailboxDialog({
           </button>
         </div>
 
-        {sent ? (
-          <div className="space-y-4 py-2 text-sm">
-            {inviteResult?.email_sent ? (
-              <p className="text-muted-foreground">
-                Invitation sent to <span className="font-medium text-foreground">{email}</span>.
-                They will receive an email with a link to connect their mailbox.
-              </p>
-            ) : (
-              <>
+        <div className="connect-mailbox-dialog__body space-y-5">
+          {sent ? (
+            <div className="space-y-4 py-2 text-sm">
+              {inviteResult?.email_sent ? (
                 <p className="text-muted-foreground">
-                  Invitation created for{" "}
-                  <span className="font-medium text-foreground">{email}</span>.
-                  {inviteResult?.email_error
-                    ? ` Email could not be sent (${inviteResult.email_error}).`
-                    : " Email could not be sent."}{" "}
-                  Share the link below with the mailbox owner.
+                  Invitation sent to <span className="font-medium text-foreground">{email}</span>.
+                  They will receive an email with a link to connect their mailbox.
                 </p>
-                {inviteResult?.connect_url && (
-                  <div className="space-y-2">
-                    <Input
-                      readOnly
-                      value={inviteResult.connect_url}
-                      className="text-xs font-mono"
-                      data-testid="input-mailbox-invite-link"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => void copyInviteLink()}
-                    >
-                      <Copy className="h-4 w-4 mr-1" />
-                      {copyDone ? "Copied" : "Copy invite link"}
-                    </Button>
-                  </div>
-                )}
-              </>
-            )}
-            <Button type="button" onClick={onClose}>
-              Done
-            </Button>
-          </div>
-        ) : (
-          <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
-            <div>
-              <label className="text-xs font-medium text-muted-foreground">Mailbox email</label>
-              <Input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="finance@company.com"
-                className="mt-1"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground">
-                Display name (optional)
-              </label>
-              <Input
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                placeholder="Finance inbox"
-                className="mt-1"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground">
-                Message to recipient (optional)
-              </label>
-              <Input
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                placeholder="Please connect our AP mailbox for invoice capture"
-                className="mt-1"
-              />
-            </div>
-            {error && <p className="text-sm text-destructive">{error}</p>}
-            <div className="flex justify-end gap-2">
-              <Button type="button" variant="outline" onClick={onClose} disabled={busy}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={busy}>
-                {busy ? "Sending…" : "Send invitation"}
+              ) : (
+                <>
+                  <p className="text-muted-foreground">
+                    Invitation created for{" "}
+                    <span className="font-medium text-foreground">{email}</span>.
+                    {inviteResult?.email_error
+                      ? ` Email could not be sent (${inviteResult.email_error}).`
+                      : " Email could not be sent."}{" "}
+                    Share the link below with the mailbox owner.
+                  </p>
+                  {inviteResult?.connect_url && (
+                    <div className="space-y-2">
+                      <Input
+                        readOnly
+                        value={inviteResult.connect_url}
+                        className="text-xs font-mono"
+                        data-testid="input-mailbox-invite-link"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void copyInviteLink()}
+                      >
+                        <Copy className="h-4 w-4 mr-1" />
+                        {copyDone ? "Copied" : "Copy invite link"}
+                      </Button>
+                    </div>
+                  )}
+                </>
+              )}
+              <Button type="button" onClick={onClose}>
+                Done
               </Button>
             </div>
-          </form>
-        )}
+          ) : (
+            <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
+              <div className="connect-mailbox-form-grid">
+                <label className="connect-mailbox-form-field">
+                  <span>Email</span>
+                  <Input
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="finance@company.com"
+                    className="h-9"
+                  />
+                </label>
+                <label className="connect-mailbox-form-field">
+                  <span>Display name</span>
+                  <Input
+                    value={displayName}
+                    onChange={(e) => setDisplayName(e.target.value)}
+                    placeholder="Finance inbox (optional)"
+                    className="h-9"
+                  />
+                </label>
+                <label className="connect-mailbox-form-field connect-mailbox-form-grid__wide">
+                  <span>Message to recipient</span>
+                  <Input
+                    value={message}
+                    onChange={(e) => setMessage(e.target.value)}
+                    placeholder="Please connect our AP mailbox for invoice capture (optional)"
+                    className="h-9"
+                  />
+                </label>
+              </div>
+              {error && <p className="text-sm text-destructive">{error}</p>}
+              <div className="flex justify-end gap-2 pt-1">
+                <Button type="button" variant="outline" onClick={onClose} disabled={busy}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={busy}>
+                  {busy ? "Sending…" : "Send invitation"}
+                </Button>
+              </div>
+            </form>
+          )}
+
+          {ingestion ? (
+            <section
+              className="connect-mailbox-ingest"
+              data-testid="mailbox-ingestion-section"
+            >
+              {ingestion}
+            </section>
+          ) : null}
+        </div>
       </div>
     </div>
   );

@@ -229,7 +229,7 @@ export function CustomerMastersPanel() {
             <tr className="text-left text-xs text-muted-foreground border-b border-border">
               <th className="px-4 py-2 font-medium w-8" />
               <th className="px-3 py-2 font-medium">Customer</th>
-              <th className="px-3 py-2 font-medium">ABN</th>
+              <th className="px-3 py-2 font-medium">Business registration number</th>
               <th className="px-3 py-2 font-medium">Default GL</th>
               <th className="px-3 py-2 font-medium text-right">Revenue YTD</th>
               <th className="px-3 py-2 font-medium">Confidence</th>
@@ -338,7 +338,7 @@ export function CustomerMastersPanel() {
                   <div className="text-sm font-medium">{item.detectedName}</div>
                   <div className="text-xs text-muted-foreground">
                     Detected on sales document · match confidence {item.confidence}% (below threshold)
-                    {item.detectedAbn ? ` · ABN ${item.detectedAbn}` : ""}
+                    {item.detectedAbn ? ` · Business registration number ${item.detectedAbn}` : ""}
                     {item.sourceInvoiceId ? (
                       <>
                         {" · "}

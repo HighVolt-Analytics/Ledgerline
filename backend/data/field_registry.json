@@ -3,7 +3,7 @@
   "fields": [
     {
       "key": "abn",
-      "label": "Tax ID / ABN",
+      "label": "Business registration number",
       "data_type": "string",
       "category": "party_identifier",
       "posting_critical": true,
@@ -13,10 +13,11 @@
         "GST",
         "VAT",
         "Tax ID",
-        "Company Reg"
+        "Company Reg",
+        "Business registration number"
       ],
-      "extraction_hint": "ABN, GST, VAT, Tax ID, Company Reg",
-      "finance_role": "Supplier tax ID (ABN, GST, VAT of the vendor)",
+      "extraction_hint": "Business registration number, GSTIN, VAT, Tax ID, ABN, Company Reg",
+      "finance_role": "Supplier business registration number (GSTIN, VAT, ABN, etc.)",
       "do_not_confuse_with": [
         "buyer_tax_id",
         "invoice_no"
@@ -163,13 +164,13 @@
     },
     {
       "key": "buyer_abn",
-      "label": "Buyer Abn",
+      "label": "Buyer business registration number",
       "data_type": "string",
       "category": "party_identifier",
       "posting_critical": true,
       "grounding_required": true,
       "synonyms": [],
-      "extraction_hint": "Look for buyer abn in document header or labeled fields",
+      "extraction_hint": "Look for buyer business registration number in document header or labeled fields",
       "finance_role": "",
       "do_not_confuse_with": [],
       "source_priority": [
@@ -258,9 +259,9 @@
       "posting_critical": false,
       "grounding_required": true,
       "synonyms": [
-        "Buyer tax ID / ABN"
+        "Buyer business registration number"
       ],
-      "extraction_hint": "Buyer tax ID / ABN",
+      "extraction_hint": "Buyer business registration number",
       "finance_role": "",
       "do_not_confuse_with": [],
       "source_priority": [
@@ -581,13 +582,13 @@
     },
     {
       "key": "seller_abn",
-      "label": "Seller Abn",
+      "label": "Seller business registration number",
       "data_type": "string",
       "category": "party_identifier",
       "posting_critical": true,
       "grounding_required": true,
       "synonyms": [],
-      "extraction_hint": "Look for seller abn in document header or labeled fields",
+      "extraction_hint": "Look for seller business registration number in document header or labeled fields",
       "finance_role": "",
       "do_not_confuse_with": [],
       "source_priority": [
@@ -676,9 +677,9 @@
       "posting_critical": false,
       "grounding_required": true,
       "synonyms": [
-        "Seller tax ID / ABN"
+        "Seller business registration number"
       ],
-      "extraction_hint": "Seller tax ID / ABN",
+      "extraction_hint": "Seller business registration number",
       "finance_role": "",
       "do_not_confuse_with": [],
       "source_priority": [

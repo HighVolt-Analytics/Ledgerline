@@ -136,7 +136,7 @@ export function InvoiceDetailPage() {
           <dl className="grid grid-cols-2 gap-2 text-sm">
             <dt className="text-muted-foreground">{counterpartyLabel(inv)}</dt>
             <dd>{counterpartyName(inv)}</dd>
-            <dt className="text-muted-foreground">ABN</dt>
+            <dt className="text-muted-foreground">Business registration number</dt>
             <dd className="tnum">{inv.abn ?? "—"}</dd>
             <dt className="text-muted-foreground">Invoice #</dt>
             <dd>{inv.invoice_no ?? "—"}</dd>

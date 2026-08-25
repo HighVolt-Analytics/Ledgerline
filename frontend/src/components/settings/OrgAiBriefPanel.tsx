@@ -38,7 +38,7 @@ const ROLE_OPTIONS: Array<{
   {
     id: "mixed",
     label: "Both AP and AR",
-    hint: "Decide purchase vs sales from party names and ABN.",
+    hint: "Decide purchase vs sales from party names and business registration number.",
   },
 ];
 
@@ -65,7 +65,7 @@ function SavedBriefSummary({ org }: { org: OrgContextConfig }) {
         </div>
         {org.abn ? (
           <div>
-            <dt className="text-xs text-muted-foreground">ABN</dt>
+            <dt className="text-xs text-muted-foreground">Business registration number</dt>
             <dd className="font-mono">{org.abn}</dd>
           </div>
         ) : null}
@@ -206,7 +206,7 @@ export function OrgAiBriefPanel({
             </div>
             <div className="space-y-1.5">
               <label htmlFor="org-abn" className="text-sm font-medium">
-                ABN
+                Business registration number
               </label>
               <Input
                 id="org-abn"

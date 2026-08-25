@@ -1,5 +1,4 @@
-import { Plus, Trash2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Trash2 } from "lucide-react";
 import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/cn";
 import type {
@@ -19,17 +18,21 @@ const FIELDS: { key: EmailField; label: string }[] = [
 ];
 
 const OPERATORS: { key: ConditionOperator; label: string }[] = [
-  { key: "equals", label: "equals" },
-  { key: "not_equals", label: "not equals" },
+  { key: "equals", label: "is" },
+  { key: "not_equals", label: "is not" },
   { key: "contains", label: "contains" },
-  { key: "not_contains", label: "not contains" },
+  { key: "not_contains", label: "does not contain" },
   { key: "starts_with", label: "starts with" },
   { key: "ends_with", label: "ends with" },
-  { key: "regex", label: "matches regex" },
+  { key: "regex", label: "matches" },
 ];
 
-const valueInputCls =
-  "h-8 w-[180px] shrink-0 rounded-md border border-border bg-field px-2 text-xs font-mono shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
+const EMPTY_CONDITION = (): RuleCondition => ({
+  type: "condition",
+  field: "subject",
+  operator: "contains",
+  value: "",
+});
 
 function updateAtPath(
   root: RuleConditionGroup,
@@ -58,6 +61,27 @@ function removeAtPath(root: RuleConditionGroup, path: number[]): RuleConditionGr
   return { ...root, children };
 }
 
+function removeAndPrune(root: RuleConditionGroup, path: number[]): RuleConditionGroup {
+  let next = removeAtPath(root, path);
+  if (path.length <= 1) return next;
+  const parentPath = path.slice(0, -1);
+  const parent = groupAt(next, parentPath);
+  if (parent && parent.children.length === 0) {
+    next = removeAtPath(next, parentPath);
+  }
+  return next;
+}
+
+function groupAt(root: RuleConditionGroup, path: number[]): RuleConditionGroup | null {
+  let node: RuleConditionGroup = root;
+  for (const index of path) {
+    const child = node.children[index];
+    if (!child || child.type !== "group") return null;
+    node = child;
+  }
+  return node;
+}
+
 function ConditionRow({
   cond,
   onChange,
@@ -72,16 +96,13 @@ function ConditionRow({
   idx: string;
 }) {
   return (
-    <div
-      className="flex flex-nowrap items-center gap-2 min-w-max"
-      data-testid={`condition-${idx}`}
-    >
+    <div className="condition-builder__row" data-testid={`condition-${idx}`}>
       <Select
         value={cond.field}
         disabled={readOnly}
         onValueChange={(field) => onChange({ ...cond, field: field as EmailField })}
         options={FIELDS.map((f) => ({ value: f.key, label: f.label }))}
-        className="w-[150px] shrink-0"
+        className="condition-builder__select"
       />
       <Select
         value={cond.operator}
@@ -90,28 +111,29 @@ function ConditionRow({
           onChange({ ...cond, operator: operator as ConditionOperator })
         }
         options={OPERATORS.map((o) => ({ value: o.key, label: o.label }))}
-        className="w-[130px] shrink-0"
+        className="condition-builder__select"
       />
       <input
         type="text"
         value={cond.value}
         disabled={readOnly}
         onChange={(e) => onChange({ ...cond, value: e.target.value })}
-        className={valueInputCls}
+        className="condition-builder__value"
         placeholder="value"
         data-testid={`condition-value-${idx}`}
       />
-      {!readOnly && (
-        <Button
+      {!readOnly ? (
+        <button
           type="button"
-          variant="ghost"
-          size="sm"
-          className="h-8 w-8 shrink-0 p-0 text-muted-foreground hover:text-destructive"
+          className="condition-builder__icon-btn"
           onClick={onRemove}
+          aria-label="Remove condition"
           data-testid={`condition-delete-${idx}`}
         >
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
+          <Trash2 />
+        </button>
+      ) : (
+        <span />
       )}
     </div>
   );
@@ -132,11 +154,11 @@ function GroupEditor({
   readOnly?: boolean;
   depth?: number;
 }) {
-  const setRoot = (next: RuleConditionGroup) => onChange(next);
   const pathKey = path.join("-") || "root";
+  const nested = depth > 0;
 
   const toggleOp = () => {
-    setRoot(
+    onChange(
       updateAtPath(root, path, (g) => ({
         ...g,
         operator: g.operator === "AND" ? "OR" : "AND",
@@ -145,83 +167,52 @@ function GroupEditor({
   };
 
   const addCondition = () => {
-    setRoot(
+    onChange(
       updateAtPath(root, path, (g) => ({
         ...g,
-        children: [
-          ...g.children,
-          { type: "condition", field: "subject", operator: "contains", value: "" },
-        ],
+        children: [...g.children, EMPTY_CONDITION()],
       }))
     );
   };
 
   const addGroup = () => {
-    setRoot(
+    onChange(
       updateAtPath(root, path, (g) => ({
         ...g,
-        children: [...g.children, { type: "group", operator: "AND", children: [] }],
+        children: [
+          ...g.children,
+          { type: "group", operator: "AND", children: [EMPTY_CONDITION()] },
+        ],
       }))
     );
   };
 
-  const opBtnCls =
-    group.operator === "AND"
-      ? "bg-primary/15 text-primary border-primary/30"
-      : "bg-accent text-accent-foreground border-border";
+  const opControl =
+    group.children.length > 0 ? (
+      <button
+        type="button"
+        disabled={readOnly}
+        onClick={toggleOp}
+        className="condition-builder__op"
+        title={group.operator === "AND" ? "All must match — click for any" : "Any may match — click for all"}
+        data-testid={`group-op-${pathKey}`}
+      >
+        {group.operator}
+      </button>
+    ) : (
+      <span className="condition-builder__op-gap" />
+    );
 
   return (
-    <div
-      className={cn(
-        "rounded-lg border p-3",
-        depth === 0 ? "border-border bg-muted/30" : "border-border/70 bg-background"
-      )}
-    >
-      <div className="flex items-center gap-2 mb-2.5">
-        <button
-          type="button"
-          disabled={readOnly}
-          onClick={toggleOp}
-          className={cn(
-            "inline-flex items-center rounded-md border px-2.5 py-1 text-xs font-semibold tracking-wide transition-colors",
-            opBtnCls,
-            !readOnly && "hover:opacity-80 cursor-pointer"
-          )}
-          data-testid={`group-op-${pathKey}`}
-        >
-          {group.operator}
-        </button>
-        <span className="text-xs text-muted-foreground">
-          {group.operator === "AND" ? "all conditions must match" : "any condition matches"}
-        </span>
-        {!readOnly && path.length > 0 ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="ml-auto h-8 w-8 shrink-0 p-0 text-muted-foreground hover:text-destructive"
-            onClick={() => setRoot(removeAtPath(root, path))}
-            aria-label="Remove group"
-            data-testid={`group-delete-${pathKey}`}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
-        ) : null}
-      </div>
-
-      <div className="space-y-2 pl-3 border-l-2 border-border/60 overflow-x-auto">
-        {group.children.length === 0 && (
-          <p className="text-xs text-muted-foreground italic py-1">
-            No conditions yet - add one below.
-          </p>
-        )}
-        {group.children.map((child, idx) => {
-          const childPath = [...path, idx];
-          const childKey = childPath.join("-");
-          if (child.type === "group") {
-            return (
+    <div className={cn("condition-builder", nested && "condition-builder--nested")}>
+      {group.children.map((child, idx) => {
+        const childPath = [...path, idx];
+        const childKey = childPath.join("-");
+        return (
+          <div key={childKey} className="condition-builder__line">
+            {idx === 0 ? opControl : <span className="condition-builder__op-gap" />}
+            {child.type === "group" ? (
               <GroupEditor
-                key={childKey}
                 group={child}
                 path={childPath}
                 root={root}
@@ -229,52 +220,60 @@ function GroupEditor({
                 readOnly={readOnly}
                 depth={depth + 1}
               />
-            );
-          }
-          return (
-            <ConditionRow
-              key={childKey}
-              cond={child}
-              readOnly={readOnly}
-              idx={childKey}
-              onChange={(next) => {
-                setRoot(
-                  updateAtPath(root, path, (g) => ({
-                    ...g,
-                    children: g.children.map((c, i) => (i === idx ? next : c)),
-                  }))
-                );
-              }}
-              onRemove={() => setRoot(removeAtPath(root, childPath))}
-            />
-          );
-        })}
-      </div>
+            ) : (
+              <ConditionRow
+                cond={child}
+                readOnly={readOnly}
+                idx={childKey}
+                onChange={(next) => {
+                  onChange(
+                    updateAtPath(root, path, (g) => ({
+                      ...g,
+                      children: g.children.map((c, i) => (i === idx ? next : c)),
+                    }))
+                  );
+                }}
+                onRemove={() => onChange(removeAndPrune(root, childPath))}
+              />
+            )}
+          </div>
+        );
+      })}
 
-      {!readOnly && (
-        <div className="flex flex-wrap gap-2 mt-2.5 pl-3">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-7 px-2 text-xs"
-            onClick={addCondition}
-            data-testid={`add-condition-${pathKey}`}
-          >
-            <Plus className="h-3.5 w-3.5 mr-1" /> Condition
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-7 px-2 text-xs"
-            onClick={addGroup}
-            data-testid={`add-group-${pathKey}`}
-          >
-            <Plus className="h-3.5 w-3.5 mr-1" /> Group
-          </Button>
+      {!readOnly ? (
+        <div className="condition-builder__line">
+          <span className="condition-builder__op-gap" />
+          <div className="condition-builder__add">
+            <button
+              type="button"
+              className="condition-builder__add-btn"
+              onClick={addCondition}
+              data-testid={`add-condition-${pathKey}`}
+            >
+              + Condition
+            </button>
+            {depth < 1 ? (
+              <button
+                type="button"
+                className="condition-builder__add-btn"
+                onClick={addGroup}
+                data-testid={`add-group-${pathKey}`}
+              >
+                + Group
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="condition-builder__add-btn condition-builder__add-btn--muted"
+                onClick={() => onChange(removeAtPath(root, path))}
+                data-testid={`group-delete-${pathKey}`}
+              >
+                Remove group
+              </button>
+            )}
+          </div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -287,6 +286,9 @@ export function ConditionBuilder({
   root: RuleConditionGroup;
   onChange: (next: RuleConditionGroup) => void;
   readOnly?: boolean;
+  compact?: boolean;
 }) {
-  return <GroupEditor group={root} path={[]} root={root} onChange={onChange} readOnly={readOnly} />;
+  return (
+    <GroupEditor group={root} path={[]} root={root} onChange={onChange} readOnly={readOnly} />
+  );
 }

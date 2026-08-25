@@ -6,7 +6,7 @@
     "klass": "Transactional",
     "posting": "Yes",
     "extraction": [
-      "Vendor name & tax ID / ABN",
+      "Vendor name & business registration number",
       "Vendor invoice number, invoice date",
       "PO number(s)",
       "Line items: description, qty, UoM, unit price, line value",
@@ -19,7 +19,7 @@
       "Vendor master: exists, active, not blocked, tax ID on invoice = master (else exception — fraud/wrong vendor)",
       "Duplicate check (multi-layer): exact, normalised invoice no., fuzzy ±0.5% / ±7 days, cross-entity scan",
       "Arithmetic: Σ lines = subtotal; subtotal + tax = total; qty × price = line value (rounding ≤ 0.05/line)",
-      "Tax validity (AU): \"Tax Invoice\" stated, ABN valid (live Lookup), GST 10% on taxable lines, buyer identity ≥ AUD 1,000",
+      "Tax validity (AU): \"Tax Invoice\" stated, business registration number valid (live Lookup), GST 10% on taxable lines, buyer identity ≥ AUD 1,000",
       "3-way match (line level): qty ≤ (PO open AND GRN unbilled); price within §9 tolerance; UoM conversion applied",
       "PO status: approved, not closed/cancelled; invoice currency = PO currency (no silent conversion)",
       "Date sanity: not future; > 12 months → controller approval; posting date per open-period rules",
@@ -639,7 +639,7 @@
     "posting": "Yes",
     "extraction": [
       "Vendor verification evidence (bank confirmation)",
-      "W-form / ABN check",
+      "W-form / business registration number check",
       "Bank details"
     ],
     "checks": [
@@ -799,7 +799,7 @@
     "klass": "Transactional",
     "posting": "Yes",
     "extraction": [
-      "Customer name & tax ID / ABN",
+      "Customer name & business registration number",
       "Invoice number, invoice date, due date",
       "Line items: description, qty, unit price, line value",
       "Subtotal, tax rate & amount, total, currency",

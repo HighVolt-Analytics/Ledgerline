@@ -244,6 +244,7 @@ export function mapVendor(raw: Record<string, unknown>): VendorMaster {
     invoiceCount: Number(raw.invoice_count ?? 0),
     matchConfidence: Number(raw.match_confidence ?? 0),
     contactEmail: String(raw.contact_email ?? ""),
+    contactPhone: String(raw.contact_phone ?? ""),
     confirmationSentAt: (raw.confirmation_sent_at as string | null | undefined) ?? null,
     confirmedAt: (raw.confirmed_at as string | null | undefined) ?? null,
   };
@@ -325,6 +326,7 @@ export function vendorToApi(vendor: VendorMaster): Record<string, unknown> {
     invoice_count: vendor.invoiceCount,
     match_confidence: vendor.matchConfidence,
     contact_email: vendor.contactEmail,
+    contact_phone: vendor.contactPhone,
   };
 }
 

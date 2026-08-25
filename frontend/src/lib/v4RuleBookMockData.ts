@@ -320,6 +320,7 @@ const VENDOR_MASTERS: VendorMaster[] = [
     invoiceCount: 12,
     matchConfidence: 99,
     contactEmail: "billing@aws.amazon.com",
+    contactPhone: "+61 2 9000 1000",
   },
   {
     id: "vm-2",
@@ -347,6 +348,7 @@ const VENDOR_MASTERS: VendorMaster[] = [
     invoiceCount: 23,
     matchConfidence: 97,
     contactEmail: "accounts@sysco.com.au",
+    contactPhone: "+61 3 9247 3333",
   },
   {
     id: "vm-3",
@@ -374,6 +376,7 @@ const VENDOR_MASTERS: VendorMaster[] = [
     invoiceCount: 6,
     matchConfidence: 99,
     contactEmail: "billing@telstra.com",
+    contactPhone: "+61 3 8647 1111",
   },
   {
     id: "vm-4",
@@ -401,6 +404,7 @@ const VENDOR_MASTERS: VendorMaster[] = [
     invoiceCount: 4,
     matchConfidence: 96,
     contactEmail: "accounts@smithco.legal",
+    contactPhone: "+61 2 8226 4300",
   },
   {
     id: "vm-5",
@@ -428,6 +432,7 @@ const VENDOR_MASTERS: VendorMaster[] = [
     invoiceCount: 18,
     matchConfidence: 98,
     contactEmail: "accounts@bidfood.com.au",
+    contactPhone: "+61 2 8874 8000",
   },
   {
     id: "vm-6",
@@ -450,6 +455,7 @@ const VENDOR_MASTERS: VendorMaster[] = [
     invoiceCount: 1,
     matchConfidence: 42,
     contactEmail: "",
+    contactPhone: "",
   },
 ];
 

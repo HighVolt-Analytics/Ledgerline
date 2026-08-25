@@ -176,6 +176,7 @@ export type VendorMaster = {
   invoiceCount: number;
   matchConfidence: number;
   contactEmail: string;
+  contactPhone: string;
   confirmationSentAt?: string | null;
   confirmedAt?: string | null;
 };
