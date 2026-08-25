@@ -553,3 +553,46 @@ def test_vision_should_sync_register_for_bundle_roles() -> None:
         enabled=True,
     )
     assert vision_should_sync_register(vault) is False
+
+
+def test_amount_inconsistent_blocks_posting_and_holds_header_review() -> None:
+    from decimal import Decimal
+
+    from app.services.invoice.invoice_evaluation_service import EVAL_VISION_HEADER_REVIEW
+    from app.services.invoice.vision_posting_continue import (
+        EXTRACTED_AMOUNT_INCONSISTENCY,
+        vision_hold_evaluation_status,
+        vision_posting_skip_reason,
+        vision_posting_skip_user_message,
+    )
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PARSING,
+        document_type_code="DT-07",
+        vendor="Acme",
+        subtotal=Decimal("100"),
+        gst=Decimal("10"),
+        total=Decimal("999"),
+    )
+    defn = _dt(posting="Yes")
+    assert vision_should_continue_posting(inv, defn, header_ok=True) is False
+    assert vision_posting_skip_reason(inv, defn, header_ok=True) == "amount_inconsistent"
+    assert vision_hold_evaluation_status(inv, defn, header_ok=True) == EVAL_VISION_HEADER_REVIEW
+    assert (inv.extracted_fields or {}).get(EXTRACTED_AMOUNT_INCONSISTENCY) is True
+    assert "do not add up" in vision_posting_skip_user_message(inv, defn, header_ok=True).lower()
+
+
+def test_tax_inclusive_amounts_do_not_block_posting() -> None:
+    from decimal import Decimal
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PARSING,
+        document_type_code="DT-07",
+        vendor="Acme",
+        subtotal=Decimal("120"),
+        gst=Decimal("20"),
+        total=Decimal("120"),
+    )
+    assert vision_should_continue_posting(inv, _dt(posting="Yes"), header_ok=True) is True

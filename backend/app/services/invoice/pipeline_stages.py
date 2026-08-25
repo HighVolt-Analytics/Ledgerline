@@ -1459,6 +1459,22 @@ def derive_resolution_hint(
         detect_invoice_blockers(inv, configured_keys=configured_keys)
     )
 
+    from app.services.invoice.vision_posting_continue import (
+        EXTRACTED_AMOUNT_INCONSISTENCY,
+        EXTRACTED_AMOUNT_UNGROUNDED,
+        extracted_bool_flag,
+    )
+
+    # Must run before eval_overrides: vision_header_review is in that set, so a
+    # later branch for it is unreachable. Persist flags (not audit events) so
+    # this still works at render time. Skip vaulted DTs — amount holds are for
+    # documents that were meant to post.
+    if eval_status != "vision_vaulted":
+        if extracted_bool_flag(inv, EXTRACTED_AMOUNT_UNGROUNDED):
+            return "Fields tab — Amount could not be verified against document text"
+        if extracted_bool_flag(inv, EXTRACTED_AMOUNT_INCONSISTENCY):
+            return "Fields tab — Amounts do not add up"
+
     # Specific eval statuses that are not about missing currency/total.
     eval_overrides = {
         "awaiting_classification",
@@ -1481,9 +1497,6 @@ def derive_resolution_hint(
                 return "Creations → Customers — register customer, then reprocess"
             return "Creations → Vendors — register vendor, then reprocess"
         return hint
-
-    if eval_status == "vision_header_review":
-        return field_hint or _RESOLUTION_HINT_BY_EVAL["vision_header_review"]
 
     logs = logs or []
     best: AuditLog | None = None

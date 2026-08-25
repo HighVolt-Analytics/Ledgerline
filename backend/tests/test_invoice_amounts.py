@@ -164,3 +164,51 @@ def test_backfill_total_only_persists_zero_gst_and_subtotal() -> None:
     assert inv.gst == Decimal("0")
     assert inv.subtotal == Decimal("6000")
     assert inv.total == Decimal("6000")
+
+
+def test_invoice_amounts_inconsistent_for_posting_math() -> None:
+    from app.services.invoice.invoice_amounts import invoice_amounts_inconsistent_for_posting
+
+    bad = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        subtotal=Decimal("100"),
+        gst=Decimal("10"),
+        total=Decimal("999"),
+        status=InvoiceStatus.EXCEPTION,
+    )
+    assert invoice_amounts_inconsistent_for_posting(bad) is True
+
+    ok = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        subtotal=Decimal("100"),
+        gst=Decimal("10"),
+        total=Decimal("110"),
+        status=InvoiceStatus.EXCEPTION,
+    )
+    assert invoice_amounts_inconsistent_for_posting(ok) is False
+
+
+def test_invoice_amounts_inconsistent_noop_when_fields_missing() -> None:
+    from app.services.invoice.invoice_amounts import invoice_amounts_inconsistent_for_posting
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        subtotal=Decimal("100"),
+        gst=None,
+        total=Decimal("110"),
+        status=InvoiceStatus.EXCEPTION,
+    )
+    assert invoice_amounts_inconsistent_for_posting(inv) is False
+
+
+def test_tax_inclusive_subtotal_is_not_inconsistent_for_posting() -> None:
+    from app.services.invoice.invoice_amounts import invoice_amounts_inconsistent_for_posting
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        subtotal=Decimal("120"),
+        gst=Decimal("20"),
+        total=Decimal("120"),
+        status=InvoiceStatus.EXCEPTION,
+    )
+    assert invoice_amounts_inconsistent_for_posting(inv) is False

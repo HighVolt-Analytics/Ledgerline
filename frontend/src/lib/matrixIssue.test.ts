@@ -108,6 +108,32 @@ describe("clarifyMatrixIssueTitle", () => {
     ).toBe("Customer not in master");
   });
 
+  it("distinguishes ungrounded amount from generic header review", () => {
+    expect(
+      clarifyMatrixIssueTitle(
+        inv({
+          evaluation_status: "vision_header_review",
+          extracted_fields: { amount_ungrounded: "true" },
+          vendor: "Acme",
+          total: "100",
+        })
+      )
+    ).toBe("Amount could not be verified against document text");
+  });
+
+  it("distinguishes amount inconsistency from generic header review", () => {
+    expect(
+      clarifyMatrixIssueTitle(
+        inv({
+          evaluation_status: "vision_header_review",
+          extracted_fields: { amount_inconsistency: "true" },
+          vendor: "Acme",
+          total: "100",
+        })
+      )
+    ).toBe("Amounts do not add up");
+  });
+
   it("prefers missing currency over suspense GL", () => {
     expect(
       clarifyMatrixIssueTitle(

@@ -295,6 +295,7 @@ async def test_evaluate_sets_needs_review_when_total_does_not_ground(
     assert result.success is True
     assert "total" in result.amount_grounding_cleared
     assert result.needs_review is True
+    assert (invoice.extracted_fields or {}).get("amount_ungrounded") is True
 
 
 def test_dt_extract_needs_review_blocks_understood_posting() -> None:

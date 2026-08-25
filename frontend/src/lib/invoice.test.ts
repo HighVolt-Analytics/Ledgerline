@@ -386,6 +386,26 @@ describe("evaluationReviewTooltip", () => {
       } as Invoice),
     ).toBe("Audit tab — reconciliation blocked posting");
   });
+
+  it("uses ungrounded-amount copy for vision_header_review when flagged", () => {
+    expect(
+      evaluationReviewTooltip({
+        evaluation_status: "vision_header_review",
+        extracted_fields: { amount_ungrounded: "true" },
+        status: "exception",
+      } as Invoice),
+    ).toBe("Fields tab — Amount could not be verified against document text");
+  });
+
+  it("uses amount-inconsistency copy for vision_header_review when flagged", () => {
+    expect(
+      evaluationReviewTooltip({
+        evaluation_status: "vision_header_review",
+        extracted_fields: { amount_inconsistency: "true" },
+        status: "exception",
+      } as Invoice),
+    ).toBe("Fields tab — Amounts do not add up");
+  });
 });
 
 describe("evaluationStatusLabel", () => {

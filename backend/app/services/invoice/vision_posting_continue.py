@@ -51,6 +51,29 @@ def vision_should_sync_register(definition: DocumentTypeDefinition | None) -> bo
     return purchase_role in {"po", "grn"} or sales_role in {"so", "dn"}
 
 
+EXTRACTED_AMOUNT_INCONSISTENCY = "amount_inconsistency"
+EXTRACTED_AMOUNT_UNGROUNDED = "amount_ungrounded"
+
+
+def extracted_bool_flag(invoice: Invoice, key: str) -> bool:
+    fields = invoice.extracted_fields if isinstance(invoice.extracted_fields, dict) else {}
+    token = fields.get(key)
+    if token is True:
+        return True
+    if isinstance(token, str) and token.strip().lower() in {"1", "true", "yes"}:
+        return True
+    return False
+
+
+def set_extracted_bool_flag(invoice: Invoice, key: str, value: bool) -> None:
+    fields = dict(invoice.extracted_fields) if isinstance(invoice.extracted_fields, dict) else {}
+    if value:
+        fields[key] = True
+    else:
+        fields.pop(key, None)
+    invoice.extracted_fields = fields or None
+
+
 def vision_should_continue_posting(
     invoice: Invoice,
     definition: DocumentTypeDefinition | None,
@@ -68,7 +91,15 @@ def vision_should_continue_posting(
         return False
     if definition is None:
         return False
-    return allows_posting_pipeline(definition)
+    if not allows_posting_pipeline(definition):
+        return False
+    from app.services.invoice.invoice_amounts import invoice_amounts_inconsistent_for_posting
+
+    inconsistent = invoice_amounts_inconsistent_for_posting(invoice)
+    set_extracted_bool_flag(invoice, EXTRACTED_AMOUNT_INCONSISTENCY, inconsistent)
+    if inconsistent:
+        return False
+    return True
 
 
 def vision_dt_never_posts(
@@ -97,6 +128,10 @@ def vision_posting_skip_reason(
         return "line_items_missing"
     if not header_ok:
         return "header_not_ok"
+    from app.services.invoice.invoice_amounts import invoice_amounts_inconsistent_for_posting
+
+    if invoice_amounts_inconsistent_for_posting(invoice):
+        return "amount_inconsistent"
     if not (invoice.document_type_code or "").strip():
         return "no_document_type"
     if definition is None:
@@ -121,6 +156,10 @@ def vision_hold_evaluation_status(
         return EVAL_VISION_VAULTED
     if (invoice.evaluation_status or "").strip() == EVAL_LINE_ITEMS_REVIEW:
         return EVAL_LINE_ITEMS_REVIEW
+    from app.services.invoice.invoice_amounts import invoice_amounts_inconsistent_for_posting
+
+    if invoice_amounts_inconsistent_for_posting(invoice):
+        return EVAL_VISION_HEADER_REVIEW
     return EVAL_VISION_VAULTED if header_ok else EVAL_VISION_HEADER_REVIEW
 
 
@@ -229,6 +268,10 @@ _VISION_POSTING_SKIP_MESSAGES: dict[str, str] = {
     "header_not_ok": (
         "Complete the document type's required fields on the Fields tab, save, "
         "then confirm again."
+    ),
+    "amount_inconsistent": (
+        "Amounts do not add up. Correct subtotal, tax, and total on the Fields tab, "
+        "then Confirm & process again."
     ),
     "no_document_type": "Confirm document type in the Fields tab before approving.",
     "definition_missing": "Document type is not in your Rule Book — fix DT before approving.",

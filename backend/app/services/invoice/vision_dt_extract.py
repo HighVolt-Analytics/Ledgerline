@@ -438,6 +438,10 @@ async def evaluate_vision_dt_extract(
             "translation_applied",
             "translation_confidence",
             "translation_skip_reason",
+            "amount_ungrounded",
+            "amount_inconsistency",
+            "amount_grounding_cleared",
+            "needs_review",
         }
     )
     fields = {
@@ -458,8 +462,18 @@ async def evaluate_vision_dt_extract(
         tenant_id=invoice.tenant_id,
     )
     needs_review = not vision_header_ok_from_invoice(invoice, defn)
+    from app.services.invoice.invoice_amounts import invoice_amounts_inconsistent_for_posting
+    from app.services.invoice.vision_posting_continue import (
+        EXTRACTED_AMOUNT_INCONSISTENCY,
+        EXTRACTED_AMOUNT_UNGROUNDED,
+        set_extracted_bool_flag,
+    )
+
     if amount_cleared:
         needs_review = True
+        set_extracted_bool_flag(invoice, EXTRACTED_AMOUNT_UNGROUNDED, True)
+    if invoice_amounts_inconsistent_for_posting(invoice):
+        set_extracted_bool_flag(invoice, EXTRACTED_AMOUNT_INCONSISTENCY, True)
     if no_di_available:
         needs_review = True
     from app.services.extraction.line_item_extraction_policy import (

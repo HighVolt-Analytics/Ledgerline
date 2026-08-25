@@ -50,6 +50,10 @@ def _line_items_subtotal(invoice: Invoice) -> Decimal | None:
 def resolve_invoice_amounts(invoice: Invoice) -> tuple[Decimal, Decimal, Decimal]:
     """Normalize subtotal/gst/total for journal posting.
 
+    When stored subtotal + gst disagrees with total, this function rewrites the
+    *computed* subtotal for journal lines and does not persist that rewrite on
+    the invoice row. See ``backend/docs/journal_vs_invoice_amount_gap.md``.
+
     Priority when header subtotal is missing:
     1. ``total − gst`` when both total and gst are present (AP / tax / expense identity)
     2. Sum of non-tax line items
@@ -129,3 +133,20 @@ def amounts_look_tax_inclusive_subtotal(
     if gst <= 0:
         return False
     return (subtotal - total).copy_abs() <= _AMOUNT_EPS
+
+
+def invoice_amounts_inconsistent_for_posting(invoice: Invoice) -> bool:
+    """True when present header amounts cannot form a coherent identity.
+
+    No-op (False) when any of subtotal / gst / total is missing — incomplete
+    header is a different hold. Tax-inclusive subtotal (subtotal ≈ total and
+    gst > 0) is not a failure.
+    """
+    subtotal = plausible_money(invoice.subtotal)
+    gst = plausible_money(invoice.gst)
+    total = plausible_money(invoice.total)
+    if subtotal is None or gst is None or total is None:
+        return False
+    if amounts_look_tax_inclusive_subtotal(subtotal=subtotal, gst=gst, total=total):
+        return False
+    return (subtotal + gst - total).copy_abs() > _AMOUNT_EPS

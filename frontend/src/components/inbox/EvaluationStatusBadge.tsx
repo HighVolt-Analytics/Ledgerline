@@ -51,6 +51,7 @@ export type EvaluationStatusBadgeInvoice = Pick<
   | "llm_suggested_dt"
   | "status"
   | "resolution_hint"
+  | "extracted_fields"
 >;
 
 export function EvaluationStatusBadge({

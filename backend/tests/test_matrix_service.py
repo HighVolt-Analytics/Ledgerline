@@ -471,3 +471,56 @@ def test_derive_matrix_acc_sync_status() -> None:
         derive_matrix_acc_sync(vaulted, ledger_status=STATUS_SUCCESS, ref_status=None)
         == SYNC_NA
     )
+
+
+def test_derive_resolution_hint_ungrounded_amount_before_generic_header() -> None:
+    from app.services.invoice.pipeline_stages import derive_resolution_hint
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="vision_header_review",
+        document_type_code="DT-07",
+        extracted_fields={"amount_ungrounded": True},
+        total=None,
+    )
+    hint = derive_resolution_hint(inv, [])
+    assert hint is not None
+    assert "could not be verified against document text" in hint.lower()
+    assert "complete header fields" not in hint.lower()
+
+
+def test_derive_resolution_hint_amount_inconsistency_before_generic_header() -> None:
+    from app.services.invoice.pipeline_stages import derive_resolution_hint
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="vision_header_review",
+        document_type_code="DT-07",
+        extracted_fields={"amount_inconsistency": True},
+        subtotal=Decimal("100"),
+        gst=Decimal("10"),
+        total=Decimal("999"),
+    )
+    hint = derive_resolution_hint(inv, [])
+    assert hint is not None
+    assert "do not add up" in hint.lower()
+    assert "complete header fields" not in hint.lower()
+
+
+def test_derive_resolution_hint_generic_header_when_no_amount_flags() -> None:
+    from app.services.invoice.pipeline_stages import derive_resolution_hint
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor=None,
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="vision_header_review",
+        document_type_code="DT-07",
+    )
+    hint = derive_resolution_hint(inv, [])
+    assert hint is not None
+    assert "complete header fields" in hint.lower()

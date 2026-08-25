@@ -636,6 +636,7 @@ export function evaluationReviewTooltip(
     | "llm_suggested_dt"
     | "status"
     | "resolution_hint"
+    | "extracted_fields"
   >,
   reviewReasons?: string[]
 ): string {
@@ -662,6 +663,15 @@ export function evaluationReviewTooltip(
   }
 
   if (status === "vision_header_review") {
+    const fields = inv.extracted_fields as Record<string, unknown> | null | undefined;
+    const ungrounded = fields?.amount_ungrounded;
+    if (ungrounded === true || String(ungrounded ?? "").toLowerCase() === "true") {
+      return "Fields tab — Amount could not be verified against document text";
+    }
+    const inconsistent = fields?.amount_inconsistency;
+    if (inconsistent === true || String(inconsistent ?? "").toLowerCase() === "true") {
+      return "Fields tab — Amounts do not add up";
+    }
     return "Fields tab — complete header fields, save, then Confirm & process";
   }
 

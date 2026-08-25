@@ -51,6 +51,25 @@ function isSuspenseGl(inv: Pick<Invoice, "account_code" | "account_name">): bool
   return /suspense|unmapped|unknown/.test(token);
 }
 
+function extractedBoolFlag(inv: Pick<Invoice, "extracted_fields">, key: string): boolean {
+  const raw = inv.extracted_fields?.[key] as unknown;
+  if (raw === true) return true;
+  if (typeof raw === "string" && ["1", "true", "yes"].includes(raw.trim().toLowerCase())) {
+    return true;
+  }
+  return false;
+}
+
+function visionAmountHoldTitle(inv: Pick<Invoice, "extracted_fields">): string | null {
+  if (extractedBoolFlag(inv, "amount_ungrounded")) {
+    return "Amount could not be verified against document text";
+  }
+  if (extractedBoolFlag(inv, "amount_inconsistency")) {
+    return "Amounts do not add up";
+  }
+  return null;
+}
+
 function firstFailedValidationMessage(inv: Invoice): string | null {
   const failed = failedValidationResults(inv);
   if (!failed.length) return null;
@@ -78,6 +97,8 @@ export function clarifyMatrixIssueTitle(inv: Invoice): string {
       : "Document type not classified";
   }
   if (status === "vision_header_review") {
+    const amountHold = visionAmountHoldTitle(inv);
+    if (amountHold) return amountHold;
     const blockers = detectInvoiceBlockers(inv);
     const fromBlockers = blockerIssueTitle(blockers);
     return fromBlockers || "Header fields incomplete";
@@ -199,6 +220,8 @@ function fixFromEvaluationStatus(inv: Invoice): string | null {
       : "Fields tab — confirm document type";
   }
   if (status === "vision_header_review") {
+    const amountHold = visionAmountHoldTitle(inv);
+    if (amountHold) return `Fields tab — ${amountHold}`;
     const blockers = detectInvoiceBlockers(inv);
     return blockerFixHint(blockers) || "Fields tab — complete header fields, save, then Confirm & process";
   }
@@ -256,6 +279,12 @@ function fixFromIssueMessage(message: string, inv: Invoice): string | null {
   const text = message.toLowerCase();
   if (!text) return null;
 
+  if (text.includes("could not be verified against document text")) {
+    return "Fields tab — Amount could not be verified against document text";
+  }
+  if (text.includes("amounts do not add up") || text.includes("amount inconsistency")) {
+    return "Fields tab — Amounts do not add up";
+  }
   if (text.includes("currency")) {
     return "Fields tab — select currency, then save and continue";
   }
