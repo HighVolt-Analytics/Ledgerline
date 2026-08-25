@@ -270,6 +270,7 @@ async def extract_fields(
     provider: DocumentAiProvider,
     vision_page_images: list[bytes] | None = None,
     prefer_vision_images: bool = False,
+    force_invoice_model: bool = False,
 ) -> ExtractFieldsResult:
     path = Path(file_path)
     dt_token = confirmed_dt.strip().upper()
@@ -279,6 +280,7 @@ async def extract_fields(
     )
     # Route-aware DI enrich for every LLM provider when DI is configured so
     # invoice_fields / semantic_fields / layout grids are present for merge.
+    # force_invoice_model overrides layout-primary skip so prebuilt-invoice runs.
     enriched = ocr
     di_detail: dict[str, object] | None = None
     if is_di_enabled() and path.is_file():
@@ -288,6 +290,7 @@ async def extract_fields(
             path,
             confirmed_dt=dt_token,
             dt_definition=dt_definition,
+            force_invoice_model=force_invoice_model,
         )
     if provider == DocumentAiProvider.GEMINI_VISION:
         llm = await extract_fields_gemini(

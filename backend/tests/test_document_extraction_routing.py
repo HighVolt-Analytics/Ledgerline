@@ -280,6 +280,58 @@ def test_grn_strategy_does_not_call_invoice_model(
     get_settings.cache_clear()
 
 
+def test_force_invoice_model_runs_prebuilt_invoice_on_layout_primary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AZURE_DI_ENDPOINT", "https://test.cognitiveservices.azure.com")
+    monkeypatch.setenv("AZURE_DI_KEY", "fake-key")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+
+    pdf = tmp_path / "grn.pdf"
+    pdf.write_bytes(b"%PDF-1.4 fake")
+    ocr = OcrArtifact(
+        success=True,
+        text="GOODS RECEIVED NOTE",
+        text_length=20,
+        di_model="prebuilt-layout",
+        payload_json={"table_line_items": [{"description": "Item A", "qty": "2"}]},
+    )
+    called: dict[str, object] = {}
+
+    def fake_parse(path, content_type="application/pdf", model_id_override=None):
+        called["ran"] = True
+        return (
+            InvoiceData(vendor="Acme", total=Decimal("100")),
+            {"content": "GRN"},
+            "success",
+        )
+
+    monkeypatch.setattr(
+        "app.services.extraction.di_raw_persist.parse_invoice_with_raw",
+        fake_parse,
+    )
+
+    from app.services.extraction.di_extract_service import enrich_ocr_for_route
+
+    defn = _dt("DT-03", purchase_role="grn", title="GRN")
+    decision = route_document_for_extraction("DT-03", defn)
+    assert decision.uses_invoice_model is False
+    enriched, audit = enrich_ocr_for_route(
+        ocr,
+        pdf,
+        confirmed_dt="DT-03",
+        dt_definition=defn,
+        decision=decision,
+        force_invoice_model=True,
+    )
+    assert called.get("ran") is True
+    assert "force_invoice_model" in (audit.get("route_reasons") or [])
+    assert enriched.payload_json.get("invoice_fields")
+    get_settings.cache_clear()
+
+
 def test_gap_fill_does_not_append_unmatched_layout_rows() -> None:
     di = [
         ParsedLineItem(

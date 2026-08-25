@@ -226,6 +226,47 @@ async def test_extract_fields_enriches_ocr_for_foundry_when_di_enabled(tmp_path,
 
 
 @pytest.mark.asyncio
+async def test_extract_fields_forwards_force_invoice_model(tmp_path, monkeypatch) -> None:
+    pdf_path = tmp_path / "doc.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4")
+    ocr = OcrArtifact(success=True, sparse=False, text="Invoice text", text_length=12)
+    expected = LlmDocumentResult(suggested_dt="DT-01", confidence=0.9)
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "app.services.extraction.document_ai_provider.is_di_enabled",
+        lambda: True,
+    )
+
+    def _enrich(*_args, **kwargs):
+        captured.update(kwargs)
+        return ocr, {"forced": True}
+
+    with (
+        patch(
+            "app.services.extraction.document_ai_provider.enrich_ocr_for_route",
+            _enrich,
+        ),
+        patch(
+            "app.services.extraction.document_ai_provider.extract_fields_claude",
+            new=AsyncMock(return_value=expected),
+        ),
+    ):
+        await extract_fields(
+            ocr,
+            file_path=pdf_path,
+            org=OrgContext(),
+            document_types=[],
+            confirmed_dt="DT-01",
+            few_shots=None,
+            provider=DocumentAiProvider.CLAUDE_VISION,
+            force_invoice_model=True,
+        )
+
+    assert captured.get("force_invoice_model") is True
+
+
+@pytest.mark.asyncio
 async def test_vision_json_waits_open_circuit_then_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     from app.services.extraction import azure_foundry_vision_client as client
 

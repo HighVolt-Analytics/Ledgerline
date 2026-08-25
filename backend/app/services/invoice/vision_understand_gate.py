@@ -11,8 +11,38 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Model must both claim understandability and meet this floor.
+# Default floor when settings are unavailable. Prefer get_settings().
 MIN_UNDERSTAND_CONFIDENCE = 0.55
+HIGH_UNDERSTAND_CONFIDENCE = 0.70
+
+
+def min_understand_confidence() -> float:
+    from app.config import get_settings
+
+    try:
+        return float(get_settings().vision_min_understand_confidence)
+    except Exception:
+        return MIN_UNDERSTAND_CONFIDENCE
+
+
+def high_understand_confidence() -> float:
+    from app.config import get_settings
+
+    try:
+        return float(get_settings().vision_understand_high_confidence)
+    except Exception:
+        return HIGH_UNDERSTAND_CONFIDENCE
+
+
+def understand_confidence_is_marginal(confidence: float | None) -> bool:
+    """True when understood-path confidence warrants forced invoice-model DI merge."""
+    if confidence is None:
+        return False
+    try:
+        value = float(confidence)
+    except (TypeError, ValueError):
+        return False
+    return min_understand_confidence() <= value < high_understand_confidence()
 
 
 @dataclass(frozen=True)
@@ -33,7 +63,7 @@ def vision_understand_audit_detail(result: VisionUnderstandResult) -> dict:
         "provider": result.provider,
         "page_count": result.page_count,
         "fail_closed": result.fail_closed,
-        "min_confidence": MIN_UNDERSTAND_CONFIDENCE,
+        "min_confidence": min_understand_confidence(),
     }
 
 
@@ -135,7 +165,7 @@ async def evaluate_vision_understand(
         "vision_can_understand" if claimed else "vision_cannot_understand"
     )
 
-    if claimed and confidence >= MIN_UNDERSTAND_CONFIDENCE:
+    if claimed and confidence >= min_understand_confidence():
         return VisionUnderstandResult(
             can_understand=True,
             confidence=confidence,

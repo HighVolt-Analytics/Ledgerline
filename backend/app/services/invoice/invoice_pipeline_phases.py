@@ -431,6 +431,7 @@ async def phase_vision_dt_extract(
     few_shots: Sequence | None = None,
     definition: DocumentTypeDefinition | None = None,
     preserve_existing: bool = False,
+    understand_confidence: float | None = None,
 ):
     """DT-scoped field extract after org DT map — never raises."""
     from app.services.invoice.vision_dt_extract import (
@@ -449,6 +450,7 @@ async def phase_vision_dt_extract(
         few_shots=list(few_shots or []),
         definition=definition,
         preserve_existing=preserve_existing,
+        understand_confidence=understand_confidence,
     )
     event = (
         "vision_dt_fields_extracted" if result.success else "vision_dt_fields_extract_failed"
@@ -475,6 +477,29 @@ async def phase_vision_dt_extract(
                 "cleared": list(result.amount_grounding_cleared),
                 "text_source": result.amount_grounding_text_source or None,
                 "skipped": result.amount_grounding_skipped,
+                "document_ai_provider": document_ai_provider,
+                "document_type_code": (confirmed_dt or "").strip().upper(),
+            },
+        )
+    if result.marginal_confidence_forced_di:
+        await log_event(
+            session,
+            "vision_marginal_confidence_forced_di",
+            invoice_id=invoice.id,
+            detail={
+                "understand_confidence": result.understand_confidence,
+                "document_ai_provider": document_ai_provider,
+                "document_type_code": (confirmed_dt or "").strip().upper(),
+            },
+        )
+    elif result.marginal_confidence_no_di:
+        await log_event(
+            session,
+            "vision_marginal_confidence_no_di_available",
+            invoice_id=invoice.id,
+            detail={
+                "understand_confidence": result.understand_confidence,
+                "needs_review": result.needs_review,
                 "document_ai_provider": document_ai_provider,
                 "document_type_code": (confirmed_dt or "").strip().upper(),
             },

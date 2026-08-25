@@ -169,3 +169,52 @@ def test_vision_understand_catalog_has_foundry_style_markers() -> None:
     assert "Foundry-style readability gate" in body
     markers = _catalog_upgrade_markers()["vision.understand.system"]
     assert all(marker in body for marker in markers)
+
+
+def test_understand_confidence_is_marginal_band() -> None:
+    from app.services.invoice.vision_understand_gate import understand_confidence_is_marginal
+
+    assert understand_confidence_is_marginal(0.55) is True
+    assert understand_confidence_is_marginal(0.69) is True
+    assert understand_confidence_is_marginal(0.70) is False
+    assert understand_confidence_is_marginal(0.90) is False
+    assert understand_confidence_is_marginal(None) is False
+    assert understand_confidence_is_marginal(0.54) is False
+
+
+@pytest.mark.asyncio
+async def test_vision_understand_min_confidence_from_settings(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.config import get_settings
+    from app.services.invoice.vision_understand_gate import evaluate_vision_understand
+
+    monkeypatch.setenv("VISION_MIN_UNDERSTAND_CONFIDENCE", "0.80")
+    get_settings.cache_clear()
+    pdf = tmp_path / "doc.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    monkeypatch.setattr(
+        "app.services.invoice.vision_understand_gate.resolve_pdf_page_images",
+        lambda *_a, **_k: [b"png"],
+    )
+    monkeypatch.setattr(
+        "app.services.extraction.document_ai_provider.provider_available",
+        lambda _p: True,
+    )
+
+    async def _probe(**_kwargs):
+        return {"can_understand": True, "confidence": 0.70, "reason": "ok"}
+
+    monkeypatch.setattr(
+        "app.services.extraction.document_ai_provider.probe_vision_understand",
+        _probe,
+    )
+    try:
+        result = await evaluate_vision_understand(
+            pdf,
+            provider=DocumentAiProvider.GEMINI_VISION,
+        )
+        assert result.can_understand is False
+        assert result.reason == "confidence_below_floor"
+    finally:
+        get_settings.cache_clear()

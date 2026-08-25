@@ -199,8 +199,18 @@ def enrich_ocr_for_route(
     confirmed_dt: str = "",
     dt_definition: DocumentTypeDefinition | None = None,
     decision: DocumentRouteDecision | None = None,
+    force_invoice_model: bool = False,
 ) -> tuple[OcrArtifact, dict[str, object]]:
-    """Run the route-specific extraction strategy after document type is confirmed."""
+    """Run the route-specific extraction strategy after document type is confirmed.
+
+    force_invoice_model: run prebuilt-invoice even when the DT route is
+    layout-primary (GRN / PO / statement). Without this, enrich is a no-op
+    skip (skip_reason=layout_primary) and invoice_fields never land for merge.
+    """
+    from dataclasses import replace
+
+    from app.services.extraction.routing.routes import ExtractionRoute
+
     path = Path(file_path)
     if decision is None:
         decision = route_document_for_extraction(
@@ -208,6 +218,14 @@ def enrich_ocr_for_route(
             dt_definition,
             ocr=ocr,
             file_path=path if path.is_file() else None,
+        )
+    if force_invoice_model:
+        new_route = decision.route if decision.uses_invoice_model else ExtractionRoute.INVOICE
+        decision = replace(
+            decision,
+            route=new_route,
+            allow_invoice_model=True,
+            reasons=(*decision.reasons, "force_invoice_model"),
         )
     strategy = get_extraction_strategy(decision.route)
     result = strategy.enrich(ocr, path, decision)

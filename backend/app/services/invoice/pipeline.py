@@ -2520,6 +2520,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                 few_shots=vision_few_shots,
                 definition=posting_defn_early,
                 preserve_existing=preserve_extracted_fields,
+                understand_confidence=understand.confidence,
             )
             # Safety net: if extract revealed link signals that prefer another DT,
             # flip once and re-extract (never when human-locked).
@@ -2577,6 +2578,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                         few_shots=vision_few_shots,
                         definition=posting_defn_early,
                         preserve_existing=preserve_extracted_fields,
+                        understand_confidence=understand.confidence,
                     )
             retained = restore_unrefilled_vision_stale_snapshot(invoice, stale_clear)
             if retained.get("restored_columns") or retained.get("restored_extracted_keys"):

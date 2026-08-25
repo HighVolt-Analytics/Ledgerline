@@ -34,6 +34,9 @@ class VisionDtExtractResult:
     amount_grounding_cleared: tuple[str, ...] = ()
     amount_grounding_skipped: bool = False
     amount_grounding_text_source: str = ""
+    understand_confidence: float | None = None
+    marginal_confidence_forced_di: bool = False
+    marginal_confidence_no_di: bool = False
 
 
 def vision_dt_extract_audit_detail(result: VisionDtExtractResult) -> dict:
@@ -50,6 +53,9 @@ def vision_dt_extract_audit_detail(result: VisionDtExtractResult) -> dict:
         "amount_grounding_cleared": list(result.amount_grounding_cleared),
         "amount_grounding_skipped": result.amount_grounding_skipped,
         "amount_grounding_text_source": result.amount_grounding_text_source or None,
+        "understand_confidence": result.understand_confidence,
+        "marginal_confidence_forced_di": result.marginal_confidence_forced_di,
+        "marginal_confidence_no_di": result.marginal_confidence_no_di,
     }
 
 
@@ -77,10 +83,12 @@ async def evaluate_vision_dt_extract(
     few_shots: list | None = None,
     definition: DocumentTypeDefinition | None = None,
     preserve_existing: bool = False,
+    understand_confidence: float | None = None,
 ) -> VisionDtExtractResult:
     """Extract fields listed on the mapped DT using vision page images."""
     from app.services.classification.document_type_catalog import get_document_type_definition
     from app.services.extraction.document_ai_provider import extract_fields
+    from app.services.extraction.document_intelligence import is_di_enabled
     from app.services.extraction.extraction_field_values import (
         effective_extraction_field_keys_for_dt,
         non_canonical_extraction_keys,
@@ -88,6 +96,7 @@ async def evaluate_vision_dt_extract(
     from app.services.extraction.llm_document_service import llm_result_to_invoice_data
     from app.services.invoice.vision_header_extract import CANONICAL_DOCUMENT_TYPE_KEY
     from app.services.invoice.vision_posting_continue import vision_header_ok_from_invoice
+    from app.services.invoice.vision_understand_gate import understand_confidence_is_marginal
     from app.services.shared.file_storage import open_pdf_for_reading
 
     provider_token = doc_provider.value
@@ -120,10 +129,17 @@ async def evaluate_vision_dt_extract(
     amount_cleared: tuple[str, ...] = ()
     grounding_skipped = False
     grounding_text_source = ""
+    forced_di = False
+    no_di_available = False
     wants_line_items = "line_items" in {str(k).strip().lower() for k in merged_keys}
+    marginal = understand_confidence_is_marginal(understand_confidence)
     try:
         with open_pdf_for_reading(invoice.raw_file_path, tenant_id=invoice.tenant_id) as path:
             ocr = _minimal_vision_ocr(page_count=page_hint)
+            if marginal and is_di_enabled():
+                forced_di = True
+            elif marginal:
+                no_di_available = True
             extract_result = await extract_fields(
                 ocr,
                 file_path=path,
@@ -134,6 +150,7 @@ async def evaluate_vision_dt_extract(
                 provider=doc_provider,
                 vision_page_images=vision_page_images,
                 prefer_vision_images=True,
+                force_invoice_model=forced_di,
             )
             ocr = extract_result.ocr
             llm_result = extract_result.llm
@@ -175,6 +192,22 @@ async def evaluate_vision_dt_extract(
             # Harvested extracted_fields often hold values when InvoiceData scalars are empty
             # (party/finance path with sparse OCR). Promote them before column persist.
             _hydrate_parsed_scalars_from_extracted(parsed)
+
+            if forced_di:
+                from app.services.extraction.extraction_field_values import (
+                    enrich_parsed_from_ocr,
+                )
+
+                parsed = enrich_parsed_from_ocr(
+                    parsed,
+                    ocr,
+                    dt_definition=definition
+                    or get_document_type_definition(
+                        dt_token,
+                        document_types=document_types,
+                        tenant_id=invoice.tenant_id,
+                    ),
+                )
 
             wants_line_items = "line_items" in {
                 str(k).strip().lower() for k in merged_keys
@@ -427,6 +460,8 @@ async def evaluate_vision_dt_extract(
     needs_review = not vision_header_ok_from_invoice(invoice, defn)
     if amount_cleared:
         needs_review = True
+    if no_di_available:
+        needs_review = True
     from app.services.extraction.line_item_extraction_policy import (
         team_expense_hard_requires_line_items,
     )
@@ -455,6 +490,9 @@ async def evaluate_vision_dt_extract(
         amount_grounding_cleared=amount_cleared,
         amount_grounding_skipped=grounding_skipped,
         amount_grounding_text_source=grounding_text_source,
+        understand_confidence=understand_confidence,
+        marginal_confidence_forced_di=forced_di,
+        marginal_confidence_no_di=no_di_available,
     )
 
 

@@ -460,6 +460,26 @@ class Settings(BaseSettings):
             "When false, keep legacy fixed vision header extract → DT map."
         ),
     )
+    vision_min_understand_confidence: float = Field(
+        default=0.55,
+        ge=0.0,
+        le=1.0,
+        validation_alias="VISION_MIN_UNDERSTAND_CONFIDENCE",
+        description=(
+            "Understood-path floor: vision must claim can_understand and meet this "
+            "confidence to skip OCR → classify → full extract."
+        ),
+    )
+    vision_understand_high_confidence: float = Field(
+        default=0.70,
+        ge=0.0,
+        le=1.0,
+        validation_alias="VISION_UNDERSTAND_HIGH_CONFIDENCE",
+        description=(
+            "At or above this, DT-scoped extract stays vision-only (route-aware DI). "
+            "Between min and this exclusive bound, force prebuilt-invoice DI merge."
+        ),
+    )
     azure_ai_foundry_endpoint: str = Field(
         default="",
         validation_alias="AZURE_AI_FOUNDRY_ENDPOINT",
