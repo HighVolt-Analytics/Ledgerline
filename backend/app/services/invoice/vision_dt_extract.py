@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -30,6 +31,9 @@ class VisionDtExtractResult:
     page_count: int = 0
     line_items_count: int = 0
     line_items_fallback: str | None = None
+    amount_grounding_cleared: tuple[str, ...] = ()
+    amount_grounding_skipped: bool = False
+    amount_grounding_text_source: str = ""
 
 
 def vision_dt_extract_audit_detail(result: VisionDtExtractResult) -> dict:
@@ -43,6 +47,9 @@ def vision_dt_extract_audit_detail(result: VisionDtExtractResult) -> dict:
         "page_count": result.page_count,
         "line_items_count": result.line_items_count,
         "line_items_fallback": result.line_items_fallback,
+        "amount_grounding_cleared": list(result.amount_grounding_cleared),
+        "amount_grounding_skipped": result.amount_grounding_skipped,
+        "amount_grounding_text_source": result.amount_grounding_text_source or None,
     }
 
 
@@ -110,6 +117,9 @@ async def evaluate_vision_dt_extract(
     page_hint = len(vision_page_images or [])
     line_items_count = 0
     line_items_fallback: str | None = None
+    amount_cleared: tuple[str, ...] = ()
+    grounding_skipped = False
+    grounding_text_source = ""
     wants_line_items = "line_items" in {str(k).strip().lower() for k in merged_keys}
     try:
         with open_pdf_for_reading(invoice.raw_file_path, tenant_id=invoice.tenant_id) as path:
@@ -225,6 +235,31 @@ async def evaluate_vision_dt_extract(
                     invoice_id=invoice.id,
                     detail=translation_detail,
                 )
+
+            from app.services.invoice.vision_header_reconcile import (
+                ground_parsed_money_fields,
+                resolve_header_grounding_text,
+            )
+
+            try:
+                text, text_source_detail = await asyncio.to_thread(
+                    resolve_header_grounding_text, path
+                )
+                parsed, grounding_detail = ground_parsed_money_fields(
+                    parsed,
+                    text,
+                    text_source=str(text_source_detail.get("source") or ""),
+                )
+                amount_cleared = tuple(
+                    str(item) for item in (grounding_detail.get("cleared") or [])
+                )
+                grounding_skipped = bool(grounding_detail.get("skipped"))
+                grounding_text_source = str(grounding_detail.get("text_source") or "")
+            except Exception as exc:
+                logger.warning("vision_dt_amount_grounding_failed", error=str(exc), dt=dt_token)
+                amount_cleared = ()
+                grounding_skipped = True
+                grounding_text_source = "grounding_error"
 
             from app.schemas.rule_book_config import RuleBookConfigPayload
             from app.services.invoice.due_date_defaults import apply_due_on_receipt_to_parsed
@@ -390,6 +425,8 @@ async def evaluate_vision_dt_extract(
         tenant_id=invoice.tenant_id,
     )
     needs_review = not vision_header_ok_from_invoice(invoice, defn)
+    if amount_cleared:
+        needs_review = True
     from app.services.extraction.line_item_extraction_policy import (
         team_expense_hard_requires_line_items,
     )
@@ -415,6 +452,9 @@ async def evaluate_vision_dt_extract(
         page_count=page_hint,
         line_items_count=line_items_count,
         line_items_fallback=line_items_fallback,
+        amount_grounding_cleared=amount_cleared,
+        amount_grounding_skipped=grounding_skipped,
+        amount_grounding_text_source=grounding_text_source,
     )
 
 

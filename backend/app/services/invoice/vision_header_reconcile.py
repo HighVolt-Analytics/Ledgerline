@@ -261,6 +261,102 @@ def resolve_header_grounding_text(path: Any) -> tuple[str, dict[str, Any]]:
     return local, detail
 
 
+def ground_parsed_money_fields(
+    parsed: Any,
+    text: str | None,
+    *,
+    text_source: str = "",
+) -> tuple[Any, dict[str, Any]]:
+    """Clear DT-scoped money fields that cannot be found in independently pulled PDF text.
+
+    Reuses the same text-usability gate and money-token matchers as
+    ``ground_vision_header_result``. Thin or corrupted text is a no-op so
+    image-only scans keep vision values.
+    """
+    from dataclasses import replace as dc_replace
+
+    from app.services.extraction.field_grounding_service import (
+        _money_grounded_in_ocr,
+        _ocr_money_forms,
+        value_grounded_in_ocr,
+    )
+    from app.services.invoice.invoice_data import InvoiceData
+    from app.services.shared.currency import currency_evidence_in_text
+
+    detail: dict[str, Any] = {
+        "skipped": False,
+        "cleared": [],
+        "kept": [],
+        "text_chars": len((text or "").strip()),
+        "text_source": text_source,
+    }
+    if not isinstance(parsed, InvoiceData):
+        detail["skipped"] = True
+        detail["reason"] = "not_invoice_data"
+        return parsed, detail
+    if not text_usable_for_header_grounding(text):
+        detail["skipped"] = True
+        from app.services.extraction.ocr_quality_signals import ocr_text_looks_corrupted
+
+        if ocr_text_looks_corrupted(text):
+            detail["reason"] = "ocr_text_corrupted"
+        else:
+            detail["reason"] = "thin_or_empty_text"
+        return parsed, detail
+
+    raw = text or ""
+    money_forms = _ocr_money_forms(raw)
+    updates: dict[str, Any] = {}
+    extracted = dict(parsed.extracted_fields or {})
+
+    def _clear_scalar(field: str, empty: Any) -> None:
+        updates[field] = empty
+        detail["cleared"].append(field)
+        extracted.pop(field, None)
+
+    for field in ("total", "subtotal", "gst"):
+        value = getattr(parsed, field, None)
+        if value is None:
+            continue
+        if money_forms and not _money_grounded_in_ocr(value, raw, field_key=field):
+            _clear_scalar(field, None)
+        else:
+            detail["kept"].append(field)
+
+    currency = (parsed.currency or "").strip()
+    if currency:
+        if currency_evidence_in_text(currency, raw) or value_grounded_in_ocr(
+            currency, raw, field_key="currency"
+        ):
+            detail["kept"].append("currency")
+        else:
+            _clear_scalar("currency", "")
+
+    new_lines = []
+    lines_changed = False
+    for index, line in enumerate(list(parsed.line_items or ())):
+        amount = getattr(line, "amount", None)
+        if amount is None:
+            new_lines.append(line)
+            continue
+        if money_forms and not _money_grounded_in_ocr(amount, raw, field_key="total"):
+            new_lines.append(dc_replace(line, amount=None))
+            detail["cleared"].append(f"line_items[{index}].amount")
+            lines_changed = True
+        else:
+            new_lines.append(line)
+            detail["kept"].append(f"line_items[{index}].amount")
+    if lines_changed:
+        updates["line_items"] = new_lines
+
+    if extracted != dict(parsed.extracted_fields or {}):
+        updates["extracted_fields"] = extracted
+
+    if not updates:
+        return parsed, detail
+    return dc_replace(parsed, **updates), detail
+
+
 def _invoice_no_soft_grounded(value: str, text: str) -> bool:
     """True when invoice_no (or its digit run) appears in PDF text."""
     from app.services.extraction.field_grounding_service import (

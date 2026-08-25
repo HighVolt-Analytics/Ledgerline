@@ -466,6 +466,19 @@ async def phase_vision_dt_extract(
             "persisted_invoice_no": invoice.invoice_no,
         },
     )
+    if result.amount_grounding_cleared:
+        await log_event(
+            session,
+            "vision_dt_amount_ungrounded",
+            invoice_id=invoice.id,
+            detail={
+                "cleared": list(result.amount_grounding_cleared),
+                "text_source": result.amount_grounding_text_source or None,
+                "skipped": result.amount_grounding_skipped,
+                "document_ai_provider": document_ai_provider,
+                "document_type_code": (confirmed_dt or "").strip().upper(),
+            },
+        )
     return result
 
 
