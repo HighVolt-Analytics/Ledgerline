@@ -157,8 +157,10 @@ def evaluate_invoice_routing(
 
     Team Expenses channel policy (highest priority for TE):
     - Manual upload never routes to Team Expenses.
-    - Email / WhatsApp / Viber + employee registry match always forces Team Expenses
-      (wins over ``force_dt_route`` and catalogue DT).
+    - Email / WhatsApp / Viber + employee registry match forces Team Expenses
+      unless document role hints look commercial (PO / SO / credit note).
+      Employee-matrix membership is not a hard gate.
+    - Content skip wins over ``force_dt_route`` identity force.
 
     When ``force_dt_route`` is True (understood-path continue) and TE is not forced by
     employee identity, a mapped catalogue DT is the sole non-TE route source — email
@@ -167,7 +169,7 @@ def evaluate_invoice_routing(
     from app.services.purchase.team_expense_route_policy import (
         ensure_team_expenses_document_type,
         normalize_capture_source,
-        should_force_team_expenses,
+        should_apply_employee_channel_te_force,
         team_expenses_allowed_capture,
     )
 
@@ -212,7 +214,7 @@ def evaluate_invoice_routing(
     capture_ok = team_expenses_allowed_capture(normalize_capture_source(invoice))
     employees = list(config.employee_masters or [])
 
-    if should_force_team_expenses(invoice, employees):
+    if should_apply_employee_channel_te_force(invoice, employees):
         ensure_team_expenses_document_type(invoice, config.document_types)
         route_target = ROUTE_TEAM
         matched_rule_ids.append("policy:te_employee_sender")
@@ -459,7 +461,7 @@ async def apply_invoice_evaluation(
     from app.services.purchase.team_expense_route_policy import (
         ensure_team_expenses_document_type,
         normalize_capture_source,
-        should_force_team_expenses,
+        should_apply_employee_channel_te_force,
         team_expenses_allowed_capture,
     )
 
@@ -468,7 +470,7 @@ async def apply_invoice_evaluation(
 
     # Understood path: catalogue DT route wins over sticky email/ingest routes,
     # except Team Expenses channel policy (employee force / upload block).
-    if should_force_team_expenses(invoice, employees):
+    if should_apply_employee_channel_te_force(invoice, employees):
         ensure_team_expenses_document_type(invoice, config.document_types)
         merged_ids = list(
             dict.fromkeys([*existing_ids, *result.matched_rule_ids, "policy:te_employee_sender"])

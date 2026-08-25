@@ -238,7 +238,74 @@ def test_email_employee_sender_forces_team_even_if_purchase_dt() -> None:
     result = evaluate_invoice_routing(inv, config, force_dt_route=True)
     assert result.route_target == ROUTE_TEAM
     assert "policy:te_employee_sender" in result.matched_rule_ids
-    assert (inv.document_type_code or "").upper() == "TE-01"
+    # Route force is the policy; DT rewrite needs a claim-kind pin and is
+    # not required for the commercial-hint skip to hold.
+
+
+def test_email_employee_sender_does_not_force_te_when_po_hint() -> None:
+    """Role hints are the skip — employee matrix does not override commercial content."""
+    from app.schemas.rule_book_config import EmployeeMaster
+
+    purchase = _dt(code="AP-01", title="Tax Invoice", route=ROUTE_PURCHASE)
+    claim = _dt(code="TE-01", title="Staff claim", route=ROUTE_TEAM, playbook="employee_claim")
+    employee = EmployeeMaster(
+        id="e1",
+        name="Priya Nair",
+        email="priya@acme.com",
+        status="Active",
+    )
+    config = RuleBookConfigPayload(
+        document_types=[purchase, claim],
+        employee_masters=[employee],
+    )
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme Supplies",
+        total=Decimal("400.00"),
+        document_type_code="AP-01",
+        document_type_confidence=0.95,
+        email_sender="priya@acme.com",
+        capture_source="email",
+        status=InvoiceStatus.PARSING,
+        file_hash="emp-skip-te-po",
+        extracted_fields={"document_role_hints": {"has_po_reference": "true"}},
+    )
+    result = evaluate_invoice_routing(inv, config, force_dt_route=True)
+    assert result.route_target == ROUTE_PURCHASE
+    assert "policy:te_employee_sender" not in result.matched_rule_ids
+    assert (inv.document_type_code or "").upper() == "AP-01"
+
+
+def test_email_employee_sender_still_forces_te_with_invoice_number_only() -> None:
+    from app.schemas.rule_book_config import EmployeeMaster
+
+    purchase = _dt(code="AP-01", title="Tax Invoice", route=ROUTE_PURCHASE)
+    claim = _dt(code="TE-01", title="Staff claim", route=ROUTE_TEAM, playbook="employee_claim")
+    employee = EmployeeMaster(
+        id="e1",
+        name="Priya Nair",
+        email="priya@acme.com",
+        status="Active",
+    )
+    config = RuleBookConfigPayload(
+        document_types=[purchase, claim],
+        employee_masters=[employee],
+    )
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Cafe",
+        total=Decimal("40.00"),
+        document_type_code="AP-01",
+        document_type_confidence=0.95,
+        email_sender="priya@acme.com",
+        capture_source="email",
+        status=InvoiceStatus.PARSING,
+        file_hash="emp-force-te-invno",
+        extracted_fields={"document_role_hints": {"has_invoice_number": "true"}},
+    )
+    result = evaluate_invoice_routing(inv, config, force_dt_route=True)
+    assert result.route_target == ROUTE_TEAM
+    assert "policy:te_employee_sender" in result.matched_rule_ids
 
 
 def test_email_unknown_sender_not_forced_team() -> None:

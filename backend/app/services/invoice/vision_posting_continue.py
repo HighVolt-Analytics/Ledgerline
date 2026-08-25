@@ -23,7 +23,7 @@ from app.services.classification.document_type_catalog import get_document_type_
 from app.services.classification.document_type_playbook_profile_service import (
     allows_posting_pipeline,
 )
-from app.services.invoice.invoice_data import invoice_data_from_invoice
+from app.services.invoice.invoice_data import _attr_if_loaded, invoice_data_from_invoice
 from app.services.invoice.invoice_evaluation_service import (
     EVAL_LINE_ITEMS_REVIEW,
     EVAL_VISION_HEADER_REVIEW,
@@ -56,7 +56,10 @@ EXTRACTED_AMOUNT_UNGROUNDED = "amount_ungrounded"
 
 
 def extracted_bool_flag(invoice: Invoice, key: str) -> bool:
-    fields = invoice.extracted_fields if isinstance(invoice.extracted_fields, dict) else {}
+    """Read a JSON flag without lazy-loading deferred extracted_fields."""
+    fields = _attr_if_loaded(invoice, "extracted_fields", default=None)
+    if not isinstance(fields, dict):
+        return False
     token = fields.get(key)
     if token is True:
         return True
@@ -359,7 +362,7 @@ async def continue_vision_understood_posting(
     from app.services.purchase.team_expense_route_policy import (
         apply_employee_channel_team_expenses_route,
         normalize_capture_source,
-        should_force_team_expenses,
+        should_apply_employee_channel_te_force,
         team_expenses_allowed_capture,
     )
     from app.services.vault.vault_blob_sync import sync_invoice_blob_path
@@ -403,7 +406,7 @@ async def continue_vision_understood_posting(
     # Team Expenses: employee-channel policy wins; upload never stays on TE.
     employees = list(config.employee_masters or [])
     capture_ok = team_expenses_allowed_capture(normalize_capture_source(loaded))
-    if should_force_team_expenses(loaded, employees):
+    if should_apply_employee_channel_te_force(loaded, employees):
         apply_employee_channel_team_expenses_route(
             loaded, config.document_types, employees
         )

@@ -4,7 +4,11 @@
 
 Manual upload never routes to Team Expenses. A known employee sender on an
 
-allowed capture channel always does (catalogue DT is filled if needed).
+allowed capture channel triggers a Team Expenses force unless the document
+
+itself looks commercial (PO / SO / credit note). Employee-matrix membership
+
+is monitoring context, not a classification gate.
 
 """
 
@@ -107,7 +111,53 @@ def should_force_team_expenses(invoice: Any, employees: Sequence[Any] | None) ->
     return find_employee_by_sender(list(employees or []), sender) is not None
 
 
+# Content-based commercial structure. Invoice/receipt numbers alone are not
+# commercial — retail claims often have a receipt no.
+_COMMERCIAL_ROLE_HINT_KEYS = ("has_po_reference", "has_so_reference", "is_credit_note")
 
+
+def _hint_is_true(value: Any) -> bool:
+    if value is True:
+        return True
+    if isinstance(value, str) and value.strip().lower() in {"1", "true", "yes"}:
+        return True
+    return False
+
+
+def invoice_role_hints(invoice: Any | None) -> dict[str, str]:
+    if invoice is None:
+        return {}
+    from app.services.invoice.vision_type_suggest import document_role_hints_from_invoice
+
+    return document_role_hints_from_invoice(invoice)
+
+
+def commercial_role_hint_keys(hints: dict[str, str] | None) -> list[str]:
+    if not isinstance(hints, dict):
+        return []
+    return [key for key in _COMMERCIAL_ROLE_HINT_KEYS if _hint_is_true(hints.get(key))]
+
+
+def role_hints_look_commercial(hints: dict[str, str] | None) -> bool:
+    """True when the document has PO / SO / credit-note structure.
+
+    Empty or unknown hints are not commercial — fail toward current TE force.
+    ``has_invoice_number`` alone is not commercial.
+    """
+    return bool(commercial_role_hint_keys(hints))
+
+
+def should_apply_employee_channel_te_force(
+    invoice: Any, employees: Sequence[Any] | None
+) -> bool:
+    """Channel+employee match, unless document content looks commercial.
+
+    ``should_force_team_expenses`` is identity/channel only. Role hints are the
+    authoritative skip. Employee-matrix membership is never a hard gate.
+    """
+    if not should_force_team_expenses(invoice, employees):
+        return False
+    return not role_hints_look_commercial(invoice_role_hints(invoice))
 
 
 def invoice_catalogue_title_match_code(
@@ -186,9 +236,13 @@ def apply_employee_channel_team_expenses_route(
 
 ) -> None:
 
-    """Route known employee channels to Team Expenses without clobbering title-match DT."""
+    """Route known employee channels to Team Expenses without clobbering title-match DT.
 
-    if not should_force_team_expenses(invoice, employees):
+    Skips when role hints look commercial so a later posting/eval pass cannot
+    undo a content-based TE skip.
+    """
+
+    if not should_apply_employee_channel_te_force(invoice, employees):
 
         return
 

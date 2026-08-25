@@ -2449,11 +2449,13 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             if not (invoice.document_type_code or "").strip() and not human_locked_dt:
                 from app.services.purchase.team_expense_route_policy import (
                     ensure_team_expenses_document_type,
-                    should_force_team_expenses,
+                    should_apply_employee_channel_te_force,
                 )
 
                 # Safety net: employee-channel TE must not stop on empty DT map.
-                if should_force_team_expenses(invoice, te_employees):
+                # Same commercial-hint skip as DT map — do not re-force after a
+                # content-based skip (employee matrix is not a second gate).
+                if should_apply_employee_channel_te_force(invoice, te_employees):
                     te_defn = ensure_team_expenses_document_type(
                         invoice, rb_config.document_types
                     )
@@ -2474,6 +2476,19 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                                     CANONICAL_DOCUMENT_TYPE_KEY
                                 ),
                                 document_type_code=invoice.document_type_code,
+                            ),
+                        )
+                        await log_event(
+                            session,
+                            "vision_te_channel_forced",
+                            invoice_id=invoice.id,
+                            detail=audit_document_detail(
+                                invoice,
+                                decision="force",
+                                authority="document_role_hints",
+                                employee_channel_matched=True,
+                                rule_reason="dt_map_unresolved_safety_net",
+                                employee_sender=invoice.email_sender,
                             ),
                         )
                         await session.flush()
@@ -2734,7 +2749,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         )
         from app.services.purchase.team_expense_route_policy import (
             apply_employee_channel_team_expenses_route,
-            should_force_team_expenses,
+            should_apply_employee_channel_te_force,
         )
         from app.services.extraction.line_item_extraction_policy import (
             team_expense_hard_requires_line_items,
@@ -2744,7 +2759,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         # the posting gate — otherwise line_items_review on a wrong Expense Claim DT
         # skips continue and force-TE never runs. Reuse the registry loaded for DT map.
         employees = te_employees
-        if should_force_team_expenses(invoice, employees):
+        if should_apply_employee_channel_te_force(invoice, employees):
             apply_employee_channel_team_expenses_route(
                 invoice, rb_config.document_types, employees
             )

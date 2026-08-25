@@ -5,7 +5,9 @@ Hybrid resolve order:
 2) Catalogue title match — vision printed title vs Rule Book shortTitle/title
    (no hardcoded document-type names)
 3) Known employee on email/WhatsApp/Viber → catalogue Team Expenses DT
-   (expense claim vs advance requisition; any receipt/invoice shape)
+   (expense claim vs advance requisition), unless type-suggest role hints
+   show commercial structure (PO / SO / credit note). Empty hints keep this
+   force. Invoice/receipt number alone is not commercial.
 4) Deterministic heading-kind scoring (same scorer as PDF segment classify)
 5) Tenant heading learning (exact normalized title → prior human_confirmed_dt)
 6) Configured classifiers (recognition / playbook identity signals)
@@ -344,6 +346,36 @@ def _resolve_force_team_expenses(
     from app.services.purchase.team_expense_route_policy import should_force_team_expenses
 
     return should_force_team_expenses(invoice, employees)
+
+
+async def _log_te_channel_event(
+    session: Any,
+    invoice: Any | None,
+    event: str,
+    *,
+    hints: dict[str, str],
+    extra: dict[str, object] | None = None,
+) -> None:
+    """Audit-only. Never used as a classification gate."""
+    if session is None or invoice is None:
+        return
+    invoice_id = getattr(invoice, "id", None)
+    if invoice_id is None:
+        return
+    from app.services.audit.audit_service import log_event
+    from app.services.dossier.document_ref_service import audit_document_detail
+    from app.services.purchase.team_expense_route_policy import commercial_role_hint_keys
+
+    detail = audit_document_detail(
+        invoice,
+        document_role_hints=dict(hints),
+        commercial_keys=commercial_role_hint_keys(hints),
+        employee_channel_matched=True,
+        authority="document_role_hints",
+        employee_sender=getattr(invoice, "email_sender", None),
+        **(extra or {}),
+    )
+    await log_event(session, event, invoice_id=invoice_id, detail=detail)
 
 
 def _team_expense_channel_map_result(
@@ -741,8 +773,9 @@ async def map_vision_label_to_document_type_with_llm_fallback(
     Learning uses exact normalized title matches from prior reviewer confirmations
     (synonyms / org-specific naming). LLM receives the same few-shots + org block
     when deterministic scoring fails. Structural ``no_dt_for_role_*`` and human
-    locks are never bypassed — except known employee email/WhatsApp/Viber senders,
-    which always resolve to a catalogue Team Expenses DT (claim vs advance).
+    locks are never bypassed. Known employee email/WhatsApp/Viber senders resolve
+    to a catalogue Team Expenses DT (claim vs advance) unless document role hints
+    look commercial — content is the skip, not employee-matrix history.
     """
     from app.services.classification.document_role_resolve_service import (
         perspective_from_invoice,
@@ -769,11 +802,28 @@ async def map_vision_label_to_document_type_with_llm_fallback(
     ):
         return rule
 
-    force_te = _resolve_force_team_expenses(
+    channel_force = _resolve_force_team_expenses(
         invoice=invoice,
         employees=employees,
         force_team_expenses=force_team_expenses,
     )
+    from app.services.purchase.team_expense_route_policy import (
+        invoice_role_hints,
+        role_hints_look_commercial,
+    )
+
+    hints = invoice_role_hints(invoice)
+    # Content is the skip. Employee-matrix membership never auto-rejects or
+    # auto-forces on its own — empty/unknown hints keep the channel force.
+    force_te = bool(channel_force) and not role_hints_look_commercial(hints)
+    if channel_force and role_hints_look_commercial(hints):
+        await _log_te_channel_event(
+            session,
+            invoice,
+            "vision_te_channel_skipped_commercial",
+            hints=hints,
+            extra={"decision": "skip_force"},
+        )
     if force_te:
         forced = _team_expense_channel_map_result(
             invoice=invoice,
@@ -784,6 +834,13 @@ async def map_vision_label_to_document_type_with_llm_fallback(
             prior_confidence=rule.confidence if rule.code else None,
         )
         if forced is not None:
+            await _log_te_channel_event(
+                session,
+                invoice,
+                "vision_te_channel_forced",
+                hints=hints,
+                extra={"decision": "force", "code": forced.code},
+            )
             return forced
 
     # Never learn/LLM into a commercial DT when role resolution already said

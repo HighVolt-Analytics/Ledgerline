@@ -1165,7 +1165,8 @@ async def test_employee_whatsapp_advance_heading_picks_advance_dt() -> None:
         employees=[employee],
     )
     assert result.code == "DT-05"
-    assert result.method == "te_employee_channel"
+    # Title match runs before channel force; either path must land on Advance.
+    assert result.method in {"te_employee_channel", "catalogue_title_match"}
 
 
 @pytest.mark.asyncio
@@ -1228,6 +1229,241 @@ async def test_upload_does_not_force_team_expense_channel(
         employees=[employee],
     )
     assert result.code is None
+    assert result.method != "te_employee_channel"
+
+
+def _employee_te_catalogue() -> list[DocumentTypeDefinition]:
+    return [
+        DocumentTypeDefinition(
+            code="DT-03",
+            title="PO-based goods invoice",
+            shortTitle="PO Goods",
+            klass="Transactional",
+            posting="Yes",
+            recognitionMode="prompt",
+            recognitionSignals=[],
+            llmPrompt="",
+            routeTarget="Purchase Management",
+            enabled=True,
+            playbookProfile="po_goods",
+            classifier={"enabled": False, "priority": 40, "confidence": 0.9},
+        ),
+        DocumentTypeDefinition(
+            code="DT-04",
+            title="Employee expense claim",
+            shortTitle="Claim",
+            klass="Transactional",
+            posting="Yes",
+            recognitionMode="prompt",
+            recognitionSignals=[],
+            llmPrompt="",
+            routeTarget="Team Expenses",
+            enabled=True,
+            playbookProfile="employee_claim",
+            teamExpenseKind="expense_claim",
+            classifier={"enabled": False, "priority": 50, "confidence": 0.9},
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_employee_email_po_hint_skips_team_expense_force(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Content-based skip: PO structure wins over employee-channel force."""
+    from app.models.invoice import Invoice, InvoiceStatus
+    from app.schemas.rule_book_config import EmployeeMaster
+    from app.services.invoice.vision_document_type_map import VisionDocumentTypeMapResult
+    from app.tenant_ids import TESTING_TENANT_UUID
+
+    async def _fake_llm(**_kwargs):
+        return VisionDocumentTypeMapResult(
+            code="DT-03",
+            confidence=0.82,
+            heading_kind="tax_invoice",
+            reason="llm_matched",
+            method="llm_catalogue_fallback",
+        )
+
+    monkeypatch.setattr(
+        "app.services.invoice.vision_document_type_map._llm_pick_catalogue_dt",
+        _fake_llm,
+    )
+    events: list[str] = []
+
+    async def _capture(_session, event, **_kwargs):
+        events.append(event)
+
+    monkeypatch.setattr("app.services.audit.audit_service.log_event", _capture)
+
+    employee = EmployeeMaster(
+        id="e1", name="Priya", email="priya@acme.com", status="Active"
+    )
+    inv = Invoice(
+        id=401,
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PARSING,
+        document_heading="TAX INVOICE",
+        capture_source="email",
+        email_sender="priya@acme.com",
+        extracted_fields={
+            "canonical_document_type": "Tax Invoice",
+            "document_role_hints": {
+                "has_po_reference": "true",
+                "has_invoice_number": "true",
+            },
+        },
+    )
+    result = await map_vision_label_to_document_type_with_llm_fallback(
+        document_heading="TAX INVOICE",
+        canonical_document_type="Tax Invoice",
+        document_types=_employee_te_catalogue(),
+        invoice=inv,
+        employees=[employee],
+        session=object(),
+    )
+    assert result.method != "te_employee_channel"
+    assert result.reason != "employee_channel_forced"
+    assert "vision_te_channel_skipped_commercial" in events
+    assert "vision_te_channel_forced" not in events
+
+
+@pytest.mark.asyncio
+async def test_employee_email_invoice_number_alone_still_forces_te(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Receipt numbers are not commercial — keep the employee-channel force."""
+    from app.models.invoice import Invoice, InvoiceStatus
+    from app.schemas.rule_book_config import EmployeeMaster
+    from app.tenant_ids import TESTING_TENANT_UUID
+
+    async def _should_not_call_llm(**_kwargs):
+        raise AssertionError("LLM must not run when employee-channel TE is forced")
+
+    monkeypatch.setattr(
+        "app.services.invoice.vision_document_type_map._llm_pick_catalogue_dt",
+        _should_not_call_llm,
+    )
+    events: list[str] = []
+
+    async def _capture(_session, event, **_kwargs):
+        events.append(event)
+
+    monkeypatch.setattr("app.services.audit.audit_service.log_event", _capture)
+
+    employee = EmployeeMaster(
+        id="e1", name="Priya", email="priya@acme.com", status="Active"
+    )
+    inv = Invoice(
+        id=402,
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PARSING,
+        document_heading="Family Floral Gift Shop",
+        capture_source="email",
+        email_sender="priya@acme.com",
+        extracted_fields={
+            "canonical_document_type": "Sales Receipt",
+            "document_role_hints": {"has_invoice_number": "true"},
+        },
+    )
+    result = await map_vision_label_to_document_type_with_llm_fallback(
+        document_heading="Family Floral Gift Shop",
+        canonical_document_type="Sales Receipt",
+        document_types=_employee_te_catalogue(),
+        invoice=inv,
+        employees=[employee],
+        session=object(),
+    )
+    assert result.code == "DT-04"
+    assert result.method == "te_employee_channel"
+    assert result.reason == "employee_channel_forced"
+    assert "vision_te_channel_forced" in events
+    assert "vision_te_channel_skipped_commercial" not in events
+
+
+@pytest.mark.asyncio
+async def test_employee_email_credit_note_hint_skips_te_force(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.models.invoice import Invoice, InvoiceStatus
+    from app.schemas.rule_book_config import EmployeeMaster
+    from app.services.invoice.vision_document_type_map import VisionDocumentTypeMapResult
+    from app.tenant_ids import TESTING_TENANT_UUID
+
+    async def _fake_llm(**_kwargs):
+        return VisionDocumentTypeMapResult(
+            code="DT-03",
+            confidence=0.7,
+            heading_kind="credit_note",
+            reason="llm_matched",
+            method="llm_catalogue_fallback",
+        )
+
+    monkeypatch.setattr(
+        "app.services.invoice.vision_document_type_map._llm_pick_catalogue_dt",
+        _fake_llm,
+    )
+    employee = EmployeeMaster(
+        id="e1", name="Priya", email="priya@acme.com", status="Active"
+    )
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PARSING,
+        document_heading="CREDIT NOTE",
+        capture_source="email",
+        email_sender="priya@acme.com",
+        extracted_fields={"document_role_hints": {"is_credit_note": "true"}},
+    )
+    result = await map_vision_label_to_document_type_with_llm_fallback(
+        document_heading="CREDIT NOTE",
+        canonical_document_type="Credit Note",
+        document_types=_employee_te_catalogue(),
+        invoice=inv,
+        employees=[employee],
+    )
+    assert result.method != "te_employee_channel"
+
+
+@pytest.mark.asyncio
+async def test_employee_email_so_hint_skips_te_force(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.models.invoice import Invoice, InvoiceStatus
+    from app.schemas.rule_book_config import EmployeeMaster
+    from app.services.invoice.vision_document_type_map import VisionDocumentTypeMapResult
+    from app.tenant_ids import TESTING_TENANT_UUID
+
+    async def _fake_llm(**_kwargs):
+        return VisionDocumentTypeMapResult(
+            code="DT-03",
+            confidence=0.7,
+            heading_kind="tax_invoice",
+            reason="llm_matched",
+            method="llm_catalogue_fallback",
+        )
+
+    monkeypatch.setattr(
+        "app.services.invoice.vision_document_type_map._llm_pick_catalogue_dt",
+        _fake_llm,
+    )
+    employee = EmployeeMaster(
+        id="e1", name="Priya", email="priya@acme.com", status="Active"
+    )
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PARSING,
+        document_heading="TAX INVOICE",
+        capture_source="email",
+        email_sender="priya@acme.com",
+        extracted_fields={"document_role_hints": {"has_so_reference": "true"}},
+    )
+    result = await map_vision_label_to_document_type_with_llm_fallback(
+        document_heading="TAX INVOICE",
+        canonical_document_type="Tax Invoice",
+        document_types=_employee_te_catalogue(),
+        invoice=inv,
+        employees=[employee],
+    )
     assert result.method != "te_employee_channel"
 
 def test_advance_requisition_catalogue_title_beats_payment_voucher_on_upload() -> None:

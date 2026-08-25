@@ -7,6 +7,9 @@ from app.schemas.rule_book_config import EmployeeMaster
 from app.services.purchase.team_expense_route_policy import (
     apply_employee_channel_team_expenses_route,
     primary_team_expenses_document_type,
+    role_hints_look_commercial,
+    should_apply_employee_channel_te_force,
+    should_force_team_expenses,
 )
 from app.services.rule_book.rule_book_mapper import ROUTE_TEAM
 from app.tenant_ids import TESTING_TENANT_UUID
@@ -38,6 +41,7 @@ class _InvoiceStub:
         self.capture_source = kwargs.get("capture_source", "email")
         self.email_sender = kwargs.get("email_sender", "")
         self.route_target = kwargs.get("route_target", "")
+        self.extracted_fields = kwargs.get("extracted_fields")
 
 
 def test_primary_team_expenses_document_type_returns_none_without_match() -> None:
@@ -112,5 +116,52 @@ def test_apply_employee_channel_fills_empty_dt() -> None:
         email_sender="ka@acme.com",
     )
     apply_employee_channel_team_expenses_route(inv, catalogue, [employee])
+    assert inv.route_target == ROUTE_TEAM
+    assert inv.document_type_code == "DT-04"
+
+
+def test_role_hints_look_commercial_requires_po_so_or_credit_note() -> None:
+    assert role_hints_look_commercial({}) is False
+    assert role_hints_look_commercial(None) is False
+    assert role_hints_look_commercial({"has_invoice_number": "true"}) is False
+    assert role_hints_look_commercial({"has_po_reference": "true"}) is True
+    assert role_hints_look_commercial({"has_so_reference": "true"}) is True
+    assert role_hints_look_commercial({"is_credit_note": "true"}) is True
+    assert role_hints_look_commercial({"has_po_reference": "false"}) is False
+
+
+def test_employee_channel_force_skips_when_hints_are_commercial() -> None:
+    employee = EmployeeMaster(
+        id="e1", name="Priya", email="priya@acme.com", status="Active"
+    )
+    inv = _InvoiceStub(
+        capture_source="email",
+        email_sender="priya@acme.com",
+        document_type_code="AP-01",
+        extracted_fields={"document_role_hints": {"has_po_reference": "true"}},
+    )
+    assert should_force_team_expenses(inv, [employee]) is True
+    assert should_apply_employee_channel_te_force(inv, [employee]) is False
+    apply_employee_channel_team_expenses_route(inv, [_te_dt("DT-04", title="Claim", team_expense_kind="expense_claim")], [employee])
+    assert inv.route_target != ROUTE_TEAM
+    assert inv.document_type_code == "AP-01"
+
+
+def test_employee_channel_force_keeps_when_only_invoice_number_hint() -> None:
+    employee = EmployeeMaster(
+        id="e1", name="Priya", email="priya@acme.com", status="Active"
+    )
+    inv = _InvoiceStub(
+        capture_source="email",
+        email_sender="priya@acme.com",
+        document_type_code="",
+        extracted_fields={"document_role_hints": {"has_invoice_number": "true"}},
+    )
+    assert should_apply_employee_channel_te_force(inv, [employee]) is True
+    apply_employee_channel_team_expenses_route(
+        inv,
+        [_te_dt("DT-04", title="Claim", team_expense_kind="expense_claim")],
+        [employee],
+    )
     assert inv.route_target == ROUTE_TEAM
     assert inv.document_type_code == "DT-04"
