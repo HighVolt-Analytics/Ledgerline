@@ -1,5 +1,6 @@
 import type { EmployeeMaster, VendorMaster, CustomerMaster } from "@/lib/v4RuleBookTypes";
 import { employeeToApi, mapEmployee, mapVendor, vendorToApi, mapCustomer, customerToApi } from "@/lib/ruleBookConfigApi";
+import { bankUpdatePayload } from "@/lib/bankMasking";
 
 export type PendingVendorRecord = {
   id: number;
@@ -141,14 +142,7 @@ export function vendorMasterToUpdateBody(patch: Partial<VendorMaster>): Record<s
     };
   }
   if (patch.bank != null) {
-    out.bank = {
-      ...(patch.bank.bsb != null ? { bsb: patch.bank.bsb } : {}),
-      account_number: patch.bank.accountNumber,
-      account_name: patch.bank.accountName,
-      bank_name: patch.bank.bankName,
-      ...(patch.bank.swift != null ? { swift: patch.bank.swift } : {}),
-      ...(patch.bank.iban != null ? { iban: patch.bank.iban } : {}),
-    };
+    out.bank = bankUpdatePayload(patch.bank);
   }
   if (patch.defaultLedger != null) out.default_ledger = patch.defaultLedger;
   if (patch.defaultSubLedger != null) out.default_sub_ledger = patch.defaultSubLedger;
@@ -208,14 +202,7 @@ export function employeeMasterToUpdateBody(patch: Partial<EmployeeMaster>): Reco
   if (patch.supervisor1 != null) out.supervisor_1 = patch.supervisor1;
   if (patch.supervisor2 != null) out.supervisor_2 = patch.supervisor2;
   if (patch.bank != null) {
-    out.bank = {
-      ...(patch.bank.bsb != null ? { bsb: patch.bank.bsb } : {}),
-      account_number: patch.bank.accountNumber,
-      account_name: patch.bank.accountName,
-      bank_name: patch.bank.bankName,
-      ...(patch.bank.swift != null ? { swift: patch.bank.swift } : {}),
-      ...(patch.bank.iban != null ? { iban: patch.bank.iban } : {}),
-    };
+    out.bank = bankUpdatePayload(patch.bank);
   }
   if (patch.budget != null) out.budget = patch.budget;
   if (patch.advanceParentLedger != null) out.advance_parent_ledger = patch.advanceParentLedger;

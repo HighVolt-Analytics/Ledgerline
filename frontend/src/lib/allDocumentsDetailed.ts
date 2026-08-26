@@ -1,8 +1,7 @@
 /**
- * All Documents Detailed column helpers — duplicate, auth, sync, line items.
+ * All Documents Detailed column helpers — duplicate, auth, sync.
  */
 import type { MatrixRow } from "@/api/types";
-import { isInvoicePipelineActive } from "@/lib/uploadColumnState";
 import { cn } from "@/lib/cn";
 import { approvalStatusChipClass, kpiStatusChipClass } from "@/lib/kpiModuleColors";
 
@@ -18,16 +17,6 @@ export function duplicateCellValue(row: MatrixRow): {
     return { label: "Possible", kind: "possible" };
   }
   return { label: "—", kind: "empty" };
-}
-
-export function lineItemCellValue(
-  row: MatrixRow,
-  count?: number | null
-): string {
-  const n = count ?? row.line_item_count ?? 0;
-  if (n > 0) return String(n);
-  if (isInvoicePipelineActive(row.invoice)) return "—";
-  return "0";
 }
 
 export function normalizeAuthSyncLabel(raw: string | null | undefined): AuthSyncLabel {

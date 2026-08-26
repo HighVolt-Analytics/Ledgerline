@@ -10,7 +10,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, toSelectOptions } from "@/components/ui/select";
 import { useCoaAccountOptions } from "@/hooks/useCoaAccountOptions";
-import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
+import { useRuleBookTeamExpensePosting } from "@/hooks/useRuleBookConfig";
 import { useInstitutionSettings } from "@/hooks/useInstitutionSettings";
 import { cn } from "@/lib/cn";
 import {
@@ -46,7 +46,7 @@ export function EmployeeDetailPanel({
   const [rulesOpen, setRulesOpen] = useState(false);
   const { data: institution } = useInstitutionSettings();
   const booksCurrency = normalizeCurrencyCode(institution?.currency) ?? "";
-  const { data: ruleBook } = useRuleBookConfig();
+  const { data: teamExpensePosting } = useRuleBookTeamExpensePosting();
   const {
     options: ledgerOptions,
     allAccounts,
@@ -57,7 +57,7 @@ export function EmployeeDetailPanel({
   });
 
   const teamDefaultAdvanceParent =
-    ruleBook?.teamExpensePosting?.defaultAdvanceParentLedger?.trim() ?? "";
+    teamExpensePosting?.defaultAdvanceParentLedger?.trim() ?? "";
 
   const advanceParentValue = useMemo(() => {
     const saved = (emp.advanceParentLedger || "").trim();

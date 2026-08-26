@@ -179,6 +179,7 @@ export type VendorMaster = {
   contactPhone: string;
   confirmationSentAt?: string | null;
   confirmedAt?: string | null;
+  bankMasked?: boolean;
 };
 
 export const DEFAULT_VENDOR_DETECTION_CONFIG: VendorDetectionConfig = {
@@ -231,6 +232,7 @@ export type EmployeeMaster = {
   status: string;
   confirmationSentAt?: string | null;
   confirmedAt?: string | null;
+  bankMasked?: boolean;
 };
 
 export type SampleEmail = {

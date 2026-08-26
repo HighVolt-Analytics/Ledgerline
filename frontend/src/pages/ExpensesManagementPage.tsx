@@ -52,7 +52,7 @@ export function ExpensesManagementPage({ embedded = false }: { embedded?: boolea
   const [searchQuery, setSearchQuery] = useState("");
 
   useVisibilityPolling(() => {
-    void refetch();
+    return refetch();
   }, CLAIM_POLL_MS);
 
   useEffect(() => {

@@ -23,6 +23,7 @@ from app.services.shared.amount_sanity import (
     plausible_qty,
     sanitize_parsed_line_item,
 )
+from app.services.shared.bank_masking import drop_masked_bank_values
 
 _EDITABLE = frozenset(
     {
@@ -101,6 +102,9 @@ async def update_invoice_fields(
     )
     overrides_requested = overrides_explicit
     extracted_fields_payload = payload.pop("extracted_fields", None)
+    if extracted_fields_payload is not None:
+        extracted_fields_payload = drop_masked_bank_values(extracted_fields_payload)
+    payload = drop_masked_bank_values(payload)
     changes: dict[str, dict[str, str | None]] = {}
 
     for field, value in payload.items():

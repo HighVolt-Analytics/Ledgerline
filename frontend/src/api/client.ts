@@ -63,7 +63,13 @@ import type {
   DashboardOverview,
   DashboardStats,
   ReportsAnalytics,
+  ReportCatalogResponse,
+  ReportColumnLayoutCreate,
+  ReportColumnLayoutItem,
+  ReportColumnLayoutUpdate,
   ReportDocumentRow,
+  ReportExportRequest,
+  ReportPreview,
   EmployeeAdvanceSettlementRow,
   EmployeeBudgetUtilizationRow,
   DepartmentBudgetRow,
@@ -401,7 +407,7 @@ function rememberGetCache(key: string, data: unknown) {
   getCache.set(key, { data, at: Date.now() });
 }
 
-export type FreshRequestOptions = { fresh?: boolean };
+export type FreshRequestOptions = { fresh?: boolean; revealBank?: boolean };
 
 export type ApiRequestOptions = RequestInit & { timeoutMs?: number };
 
@@ -1226,7 +1232,8 @@ export const api = {
     return requestWithMeta<Invoice[]>(path);
   },
   getInvoice: (id: number, options?: FreshRequestOptions) => {
-    const path = `/api/invoices/${id}`;
+    const q = options?.revealBank ? "?reveal_bank=true" : "";
+    const path = `/api/invoices/${id}${q}`;
     if (options?.fresh) bustGetCache(path);
     return request<InvoiceDetails>(path);
   },
@@ -1518,7 +1525,8 @@ export const api = {
       method: "DELETE",
     }),
   listVendorMasters: (options?: FreshRequestOptions) => {
-    const path = "/api/vendor-masters";
+    const q = options?.revealBank ? "?reveal_bank=true" : "";
+    const path = `/api/vendor-masters${q}`;
     if (options?.fresh) bustGetCache(path);
     return request<Array<Record<string, unknown>>>(path);
   },
@@ -1542,7 +1550,8 @@ export const api = {
       { method: "POST" }
     ),
   listEmployeeMasters: (options?: FreshRequestOptions) => {
-    const path = "/api/employee-masters";
+    const q = options?.revealBank ? "?reveal_bank=true" : "";
+    const path = `/api/employee-masters${q}`;
     if (options?.fresh) bustGetCache(path);
     return request<Array<Record<string, unknown>>>(path);
   },
@@ -1934,6 +1943,81 @@ export const api = {
     }),
   getReportsAnalytics: (month: string) =>
     request<ReportsAnalytics>(`/api/reports/analytics?month=${encodeURIComponent(month)}`),
+  getReportCatalog: () => request<ReportCatalogResponse>("/api/reports/catalog"),
+  putReportFavourites: (reportIds: string[]) =>
+    request<string[]>("/api/reports/favourites", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ report_ids: reportIds }),
+    }),
+  getReportPreview: (
+    reportId: string,
+    params: {
+      range: string;
+      compare?: boolean;
+      from?: string;
+      to?: string;
+    }
+  ) => {
+    const q = new URLSearchParams();
+    q.set("range", params.range);
+    if (params.compare) q.set("compare", "true");
+    if (params.from) q.set("from", params.from);
+    if (params.to) q.set("to", params.to);
+    return request<ReportPreview>(
+      `/api/reports/${encodeURIComponent(reportId)}/preview?${q.toString()}`
+    );
+  },
+  listReportLayouts: (reportId: string) =>
+    request<ReportColumnLayoutItem[]>(
+      `/api/reports/${encodeURIComponent(reportId)}/layouts`
+    ),
+  createReportLayout: (reportId: string, body: ReportColumnLayoutCreate) =>
+    request<ReportColumnLayoutItem>(
+      `/api/reports/${encodeURIComponent(reportId)}/layouts`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }
+    ),
+  updateReportLayout: (
+    reportId: string,
+    layoutId: number,
+    body: ReportColumnLayoutUpdate
+  ) =>
+    request<ReportColumnLayoutItem>(
+      `/api/reports/${encodeURIComponent(reportId)}/layouts/${layoutId}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }
+    ),
+  setDefaultReportLayout: (reportId: string, layoutId: number) =>
+    request<ReportColumnLayoutItem>(
+      `/api/reports/${encodeURIComponent(reportId)}/layouts/${layoutId}/default`,
+      { method: "POST" }
+    ),
+  deleteReportLayout: (reportId: string, layoutId: number) =>
+    request<null>(
+      `/api/reports/${encodeURIComponent(reportId)}/layouts/${layoutId}`,
+      { method: "DELETE" }
+    ),
+  exportReport: async (reportId: string, body: ReportExportRequest) => {
+    const fallback = `${reportId}.${body.format === "pdf" ? "pdf" : "xlsx"}`;
+    const { blob, filename } = await requestBlob(
+      `/api/reports/${encodeURIComponent(reportId)}/export`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+      fallback
+    );
+    saveBlobAsFile(blob, filename);
+    return { filename };
+  },
   getApBalances: (asOf?: string) => {
     const params = new URLSearchParams();
     if (asOf) params.set("as_of", asOf);

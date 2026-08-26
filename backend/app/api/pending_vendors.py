@@ -17,6 +17,7 @@ from app.services.master_data.master_data_service import (
     list_pending_vendors,
     promote_pending_vendor,
 )
+from app.services.shared.bank_masking import apply_bank_mask_to_master
 
 router = APIRouter(prefix="/pending-vendors", tags=["pending-vendors"])
 
@@ -51,7 +52,11 @@ async def promote_pending_vendor_record(
         vendor = await promote_pending_vendor(db, ctx.tenant_id, pending_id, body)
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
-    return ApiEnvelope(data=vendor)
+    return ApiEnvelope(
+        data=VendorMasterResponse.model_validate(
+            apply_bank_mask_to_master(vendor.model_dump(), reveal=False)
+        )
+    )
 
 
 @router.post("/{pending_id}/dismiss", status_code=204)

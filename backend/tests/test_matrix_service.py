@@ -505,6 +505,23 @@ def test_derive_resolution_hint_ungrounded_amount_before_generic_header() -> Non
     assert "complete header fields" not in hint.lower()
 
 
+def test_derive_resolution_hint_skips_ungrounded_when_total_present() -> None:
+    from app.services.invoice.pipeline_stages import derive_resolution_hint
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="vision_header_review",
+        document_type_code="DT-07",
+        extracted_fields={"amount_ungrounded": True},
+        total=Decimal("100000"),
+    )
+    hint = derive_resolution_hint(inv, [])
+    assert hint is not None
+    assert "could not be verified against document text" not in hint.lower()
+
+
 def test_derive_resolution_hint_amount_inconsistency_before_generic_header() -> None:
     from app.services.invoice.pipeline_stages import derive_resolution_hint
 

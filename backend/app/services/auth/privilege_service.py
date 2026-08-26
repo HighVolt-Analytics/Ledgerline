@@ -8,7 +8,7 @@ from fastapi import HTTPException
 
 from app.api.deps import AuthContext
 from app.services.approval.approval_policy_io import load_policy_for_tenant
-from app.tenant_roles import APPROVAL_ACTIONS, matrix_row_for_role
+from app.tenant_roles import APPROVAL_ACTIONS, BANK_REVEAL_ROLES, matrix_row_for_role, normalize_tenant_role
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -52,3 +52,17 @@ def require_privilege(ctx: AuthContext, action: str) -> None:
     )
     if not allowed:
         raise HTTPException(403, f"Missing privilege: {action}")
+
+
+def can_reveal_bank_details(ctx: AuthContext) -> bool:
+    """Admin / finance head / bookkeeper may request unmasked bank identifiers."""
+    slug = (ctx.role or "").strip().lower()
+    if slug in BANK_REVEAL_ROLES:
+        return True
+    normalized = normalize_tenant_role(ctx.role)
+    return normalized is not None and normalized.value in BANK_REVEAL_ROLES
+
+
+def require_bank_reveal(ctx: AuthContext) -> None:
+    if not can_reveal_bank_details(ctx):
+        raise HTTPException(403, "Missing privilege to reveal bank details")

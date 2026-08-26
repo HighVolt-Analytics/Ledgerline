@@ -97,6 +97,28 @@ def resolve_party_child_mapping(
     return None
 
 
+def _unique_sub_ledger_name(parent: ChartOfAccountEntry, name: str, code: str) -> str:
+    """Keep names unique under one parent, including when renaming an existing party row."""
+    code_upper = code.strip().upper()
+    taken = {
+        sub.name.strip().lower()
+        for sub in parent.sub_ledgers
+        if sub.code.strip().upper() != code_upper
+    }
+    candidate = (name or "").strip() or code
+    if candidate.lower() not in taken:
+        return candidate
+    suffixed = f"{candidate} ({code})"
+    if suffixed.lower() not in taken:
+        return suffixed
+    n = 2
+    while True:
+        suffixed = f"{candidate} ({code}-{n})"
+        if suffixed.lower() not in taken:
+            return suffixed
+        n += 1
+
+
 def _upsert_sub_ledger_on_parent(
     parent: ChartOfAccountEntry,
     *,
@@ -104,19 +126,13 @@ def _upsert_sub_ledger_on_parent(
     party_name: str,
 ) -> SubLedgerEntry:
     code = party_sub_ledger_code(slug)
-    name = (party_name or "").strip() or code
+    name = _unique_sub_ledger_name(parent, (party_name or "").strip() or code, code)
     code_upper = code.upper()
     for idx, sub in enumerate(parent.sub_ledgers):
         if sub.code.strip().upper() == code_upper:
             updated = SubLedgerEntry(code=sub.code.strip(), name=name, origin="party")
             parent.sub_ledgers[idx] = updated
             return updated
-    # Avoid name collisions with a different code under the same parent.
-    name_lower = name.lower()
-    for sub in parent.sub_ledgers:
-        if sub.name.strip().lower() == name_lower and sub.code.strip().upper() != code_upper:
-            name = f"{name} ({code})"
-            break
     created = SubLedgerEntry(code=code, name=name, origin="party")
     parent.sub_ledgers.append(created)
     return created

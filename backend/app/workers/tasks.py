@@ -1,4 +1,5 @@
 import asyncio
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -22,6 +23,13 @@ _last_run: str | None = None
 # Per-tenant in-process pipeline activity (not a global lock).
 _inline_active_tenants: set[uuid.UUID] = set()
 _inline_active_unscoped = 0
+
+# Celery inspect waits up to this long when workers do not reply. Staging measured
+# ~1s per GET /api/process/status with timeout=0.8. Cache so polls stay cheap.
+_CELERY_INSPECT_TIMEOUT_S = 0.15
+_CELERY_ACTIVE_CACHE_TTL_S = 2.0
+# (expires_monotonic, active_count)
+_celery_active_cache: tuple[float, int] = (0.0, 0)
 
 
 def _mark_pipeline_enter(tenant_id: uuid.UUID | None) -> None:
@@ -51,17 +59,45 @@ def is_inline_pipeline_active(*, tenant_id: uuid.UUID | None = None) -> bool:
     return bool(_inline_active_tenants) or _inline_active_unscoped > 0
 
 
-def get_processing_status() -> dict[str, str | int | None]:
-    celery_active = 0
+def mark_celery_work_queued() -> None:
+    """Treat a just-enqueued Celery task as active until inspect cache refreshes."""
+    global _celery_active_cache
+    now = time.monotonic()
+    _expires, count = _celery_active_cache
+    _celery_active_cache = (now + _CELERY_ACTIVE_CACHE_TTL_S, max(count, 1))
+
+
+def reset_processing_status_cache() -> None:
+    global _celery_active_cache
+    _celery_active_cache = (0.0, 0)
+
+
+def _query_celery_active_count() -> int | None:
     try:
         from celery import current_app
 
-        inspect = current_app.control.inspect(timeout=0.8)
+        inspect = current_app.control.inspect(timeout=_CELERY_INSPECT_TIMEOUT_S)
         active = inspect.active() if inspect else None
-        celery_active = sum(len(t or []) for t in (active or {}).values())
+        return sum(len(t or []) for t in (active or {}).values())
     except Exception:
-        pass
+        return None
 
+
+async def _cached_celery_active_count() -> int:
+    global _celery_active_cache
+    now = time.monotonic()
+    expires_at, cached = _celery_active_cache
+    if now < expires_at:
+        return cached
+    counted = await asyncio.to_thread(_query_celery_active_count)
+    if counted is None:
+        counted = cached
+    _celery_active_cache = (time.monotonic() + _CELERY_ACTIVE_CACHE_TTL_S, counted)
+    return counted
+
+
+async def get_processing_status() -> dict[str, str | int | None]:
+    celery_active = await _cached_celery_active_count()
     inline_count = len(_inline_active_tenants) + _inline_active_unscoped
     running = celery_active > 0 or inline_count > 0
     return {

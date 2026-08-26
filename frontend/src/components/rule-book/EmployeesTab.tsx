@@ -29,6 +29,7 @@ import { cn } from "@/lib/cn";
 import type { EmployeeMaster } from "@/lib/v4RuleBookTypes";
 import { EmployeeDetailPanel } from "./EmployeeDetailPanel";
 import { EmployeeImportDialog } from "./EmployeeImportDialog";
+import { usePermissions } from "@/hooks/usePermissions";
 
 const EMPLOYEE_SECTIONS = [
   { value: "pending", label: "Pending", testid: "tab-employees-pending" },
@@ -61,15 +62,24 @@ function StatusDot({ status }: { status: string }) {
 
 export function EmployeesTab() {
   const { toast } = useToast();
+  const { permissions } = usePermissions();
+  const canRevealBank = permissions?.can_reveal_bank === true;
   const [section, setSection] = useState<EmployeeSection>("list");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [pinToTopId, setPinToTopId] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
-  const [bankMasked, setBankMasked] = useState(true);
+  const [revealBank, setRevealBank] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, EmployeeMaster>>({});
   const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set());
 
-  const { data: employees = [], isLoading } = useEmployeeMasters();
+  const { data: employees = [], isLoading } = useEmployeeMasters(true, revealBank && canRevealBank);
+  const bankMasked = !revealBank;
+  const toggleRevealBank = () => {
+    if (!canRevealBank) return;
+    setRevealBank((current) => !current);
+    setDrafts({});
+    setDirtyIds(new Set());
+  };
   const { data: posting } = useRuleBookTeamExpensePosting(!isLoading);
   const { data: coaAccounts = [] } = useChartOfAccounts(!isLoading);
   const createMutation = useCreateEmployeeMaster();
@@ -215,11 +225,10 @@ export function EmployeesTab() {
   };
 
   const listedEmployees = useMemo(() => {
-    const rows = employees.filter((emp) => !isPendingEmployee(emp) || emp.id === pinToTopId);
-    if (!pinToTopId) return rows;
-    const idx = rows.findIndex((emp) => emp.id === pinToTopId);
-    if (idx <= 0) return rows;
-    return [rows[idx]!, ...rows.slice(0, idx), ...rows.slice(idx + 1)];
+    if (!pinToTopId) return employees;
+    const idx = employees.findIndex((emp) => emp.id === pinToTopId);
+    if (idx <= 0) return employees;
+    return [employees[idx]!, ...employees.slice(0, idx), ...employees.slice(idx + 1)];
   }, [employees, pinToTopId]);
 
   const pendingEmployees = useMemo(
@@ -309,7 +318,7 @@ export function EmployeesTab() {
                             emp={draft}
                             onChange={(patch) => patchDraft(emp.id, patch)}
                             masked={bankMasked}
-                            onToggleMask={() => setBankMasked((m) => !m)}
+                            onToggleMask={canRevealBank ? toggleRevealBank : undefined}
                           />
                           <div className="flex items-center justify-between gap-2 px-4 pb-4 bg-muted/20">
                             <Button
@@ -397,7 +406,10 @@ export function EmployeesTab() {
         data-testid="employees-section-tabs"
         tabs={EMPLOYEE_SECTIONS.map((row) => ({
           value: row.value,
-          label: row.label,
+          label:
+            row.value === "pending" && pendingEmployees.length > 0
+              ? `${row.label} (${pendingEmployees.length})`
+              : row.label,
           testid: row.testid,
           secondary: true,
         }))}
@@ -425,6 +437,16 @@ export function EmployeesTab() {
 
       <PageTabPanel value="list" active={section} className="mt-0 space-y-4">
         <div className="flex justify-end flex-wrap gap-2">
+          {canRevealBank ? (
+            <button
+              type="button"
+              onClick={toggleRevealBank}
+              className="text-xs text-muted-foreground hover:text-foreground self-center"
+              data-testid="toggle-bank-mask"
+            >
+              {bankMasked ? "Show bank details" : "Hide bank details"}
+            </button>
+          ) : null}
           <Button
             size="sm"
             variant="outline"

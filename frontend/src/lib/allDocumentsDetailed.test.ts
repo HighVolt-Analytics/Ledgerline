@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { Invoice, MatrixRow } from "@/api/types";
 import {
   duplicateCellValue,
-  lineItemCellValue,
   normalizeAuthSyncLabel,
 } from "@/lib/allDocumentsDetailed";
 
@@ -54,22 +53,6 @@ describe("duplicateCellValue", () => {
 
   it("returns empty dash otherwise", () => {
     expect(duplicateCellValue(row())).toEqual({ label: "—", kind: "empty" });
-  });
-});
-
-describe("lineItemCellValue", () => {
-  it("shows count when present", () => {
-    expect(lineItemCellValue(row({ line_item_count: 3 }))).toBe("3");
-  });
-
-  it("shows em dash while still parsing with zero lines", () => {
-    expect(
-      lineItemCellValue(row({ invoice: inv({ status: "parsing" }), line_item_count: 0 }))
-    ).toBe("—");
-  });
-
-  it("shows 0 when settled with no lines", () => {
-    expect(lineItemCellValue(row({ line_item_count: 0 }))).toBe("0");
   });
 });
 

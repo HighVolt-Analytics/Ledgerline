@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_db, require_admin
+from app.services.auth.privilege_service import require_bank_reveal
 from app.config import get_settings
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.tenant import Tenant
@@ -397,9 +398,22 @@ async def classification_review_queue(
 @router.get("/{invoice_id:int}", response_model=ApiEnvelope[InvoiceWithDetails])
 async def get_invoice(
     invoice_id: int,
+    reveal_bank: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[InvoiceWithDetails]:
+    if reveal_bank:
+        require_bank_reveal(ctx)
+        actor_name, actor_email = await actor_from_context(db, ctx)
+        await log_event(
+            db,
+            "bank_details_revealed",
+            tenant_id=ctx.tenant_id,
+            invoice_id=invoice_id,
+            detail={"scope": "invoice"},
+            actor_name=actor_name,
+            actor_email=actor_email,
+        )
     inv = await _load_invoice_with_details(
         db,
         invoice_id=invoice_id,
@@ -414,6 +428,7 @@ async def get_invoice(
         repair_stored_path=True,
         document_type_extraction_fields=await _document_type_extraction_fields(db, ctx.tenant_id, inv),
         include_extraction_field_confidence=True,
+        reveal_bank=reveal_bank,
     )
     inv = await _load_invoice_with_details(
         db,

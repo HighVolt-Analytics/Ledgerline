@@ -26,6 +26,7 @@ from app.services.master_data.party_coa_subledger_service import (
     ensure_vendor_party_coa_sub_ledger,
     party_sub_ledger_code,
     resolve_party_child_mapping,
+    _upsert_sub_ledger_on_parent,
 )
 from app.services.master_data.vendor_registry_service import create_vendor_registry
 from app.services.payments.journal_generator import generate_entries
@@ -99,6 +100,31 @@ async def test_create_vendor_registry_upserts_party_coa_child(
     ap = next(a for a in payload.chart_of_accounts if a.name == "Accounts Payable")
     party_rows = [s for s in ap.sub_ledgers if s.origin == "party"]
     assert any(s.code == child.account_code for s in party_rows)
+
+
+def test_upsert_renames_with_suffix_when_name_already_used() -> None:
+    """Renaming an employee to an existing party name must not 500 on unique names."""
+    parent = ChartOfAccountEntry(
+        code="1003",
+        name="Staff Advance.",
+        type="Asset",
+        sub_ledgers=[
+            SubLedgerEntry(code="EM-NEW-EMPLOYEE-FAD7", name="vishnu", origin="party"),
+            SubLedgerEntry(
+                code="EM-NEW-EMPLOYEE-94C3",
+                name="New employee (EM-NEW-EMPLOYEE-94C3)",
+                origin="party",
+            ),
+        ],
+    )
+    child = _upsert_sub_ledger_on_parent(
+        parent,
+        slug="em-new-employee-94c3a3",
+        party_name="vishnu",
+    )
+    assert child.code == "EM-NEW-EMPLOYEE-94C3"
+    assert child.name == "vishnu (EM-NEW-EMPLOYEE-94C3)"
+    ChartOfAccountEntry.model_validate(parent.model_dump())
 
 
 def test_generate_entries_posts_to_party_coa_child() -> None:

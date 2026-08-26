@@ -315,12 +315,20 @@ export function DashboardPageSkeleton() {
 export function ReportsPageSkeleton() {
   return (
     <div className="space-y-4">
-      <KpiGridSkeleton count={4} className="mb-2" />
-      <div className="grid gap-4 lg:grid-cols-2">
-        <ChartCardSkeleton tall />
-        <ChartCardSkeleton tall />
-      </div>
-      <TableSkeleton rows={5} columns={4} />
+      <Skeleton className="h-8 w-full max-w-sm" />
+      <TabsSkeleton count={6} />
+      <Card className="p-4">
+        <Skeleton className="h-4 w-28 mb-2" />
+        {Array.from({ length: 4 }).map((_, i) => (
+          <ListRowSkeleton key={i} actionWidth="w-24" />
+        ))}
+      </Card>
+      <Card className="p-4">
+        <Skeleton className="h-4 w-40 mb-2" />
+        {Array.from({ length: 5 }).map((_, i) => (
+          <ListRowSkeleton key={i} actionWidth="w-24" />
+        ))}
+      </Card>
     </div>
   );
 }

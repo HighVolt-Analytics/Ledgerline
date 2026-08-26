@@ -21,6 +21,8 @@ import { fetchMatrixPage, MATRIX_PAGE_SIZE, sortMatrixRowsNewestFirst, stagesToC
 import type { MatrixFlagType, MatrixPaymentStatus } from "@/lib/v4MatrixMockData";
 import { cn } from "@/lib/cn";
 import { isInvoicePipelineActive } from "@/lib/uploadColumnState";
+import { UPLOAD_POLL_FAST_MS, UPLOAD_POLL_MS } from "@/lib/uploadPolling";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { useAuth } from "@/context/AuthContext";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
@@ -39,8 +41,6 @@ const InvoiceDetailDrawer = lazy(() =>
   }))
 );
 
-const MATRIX_POLL_MS = 15_000;
-const MATRIX_POLL_FAST_MS = 4_000;
 const PAGE_SIZE = MATRIX_PAGE_SIZE;
 
 type MatrixFilter = "all" | "anomalies" | "awaiting" | "paid" | "pending" | "failed";
@@ -155,6 +155,7 @@ export function DocumentMatrixPanel({
   const [error, setError] = useState<string | null>(null);
   const [drawerInvoiceId, setDrawerInvoiceId] = useState<number | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const debouncedSearch = useDebouncedValue(searchQuery.trim());
 
   useResetOnTenantChange(() => {
     loadSeq.current += 1;
@@ -175,12 +176,12 @@ export function DocumentMatrixPanel({
     const params: Record<string, string> = {};
     if (captureSource) params.capture_source = captureSource;
     if (filter !== "all") params.matrix_filter = filter;
-    if (searchQuery.trim()) params.q = searchQuery.trim();
+    if (debouncedSearch) params.q = debouncedSearch;
     return params;
-  }, [captureSource, filter, searchQuery]);
+  }, [captureSource, filter, debouncedSearch]);
 
   const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
-    if (options?.silent && loadInFlightRef.current) return null;
+    if (options?.silent && loadInFlightRef.current && !options.fresh) return null;
     const scope = captureTenantFetchScope();
     const seq = ++loadSeq.current;
     if (!options?.silent) {
@@ -228,7 +229,7 @@ export function DocumentMatrixPanel({
 
   useEffect(() => {
     setPage(1);
-  }, [captureSource, filter, searchQuery]);
+  }, [captureSource, filter, debouncedSearch]);
 
   useEffect(() => {
     if (!refreshRef) return;
@@ -250,10 +251,10 @@ export function DocumentMatrixPanel({
     [matrixRows]
   );
 
-  const matrixPollMs = hasActiveProcessing ? MATRIX_POLL_FAST_MS : MATRIX_POLL_MS;
+  const matrixPollMs = hasActiveProcessing ? UPLOAD_POLL_FAST_MS : UPLOAD_POLL_MS;
 
   useVisibilityPolling(() => {
-    void load({ silent: true, fresh: hasActiveProcessing });
+    return load({ silent: true, fresh: hasActiveProcessing });
   }, matrixPollMs);
 
   const pagedRows = matrixRows;

@@ -72,7 +72,11 @@ from app.services.auth.membership_enumeration import (
     membership_is_switchable,
 )
 from app.services.auth.membership_service import ensure_membership, user_has_tenant_access
-from app.services.auth.privilege_service import matrix_role_for_context, permissions_for_context
+from app.services.auth.privilege_service import (
+    can_reveal_bank_details,
+    matrix_role_for_context,
+    permissions_for_context,
+)
 from app.services.auth.super_admin_portal_embed_service import (
     check_portal_embed_request,
     resolve_portal_embed_login_target,
@@ -818,6 +822,7 @@ async def my_permissions(
             matrix_role=matrix_role_for_context(ctx),
             permissions=permissions_for_context(ctx),
             enabled_modules=modules,
+            can_reveal_bank=can_reveal_bank_details(ctx),
         )
     )
 

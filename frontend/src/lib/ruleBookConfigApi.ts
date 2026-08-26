@@ -247,6 +247,7 @@ export function mapVendor(raw: Record<string, unknown>): VendorMaster {
     contactPhone: String(raw.contact_phone ?? ""),
     confirmationSentAt: (raw.confirmation_sent_at as string | null | undefined) ?? null,
     confirmedAt: (raw.confirmed_at as string | null | undefined) ?? null,
+    bankMasked: raw.bank_masked !== false,
   };
 }
 
@@ -377,6 +378,7 @@ export function mapEmployee(raw: Record<string, unknown>): EmployeeMaster {
     status: String(raw.status ?? ""),
     confirmationSentAt: (raw.confirmation_sent_at as string | null | undefined) ?? null,
     confirmedAt: (raw.confirmed_at as string | null | undefined) ?? null,
+    bankMasked: raw.bank_masked !== false,
   };
 }
 

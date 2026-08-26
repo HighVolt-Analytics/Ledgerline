@@ -76,3 +76,4 @@ class PermissionsResponse(BaseModel):
     matrix_role: str
     permissions: dict[str, bool]
     enabled_modules: dict[str, bool] = Field(default_factory=dict)
+    can_reveal_bank: bool = False

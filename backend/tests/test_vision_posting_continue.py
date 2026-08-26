@@ -181,11 +181,12 @@ def test_vision_header_ok_from_invoice_requires_payable_fields() -> None:
         vendor="Acme",
         total=Decimal("100"),
         due_date=date(2026, 6, 1),
-        extracted_fields={"needs_review": True},
+        extracted_fields={"needs_review": True, "amount_ungrounded": True},
     )
     # Stale vision needs_review must not block once payable fields are complete.
     assert vision_header_ok_from_invoice(needs_review, defn) is True
     assert (needs_review.extracted_fields or {}).get("needs_review") in (None, False)
+    assert (needs_review.extracted_fields or {}).get("amount_ungrounded") in (None, False)
 
 
 def test_vision_posting_skip_message_lists_missing_fields() -> None:

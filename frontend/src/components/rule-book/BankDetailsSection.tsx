@@ -11,11 +11,6 @@ export type BankDetails = {
   iban?: string;
 };
 
-export function maskBankField(value: string, masked: boolean) {
-  if (!masked || !value || value.length <= 4) return value;
-  return `••••${value.slice(-4)}`;
-}
-
 export function BankDetailsSection({
   bank,
   onChange,
@@ -34,6 +29,9 @@ export function BankDetailsSection({
   const setField = (key: keyof BankDetails, value: string) => {
     onChange?.({ ...bank, [key]: value });
   };
+  const secretsLocked = Boolean(
+    masked && (bank.accountNumber || bank.bsb || bank.iban)
+  );
 
   const note =
     noteFor === "Payments"
@@ -64,18 +62,18 @@ export function BankDetailsSection({
       <div className="grid sm:grid-cols-2 gap-2.5">
         <FieldLabel label="BSB (AU)">
           <Input
-            value={maskBankField(bank.bsb ?? "", masked)}
+            value={bank.bsb ?? ""}
             onChange={(e) => setField("bsb", e.target.value)}
-            readOnly={readOnly || masked}
+            readOnly={readOnly || secretsLocked}
             className="h-8 text-xs font-mono"
             placeholder="000-000"
           />
         </FieldLabel>
         <FieldLabel label="Account number">
           <Input
-            value={maskBankField(bank.accountNumber, masked)}
+            value={bank.accountNumber}
             onChange={(e) => setField("accountNumber", e.target.value)}
-            readOnly={readOnly || masked}
+            readOnly={readOnly || secretsLocked}
             className="h-8 text-xs font-mono"
             placeholder="00000000"
           />
@@ -111,7 +109,7 @@ export function BankDetailsSection({
           <Input
             value={bank.iban ?? ""}
             onChange={(e) => setField("iban", e.target.value)}
-            readOnly={readOnly}
+            readOnly={readOnly || secretsLocked}
             className="h-8 text-xs font-mono"
             placeholder="—"
           />

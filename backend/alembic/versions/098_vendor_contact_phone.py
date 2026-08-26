@@ -1,7 +1,10 @@
 """Add contact phone to vendor masters.
 
-Revision ID: 096
-Revises: 095
+Revision ID: 098
+Revises: 097
+
+Was originally checked in as a second 096 (alongside report favourites),
+so alembic never applied this column.
 """
 
 from typing import Sequence, Union
@@ -10,8 +13,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy import inspect
 
-revision: str = "096"
-down_revision: Union[str, None] = "095"
+revision: str = "098"
+down_revision: Union[str, None] = "097"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

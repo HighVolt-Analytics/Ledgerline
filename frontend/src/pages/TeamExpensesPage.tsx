@@ -121,7 +121,7 @@ export function TeamExpensesPage({ embedded = false }: { embedded?: boolean }) {
   };
 
   useVisibilityPolling(() => {
-    void refetch();
+    return refetch();
   }, CLAIM_POLL_MS);
 
   useEffect(() => {

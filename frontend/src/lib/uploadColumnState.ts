@@ -8,7 +8,6 @@ import {
   type ValidationPassDocumentType,
 } from "@/lib/invoice";
 import { PIPELINE_STATUSES } from "@/lib/invoiceActions";
-import { buildMatrixCells, type MatrixStage } from "@/lib/matrix";
 import { storedDocumentTypeCode, visionDocumentTypeLabel } from "@/lib/documentTypeResolve";
 
 export type UploadListColumnId =
@@ -24,34 +23,18 @@ export type UploadListColumnId =
 
 export type ColumnDisplayMode = "value" | "processing" | "empty";
 
-const COLUMN_STAGE: Record<UploadListColumnId, MatrixStage> = {
-  documentMeta: "Parsed",
-  documentType: "Parsed",
-  counterparty: "Parsed",
-  route: "Parsed",
-  glAccount: "Mapped",
-  evaluation: "Validated",
-  vrPass: "Validated",
-  match: "Parsed",
-  total: "Parsed",
-};
-
 const PIPELINE_ACTIVE = new Set<string>(PIPELINE_STATUSES);
 
-const SETTLED_STATUSES = new Set(["processed", "exception", "rejected", "duplicate_skipped"]);
+/** Terminal outcomes that should not keep an optimistic processing overlay. */
+const PIPELINE_COMPLETE = new Set(["processed", "duplicate_skipped"]);
 
 export function isInvoicePipelineActive(
   inv: Pick<Invoice, "status" | "id">,
   processingIds?: ReadonlySet<number>
 ): boolean {
+  if (processingIds?.has(inv.id) && !PIPELINE_COMPLETE.has(inv.status)) return true;
   if (PIPELINE_ACTIVE.has(inv.status)) return true;
-  if (processingIds?.has(inv.id) && !SETTLED_STATUSES.has(inv.status)) return true;
   return false;
-}
-
-function requiredStageComplete(inv: Invoice, column: UploadListColumnId): boolean {
-  const cell = buildMatrixCells(inv)[COLUMN_STAGE[column]];
-  return cell.state === "done";
 }
 
 export function columnHasDisplayValue(
@@ -104,14 +87,30 @@ export function uploadColumnDisplayMode(
     return "value";
   }
 
-  const activelyProcessing = isInvoicePipelineActive(inv, options?.processingIds);
-  const stageDone = requiredStageComplete(inv, column);
-
-  if (activelyProcessing && !stageDone) {
+  if (isInvoicePipelineActive(inv, options?.processingIds)) {
     return "processing";
   }
 
   return "empty";
+}
+
+/** Empty extracted field → spinner while the pipeline is running. */
+export function valueOrProcessingMode(
+  hasValue: boolean,
+  inv: Pick<Invoice, "status" | "id">,
+  processingIds?: ReadonlySet<number>
+): ColumnDisplayMode {
+  if (hasValue) return "value";
+  if (isInvoicePipelineActive(inv, processingIds)) return "processing";
+  return "empty";
+}
+
+/** Auth / posting / payment cells: hide stale Failed/Pending while reprocessing. */
+export function derivedColumnProcessingMode(
+  inv: Pick<Invoice, "status" | "id">,
+  processingIds?: ReadonlySet<number>
+): ColumnDisplayMode {
+  return isInvoicePipelineActive(inv, processingIds) ? "processing" : "value";
 }
 
 export function isStageColumnProcessing(
@@ -119,6 +118,7 @@ export function isStageColumnProcessing(
   processingIds?: ReadonlySet<number>
 ): boolean {
   if (!isInvoicePipelineActive(inv, processingIds)) return false;
+  if (processingIds?.has(inv.id)) return true;
   const state = inv.current_stage_state;
   return state == null || state === "pending";
 }

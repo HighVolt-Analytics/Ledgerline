@@ -107,11 +107,7 @@ async def _load_rule_book_response_dict(
     tenant_id: uuid.UUID,
 ) -> dict[str, Any]:
     data = await _load_rule_book_raw_dict(db, tenant_id, validate=True)
-    return await attach_email_capture_ingest_stats(
-        db,
-        tenant_id,
-        await attach_masters_to_config_dict(db, tenant_id, data),
-    )
+    return await attach_masters_to_config_dict(db, tenant_id, data)
 
 
 async def _load_rule_book_editor_dict(

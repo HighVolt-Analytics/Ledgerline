@@ -316,31 +316,6 @@ table.all-docs-table-fixed {
   table-layout: fixed;
 }
 
-.all-docs-table--summary { min-width: 72rem; }
-.all-docs-table--summary-source { min-width: 78rem; }
-
-table.all-docs-table--summary th,
-table.all-docs-table--summary td,
-table.all-docs-table--summary-source th,
-table.all-docs-table--summary-source td {
-  padding-left: 0.7rem;
-  padding-right: 0.7rem;
-}
-
-table.all-docs-table--summary th:first-child,
-table.all-docs-table--summary td:first-child,
-table.all-docs-table--summary-source th:first-child,
-table.all-docs-table--summary-source td:first-child {
-  padding-left: 0.75rem;
-}
-
-table.all-docs-table--summary th:last-child,
-table.all-docs-table--summary td:last-child,
-table.all-docs-table--summary-source th:last-child,
-table.all-docs-table--summary-source td:last-child {
-  padding-right: 0.75rem;
-}
-
 table.all-docs-pills th,
 table.all-docs-pills td,
 .all-docs-pills th,
@@ -386,25 +361,6 @@ table.all-docs-pills td .badge,
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-.all-docs-col--doc { width: 7.5rem; }
-.all-docs-col--doc-sm { width: 5rem; }
-.all-docs-col--source { width: 6.25rem; }
-.all-docs-col--type { width: 7.25rem; }
-.all-docs-col--party { width: 9.5rem; }
-.all-docs-col--nature { width: 7.25rem; }
-.all-docs-col--date { width: 5.75rem; }
-.all-docs-col--ledger { width: 8rem; }
-.all-docs-col--amount { width: 7rem; }
-.all-docs-col--status { width: 5.75rem; }
-.all-docs-col--pay { width: 6.75rem; }
-.all-docs-col--action { width: 8.5rem; }
-.all-docs-col--vault { width: 6.75rem; }
-.all-docs-col--dup { width: 6.5rem; }
-.all-docs-col--route { width: 8rem; }
-.all-docs-col--invno { width: 7rem; }
-.all-docs-col--lines { width: 5rem; }
-.all-docs-col--auth { width: 5.75rem; }
 
 .all-docs-pills .approvals-action-chip.status-chip,
 .all-docs-pills .status-chip {

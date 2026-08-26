@@ -51,4 +51,4 @@ async def trigger_processing(
 
 @router.get("/status", response_model=ApiEnvelope[ProcessingStatus])
 async def processing_status() -> ApiEnvelope[ProcessingStatus]:
-    return ApiEnvelope(data=ProcessingStatus(**get_processing_status()))
+    return ApiEnvelope(data=ProcessingStatus(**(await get_processing_status())))

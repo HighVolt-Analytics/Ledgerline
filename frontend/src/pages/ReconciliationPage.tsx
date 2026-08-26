@@ -83,7 +83,7 @@ export function ReconciliationPage() {
       return;
     }
     api
-      .getRuleBookConfig()
+      .getRuleBookConfig({ fields: "editor" })
       .then((config) => setPostingDefaults(ruleBookConfigFromApi(config).postingDefaults))
       .catch(() => setPostingDefaults({ ...DEFAULT_POSTING_DEFAULTS }));
   }, [tenantScope]);

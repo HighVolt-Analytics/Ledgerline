@@ -38,6 +38,17 @@ class TenantRole(str, enum.Enum):
     USER = "user"
 
 
+# Finance roles that may request unmasked account / BSB / IBAN over the API.
+BANK_REVEAL_ROLES: frozenset[str] = frozenset(
+    {
+        TenantRole.ADMIN.value,
+        TenantRole.FINANCE_HEAD.value,
+        TenantRole.BOOKKEEPER.value,
+        UserRole.ADMIN.value,
+    }
+)
+
+
 _MATRIX_ROW_BY_SLUG: dict[str, str] = {
     TenantRole.ADMIN.value: "Admin",
     TenantRole.FUNCTIONAL_MANAGER.value: "Functional manager",

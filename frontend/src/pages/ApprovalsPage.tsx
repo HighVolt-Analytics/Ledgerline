@@ -32,6 +32,7 @@ import {
 } from "@/components/inbox/DocumentTypeDisplay";
 import { EvaluationStatusBadge } from "@/components/inbox/EvaluationStatusBadge";
 import { StageBadge, invoiceStageBadgeProps } from "@/components/StageBadge";
+import { UploadColumnProcessingIndicator } from "@/components/upload/UploadColumnCell";
 import {
   APPROVABLE_STATUSES,
   APPROVAL_QUEUE_STATUSES,
@@ -729,7 +730,10 @@ export function ApprovalsPage() {
                   >
                     <div className="approvals-kanban-card__body">
                       <div className="approvals-kanban-card__top">
-                        <span className="approvals-kanban-card__vendor">{inv.vendor ?? "—"}</span>
+                        <span className="approvals-kanban-card__vendor inline-flex items-center gap-1.5 min-w-0">
+                          {processingIds.has(inv.id) ? <UploadColumnProcessingIndicator /> : null}
+                          <span className="truncate">{inv.vendor ?? "—"}</span>
+                        </span>
                         <div className="flex flex-wrap items-center justify-end gap-1">
                           <VisionHeadingBadge inv={inv} className="approvals-kanban-card__type-chip" />
                           <MappedDocumentTypeBadge

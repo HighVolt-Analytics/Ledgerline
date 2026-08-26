@@ -1,3 +1,8 @@
+/**
+ * TODO(reports-catalog): remove ReportDownloadMenu.tsx once nothing imports it.
+ * Confirmed unused after ReportsPage was rewritten to the catalog UI
+ * (previous importer: frontend/src/pages/ReportsPage.tsx only).
+ */
 import { useMemo, useState } from "react";
 import { Download } from "lucide-react";
 import { api } from "@/api/client";

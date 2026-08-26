@@ -32,6 +32,7 @@ from app.services.rule_book.rule_book_config_io import (
     load_rule_book_config_dict,
 )
 from app.services.rule_book.rule_book_mapper import clear_classification_config_cache
+from app.services.shared.bank_masking import merge_bank_update
 from app.tenant_scoped import coerce_tenant_uuid
 
 
@@ -116,6 +117,7 @@ def employee_record_to_schema(row: EmployeeMasterRecord) -> EmployeeMasterRespon
 def vendor_master_to_dict(vendor: VendorMaster) -> dict[str, Any]:
     data = vendor.model_dump()
     data.pop("db_id", None)
+    data.pop("bank_masked", None)
     return data
 
 
@@ -123,6 +125,7 @@ def employee_master_to_dict(employee: EmployeeMaster) -> dict[str, Any]:
     data = employee.model_dump(by_alias=True)
     data.pop("db_id", None)
     data.pop("advance_balance", None)
+    data.pop("bank_masked", None)
     # Keep legacy key for rule-book file consumers.
     if "spending_limits" in data and "budget" not in data:
         data["budget"] = data["spending_limits"]
@@ -411,7 +414,7 @@ async def create_vendor_master(
         aliases=body.aliases,
         abn=_normalize_abn(body.abn),
         billing_address=body.billing_address.model_dump(),
-        bank=body.bank.model_dump(exclude_none=True),
+        bank=merge_bank_update({}, body.bank.model_dump(exclude_none=True)),
         default_ledger=body.default_ledger,
         default_sub_ledger=body.default_sub_ledger,
         payment_terms=body.payment_terms,
@@ -446,10 +449,15 @@ async def update_vendor_master(
         patch["contact_phone"] = str(patch["contact_phone"]).strip()
     if "contact_email" in patch and patch["contact_email"] is not None:
         patch["contact_email"] = str(patch["contact_email"]).strip()
+    if "bank" in patch and body.bank is not None:
+        patch["bank"] = merge_bank_update(
+            row.bank or {},
+            body.bank.model_dump(exclude_unset=True, exclude_none=True),
+        )
     for key, value in patch.items():
-        if key in {"billing_address", "bank"} and value is not None:
+        if key == "billing_address" and value is not None:
             if hasattr(value, "model_dump"):
-                value = value.model_dump(exclude_none=True)
+                value = value.model_dump(exclude_unset=True, exclude_none=True)
         setattr(row, key, value)
     await db.flush()
     await sync_masters_to_config_file(db, tenant_id)
@@ -514,7 +522,7 @@ async def create_employee_master(
         division=body.division,
         supervisor_1=body.supervisor_1,
         supervisor_2=body.supervisor_2,
-        bank=body.bank.model_dump(exclude_none=True),
+        bank=merge_bank_update({}, body.bank.model_dump(exclude_none=True)),
         spending_limits=body.spending_limits.model_dump(),
         advance_parent_ledger=advance_parent,
         ytd_spent=body.ytd_spent,
@@ -570,9 +578,14 @@ async def update_employee_master(
     else:
         patch.pop("budget", None)
     for key, value in patch.items():
-        if key in {"bank", "spending_limits"} and value is not None:
+        if key == "bank" and body.bank is not None:
+            value = merge_bank_update(
+                row.bank or {},
+                body.bank.model_dump(exclude_unset=True, exclude_none=True),
+            )
+        elif key == "spending_limits" and value is not None:
             if hasattr(value, "model_dump"):
-                value = value.model_dump(exclude_none=True) if key == "bank" else value.model_dump()
+                value = value.model_dump()
         if key == "advance_parent_ledger" and value is not None:
             value = str(value).strip()
         setattr(row, key, value)

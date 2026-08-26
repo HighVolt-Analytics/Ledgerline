@@ -63,8 +63,7 @@ export function CollectionsPage() {
   const showKpiPlaceholder = kpisLoading || collectionsBlocked;
 
   useVisibilityPolling(() => {
-    void refetch();
-    void refetchKpis();
+    return Promise.all([refetch(), refetchKpis()]);
   }, POLL_MS);
 
   useEffect(() => {

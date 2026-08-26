@@ -104,9 +104,13 @@ export function counterpartyName(
   const fields = inv.extracted_fields ?? {};
   const kind = counterpartyKind(inv);
   const vendor = inv.vendor?.trim() || "";
-  const employeeName = fields.employee_name?.trim() || "";
-  const buyer = fields.buyer_name?.trim() || "";
-  const seller = fields.seller_name?.trim() || "";
+  const fieldText = (key: string) => {
+    const value = fields[key];
+    return typeof value === "string" ? value.trim() : "";
+  };
+  const employeeName = fieldText("employee_name");
+  const buyer = fieldText("buyer_name");
+  const seller = fieldText("seller_name");
   const purchaseDoc = (inv.purchase_document_type ?? "").trim().toLowerCase();
 
   // PO/GRN: vendor column is authoritative; seller_name often holds doc numbers (GRN-xxx).
@@ -206,8 +210,10 @@ function extractionFieldPopulated(inv: InvoiceDetails, fieldKey: string): boolea
   }
   if (fieldKey === "document_heading") {
     return Boolean(
-      inv.document_heading?.trim() ||
-        inv.extracted_fields?.document_heading?.trim() ||
+        inv.document_heading?.trim() ||
+        (typeof inv.extracted_fields?.document_heading === "string"
+          ? inv.extracted_fields.document_heading.trim()
+          : "") ||
         headingFromDocumentText(inv.document_text)
     );
   }
@@ -665,7 +671,11 @@ export function evaluationReviewTooltip(
   if (status === "vision_header_review") {
     const fields = inv.extracted_fields as Record<string, unknown> | null | undefined;
     const ungrounded = fields?.amount_ungrounded;
-    if (ungrounded === true || String(ungrounded ?? "").toLowerCase() === "true") {
+    const hasTotal = inv.total != null && String(inv.total).trim() !== "";
+    if (
+      !hasTotal &&
+      (ungrounded === true || String(ungrounded ?? "").toLowerCase() === "true")
+    ) {
       return "Fields tab — Amount could not be verified against document text";
     }
     const inconsistent = fields?.amount_inconsistency;

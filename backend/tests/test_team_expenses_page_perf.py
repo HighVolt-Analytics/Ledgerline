@@ -216,3 +216,22 @@ async def test_gl_budget_utilization_does_not_n1_gl_period_consumed(
     )
     row = next(r for r in rows if r.gl_ledger == "Travel")
     assert row.consumed == 80
+
+
+def test_team_expense_kind_count_sql_is_postgres_safe() -> None:
+    from sqlalchemy.dialects import postgresql
+
+    from app.models.invoice import Invoice
+    from app.services.reports.team_expense_reports_service import (
+        team_expense_kind_count_stmt,
+    )
+    from app.tenant_ids import TESTING_TENANT_UUID
+
+    sql = str(
+        team_expense_kind_count_stmt(Invoice.tenant_id == TESTING_TENANT_UUID).compile(
+            dialect=postgresql.dialect()
+        )
+    ).lower()
+    assert "group by invoices.team_expense_kind" in sql
+    assert "lower(" not in sql
+    assert "coalesce(" not in sql

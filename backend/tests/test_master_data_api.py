@@ -1,13 +1,31 @@
 """Phase 4 master data APIs."""
 
+from datetime import datetime, timezone
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import AuditLog
+from app.models.employee_master import EmployeeMasterRecord
+from app.schemas.master_data import EmployeeMasterCreate
+from app.services.audit.audit_service import json_safe_audit_detail
+from app.services.master_data.master_data_service import create_employee_master
 from app.services.rule_book.rule_book_mapper import clear_classification_config_cache
 from app.tenant_ids import TESTING_TENANT_UUID
+
+
+def test_json_safe_audit_detail_serializes_datetime() -> None:
+    sent = datetime(2026, 8, 26, 2, 30, tzinfo=timezone.utc)
+    out = json_safe_audit_detail(
+        {
+            "before": {"confirmation_sent_at": sent, "name": "vishnu"},
+        }
+    )
+    assert out is not None
+    assert str(out["before"]["confirmation_sent_at"]).startswith("2026-08-26T02:30:00")
+    assert out["before"]["name"] == "vishnu"
 
 
 @pytest.mark.asyncio
@@ -119,6 +137,35 @@ async def test_employee_master_crud(client: AsyncClient) -> None:
 
     res = await client.delete(f"/api/employee-masters/{master_id}")
     assert res.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_employee_master_patch_with_confirmation_timestamps(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    created = await create_employee_master(
+        db_session,
+        TESTING_TENANT_UUID,
+        EmployeeMasterCreate(name="Jordan Lee", email="jordan@example.com"),
+    )
+    row = (
+        await db_session.execute(
+            select(EmployeeMasterRecord).where(EmployeeMasterRecord.master_id == created.id)
+        )
+    ).scalar_one()
+    now = datetime.now(timezone.utc)
+    row.confirmation_sent_at = now
+    row.confirmed_at = now
+    await db_session.commit()
+
+    res = await client.patch(
+        f"/api/employee-masters/{created.id}",
+        json={"last_claim": "2026-08-01"},
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["data"]["last_claim"] == "2026-08-01"
+
+    await client.delete(f"/api/employee-masters/{created.id}")
 
 
 @pytest.mark.asyncio

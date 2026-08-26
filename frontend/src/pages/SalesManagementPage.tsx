@@ -118,7 +118,7 @@ export function SalesManagementPage({ embedded = false }: { embedded?: boolean }
   };
 
   useVisibilityPolling(() => {
-    void refetchAll();
+    return refetchAll();
   }, POLL_MS);
 
   useEffect(() => {

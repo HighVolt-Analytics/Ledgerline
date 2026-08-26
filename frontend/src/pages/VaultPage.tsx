@@ -246,9 +246,11 @@ export function VaultPage() {
   }, [user?.tenant_id]);
 
   useVisibilityPolling(() => {
-    void refetchTree();
-    if (folderFilesEnabled) void refetchFolderFiles();
-    if (tab === "sets") void refetchSets();
+    return Promise.all([
+      refetchTree(),
+      folderFilesEnabled ? refetchFolderFiles() : Promise.resolve(),
+      tab === "sets" ? refetchSets() : Promise.resolve(),
+    ]);
   }, VAULT_POLL_MS);
 
   const folderTree = useMemo(() => toTreeNodes(vaultData?.tree ?? []), [vaultData]);

@@ -8,9 +8,42 @@ from fastapi.responses import FileResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, get_auth_context, get_db
-from app.api.http_errors import http_bad_request
+from app.api.http_errors import http_bad_request, http_not_found
 from app.schemas.common import ApiEnvelope
+from app.schemas.report_catalog import (
+    ReportCatalogResponse,
+    ReportColumnLayoutCreate,
+    ReportColumnLayoutItem,
+    ReportColumnLayoutUpdate,
+    ReportExportRequest,
+    ReportFavouritesUpdate,
+    ReportPreview,
+    ReportRange,
+)
 from app.schemas.reports import ReportDocumentRow, ReportsAnalytics
+from app.services.reports.report_catalog import (
+    TE_XLSX_KIND_BY_ID,
+    UnknownReportId,
+    UnknownReportIds,
+    catalog_items,
+    get_report_or_raise,
+    list_favourite_ids,
+    replace_favourite_ids,
+)
+from app.services.reports.report_layout_service import (
+    DuplicateLayoutName,
+    UnknownLayoutId,
+    apply_column_layout,
+    create_layout,
+    delete_layout,
+    list_layouts,
+    load_owned_layout,
+    set_default_layout,
+    update_layout,
+)
+from app.services.reports.report_export_service import export_preview
+from app.services.reports.statement_builders import build_report_preview, resolve_report_window
+from app.services.reports.team_expense_reports_excel import build_team_expense_excel_export
 from app.schemas.reports_api import (
     DocumentsBundleExportRequest,
     ReportsAnalyticsRequest,
@@ -53,6 +86,270 @@ from app.services.reports.team_expense_reports_excel import build_team_expense_e
 from app.services.reports.workbook_writer import write_workbook
 
 router = APIRouter(prefix="/reports", tags=["reports"])
+
+
+@router.get("/catalog", response_model=ApiEnvelope[ReportCatalogResponse])
+async def reports_catalog(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[ReportCatalogResponse]:
+    """Named reports plus the current user's favourite ids."""
+    favourite_ids = await list_favourite_ids(db, ctx.tenant_id, ctx.user_id)
+    return ApiEnvelope(
+        data=ReportCatalogResponse(reports=catalog_items(), favourite_ids=favourite_ids)
+    )
+
+
+@router.put("/favourites", response_model=ApiEnvelope[list[str]])
+async def reports_favourites_update(
+    body: ReportFavouritesUpdate,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[list[str]]:
+    """Replace the signed-in user's starred report ids."""
+    if ctx.user_id is None:
+        raise HTTPException(400, "Favourites require a signed-in user")
+    try:
+        ids = await replace_favourite_ids(
+            db, ctx.tenant_id, ctx.user_id, body.report_ids
+        )
+    except UnknownReportIds as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return ApiEnvelope(data=ids)
+
+
+def _require_user_id(ctx: AuthContext) -> int:
+    if ctx.user_id is None:
+        raise HTTPException(400, "Layouts require a signed-in user")
+    return ctx.user_id
+
+
+@router.get(
+    "/{report_id}/layouts",
+    response_model=ApiEnvelope[list[ReportColumnLayoutItem]],
+)
+async def reports_layouts_list(
+    report_id: str,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[list[ReportColumnLayoutItem]]:
+    user_id = _require_user_id(ctx)
+    try:
+        rows = await list_layouts(db, ctx.tenant_id, user_id, report_id)
+    except UnknownReportId as exc:
+        raise http_not_found(exc) from exc
+    return ApiEnvelope(data=rows)
+
+
+@router.post(
+    "/{report_id}/layouts",
+    response_model=ApiEnvelope[ReportColumnLayoutItem],
+)
+async def reports_layouts_create(
+    report_id: str,
+    body: ReportColumnLayoutCreate,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[ReportColumnLayoutItem]:
+    user_id = _require_user_id(ctx)
+    try:
+        row = await create_layout(
+            db,
+            ctx.tenant_id,
+            user_id,
+            report_id,
+            name=body.name,
+            column_config=body.column_config,
+            is_default=body.is_default,
+        )
+    except UnknownReportId as exc:
+        raise http_not_found(exc) from exc
+    except DuplicateLayoutName as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return ApiEnvelope(data=row)
+
+
+@router.patch(
+    "/{report_id}/layouts/{layout_id}",
+    response_model=ApiEnvelope[ReportColumnLayoutItem],
+)
+async def reports_layouts_update(
+    report_id: str,
+    layout_id: int,
+    body: ReportColumnLayoutUpdate,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[ReportColumnLayoutItem]:
+    user_id = _require_user_id(ctx)
+    try:
+        row = await update_layout(
+            db,
+            ctx.tenant_id,
+            user_id,
+            report_id,
+            layout_id,
+            name=body.name,
+            column_config=body.column_config,
+        )
+    except UnknownReportId as exc:
+        raise http_not_found(exc) from exc
+    except UnknownLayoutId as exc:
+        raise http_not_found(exc) from exc
+    except DuplicateLayoutName as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return ApiEnvelope(data=row)
+
+
+@router.post(
+    "/{report_id}/layouts/{layout_id}/default",
+    response_model=ApiEnvelope[ReportColumnLayoutItem],
+)
+async def reports_layouts_set_default(
+    report_id: str,
+    layout_id: int,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[ReportColumnLayoutItem]:
+    user_id = _require_user_id(ctx)
+    try:
+        row = await set_default_layout(
+            db, ctx.tenant_id, user_id, report_id, layout_id
+        )
+    except UnknownReportId as exc:
+        raise http_not_found(exc) from exc
+    except UnknownLayoutId as exc:
+        raise http_not_found(exc) from exc
+    return ApiEnvelope(data=row)
+
+
+@router.delete("/{report_id}/layouts/{layout_id}", response_model=ApiEnvelope[None])
+async def reports_layouts_delete(
+    report_id: str,
+    layout_id: int,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[None]:
+    user_id = _require_user_id(ctx)
+    try:
+        await delete_layout(db, ctx.tenant_id, user_id, report_id, layout_id)
+    except UnknownReportId as exc:
+        raise http_not_found(exc) from exc
+    except UnknownLayoutId as exc:
+        raise http_not_found(exc) from exc
+    return ApiEnvelope(data=None)
+
+
+def _preview_query(
+    range_key: ReportRange,
+    compare: bool,
+    date_from: date | None,
+    date_to: date | None,
+) -> dict:
+    return {
+        "range_key": range_key,
+        "compare": compare,
+        "date_from": date_from,
+        "date_to": date_to,
+    }
+
+
+@router.get("/{report_id}/preview", response_model=ApiEnvelope[ReportPreview])
+async def reports_preview(
+    report_id: str,
+    range: Annotated[ReportRange, Query()] = "month",
+    compare: bool = False,
+    date_from: Annotated[date | None, Query(alias="from")] = None,
+    date_to: Annotated[date | None, Query(alias="to")] = None,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[ReportPreview]:
+    """Live report rows for the selected range (no hardcoded sample data)."""
+    try:
+        preview = await build_report_preview(
+            db,
+            ctx.tenant_id,
+            report_id,
+            **_preview_query(range, compare, date_from, date_to),
+        )
+    except UnknownReportId as exc:
+        raise http_not_found(exc) from exc
+    except ValueError as exc:
+        raise http_bad_request(exc) from exc
+    return ApiEnvelope(data=preview)
+
+
+@router.post("/{report_id}/export")
+async def reports_export(
+    report_id: str,
+    body: ReportExportRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> Response:
+    """Download the selected report as PDF or Excel for the chosen range."""
+    try:
+        if body.format == "xlsx" and report_id in TE_XLSX_KIND_BY_ID and body.layout_id is None:
+            get_report_or_raise(report_id)
+            start, end = await resolve_report_window(
+                db,
+                ctx.tenant_id,
+                body.range,
+                body.date_from,
+                body.date_to,
+            )
+            te = await build_team_expense_excel_export(
+                db,
+                ctx.tenant_id,
+                report=TE_XLSX_KIND_BY_ID[report_id],
+                tenant_slug=ctx.tenant_slug or "tenant",
+                date_from=start,
+                date_to=end,
+                as_of=body.range != "custom",
+            )
+            return Response(
+                content=te.xlsx_bytes,
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{te.filename}"',
+                    "X-Data-Rows": str(te.data_rows),
+                    "X-Page-Count": "1",
+                },
+            )
+        preview = await build_report_preview(
+            db,
+            ctx.tenant_id,
+            report_id,
+            range_key=body.range,
+            compare=body.compare,
+            date_from=body.date_from,
+            date_to=body.date_to,
+        )
+        if body.layout_id is not None:
+            if ctx.user_id is None:
+                raise HTTPException(400, "Layouts require a signed-in user")
+            layout = await load_owned_layout(
+                db,
+                ctx.tenant_id,
+                ctx.user_id,
+                report_id,
+                body.layout_id,
+            )
+            preview = apply_column_layout(preview, layout.column_config.columns)
+        payload = export_preview(preview, body.format)
+    except UnknownReportId as exc:
+        raise http_not_found(exc) from exc
+    except UnknownLayoutId as exc:
+        raise http_not_found(exc) from exc
+    except ValueError as exc:
+        raise http_bad_request(exc) from exc
+    return Response(
+        content=payload.body,
+        media_type=payload.media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{payload.filename}"',
+            "X-Data-Rows": str(payload.data_rows),
+            "X-Page-Count": str(payload.page_count),
+        },
+    )
 
 
 @router.get("/analytics", response_model=ApiEnvelope[ReportsAnalytics])

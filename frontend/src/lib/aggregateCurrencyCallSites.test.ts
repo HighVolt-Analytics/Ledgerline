@@ -13,10 +13,12 @@ describe("aggregate money call sites", () => {
     expect(src).toContain("stats.base_currency");
   });
 
-  it("Reports formats with analytics base_currency", () => {
-    const src = readFileSync(join(__dirname, "../pages/ReportsPage.tsx"), "utf8");
-    expect(src).toContain("money(v, currency, locale)");
-    expect(src).toContain("base_currency");
+  it("Reports preview surfaces API currency", () => {
+    const src = readFileSync(
+      join(__dirname, "../components/reports/ReportPreviewPanel.tsx"),
+      "utf8"
+    );
+    expect(src).toContain("preview.data.currency");
   });
 
   it("Reconciliation formats base totals and per-row currency", () => {

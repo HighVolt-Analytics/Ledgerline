@@ -86,7 +86,7 @@ export function CustomerRegistryPanel() {
   }, [load, user?.tenant_id]);
 
   useVisibilityPolling(() => {
-    void load({ silent: true, fresh: true });
+    return load({ silent: true, fresh: true });
   }, CUSTOMERS_POLL_MS);
 
   const statsByCustomer = useMemo(() => buildInvoiceStats(invoices), [invoices]);

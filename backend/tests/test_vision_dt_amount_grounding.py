@@ -298,6 +298,113 @@ async def test_evaluate_sets_needs_review_when_total_does_not_ground(
     assert (invoice.extracted_fields or {}).get("amount_ungrounded") is True
 
 
+@pytest.mark.asyncio
+async def test_evaluate_does_not_hold_when_persisted_total_survives_grounding(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Handwritten total missed by DI but still on the invoice must not block Confirm."""
+    from contextlib import contextmanager
+
+    from app.models.invoice import Invoice, InvoiceStatus
+    from app.services.extraction.document_ai_provider import (
+        DocumentAiProvider,
+        ExtractFieldsResult,
+    )
+    from app.services.invoice.vision_dt_extract import (
+        _minimal_vision_ocr,
+        evaluate_vision_dt_extract,
+    )
+    from app.services.tenant.tenant_org_context import OrgContext
+    from app.tenant_ids import TESTING_TENANT_UUID
+
+    pdf = tmp_path / "doc.pdf"
+    pdf.write_bytes(b"%PDF-1.4 dummy")
+
+    @contextmanager
+    def _open_pdf(*_args, **_kwargs):
+        yield pdf
+
+    async def _extract(*_args, **_kwargs):
+        return ExtractFieldsResult(
+            llm=SimpleNamespace(confidence=0.9, raw={}),
+            ocr=_minimal_vision_ocr(page_count=1),
+        )
+
+    monkeypatch.setattr("app.services.shared.file_storage.open_pdf_for_reading", _open_pdf)
+    monkeypatch.setattr("app.services.extraction.document_ai_provider.extract_fields", _extract)
+    monkeypatch.setattr(
+        "app.services.extraction.llm_document_service.llm_result_to_invoice_data",
+        lambda *_a, **_k: InvoiceData(
+            vendor="Acme",
+            total=Decimal("99999.00"),
+            subtotal=Decimal("100.00"),
+            gst=Decimal("10.00"),
+        ),
+    )
+
+    async def _translate(parsed, **_k):
+        return parsed, {}
+
+    monkeypatch.setattr(
+        "app.services.extraction.field_translation_service.apply_field_translation",
+        _translate,
+    )
+    monkeypatch.setattr(
+        "app.services.invoice.vision_header_reconcile.resolve_header_grounding_text",
+        lambda _path: (_RICH_TEXT, {"source": "local"}),
+    )
+    monkeypatch.setattr("app.services.invoice.pipeline._apply_parsed_to_invoice", AsyncMock())
+    monkeypatch.setattr(
+        "app.services.purchase.team_expense_service.stamp_team_expense_employee_identity",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        "app.services.invoice.vision_posting_continue.vision_header_ok_from_invoice",
+        lambda *_a, **_k: True,
+    )
+    monkeypatch.setattr(
+        "app.services.approval.approval_pipeline_service.payable_fields_complete",
+        lambda *_a, **_k: True,
+    )
+    monkeypatch.setattr(
+        "app.services.invoice.due_date_defaults.apply_due_on_receipt_to_parsed",
+        lambda parsed, *_a, **_k: None,
+    )
+    monkeypatch.setattr(
+        "app.services.invoice.due_date_defaults.apply_due_on_receipt_to_invoice",
+        lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(
+        "app.services.extraction.line_item_extraction_policy.team_expense_hard_requires_line_items",
+        lambda *_a, **_k: False,
+    )
+    monkeypatch.setattr("app.services.audit.audit_service.log_event", AsyncMock())
+
+    invoice = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PARSING,
+        raw_file_path=str(pdf),
+        document_type_code="DT-99",
+        vendor="Acme",
+        total=Decimal("100000.00"),
+    )
+    result = await evaluate_vision_dt_extract(
+        AsyncMock(),
+        invoice,
+        org=OrgContext(),
+        document_types=[_posting_dt()],
+        confirmed_dt="DT-99",
+        doc_provider=DocumentAiProvider.CLAUDE_VISION,
+        definition=_posting_dt(),
+    )
+    assert result.success is True
+    assert "total" in result.amount_grounding_cleared
+    assert result.needs_review is False
+    assert (invoice.extracted_fields or {}).get("amount_ungrounded") is not True
+    assert invoice.total == Decimal("100000.00")
+
+
 def test_dt_extract_needs_review_blocks_understood_posting() -> None:
     """Pipeline header_ok formula: needs_review on DT extract stops posting continue."""
     from app.models.invoice import Invoice, InvoiceStatus

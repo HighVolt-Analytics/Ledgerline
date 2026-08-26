@@ -172,6 +172,7 @@ class VendorMaster(BaseModel):
     contact_phone: str = ""
     confirmation_sent_at: datetime | None = None
     confirmed_at: datetime | None = None
+    bank_masked: bool = False
 
 
 class VendorDetectionWeights(BaseModel):
@@ -240,6 +241,7 @@ class EmployeeMaster(BaseModel):
     status: str = ""
     confirmation_sent_at: datetime | None = None
     confirmed_at: datetime | None = None
+    bank_masked: bool = False
 
     @property
     def budget(self) -> EmployeeSpendingLimit:

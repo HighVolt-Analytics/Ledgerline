@@ -18,9 +18,14 @@ from app.schemas.rule_book_config import (
     TEAM_EXPENSE_KIND_CLAIM,
     normalize_team_expense_kind,
 )
-from app.services.invoice.invoice_evaluation_service import ROUTE_TEAM
+from app.services.invoice.invoice_evaluation_service import EVAL_PENDING_APPROVAL, ROUTE_TEAM
 
 _SPEND_KINDS = frozenset({TEAM_EXPENSE_KIND_CLAIM})
+_COMMITTED_EXCLUDED_STATUSES = (
+    InvoiceStatus.PROCESSED,
+    InvoiceStatus.REJECTED,
+    InvoiceStatus.DUPLICATE_SKIPPED,
+)
 
 
 def normalize_employee_email(value: str | None) -> str:
@@ -228,6 +233,49 @@ async def load_processed_claim_spend_rows(
                 Invoice.tenant_id == tenant_id,
                 Invoice.route_target == ROUTE_TEAM,
                 Invoice.status == InvoiceStatus.PROCESSED,
+                Invoice.team_expense_kind.in_(list(_SPEND_KINDS)),
+                effective >= date_from,
+                effective <= date_to,
+            )
+        )
+    ).all()
+    out: list[SpendRow] = []
+    for name, code, total, effective_raw in rows:
+        day = _as_date(effective_raw)
+        if day is None:
+            continue
+        out.append(
+            (
+                (name or "").strip().lower(),
+                (code or "").strip().lower(),
+                float(total or 0),
+                day,
+            )
+        )
+    return out
+
+
+async def load_committed_claim_spend_rows(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    *,
+    date_from: date,
+    date_to: date,
+) -> list[SpendRow]:
+    """Approved-but-not-posted TE claims in [date_from, date_to]."""
+    effective = _effective_date_expr()
+    rows = (
+        await session.execute(
+            select(
+                Invoice.account_name,
+                Invoice.account_code,
+                Invoice.total,
+                effective,
+            ).where(
+                Invoice.tenant_id == tenant_id,
+                Invoice.route_target == ROUTE_TEAM,
+                Invoice.status.notin_(_COMMITTED_EXCLUDED_STATUSES),
+                func.coalesce(Invoice.evaluation_status, "") != EVAL_PENDING_APPROVAL,
                 Invoice.team_expense_kind.in_(list(_SPEND_KINDS)),
                 effective >= date_from,
                 effective <= date_to,

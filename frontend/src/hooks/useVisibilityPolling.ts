@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 
 /** Run callback on an interval while the browser tab is visible. */
 export function useVisibilityPolling(
-  callback: () => void | Promise<void>,
+  callback: () => void | Promise<unknown>,
   intervalMs: number,
   enabled = true
 ) {
@@ -17,23 +17,26 @@ export function useVisibilityPolling(
     let cancelled = false;
     let timer: number | undefined;
 
-    const tick = () => {
-      if (cancelled) return;
-      if (document.visibilityState === "visible") {
-        void saved.current();
+    const wait = (ms: number) =>
+      new Promise<void>((resolve) => {
+        timer = window.setTimeout(resolve, ms);
+      });
+
+    const loop = async () => {
+      while (!cancelled) {
+        await wait(Math.max(1000, intervalRef.current));
+        if (cancelled) return;
+        if (document.visibilityState !== "visible") continue;
+        try {
+          // Await the tick so a slow /api/matrix (or similar) cannot stack.
+          await saved.current();
+        } catch {
+          // Keep polling even if a tick fails.
+        }
       }
     };
 
-    const schedule = () => {
-      if (cancelled) return;
-      const waitMs = Math.max(1000, intervalRef.current);
-      timer = window.setTimeout(() => {
-        tick();
-        schedule();
-      }, waitMs);
-    };
-
-    schedule();
+    void loop();
     return () => {
       cancelled = true;
       if (timer != null) window.clearTimeout(timer);

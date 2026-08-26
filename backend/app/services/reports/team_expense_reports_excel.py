@@ -586,6 +586,7 @@ async def build_team_expense_excel_export(
     tenant_slug: str = "tenant",
     date_from: date | None = None,
     date_to: date | None = None,
+    as_of: bool = False,
 ) -> TeamExpenseExcelExport:
     """
     Build a styled workbook for Team Expense finance reporting.
@@ -729,7 +730,145 @@ async def build_team_expense_excel_export(
             data_rows=count,
         )
 
-    raise ValueError(f"Unknown team expense report: {report}")
+    from app.services.reports.report_catalog import CATALOG_BY_ID
+    from app.services.reports.team_expense_catalog_builders import (
+        build_advance_aging,
+        build_expense_claims_register,
+        build_missing_documents,
+        build_reimbursement_due,
+        settlement_excel_rows,
+    )
+
+    if kind == "advance-settlement":
+        data_rows = await settlement_excel_rows(session, tenant_id)
+        ws = wb.create_sheet("Advance Reconciliation")
+        total_rows += _write_sheet(
+            ws,
+            title="Advance Reconciliation",
+            subtitle="Employee Staff Advance taken, used, outstanding, pending claims, and available.",
+            headers=[
+                "Employee ID",
+                "Employee",
+                "Email",
+                "Taken",
+                "Used",
+                "Outstanding",
+                "Pending claims",
+                "Available",
+            ],
+            data_rows=data_rows,
+        )
+        return TeamExpenseExcelExport(
+            xlsx_bytes=_workbook_bytes(wb),
+            filename=_slug_filename("te_advance_reconciliation", tenant_slug),
+            data_rows=total_rows,
+        )
+
+    if date_from is None or date_to is None:
+        raise ValueError("from and to are required for this team expense catalog export")
+
+    catalog_id = {
+        "advance-aging": "advance-aging",
+        "expense-claims-register": "expense-claims-register",
+        "reimbursement-due": "reimbursement-due",
+        "missing-documents": "missing-documents",
+    }.get(kind)
+    if catalog_id is None:
+        raise ValueError(f"Unknown team expense report: {report}")
+    definition = CATALOG_BY_ID[catalog_id]
+    period = f"{date_from.isoformat()} to {date_to.isoformat()}"
+
+    if kind == "advance-aging":
+        _preview, data_rows = await build_advance_aging(
+            session, tenant_id, definition, date_to
+        )
+        headers = [
+            "Employee",
+            "Advance Ref",
+            "Date Issued",
+            "Advance Issued",
+            "Amount Settled",
+            "Outstanding",
+            "Days Outstanding",
+            "0–30",
+            "31–60",
+            "61–90",
+            "90+",
+        ]
+        title = "Advance Aging"
+        subtitle = (
+            f"Unsettled advances bucketed by age from date issued as of {date_to.isoformat()}. "
+            "Chase the 60+ columns at close."
+        )
+    elif kind == "expense-claims-register":
+        _preview, data_rows = await build_expense_claims_register(
+            session, tenant_id, definition, date_from, date_to, as_of=as_of
+        )
+        headers = [
+            "Claim ID",
+            "Employee",
+            "Date",
+            "Dept / Project",
+            "Category",
+            "Amount",
+            "Against Advance?",
+            "Receipt Attached?",
+            "Within Policy",
+            "Status",
+            "Approver",
+        ]
+        title = "Expense Claims Register"
+        subtitle = (
+            "Every claim line. Feeds Advance Reconciliation and Reimbursement Due. "
+            "Receipt & policy flags support File Management."
+        )
+    elif kind == "reimbursement-due":
+        _preview, data_rows = await build_reimbursement_due(
+            session, tenant_id, definition, date_from, date_to, as_of=as_of
+        )
+        headers = [
+            "Employee",
+            "From Advances (Co. owes)",
+            "Out-of-pocket Claims",
+            "Total Due",
+            "Payment Status",
+        ]
+        title = "Reimbursement Due — net owed to employees"
+        subtitle = (
+            "Green cells pull from Advance Reconciliation (Co. owes) and Expense Claims "
+            "(out-of-pocket, not against advance)."
+        )
+    else:
+        _preview, data_rows = await build_missing_documents(
+            session, tenant_id, definition, date_from, date_to, as_of=as_of
+        )
+        headers = [
+            "Type",
+            "Reference ID",
+            "Owner",
+            "Expected Document",
+            "Attached",
+            "Flag",
+            "Notes",
+        ]
+        title = "Missing Documents — File Management completeness"
+        subtitle = (
+            "Anything expected-but-not-attached. This is the report that makes the other tabs audit-ready."
+        )
+
+    ws = wb.create_sheet(title[:31])
+    total_rows += _write_sheet(
+        ws,
+        title=title,
+        subtitle=subtitle,
+        headers=headers,
+        data_rows=data_rows,
+    )
+    return TeamExpenseExcelExport(
+        xlsx_bytes=_workbook_bytes(wb),
+        filename=_slug_filename(f"te_{kind.replace('-', '_')}", tenant_slug),
+        data_rows=total_rows,
+    )
 
 
 def _workbook_bytes(wb: Workbook) -> bytes:

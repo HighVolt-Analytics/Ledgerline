@@ -35,6 +35,7 @@ from app.services.master_data.chart_of_accounts_service import (
     account_is_sub_ledger,
     parent_ledger_for_account,
 )
+from app.services.shared.bank_masking import mask_account, mask_bsb, mask_iban
 from app.services.master_data.department_budget_service import list_department_budgets
 from app.services.master_data.master_data_service import list_employee_masters
 from app.services.purchase.team_expense_advance_service import (
@@ -67,10 +68,10 @@ def _bank_fields(employee: EmployeeMasterResponse) -> dict[str, str]:
     return {
         "bank_name": bank.bank_name or "",
         "bank_account_name": bank.account_name or "",
-        "bank_account_number": bank.account_number or "",
-        "bank_bsb": bank.bsb or "",
+        "bank_account_number": mask_account(bank.account_number or ""),
+        "bank_bsb": mask_bsb(bank.bsb or ""),
         "bank_swift": bank.swift or "",
-        "bank_iban": bank.iban or "",
+        "bank_iban": mask_iban(bank.iban or ""),
     }
 
 
@@ -903,6 +904,19 @@ async def build_employee_advance_detail_rows(
     return rows
 
 
+def team_expense_kind_count_stmt(*where_clauses):
+    """Kind totals grouped by the stored column (Postgres-safe).
+
+    Do not GROUP BY lower(coalesce(kind, :empty)): SQLAlchemy emits two binds
+    and Postgres treats SELECT and GROUP BY as different expressions.
+    """
+    return (
+        select(Invoice.team_expense_kind, func.count(Invoice.id))
+        .where(*where_clauses)
+        .group_by(Invoice.team_expense_kind)
+    )
+
+
 async def build_team_expense_workspace_kpis(
     session: AsyncSession,
     tenant_id: uuid.UUID,
@@ -942,14 +956,7 @@ async def build_team_expense_workspace_kpis(
     kind_counts: dict[str, int] = {}
     if include_kinds:
         kind_rows = (
-            await session.execute(
-                select(
-                    func.lower(func.coalesce(Invoice.team_expense_kind, "")),
-                    func.count(Invoice.id),
-                )
-                .where(*base)
-                .group_by(func.lower(func.coalesce(Invoice.team_expense_kind, "")))
-            )
+            await session.execute(team_expense_kind_count_stmt(*base))
         ).all()
         kind_counts = {
             "expense_claim": 0,

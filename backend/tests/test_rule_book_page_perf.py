@@ -73,3 +73,18 @@ async def test_rule_book_ingest_stats_slice_uses_audit_group_by(
     sql = " ".join(statements).lower()
     assert "audit_logs" in sql
     assert "group by" in sql
+
+
+@pytest.mark.asyncio
+async def test_rule_book_full_config_skips_ingest_stats_audit_scan(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    statements, stop = _capture_sql(db_session)
+    try:
+        res = await client.get("/api/rule-book/config")
+    finally:
+        stop()
+
+    assert res.status_code == 200
+    sql = " ".join(statements).lower()
+    assert "audit_logs" not in sql

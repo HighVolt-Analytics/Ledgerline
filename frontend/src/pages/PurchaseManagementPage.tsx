@@ -96,7 +96,7 @@ export function PurchaseManagementPage({ embedded = false }: { embedded?: boolea
   };
 
   useVisibilityPolling(() => {
-    void refetchAll();
+    return refetchAll();
   }, POLL_MS);
 
   useEffect(() => {

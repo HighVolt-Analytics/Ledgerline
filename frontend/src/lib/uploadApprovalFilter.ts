@@ -36,18 +36,37 @@ export const EMPTY_UPLOAD_APPROVAL_COUNTS: UploadApprovalBoardCounts = {
   rejected: 0,
 };
 
+/** Stable empty filter — never allocate a new `[]` for "All". */
+export const EMPTY_UPLOAD_APPROVAL_FILTER: UploadApprovalStatusKey[] = [];
+
+export function approvalBoardCountsEqual(
+  a: UploadApprovalBoardCounts | null | undefined,
+  b: UploadApprovalBoardCounts | null | undefined
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.all === b.all &&
+    a.review === b.review &&
+    a.processing === b.processing &&
+    a.approved === b.approved &&
+    a.rejected === b.rejected
+  );
+}
+
 function isStatusKey(value: string): value is UploadApprovalStatusKey {
   return (UPLOAD_APPROVAL_STATUS_KEYS as readonly string[]).includes(value);
 }
 
 /** Empty array means All (no column filter). */
 export function parseUploadApprovalFilter(value: string | null): UploadApprovalStatusKey[] {
-  if (!value || value === "all") return [];
+  if (!value || value === "all") return EMPTY_UPLOAD_APPROVAL_FILTER;
   const selected = new Set<UploadApprovalStatusKey>();
   for (const part of value.split(",")) {
     const token = part.trim().toLowerCase();
     if (isStatusKey(token)) selected.add(token);
   }
+  if (selected.size === 0) return EMPTY_UPLOAD_APPROVAL_FILTER;
   return UPLOAD_APPROVAL_STATUS_KEYS.filter((key) => selected.has(key));
 }
 
@@ -65,7 +84,7 @@ export function toggleUploadApprovalFilter(
   current: UploadApprovalStatusKey[],
   key: UploadApprovalFilterKey
 ): UploadApprovalStatusKey[] {
-  if (key === "all") return [];
+  if (key === "all") return EMPTY_UPLOAD_APPROVAL_FILTER;
   if (current.includes(key)) return current.filter((item) => item !== key);
   return UPLOAD_APPROVAL_STATUS_KEYS.filter((item) => item === key || current.includes(item));
 }

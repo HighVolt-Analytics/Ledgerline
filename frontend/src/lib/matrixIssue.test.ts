@@ -115,7 +115,6 @@ describe("clarifyMatrixIssueTitle", () => {
           evaluation_status: "vision_header_review",
           extracted_fields: { amount_ungrounded: "true" },
           vendor: "Acme",
-          total: "100",
         })
       )
     ).toBe("Amount could not be verified against document text");

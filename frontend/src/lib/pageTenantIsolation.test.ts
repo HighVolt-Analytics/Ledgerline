@@ -40,6 +40,7 @@ const TENANT_SCOPED_HOOKS = [
   "useNotifications",
   "useReconciliationOverview",
   "useReportsAnalytics",
+  "useReportCatalog",
   "useRuleBookConfig",
   "useRuleBookEditorConfig",
   "useRuleBookDocumentTypes",

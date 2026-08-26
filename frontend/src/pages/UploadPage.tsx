@@ -14,7 +14,6 @@ import { canRenderTenantOwnedUi } from "@/lib/tenantSession";
 import { MailboxImportDialog } from "@/components/mailboxes/MailboxImportDialog";
 import { PageHeader } from "@/components/PageHeader";
 import { PageTabs } from "@/components/PageTabs";
-import { AllDocumentsSummaryTable } from "@/components/upload/AllDocumentsSummaryTable";
 import { AllDocumentsDetailedTable } from "@/components/upload/AllDocumentsDetailedTable";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -22,6 +21,7 @@ import { UploadApprovalFilter } from "@/components/upload/UploadApprovalFilter";
 import { parseUploadChannelTab, type AllDocumentsChannelTab } from "@/lib/allDocumentsSummary";
 import {
   EMPTY_UPLOAD_APPROVAL_COUNTS,
+  approvalBoardCountsEqual,
   parseUploadApprovalFilter,
   serializeUploadApprovalFilter,
   type UploadApprovalBoardCounts,
@@ -100,7 +100,7 @@ const OPERATIONS_VIEW_TABS = [
 ] as const;
 
 type OperationsViewTab = (typeof OPERATIONS_VIEW_TABS)[number]["value"];
-type ViewTab = "summary" | "detailed" | "setup" | OperationsViewTab;
+type ViewTab = "summary" | "setup" | OperationsViewTab;
 
 function isOperationsViewTab(value: string | null): value is OperationsViewTab {
   return OPERATIONS_VIEW_TABS.some((tab) => tab.value === value);
@@ -116,7 +116,6 @@ function channelHasSetupTab(channel: ChannelTab): boolean {
 
 function parseViewTab(searchParams: URLSearchParams, channel: ChannelTab): ViewTab {
   const view = searchParams.get("view") ?? searchParams.get("tab");
-  if (view === "detailed") return "detailed";
   if (view === "setup" && channelHasSetupTab(channel)) return "setup";
   if (isOperationsViewTab(view) && channel === "all") return view;
   return "summary";
@@ -175,12 +174,29 @@ export function UploadPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const channelTab = parseChannelTab(searchParams.get("channel"));
   const viewTab = parseViewTab(searchParams, channelTab);
+
+  useEffect(() => {
+    const view = searchParams.get("view");
+    const tab = searchParams.get("tab");
+    if (view !== "detailed" && tab !== "detailed") return;
+    const next = new URLSearchParams(searchParams);
+    if (next.get("view") === "detailed") next.delete("view");
+    if (next.get("tab") === "detailed") next.delete("tab");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
   const showSetupTab = channelHasSetupTab(channelTab);
   const showOperationsTabs = channelTab === "all";
-  const approvalFilter = parseUploadApprovalFilter(searchParams.get("approval"));
+  const approvalParam = searchParams.get("approval");
+  const approvalFilter = useMemo(
+    () => parseUploadApprovalFilter(approvalParam),
+    [approvalParam]
+  );
   const [boardCounts, setBoardCounts] = useState<UploadApprovalBoardCounts>(
     EMPTY_UPLOAD_APPROVAL_COUNTS
   );
+  const setBoardCountsIfChanged = (next: UploadApprovalBoardCounts) => {
+    setBoardCounts((prev) => (approvalBoardCountsEqual(prev, next) ? prev : next));
+  };
   const matrixRefreshRef = useRef<(() => void) | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const {
@@ -275,8 +291,7 @@ export function UploadPage() {
   const setViewTab = (tab: ViewTab) => {
     const next = new URLSearchParams(searchParams);
     next.delete("tab");
-    if (tab === "detailed") next.set("view", "detailed");
-    else if (tab === "setup") next.set("view", "setup");
+    if (tab === "setup") next.set("view", "setup");
     else if (isOperationsViewTab(tab)) next.set("view", tab);
     else next.delete("view");
     setSearchParams(next, { replace: true });
@@ -602,17 +617,15 @@ export function UploadPage() {
             onFiles={(files) => void runUpload(files)}
             onBrowse={() => uploadInputRef.current?.click()}
           />
-          {viewTab === "summary" ? (
-            <input
-              ref={uploadInputRef}
-              type="file"
-              accept={UPLOAD_ACCEPT}
-              multiple
-              className="hidden"
-              data-testid="input-upload-doc"
-              onChange={uploadDocuments}
-            />
-          ) : null}
+          <input
+            ref={uploadInputRef}
+            type="file"
+            accept={UPLOAD_ACCEPT}
+            multiple
+            className="hidden"
+            data-testid="input-upload-doc"
+            onChange={uploadDocuments}
+          />
         </>
       ) : null}
       {fetchNotice ? (
@@ -643,11 +656,6 @@ export function UploadPage() {
               value: "summary",
               testid: "tab-upload-summary",
               label: "Summary",
-            },
-            {
-              value: "detailed",
-              testid: "tab-upload-detailed",
-              label: "Detailed",
             },
             ...(showOperationsTabs
               ? operationsTabs.map((tab) => ({
@@ -751,24 +759,6 @@ export function UploadPage() {
       setupPanel
     ) : isOperationsViewTab(viewTab) ? (
       <OperationsWorkspace view={viewTab} />
-    ) : viewTab === "summary" ? (
-      <AllDocumentsSummaryTable
-        captureSource={channelCaptureSource}
-        showUploadSource={showUploadSourceColumn}
-        title={channelDocsTitle}
-        emptyTitle={emptyTitle}
-        emptyHint={emptyHint}
-        onGoUpload={
-          channelTab === "all" || channelTab === "upload"
-            ? () => setChannelTab("upload")
-            : undefined
-        }
-        refreshRef={matrixRefreshRef}
-        searchQuery={searchQuery}
-        onSearchChange={setSearchQuery}
-        approvalBoardColumns={approvalFilter}
-        onBoardCounts={setBoardCounts}
-      />
     ) : (
       <AllDocumentsDetailedTable
         captureSource={channelCaptureSource}
@@ -785,7 +775,7 @@ export function UploadPage() {
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         approvalBoardColumns={approvalFilter}
-        onBoardCounts={setBoardCounts}
+        onBoardCounts={setBoardCountsIfChanged}
       />
     )
   );

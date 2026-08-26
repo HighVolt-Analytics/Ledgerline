@@ -4,10 +4,12 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_db, require_admin
 from app.services.audit.audit_service import log_event
+from app.services.auth.privilege_service import require_bank_reveal
 from app.schemas.common import ApiEnvelope
 from app.schemas.master_data import (
     EmployeeImportResultResponse,
@@ -34,10 +36,39 @@ from app.services.master_data.master_data_service import (
     list_employee_masters,
     update_employee_master,
 )
+from app.services.shared.bank_masking import apply_bank_mask_to_master, redact_bank_in_payload
 
 router = APIRouter(prefix="/employee-masters", tags=["employee-masters"])
 
 EmployeeImportMode = Literal["register", "payment"]
+
+
+def _public_employee(row: EmployeeMasterResponse, *, reveal: bool) -> EmployeeMasterResponse:
+    return EmployeeMasterResponse.model_validate(
+        apply_bank_mask_to_master(row.model_dump(), reveal=reveal)
+    )
+
+
+async def _resolve_reveal(
+    db: AsyncSession,
+    ctx: AuthContext,
+    *,
+    reveal_bank: bool,
+    scope: str,
+) -> bool:
+    if not reveal_bank:
+        return False
+    require_bank_reveal(ctx)
+    actor_name, actor_email = await actor_from_context(db, ctx)
+    await log_event(
+        db,
+        "bank_details_revealed",
+        tenant_id=ctx.tenant_id,
+        detail={"scope": scope},
+        actor_name=actor_name,
+        actor_email=actor_email,
+    )
+    return True
 
 
 def _import_result_response(result) -> EmployeeImportResultResponse:
@@ -131,11 +162,13 @@ async def import_employee_master_file(
 
 @router.get("", response_model=ApiEnvelope[list[EmployeeMasterResponse]])
 async def list_employee_master_records(
+    reveal_bank: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[list[EmployeeMasterResponse]]:
+    reveal = await _resolve_reveal(db, ctx, reveal_bank=reveal_bank, scope="employee_masters")
     rows = await list_employee_masters(db, ctx.tenant_id)
-    return ApiEnvelope(data=rows)
+    return ApiEnvelope(data=[_public_employee(row, reveal=reveal) for row in rows])
 
 
 @router.post("", response_model=ApiEnvelope[EmployeeMasterResponse], status_code=201)
@@ -169,7 +202,7 @@ async def create_employee_master_record(
         )
     rows = await list_employee_masters(db, ctx.tenant_id)
     row = next((item for item in rows if item.id == row.id), row)
-    return ApiEnvelope(data=row)
+    return ApiEnvelope(data=_public_employee(row, reveal=False))
 
 
 @router.patch("/{master_id}", response_model=ApiEnvelope[EmployeeMasterResponse])
@@ -190,6 +223,9 @@ async def update_employee_master_record(
         row = await update_employee_master(db, ctx.tenant_id, master_id, body)
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
+    except ValidationError as exc:
+        detail = exc.errors()[0].get("msg") if exc.errors() else "Invalid employee or chart of accounts"
+        raise HTTPException(400, str(detail)) from exc
     actor_name, actor_email = await actor_from_context(db, ctx)
     client_ip = request.client.host if request.client else None
     await log_event(
@@ -198,8 +234,8 @@ async def update_employee_master_record(
         tenant_id=ctx.tenant_id,
         detail={
             "master_id": master_id,
-            "before": before.model_dump() if before else None,
-            "after": row.model_dump(),
+            "before": redact_bank_in_payload(before.model_dump(mode="json")) if before else None,
+            "after": redact_bank_in_payload(row.model_dump(mode="json")),
         },
         actor_name=actor_name,
         actor_email=actor_email,
@@ -214,7 +250,7 @@ async def update_employee_master_record(
     )
     rows = await list_employee_masters(db, ctx.tenant_id)
     row = next((item for item in rows if item.id == master_id), row)
-    return ApiEnvelope(data=row)
+    return ApiEnvelope(data=_public_employee(row, reveal=False))
 
 
 @router.delete("/{master_id}", status_code=204)

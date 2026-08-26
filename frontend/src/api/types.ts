@@ -26,6 +26,7 @@ export interface UserPermissions {
   matrix_role: string;
   permissions: Record<ApprovalActionKey, boolean>;
   enabled_modules: Record<string, boolean>;
+  can_reveal_bank?: boolean;
 }
 
 export interface TenantMember {
@@ -468,12 +469,13 @@ export interface Invoice {
   document_type_extraction_fields?: string[] | null;
   bank_bsb?: string | null;
   bank_account?: string | null;
+  bank_masked?: boolean;
   email_attachment_name?: string | null;
   billing_address?: string | null;
   email_subject?: string | null;
   document_text?: string | null;
   document_heading?: string | null;
-  extracted_fields?: Record<string, string> | null;
+  extracted_fields?: Record<string, unknown> | null;
   extraction_field_confidence?: Record<string, number> | null;
   created_at: string;
   has_stored_file: boolean;
@@ -1233,6 +1235,79 @@ export interface ReportsAnalytics {
   top_vendors: VendorSpendRow[];
   kpi_trends: ReportsKpiTrends;
   period_has_data: boolean;
+}
+
+export type ReportCategory =
+  | "payables_receivables"
+  | "budgets_performance"
+  | "transactions"
+  | "exceptions_controls";
+
+export type ReportRangeKey = "month" | "quarter" | "custom";
+export type ReportExportFormat = "pdf" | "xlsx";
+
+export interface ReportCatalogItem {
+  id: string;
+  name: string;
+  description: string;
+  category: ReportCategory;
+  supports_compare: boolean;
+}
+
+export interface ReportCatalogResponse {
+  reports: ReportCatalogItem[];
+  favourite_ids: string[];
+}
+
+export interface ReportPreviewRow {
+  cells: string[];
+  emphasize?: boolean;
+}
+
+export interface ReportPreview {
+  report_id: string;
+  title: string;
+  period_label: string;
+  currency: string;
+  columns: string[];
+  rows: ReportPreviewRow[];
+  compare_columns?: string[] | null;
+  empty: boolean;
+  notes?: string | null;
+}
+
+export interface ReportExportRequest {
+  format: ReportExportFormat;
+  range: ReportRangeKey;
+  compare?: boolean;
+  from?: string;
+  to?: string;
+  layout_id?: number | null;
+}
+
+export interface ReportColumnConfig {
+  columns: string[];
+}
+
+export interface ReportColumnLayoutItem {
+  id: number;
+  report_id: string;
+  name: string;
+  column_config: ReportColumnConfig;
+  is_default: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ReportColumnLayoutCreate {
+  name: string;
+  column_config: ReportColumnConfig;
+  is_default?: boolean;
+}
+
+export interface ReportColumnLayoutUpdate {
+  name?: string;
+  column_config?: ReportColumnConfig;
 }
 
 export interface EmployeeAdvanceSettlementRow {

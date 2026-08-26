@@ -470,8 +470,15 @@ async def evaluate_vision_dt_extract(
     )
 
     if amount_cleared:
-        needs_review = True
-        set_extracted_bool_flag(invoice, EXTRACTED_AMOUNT_UNGROUNDED, True)
+        # DI/OCR often misses handwritten totals. If persist/preserve kept a
+        # payable total on the row, clerk (or prior extract) already has an
+        # amount — do not block Confirm on a grounding miss.
+        total_missing = invoice.total is None and "total" in amount_cleared
+        if total_missing:
+            needs_review = True
+            set_extracted_bool_flag(invoice, EXTRACTED_AMOUNT_UNGROUNDED, True)
+        else:
+            set_extracted_bool_flag(invoice, EXTRACTED_AMOUNT_UNGROUNDED, False)
     if invoice_amounts_inconsistent_for_posting(invoice):
         set_extracted_bool_flag(invoice, EXTRACTED_AMOUNT_INCONSISTENCY, True)
     if no_di_available:

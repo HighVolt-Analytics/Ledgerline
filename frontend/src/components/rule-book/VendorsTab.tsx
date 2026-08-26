@@ -44,6 +44,7 @@ import {
   VendorRegistrationDialog,
   vendorDraftFromPending,
 } from "./VendorRegistrationDialog";
+import { usePermissions } from "@/hooks/usePermissions";
 
 const VENDOR_SECTIONS = [
   { value: "pending", label: "Pending", testid: "tab-vendors-pending" },
@@ -66,7 +67,13 @@ function formatAccountNumber(vendor: VendorMaster, showBank: boolean) {
     return <span className="text-muted-foreground">—</span>;
   }
   const account = showBank ? vendor.bank.accountNumber : maskAccount(vendor.bank.accountNumber);
-  return <span className="font-mono text-xs whitespace-nowrap">{account}</span>;
+  const bsb = showBank && vendor.bank.bsb ? `${vendor.bank.bsb} · ` : "";
+  return (
+    <span className="font-mono text-xs whitespace-nowrap">
+      {bsb}
+      {account}
+    </span>
+  );
 }
 
 function normalizeAbn(value: string): string {
@@ -99,11 +106,13 @@ export function VendorsTab({
   initialSearchQuery?: string | null;
 }) {
   const { toast } = useToast();
+  const { permissions } = usePermissions();
+  const canRevealBank = permissions?.can_reveal_bank === true;
   const { data: institution } = useInstitutionSettings();
   const booksCurrency = normalizeCurrencyCode(institution?.currency) ?? "";
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [pinToTopId, setPinToTopId] = useState<string | null>(null);
-  const [bankMasked, setBankMasked] = useState(true);
+  const [revealBank, setRevealBank] = useState(false);
   const [focusBankId, setFocusBankId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, VendorMaster>>({});
   const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set());
@@ -111,7 +120,7 @@ export function VendorsTab({
   const [section, setSection] = useState<VendorSection>("pending");
   const [registration, setRegistration] = useState<VendorRegistrationState | null>(null);
 
-  const { data: vendors = [], isLoading } = useVendorMasters();
+  const { data: vendors = [], isLoading } = useVendorMasters(true, revealBank && canRevealBank);
   const { data: pendingQueue = [] } = usePendingVendors();
   const createMutation = useCreateVendorMaster();
   const updateMutation = useUpdateVendorMaster();
@@ -119,6 +128,14 @@ export function VendorsTab({
   const promoteMutation = usePromotePendingVendor();
   const dismissMutation = useDismissPendingVendor();
   const sendConfirmationMutation = useSendVendorMasterConfirmation();
+  const bankMasked = !revealBank;
+
+  const toggleRevealBank = () => {
+    if (!canRevealBank) return;
+    setRevealBank((current) => !current);
+    setDrafts({});
+    setDirtyIds(new Set());
+  };
 
   const sendVendorConfirmation = (vendor: VendorMaster) => {
     sendConfirmationMutation.mutate(vendor.id, {
@@ -461,14 +478,16 @@ export function VendorsTab({
         <div className="flex items-center justify-between gap-2 p-3 border-b border-border flex-wrap">
           <h3 className="text-sm font-semibold">Vendor master ({vendors.length})</h3>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setBankMasked((m) => !m)}
-              className="text-xs text-muted-foreground hover:text-foreground"
-              data-testid="toggle-bank-mask"
-            >
-              {bankMasked ? "Show bank details" : "Hide bank details"}
-            </button>
+            {canRevealBank ? (
+              <button
+                type="button"
+                onClick={toggleRevealBank}
+                className="text-xs text-muted-foreground hover:text-foreground"
+                data-testid="toggle-bank-mask"
+              >
+                {bankMasked ? "Show bank details" : "Hide bank details"}
+              </button>
+            ) : null}
             <Button
               size="sm"
               onClick={addVendor}
@@ -578,7 +597,7 @@ export function VendorsTab({
                             vendor={draft}
                             onChange={(patch) => patchDraft(v.id, patch)}
                             masked={bankMasked}
-                            onToggleMask={() => setBankMasked((m) => !m)}
+                            onToggleMask={canRevealBank ? toggleRevealBank : undefined}
                             focusBank={focusBankId === v.id}
                           />
                           <div className="flex items-center justify-between gap-2 px-4 pb-4 bg-muted/20">

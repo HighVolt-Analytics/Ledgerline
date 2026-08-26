@@ -60,8 +60,9 @@ function extractedBoolFlag(inv: Pick<Invoice, "extracted_fields">, key: string):
   return false;
 }
 
-function visionAmountHoldTitle(inv: Pick<Invoice, "extracted_fields">): string | null {
-  if (extractedBoolFlag(inv, "amount_ungrounded")) {
+function visionAmountHoldTitle(inv: Pick<Invoice, "extracted_fields" | "total">): string | null {
+  const hasTotal = inv.total != null && String(inv.total).trim() !== "";
+  if (!hasTotal && extractedBoolFlag(inv, "amount_ungrounded")) {
     return "Amount could not be verified against document text";
   }
   if (extractedBoolFlag(inv, "amount_inconsistency")) {

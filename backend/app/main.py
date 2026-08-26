@@ -63,6 +63,7 @@ from app.api.deps import CorrelationIdMiddleware, require_super_admin, require_u
 from app.config import get_settings
 from app.database import async_session_factory
 from app.middleware.proxy_path import ProxyPathPrefixMiddleware
+from app.middleware.request_timing import RequestTimingMiddleware
 from app.middleware.tenant_context_middleware import TenantContextMiddleware
 from app.services.ingest.inline_mailbox_poller import (
     start_inline_mailbox_poller,
@@ -153,7 +154,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Correlation-ID", "X-Tenant-Id"],
+    expose_headers=["X-Correlation-ID", "X-Process-Time", "X-Tenant-Id"],
 )
 if _settings.root_path:
     app.add_middleware(ProxyPathPrefixMiddleware, prefix=_settings.root_path)
@@ -168,6 +169,8 @@ if _settings.app_env.strip().lower() in {
     "ledgerlink",
 }:
     app.add_middleware(GZipMiddleware, minimum_size=500)
+# Outermost so duration_ms includes gzip. Pure ASGI (not BaseHTTPMiddleware).
+app.add_middleware(RequestTimingMiddleware)
 
 app.include_router(auth.router, prefix="/api")
 app.include_router(master_confirm.router, prefix="/api")

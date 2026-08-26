@@ -257,9 +257,11 @@ def vision_header_ok_from_invoice(
         _assert_invoice_ready_for_approval(invoice, definition=definition)
     except ValueError:
         return False
-    # Columns are complete — clear sticky extract flag so Confirm & process can proceed.
+    # Columns are complete — clear sticky extract flags so Confirm & process can proceed.
     if _extracted_needs_review(invoice):
         _clear_extracted_needs_review(invoice)
+    if extracted_bool_flag(invoice, EXTRACTED_AMOUNT_UNGROUNDED):
+        set_extracted_bool_flag(invoice, EXTRACTED_AMOUNT_UNGROUNDED, False)
     return True
 
 

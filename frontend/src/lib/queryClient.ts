@@ -34,6 +34,15 @@ const baseKeys = {
   subledgerArBalances: (asOf?: string) => ["reports", "subledger", "ar", asOf ?? ""] as const,
   reportDocuments: (dateFrom?: string, dateTo?: string) =>
     ["reports", "documents", dateFrom ?? "all", dateTo ?? "all"] as const,
+  reportCatalog: ["reports", "catalog"] as const,
+  reportPreview: (
+    reportId: string,
+    range: string,
+    compare: boolean,
+    dateFrom: string,
+    dateTo: string
+  ) => ["reports", "preview", reportId, range, compare, dateFrom, dateTo] as const,
+  reportLayouts: (reportId: string) => ["reports", "layouts", reportId] as const,
   teAdvanceSettlement: ["reports", "team-expenses", "advance-settlement"] as const,
   teBudgetUtilization: ["reports", "team-expenses", "budget-utilization"] as const,
   teDepartmentBudgetUtilization: [
@@ -116,6 +125,18 @@ export const queryKeys = {
   subledgerArBalances: (asOf?: string) => tenantQueryKey(baseKeys.subledgerArBalances(asOf)),
   reportDocuments: (dateFrom?: string, dateTo?: string) =>
     tenantQueryKey(baseKeys.reportDocuments(dateFrom, dateTo)),
+  reportCatalog: () => tenantQueryKey(baseKeys.reportCatalog),
+  reportPreview: (
+    reportId: string,
+    range: string,
+    compare: boolean,
+    dateFrom?: string,
+    dateTo?: string
+  ) =>
+    tenantQueryKey(
+      baseKeys.reportPreview(reportId, range, compare, dateFrom ?? "", dateTo ?? "")
+    ),
+  reportLayouts: (reportId: string) => tenantQueryKey(baseKeys.reportLayouts(reportId)),
   teAdvanceSettlement: () => tenantQueryKey(baseKeys.teAdvanceSettlement),
   teBudgetUtilization: () => tenantQueryKey(baseKeys.teBudgetUtilization),
   teDepartmentBudgetUtilization: () =>
@@ -137,8 +158,14 @@ export const queryKeys = {
   aiProviders: () => tenantQueryKey(baseKeys.aiProviders),
   ruleBookChangelog: () => tenantQueryKey(baseKeys.ruleBookChangelog),
   recognitionSignals: () => tenantQueryKey(baseKeys.recognitionSignals),
-  vendorMasters: () => tenantQueryKey(baseKeys.vendorMasters),
-  employeeMasters: () => tenantQueryKey(baseKeys.employeeMasters),
+  vendorMasters: (revealBank?: boolean) =>
+    revealBank === undefined
+      ? tenantQueryKey(baseKeys.vendorMasters)
+      : tenantQueryKey([...baseKeys.vendorMasters, revealBank]),
+  employeeMasters: (revealBank?: boolean) =>
+    revealBank === undefined
+      ? tenantQueryKey(baseKeys.employeeMasters)
+      : tenantQueryKey([...baseKeys.employeeMasters, revealBank]),
   pendingVendors: () => tenantQueryKey(baseKeys.pendingVendors),
   pendingCustomers: () => tenantQueryKey(baseKeys.pendingCustomers),
   vendorPayoutMethods: (vendorId: number) =>

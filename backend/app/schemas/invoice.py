@@ -103,12 +103,13 @@ class InvoiceResponse(BaseModel):
     document_type_extraction_fields: list[str] | None = None
     bank_bsb: str | None = None
     bank_account: str | None = None
+    bank_masked: bool = True
     email_attachment_name: str | None = None
     billing_address: str | None = None
     email_subject: str | None = None
     document_text: str | None = None
     document_heading: str | None = None
-    extracted_fields: dict[str, str] | None = None
+    extracted_fields: dict[str, Any] | None = None
     validation_results: list[ValidationResultItem] | None = None
     validation_pass_rate: int | None = None
     extraction_field_confidence: dict[str, float] | None = None

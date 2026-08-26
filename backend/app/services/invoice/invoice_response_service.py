@@ -31,6 +31,11 @@ from app.services.shared.file_storage import (
     repair_invoice_stored_path,
     stored_file_available,
 )
+from app.services.shared.bank_masking import (
+    mask_account,
+    mask_bsb,
+    mask_extracted_bank_fields,
+)
 from app.services.invoice.invoice_evaluation_service import (
     load_config_for_tenant,
     parse_matched_rule_ids,
@@ -254,6 +259,7 @@ def invoice_to_response(
     current_stage_state: str | None = None,
     document_types: list | None = None,
     for_list: bool = False,
+    reveal_bank: bool = False,
 ) -> InvoiceResponse:
     stored_ok = (
         has_stored_file
@@ -353,14 +359,25 @@ def invoice_to_response(
         document_type_confidence=inv.document_type_confidence,
         llm_suggested_dt=getattr(inv, "llm_suggested_dt", None),
         llm_confidence=getattr(inv, "llm_confidence", None),
-        bank_bsb=None if for_list else inv.bank_bsb,
-        bank_account=None if for_list else inv.bank_account,
+        bank_bsb=None
+        if for_list
+        else (inv.bank_bsb if reveal_bank or not inv.bank_bsb else mask_bsb(inv.bank_bsb)),
+        bank_account=None
+        if for_list
+        else (
+            inv.bank_account
+            if reveal_bank or not inv.bank_account
+            else mask_account(inv.bank_account)
+        ),
+        bank_masked=not reveal_bank,
         email_attachment_name=inv.email_attachment_name,
         billing_address=None if for_list else inv.billing_address,
         email_subject=inv.email_subject if not for_list else None,
         document_text=None if for_list else _document_text_if_loaded(inv),
         document_heading=getattr(inv, "document_heading", None),
-        extracted_fields=None if for_list else (_extracted_fields_if_loaded(inv) or None),
+        extracted_fields=None
+        if for_list
+        else mask_extracted_bank_fields(_extracted_fields_if_loaded(inv) or None, reveal=reveal_bank),
         validation_results=None if for_list else validation_items,
         validation_pass_rate=validation_pass_rate,
         extraction_field_confidence=(

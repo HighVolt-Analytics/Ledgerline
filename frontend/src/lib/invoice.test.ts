@@ -397,6 +397,17 @@ describe("evaluationReviewTooltip", () => {
     ).toBe("Fields tab — Amount could not be verified against document text");
   });
 
+  it("does not keep ungrounded-amount copy once a total is on the row", () => {
+    expect(
+      evaluationReviewTooltip({
+        evaluation_status: "vision_header_review",
+        extracted_fields: { amount_ungrounded: "true" },
+        total: "100000",
+        status: "exception",
+      } as Invoice),
+    ).toBe("Fields tab — complete header fields, save, then Confirm & process");
+  });
+
   it("uses amount-inconsistency copy for vision_header_review when flagged", () => {
     expect(
       evaluationReviewTooltip({

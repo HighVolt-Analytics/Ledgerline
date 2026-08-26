@@ -37,26 +37,6 @@ export function UploadCellClip({
   );
 }
 
-export function UploadSummaryColGroup({ showSource }: { showSource: boolean }) {
-  return (
-    <colgroup>
-      <col className="all-docs-col all-docs-col--doc" />
-      {showSource ? <col className="all-docs-col all-docs-col--source" /> : null}
-      <col className="all-docs-col all-docs-col--type" />
-      <col className="all-docs-col all-docs-col--party" />
-      <col className="all-docs-col all-docs-col--nature" />
-      <col className="all-docs-col all-docs-col--date" />
-      <col className="all-docs-col all-docs-col--ledger" />
-      <col className="all-docs-col all-docs-col--amount" />
-      <col className="all-docs-col all-docs-col--status" />
-      <col className="all-docs-col all-docs-col--status" />
-      <col className="all-docs-col all-docs-col--pay" />
-      <col className="all-docs-col all-docs-col--action" />
-      <col className="all-docs-col all-docs-col--vault" />
-    </colgroup>
-  );
-}
-
 export function UploadDetailedColGroup({ showSource }: { showSource: boolean }) {
   return (
     <colgroup>
@@ -69,8 +49,8 @@ export function UploadDetailedColGroup({ showSource }: { showSource: boolean }) 
       <col style={{ width: "6.5rem" }} />
       <col style={{ width: "8.5rem" }} />
       <col style={{ width: "5.5rem" }} />
+      <col style={{ width: "5.5rem" }} />
       <col style={{ width: "7rem" }} />
-      <col style={{ width: "4.5rem" }} />
       <col style={{ width: "7.5rem" }} />
       <col style={{ width: "5.5rem" }} />
       <col style={{ width: "5.5rem" }} />

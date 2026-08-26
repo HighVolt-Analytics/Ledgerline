@@ -3,12 +3,21 @@
 import uuid
 from typing import Any
 
+from pydantic_core import to_jsonable_python
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import AuditLog
 from app.utils.logger import correlation_id_ctx, get_logger
 
 logger = get_logger(__name__)
+
+
+def json_safe_audit_detail(detail: dict[str, Any] | None) -> dict[str, Any] | None:
+    """JSONB cannot store datetime/UUID/Decimal; coerce before insert."""
+    if detail is None:
+        return None
+    converted = to_jsonable_python(detail)
+    return converted if isinstance(converted, dict) else {"value": converted}
 
 
 def merge_actor_detail(
@@ -71,6 +80,7 @@ async def log_event(
     if resolved_tenant_id is not None:
         merged_detail = dict(merged_detail or {})
         merged_detail.setdefault("tenant_id", str(resolved_tenant_id))
+    merged_detail = json_safe_audit_detail(merged_detail)
 
     entry = AuditLog(
         event=event,

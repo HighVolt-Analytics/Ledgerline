@@ -1479,7 +1479,10 @@ def derive_resolution_hint(
     # a loaded scalar column exists. Do not treat that fallback as the product
     # intent — see test_deferred_ungrounded_amount_falls_back_to_generic_header_hint.
     if eval_status != "vision_vaulted":
-        if extracted_bool_flag(inv, EXTRACTED_AMOUNT_UNGROUNDED):
+        from app.services.invoice.invoice_data import _attr_if_loaded
+
+        loaded_total = _attr_if_loaded(inv, "total", default=None)
+        if extracted_bool_flag(inv, EXTRACTED_AMOUNT_UNGROUNDED) and loaded_total is None:
             return "Fields tab — Amount could not be verified against document text"
         if extracted_bool_flag(inv, EXTRACTED_AMOUNT_INCONSISTENCY) or (
             eval_status == "vision_header_review"

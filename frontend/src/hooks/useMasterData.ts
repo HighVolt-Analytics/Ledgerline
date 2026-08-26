@@ -28,22 +28,22 @@ export function useCustomerMasters(enabled = true) {
   });
 }
 
-export function useVendorMasters(enabled = true) {
+export function useVendorMasters(enabled = true, revealBank = false) {
   return useTenantQuery({
-    queryKey: queryKeys.vendorMasters(),
+    queryKey: queryKeys.vendorMasters(revealBank),
     queryFn: async () => {
-      const rows = await api.listVendorMasters();
+      const rows = await api.listVendorMasters({ revealBank });
       return rows.map((row) => vendorMasterFromApi(row as Record<string, unknown>));
     },
     enabled,
   });
 }
 
-export function useEmployeeMasters(enabled = true) {
+export function useEmployeeMasters(enabled = true, revealBank = false) {
   return useTenantQuery({
-    queryKey: queryKeys.employeeMasters(),
+    queryKey: queryKeys.employeeMasters(revealBank),
     queryFn: async () => {
-      const rows = await api.listEmployeeMasters();
+      const rows = await api.listEmployeeMasters({ revealBank });
       return rows.map((row) => employeeMasterFromApi(row as Record<string, unknown>));
     },
     enabled,
@@ -76,20 +76,25 @@ function patchVendorInCache(
   queryClient: ReturnType<typeof useQueryClient>,
   updated: VendorMaster
 ) {
-  queryClient.setQueryData<VendorMaster[]>(queryKeys.vendorMasters(), (rows) =>
+  queryClient.setQueryData<VendorMaster[]>(queryKeys.vendorMasters(false), (rows) =>
     rows?.map((row) => (row.id === updated.id ? updated : row)) ?? [updated]
   );
+  void queryClient.invalidateQueries({ queryKey: queryKeys.vendorMasters(true) });
 }
 
 function appendVendorInCache(queryClient: ReturnType<typeof useQueryClient>, created: VendorMaster) {
-  queryClient.setQueryData<VendorMaster[]>(queryKeys.vendorMasters(), (rows) => {
+  queryClient.setQueryData<VendorMaster[]>(queryKeys.vendorMasters(false), (rows) => {
     if (!rows) return [created];
     return [created, ...rows.filter((row) => row.id !== created.id)];
   });
+  void queryClient.invalidateQueries({ queryKey: queryKeys.vendorMasters(true) });
 }
 
 function removeVendorFromCache(queryClient: ReturnType<typeof useQueryClient>, id: string) {
-  queryClient.setQueryData<VendorMaster[]>(queryKeys.vendorMasters(), (rows) =>
+  queryClient.setQueryData<VendorMaster[]>(queryKeys.vendorMasters(false), (rows) =>
+    rows?.filter((row) => row.id !== id)
+  );
+  queryClient.setQueryData<VendorMaster[]>(queryKeys.vendorMasters(true), (rows) =>
     rows?.filter((row) => row.id !== id)
   );
 }
@@ -215,9 +220,10 @@ export function useCreateEmployeeMaster() {
       return employeeMasterFromApi(raw as Record<string, unknown>);
     },
     onSuccess: (created) => {
-      queryClient.setQueryData<EmployeeMaster[]>(queryKeys.employeeMasters(), (rows) =>
+      queryClient.setQueryData<EmployeeMaster[]>(queryKeys.employeeMasters(false), (rows) =>
         rows ? [created, ...rows] : [created]
       );
+      void queryClient.invalidateQueries({ queryKey: queryKeys.employeeMasters(true) });
     },
   });
 }
@@ -230,9 +236,10 @@ export function useUpdateEmployeeMaster() {
       return employeeMasterFromApi(raw as Record<string, unknown>);
     },
     onSuccess: (updated) => {
-      queryClient.setQueryData<EmployeeMaster[]>(queryKeys.employeeMasters(), (rows) =>
+      queryClient.setQueryData<EmployeeMaster[]>(queryKeys.employeeMasters(false), (rows) =>
         rows?.map((row) => (row.id === updated.id ? updated : row))
       );
+      void queryClient.invalidateQueries({ queryKey: queryKeys.employeeMasters(true) });
     },
   });
 }
@@ -242,7 +249,10 @@ export function useDeleteEmployeeMaster() {
   return useMutation({
     mutationFn: (id: string) => api.deleteEmployeeMaster(id),
     onSuccess: (_data, id) => {
-      queryClient.setQueryData<EmployeeMaster[]>(queryKeys.employeeMasters(), (rows) =>
+      queryClient.setQueryData<EmployeeMaster[]>(queryKeys.employeeMasters(false), (rows) =>
+        rows?.filter((row) => row.id !== id)
+      );
+      queryClient.setQueryData<EmployeeMaster[]>(queryKeys.employeeMasters(true), (rows) =>
         rows?.filter((row) => row.id !== id)
       );
     },

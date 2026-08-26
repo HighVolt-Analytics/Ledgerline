@@ -129,7 +129,8 @@ export function teamExpenseChannelsFromRules(rules: TeamExpenseRule[]): TeamExpe
 }
 
 function inferSubmitter(inv: Invoice): string {
-  const employeeName = inv.extracted_fields?.employee_name?.trim();
+  const rawName = inv.extracted_fields?.employee_name;
+  const employeeName = typeof rawName === "string" ? rawName.trim() : "";
   if (employeeName) return employeeName;
   const sender = inv.email_sender?.trim();
   if (sender?.includes("@")) {

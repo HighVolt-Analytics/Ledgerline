@@ -147,7 +147,7 @@ export function VendorDetailPanel({
       <BankDetailsSection
         bank={vendor.bank}
         onChange={(bank) => onChange({ bank })}
-        masked={focusBank ? false : masked}
+        masked={masked}
         onToggleMask={onToggleMask}
       />
 

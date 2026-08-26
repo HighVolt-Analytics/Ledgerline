@@ -365,7 +365,7 @@ export function OperationsLayer({
             <span className="font-medium text-muted-foreground">Documents</span>
           </p>
           <Link
-            to="/upload?view=detailed"
+            to="/upload"
             className="inline-flex h-8 items-center gap-1.5 rounded-full border border-border/70 bg-background px-3 text-xs font-medium text-muted-foreground hover:text-foreground hover-elevate"
             data-testid="ops-view-detail"
           >

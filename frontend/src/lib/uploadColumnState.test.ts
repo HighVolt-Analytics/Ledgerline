@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Invoice } from "@/api/types";
 import {
   columnHasDisplayValue,
+  derivedColumnProcessingMode,
   isInvoicePipelineActive,
   uploadColumnDisplayMode,
 } from "@/lib/uploadColumnState";
@@ -26,9 +27,14 @@ describe("isInvoicePipelineActive", () => {
     expect(isInvoicePipelineActive(inv(1, "pending"), new Set([1]))).toBe(true);
   });
 
-  it("returns false when processingIds is set but status already settled", () => {
+  it("keeps optimistic overlay for rejected/exception until the pipeline completes", () => {
+    expect(isInvoicePipelineActive(inv(1, "rejected"), new Set([1]))).toBe(true);
+    expect(isInvoicePipelineActive(inv(2, "exception"), new Set([2]))).toBe(true);
+  });
+
+  it("clears overlay once the invoice is processed even if the id is still listed", () => {
     expect(isInvoicePipelineActive(inv(1, "processed"), new Set([1]))).toBe(false);
-    expect(isInvoicePipelineActive(inv(2, "exception"), new Set([2]))).toBe(false);
+    expect(isInvoicePipelineActive(inv(2, "duplicate_skipped"), new Set([2]))).toBe(false);
   });
 
   it("returns false for settled statuses without optimistic id", () => {
@@ -64,6 +70,21 @@ describe("uploadColumnDisplayMode", () => {
         processingIds: new Set([1]),
       })
     ).toBe("processing");
+  });
+
+  it("shows processing on empty columns after reject → reprocess", () => {
+    expect(
+      uploadColumnDisplayMode(inv(1, "rejected"), "route", {
+        processingIds: new Set([1]),
+      })
+    ).toBe("processing");
+  });
+});
+
+describe("derivedColumnProcessingMode", () => {
+  it("spins auth/posting cells while a rejected document is reprocessing", () => {
+    expect(derivedColumnProcessingMode(inv(1, "rejected"), new Set([1]))).toBe("processing");
+    expect(derivedColumnProcessingMode(inv(1, "rejected"))).toBe("value");
   });
 });
 

@@ -57,6 +57,9 @@ async def queue_processing(
         from app.workers.tasks import process_inbox_task
 
         task = process_inbox_task.delay(mailbox_id=mailbox_id, tenant_id=tenant_id)
+        from app.workers.tasks import mark_celery_work_queued
+
+        mark_celery_work_queued()
         return ProcessingTriggerResult(task_id=task.id, status="queued")
     except Exception:
         from app.workers.tasks import run_pipeline_background

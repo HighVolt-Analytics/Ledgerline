@@ -1,10 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import {
   Check,
   Clock,
   FileText,
+  Loader2,
   Pencil,
   Plus,
   Send,
@@ -35,6 +36,7 @@ import {
 import { InvoiceClassificationPanel } from "@/components/invoices/InvoiceClassificationPanel";
 import { DuplicateReviewBadge, EvaluationStatusBadge } from "@/components/inbox/EvaluationStatusBadge";
 import { MappedDocumentTypeBadge, VisionHeadingBadge } from "@/components/inbox/DocumentTypeDisplay";
+import { StageBadge, invoiceStageBadgeProps } from "@/components/StageBadge";
 import { DossierLinkedDocumentsPanel } from "@/components/dossiers/DossierLinkedDocumentsPanel";
 import { InvoiceDrawerProcessingSection } from "@/components/invoices/InvoiceDrawerProcessingSection";
 import { PageTabs } from "@/components/PageTabs";
@@ -62,6 +64,7 @@ import {
   type LineItemColumnVisibility,
   type PreviewLineItem,
 } from "@/lib/invoicePreview";
+import { looksMaskedBankValue } from "@/lib/bankMasking";
 import { cn } from "@/lib/cn";
 import {
   approveAndProcess,
@@ -76,6 +79,7 @@ import {
   settlementApprovalHint,
   validateInvoiceReadyForApproval,
 } from "@/lib/invoiceActions";
+import { isInvoicePipelineActive } from "@/lib/uploadColumnState";
 import {
   counterpartyName,
   extractionFieldLabelForInvoice,
@@ -85,13 +89,14 @@ import {
   ROUTE_TEAM,
 } from "@/lib/invoice";
 import { useEmployeeMasters } from "@/hooks/useMasterData";
+import { usePermissions } from "@/hooks/usePermissions";
 import { matchEmployeeForSender } from "@/lib/routePageAdapters";
 import type { EmployeeMaster } from "@/lib/v4RuleBookTypes";
 import { LineGlAccountCell } from "@/components/invoices/LineGlAccountCell";
 import { effectiveMatchPolicy, isTwoWayMatchMode } from "@/lib/documentPlaybookConfig";
 import { InvoicePurchaseDossierSection } from "@/components/invoices/InvoicePurchaseDossierSection";
 import { InvoiceSalesDossierSection } from "@/components/invoices/InvoiceSalesDossierSection";
-import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
+import { useRuleBookDocumentTypes } from "@/hooks/useRuleBookConfig";
 import { useAuth } from "@/context/AuthContext";
 import {
   canRenderTenantOwnedUi,
@@ -335,6 +340,7 @@ function FieldRow({
   placeholder,
   hint,
   onChange,
+  action,
 }: {
   label: string;
   value: string;
@@ -345,6 +351,7 @@ function FieldRow({
   placeholder?: string;
   hint?: string | null;
   onChange?: (value: string) => void;
+  action?: ReactNode;
 }) {
   const canEdit = Boolean(editable);
   return (
@@ -356,7 +363,10 @@ function FieldRow({
         canEdit ? "invoice-drawer-field--editable" : "invoice-drawer-field--readonly"
       )}
     >
-      <label className="invoice-drawer-field__label font-normal">{label}</label>
+      <label className="invoice-drawer-field__label font-normal">
+        {label}
+        {action}
+      </label>
       {canEdit ? (
         <div className="invoice-drawer-field__control">
           <Input
@@ -475,7 +485,7 @@ function groupExtractionFieldKeys(keys: string[]): FieldSection[] {
   return buckets.filter((section) => section.keys.length > 0);
 }
 
-function strField(v: string | number | null | undefined): string {
+function strField(v: unknown): string {
   if (v == null) return "";
   return String(v);
 }
@@ -526,7 +536,7 @@ function isSetInvoiceCurrency(currency: string | null | undefined): boolean {
 
 function invoiceCurrencySymbol(inv: InvoiceDetails): string | null {
   if (isSetInvoiceCurrency(inv.currency)) return null;
-  const symbol = (inv.extracted_fields?.currency_symbol ?? "").trim();
+  const symbol = strField(inv.extracted_fields?.currency_symbol).trim();
   return symbol || null;
 }
 
@@ -838,9 +848,19 @@ function payloadFromDraft(draft: InvoiceEditDraft, inv?: InvoiceDetails): Invoic
     payload.processing_overrides = overridesPatch;
   }
   const extracted_fields: Record<string, string> = {};
+  const bankExtractedKeys = new Set([
+    "bank_account",
+    "bank_bsb",
+    "iban",
+    "bank_iban",
+    "bank_details",
+    "account_number",
+  ]);
   for (const [key, value] of Object.entries(draft.extractedFields)) {
     const trimmed = value.trim();
-    if (trimmed) extracted_fields[key] = trimmed;
+    if (!trimmed) continue;
+    if (bankExtractedKeys.has(key) && looksMaskedBankValue(trimmed)) continue;
+    extracted_fields[key] = trimmed;
   }
   if (Object.keys(extracted_fields).length) {
     payload.extracted_fields = extracted_fields;
@@ -994,11 +1014,16 @@ export function InvoiceDetailDrawer({
   initialTab = "fields",
 }: InvoiceDetailDrawerProps) {
   const { user } = useAuth();
+  const { permissions } = usePermissions();
+  const canRevealBank = permissions?.can_reveal_bank === true;
   const tenantScope = user?.tenant_id ?? null;
   const loadSeq = useRef(0);
   const [tab, setTab] = useState<Tab>(initialTab);
-  const { data: ruleBook } = useRuleBookConfig(open);
+  const { data: documentTypes } = useRuleBookDocumentTypes(open);
   const [inv, setInv] = useState<InvoiceDetails | null>(null);
+  const [revealBank, setRevealBank] = useState(false);
+  const revealBankRef = useRef(false);
+  revealBankRef.current = revealBank && canRevealBank;
   const isTeamExpenseRoute = (inv?.route_target || "").trim() === ROUTE_TEAM;
   const { data: employees = [] } = useEmployeeMasters(open && isTeamExpenseRoute);
   const [loading, setLoading] = useState(false);
@@ -1042,12 +1067,16 @@ export function InvoiceDetailDrawer({
     });
   }, []);
 
+  const fetchInvoiceDetails = useCallback((id: number) => {
+    return api.getInvoice(id, { fresh: true, revealBank: revealBankRef.current });
+  }, []);
+
   const catalogueCodes = useMemo(
     () =>
-      (ruleBook?.documentTypes ?? [])
+      (documentTypes ?? [])
         .filter((dt) => dt.enabled)
         .map((dt) => dt.code),
-    [ruleBook?.documentTypes]
+    [documentTypes]
   );
 
   const settlementHint = useMemo(
@@ -1063,7 +1092,7 @@ export function InvoiceDetailDrawer({
       await resolveClassificationAndWatch(targetId, confirmedDt, async () => {
         if (!isStillViewing(targetId)) return;
         const [freshInv, freshAudit] = await Promise.all([
-          api.getInvoice(targetId, { fresh: true }),
+          api.getInvoice(targetId, { fresh: true, revealBank: revealBankRef.current }),
           api.getInvoiceClassificationAudit(targetId, { fresh: true }),
         ]);
         if (!isStillViewing(targetId)) return;
@@ -1073,7 +1102,7 @@ export function InvoiceDetailDrawer({
       });
       if (!isStillViewing(targetId)) return;
       const [freshInv, freshAudit] = await Promise.all([
-        api.getInvoice(targetId, { fresh: true }),
+        api.getInvoice(targetId, { fresh: true, revealBank: revealBankRef.current }),
         api.getInvoiceClassificationAudit(targetId, { fresh: true }),
       ]);
       if (!isStillViewing(targetId)) return;
@@ -1138,7 +1167,7 @@ export function InvoiceDetailDrawer({
     const seq = ++loadSeq.current;
     setLoading(true);
     api
-      .getInvoice(activeInvoiceId, { fresh: true })
+      .getInvoice(activeInvoiceId, { fresh: true, revealBank: revealBankRef.current })
       .then((data) => {
         if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
         setInv(data);
@@ -1150,7 +1179,7 @@ export function InvoiceDetailDrawer({
       .finally(() => {
         if (seq === loadSeq.current && isTenantFetchScopeCurrent(scope)) setLoading(false);
       });
-  }, [mounted, activeInvoiceId, tenantScope]);
+  }, [mounted, activeInvoiceId, tenantScope, revealBank]);
 
   useEffect(() => {
     if (!inv) {
@@ -1316,9 +1345,9 @@ export function InvoiceDetailDrawer({
   }, [mounted, onClose]);
 
   const resolvedDocumentTypeCode = useMemo(() => {
-    if (!inv || !ruleBook) return "";
-    return effectiveDocumentTypeCode(inv, ruleBook.documentTypes);
-  }, [inv, ruleBook]);
+    if (!inv || !documentTypes) return "";
+    return effectiveDocumentTypeCode(inv, documentTypes);
+  }, [inv, documentTypes]);
 
   const classificationConfirmRequired = useMemo(
     () => requiresClassificationConfirm(inv),
@@ -1331,8 +1360,8 @@ export function InvoiceDetailDrawer({
     let keys =
       fromApi.length > 0
         ? fromApi
-        : ruleBook && resolvedDocumentTypeCode
-          ? extractionFieldsForDocumentType(ruleBook.documentTypes, resolvedDocumentTypeCode)
+        : documentTypes && resolvedDocumentTypeCode
+          ? extractionFieldsForDocumentType(documentTypes, resolvedDocumentTypeCode)
           : [];
     // Team Expenses identity: capture-channel sender + Employee Master name only.
     // Drop vendor — legacy TE configs remapped it to "Employee" and OCR fills merchant/place text.
@@ -1344,7 +1373,7 @@ export function InvoiceDetailDrawer({
       keys = ["email_sender", "employee_name", ...rest];
     }
     return keys;
-  }, [inv, ruleBook, resolvedDocumentTypeCode]);
+  }, [inv, documentTypes, resolvedDocumentTypeCode]);
 
   const matchedTeamEmployee = useMemo((): EmployeeMaster | undefined => {
     if (!inv || (inv.route_target || "").trim() !== ROUTE_TEAM) return undefined;
@@ -1363,25 +1392,25 @@ export function InvoiceDetailDrawer({
 
   const documentTypeInCatalogue = useMemo(() => {
     const code = resolvedDocumentTypeCode;
-    if (!code || !ruleBook) return false;
-    return ruleBook.documentTypes.some((dt) => dt.code.toUpperCase() === code);
-  }, [resolvedDocumentTypeCode, ruleBook]);
+    if (!code || !documentTypes) return false;
+    return documentTypes.some((dt) => dt.code.toUpperCase() === code);
+  }, [resolvedDocumentTypeCode, documentTypes]);
 
   const documentTypeBadgeLabel = useMemo(() => {
     if (!inv) return null;
-    if (!ruleBook) {
+    if (!documentTypes) {
       return invoiceDocumentTypeDisplayLabel(inv, null);
     }
-    return invoiceDocumentTypeDisplayLabel(inv, ruleBook.documentTypes);
-  }, [inv, ruleBook]);
+    return invoiceDocumentTypeDisplayLabel(inv, documentTypes);
+  }, [inv, documentTypes]);
 
   const resolvedDocType = useMemo(() => {
     const code = resolvedDocumentTypeCode;
-    if (!code || !ruleBook) return null;
+    if (!code || !documentTypes) return null;
     return (
-      ruleBook.documentTypes.find((dt) => dt.code.toUpperCase() === code.toUpperCase()) ?? null
+      documentTypes.find((dt) => dt.code.toUpperCase() === code.toUpperCase()) ?? null
     );
-  }, [resolvedDocumentTypeCode, ruleBook]);
+  }, [resolvedDocumentTypeCode, documentTypes]);
 
   const invoiceMatchMode = useMemo(() => {
     if (resolvedDocType) return effectiveMatchPolicy(resolvedDocType).mode;
@@ -1391,8 +1420,8 @@ export function InvoiceDetailDrawer({
   const absentFields = resolvedDocType?.absentFields ?? [];
 
   const postingApplies = useMemo(
-    () => (inv ? glPostingApplicable(inv, ruleBook?.documentTypes) : true),
-    [inv, ruleBook?.documentTypes]
+    () => (inv ? glPostingApplicable(inv, documentTypes) : true),
+    [inv, documentTypes]
   );
 
   const parentLedger = useMemo(() => {
@@ -1515,7 +1544,7 @@ export function InvoiceDetailDrawer({
   async function reloadInvoice(expectedId?: number) {
     const id = expectedId ?? activeInvoiceIdRef.current;
     if (id == null) return;
-    const updated = await api.getInvoice(id, { fresh: true });
+    const updated = await api.getInvoice(id, { fresh: true, revealBank: revealBankRef.current });
     if (!isStillViewing(id)) return;
     setInv(updated);
     if (tab === "audit") {
@@ -1534,7 +1563,12 @@ export function InvoiceDetailDrawer({
     try {
       const updated = await api.updateInvoice(targetId, payloadFromDraft(draft, inv));
       if (!isStillViewing(targetId)) return;
-      setInv(updated);
+      const nextInv =
+        revealBankRef.current && updated.bank_masked
+          ? await fetchInvoiceDetails(targetId)
+          : updated;
+      if (!isStillViewing(targetId)) return;
+      setInv(nextInv);
       setEditing(false);
       setDraft(null);
       onUpdated?.();
@@ -1557,9 +1591,14 @@ export function InvoiceDetailDrawer({
     try {
       const updated = await api.updateInvoice(targetId, { currency: next });
       if (!isStillViewing(targetId)) return;
-      setInv(updated);
+      const nextInv =
+        revealBankRef.current && updated.bank_masked
+          ? await fetchInvoiceDetails(targetId)
+          : updated;
+      if (!isStillViewing(targetId)) return;
+      setInv(nextInv);
       if (editing) {
-        setDraft(draftFromInvoice(updated, extractionFieldKeys));
+        setDraft(draftFromInvoice(nextInv, extractionFieldKeys));
       }
       onUpdated?.();
     } catch (e) {
@@ -1575,7 +1614,7 @@ export function InvoiceDetailDrawer({
     setAttachBusy(true);
     try {
       await api.attachInvoiceFile(targetId, file);
-      const updated = await api.getInvoice(targetId, { fresh: true });
+      const updated = await api.getInvoice(targetId, { fresh: true, revealBank: revealBankRef.current });
       if (!isStillViewing(targetId)) return;
       setInv(updated);
       if (editing && draft) {
@@ -1730,7 +1769,7 @@ export function InvoiceDetailDrawer({
   async function handleConfirmAndProcess() {
     if (!inv) return;
     const targetId = inv.id;
-    const fresh = await api.getInvoice(targetId, { fresh: true });
+    const fresh = await api.getInvoice(targetId, { fresh: true, revealBank: revealBankRef.current });
     if (!isStillViewing(targetId)) return;
     setInv(fresh);
     if (!canApproveFromDrawer(fresh)) {
@@ -1750,7 +1789,7 @@ export function InvoiceDetailDrawer({
 
     const fieldCheck = validateInvoiceReadyForApproval(
       inv,
-      ruleBook?.documentTypes,
+      documentTypes,
       approvalFieldsFromDraftOrInvoice()
     );
     if (!fieldCheck.ok) {
@@ -1793,7 +1832,7 @@ export function InvoiceDetailDrawer({
   async function handleApproveAndProcess() {
     if (!inv) return;
     const targetId = inv.id;
-    const fresh = await api.getInvoice(targetId, { fresh: true });
+    const fresh = await api.getInvoice(targetId, { fresh: true, revealBank: revealBankRef.current });
     if (!isStillViewing(targetId)) return;
     setInv(fresh);
     if (!canApproveFromDrawer(fresh)) {
@@ -1813,7 +1852,7 @@ export function InvoiceDetailDrawer({
 
     const fieldCheck = validateInvoiceReadyForApproval(
       inv,
-      ruleBook?.documentTypes,
+      documentTypes,
       approvalFieldsFromDraftOrInvoice()
     );
     if (!fieldCheck.ok) {
@@ -1901,7 +1940,13 @@ export function InvoiceDetailDrawer({
                   {inv ? (
                     <MappedDocumentTypeBadge
                       inv={inv}
-                      documentTypes={ruleBook?.documentTypes}
+                      documentTypes={documentTypes}
+                    />
+                  ) : null}
+                  {actionBusy || isInvoicePipelineActive(inv) ? (
+                    <StageBadge
+                      {...invoiceStageBadgeProps(inv)}
+                      processing={actionBusy || isInvoicePipelineActive(inv)}
                     />
                   ) : null}
                   {inv.evaluation_status ? (
@@ -1999,7 +2044,7 @@ export function InvoiceDetailDrawer({
                       audit={classificationAudit}
                       loading={classificationLoading}
                       catalogueCodes={catalogueCodes}
-                      documentTypes={ruleBook?.documentTypes ?? []}
+                      documentTypes={documentTypes ?? []}
                       requiresConfirm={classificationConfirmRequired}
                       onConfirmDt={
                         classificationConfirmRequired
@@ -2160,6 +2205,17 @@ export function InvoiceDetailDrawer({
                                             editable={fieldEditable}
                                             placeholder={dateFieldPlaceholder(key, fieldValue)}
                                             hint={dateFieldHint(key, fieldValue, fieldEditable)}
+                                            action={
+                                              key === "bank_details" && canRevealBank ? (
+                                                <button
+                                                  type="button"
+                                                  className="text-[10px] text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
+                                                  onClick={() => setRevealBank((current) => !current)}
+                                                >
+                                                  {revealBank ? "Hide" : "Show"}
+                                                </button>
+                                              ) : undefined
+                                            }
                                             onChange={
                                               draft &&
                                               editing &&
@@ -2477,7 +2533,14 @@ export function InvoiceDetailDrawer({
                         disabled={actionBusy || !invoiceCanAttemptReprocess(inv)}
                         onClick={() => void handleReprocess()}
                       >
-                        Reprocess
+                        {actionBusy ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                            Reprocessing…
+                          </>
+                        ) : (
+                          "Reprocess"
+                        )}
                       </Button>
                     )}
                     {canApproveFromDrawer(inv) && (
@@ -2515,7 +2578,14 @@ export function InvoiceDetailDrawer({
                           disabled={actionBusy || !invoiceCanAttemptReprocess(inv)}
                           onClick={() => void handleReprocess()}
                         >
-                          Reprocess
+                          {actionBusy ? (
+                            <>
+                              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                              Reprocessing…
+                            </>
+                          ) : (
+                            "Reprocess"
+                          )}
                         </Button>
                       )}
                     {canEdit(inv.status) && (

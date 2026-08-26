@@ -189,7 +189,7 @@ export function VendorsPage() {
   }, [load, user?.tenant_id]);
 
   useVisibilityPolling(() => {
-    void load({ silent: true, fresh: true });
+    return load({ silent: true, fresh: true });
   }, VENDORS_POLL_MS);
 
   const statsByVendor = useMemo(() => activityToStatsMap(activity), [activity]);

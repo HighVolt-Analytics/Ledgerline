@@ -158,6 +158,25 @@ def test_legacy_awaiting_heading_empty_body_maps_to_vaulted() -> None:
     assert response.evaluation_status == EvaluationStatus.VISION_VAULTED
 
 
+def test_invoice_detail_response_keeps_boolean_extracted_flags() -> None:
+    """Vision flags are stored as booleans; GET must not 500 on dict[str, str]."""
+    inv = Invoice(
+        id=772,
+        tenant_id=TESTING_TENANT_UUID,
+        created_at=datetime.now(timezone.utc),
+        status=InvoiceStatus.EXCEPTION,
+        currency="AUD",
+        extracted_fields={
+            "amount_ungrounded": True,
+            "canonical_document_type": "Tax Invoice",
+        },
+    )
+    response = invoice_to_response(inv, has_stored_file=False)
+    assert response.extracted_fields is not None
+    assert response.extracted_fields["amount_ungrounded"] is True
+    assert response.extracted_fields["canonical_document_type"] == "Tax Invoice"
+
+
 def test_document_text_if_loaded_returns_none_when_deferred() -> None:
     class _State:
         dict: dict = {}
