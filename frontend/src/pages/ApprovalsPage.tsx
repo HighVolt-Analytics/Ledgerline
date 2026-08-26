@@ -30,19 +30,25 @@ import {
   MappedDocumentTypeBadge,
   VisionHeadingBadge,
 } from "@/components/inbox/DocumentTypeDisplay";
+import { EvaluationStatusBadge } from "@/components/inbox/EvaluationStatusBadge";
+import { StageBadge, invoiceStageBadgeProps } from "@/components/StageBadge";
 import {
   APPROVABLE_STATUSES,
   APPROVAL_QUEUE_STATUSES,
   type ApprovalBoardColumnKey,
+  type ApprovedKindFilter,
   canShowApproveOnBoard,
   canShowConfirmOnBoard,
   canShowRejectOnApprovedBoard,
   canShowReprocessOnBoard,
   columnForInvoice,
+  filterApprovedBoardRows,
+  isSystemFiledVaultTerminal,
   mergeBoardRowWithLocal,
   PERMANENTLY_DELETABLE,
   needsReviewQueueCount,
   isNeedsReviewInvoice,
+  systemFiledDocumentTypeOptions,
 } from "@/lib/approvalsBoard";
 import { ActionChip } from "@/components/ActionChip";
 import { cn } from "@/lib/cn";
@@ -91,6 +97,8 @@ export function ApprovalsPage() {
   const [processingIds, setProcessingIds] = useState<Set<number>>(() => new Set());
   const [processingBusy, setProcessingBusy] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [approvedKind, setApprovedKind] = useState<ApprovedKindFilter>("all");
+  const [approvedDt, setApprovedDt] = useState("");
   const [searchParams, setSearchParams] = useSearchParams();
   const loadSeq = useRef(0);
   const busyRef = useRef<number | null>(null);
@@ -221,7 +229,7 @@ export function ApprovalsPage() {
 
   useVisibilityPolling(() => {
     if (busyRef.current !== null) return;
-    void load({ silent: true });
+    return load({ silent: true });
   }, processingIds.size > 0 ? APPROVAL_POLL_FAST_MS : APPROVAL_POLL_MS);
 
   useEffect(() => {
@@ -258,6 +266,10 @@ export function ApprovalsPage() {
     [boardMeta]
   );
   const needsReviewCount = useMemo(() => needsReviewQueueCount(invoices), [invoices]);
+  const systemFiledDtOptions = useMemo(
+    () => systemFiledDocumentTypeOptions(board.approved),
+    [board.approved],
+  );
 
   const invalidateAfterApproval = useCallback(async () => {
     await Promise.all([
@@ -629,9 +641,15 @@ export function ApprovalsPage() {
 
       <div className="approvals-kanban-board">
         {KANBAN_COLUMNS.map((col) => {
-          const cards = board[col.key];
+          const rawCards = board[col.key];
+          const cards =
+            col.key === "approved"
+              ? filterApprovedBoardRows(rawCards, approvedKind, approvedDt)
+              : rawCards;
           const columnCount =
-            searchQuery.trim() || columnTotals[col.key] == null
+            searchQuery.trim() ||
+            columnTotals[col.key] == null ||
+            (col.key === "approved" && approvedKind !== "all")
               ? cards.length
               : columnTotals[col.key];
           return (
@@ -645,6 +663,51 @@ export function ApprovalsPage() {
                 <span className="approvals-kanban-column__count">
                   {columnCount} {columnCount === 1 ? "Task" : "Tasks"}
                 </span>
+                {col.key === "approved" ? (
+                  <div
+                    className="flex flex-wrap items-center gap-1 mt-1 w-full"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {(
+                      [
+                        ["all", "All"],
+                        ["posted", "Posted"],
+                        ["system_filed", "System filed"],
+                      ] as const
+                    ).map(([key, label]) => (
+                      <Button
+                        key={key}
+                        type="button"
+                        size="sm"
+                        variant={approvedKind === key ? "surface" : "outline"}
+                        className="h-6 px-2 text-[10px]"
+                        onClick={() => {
+                          setApprovedKind(key);
+                          if (key !== "system_filed") setApprovedDt("");
+                        }}
+                        data-testid={`filter-approved-${key}`}
+                      >
+                        {label}
+                      </Button>
+                    ))}
+                    {approvedKind === "system_filed" && systemFiledDtOptions.length > 0 ? (
+                      <select
+                        className="h-6 max-w-[9rem] rounded-md border border-border bg-background px-1 text-[10px]"
+                        value={approvedDt}
+                        onChange={(e) => setApprovedDt(e.target.value)}
+                        data-testid="filter-approved-dt"
+                        aria-label="System filed document type"
+                      >
+                        <option value="">All types</option>
+                        {systemFiledDtOptions.map((dt) => (
+                          <option key={dt} value={dt}>
+                            {dt}
+                          </option>
+                        ))}
+                      </select>
+                    ) : null}
+                  </div>
+                ) : null}
               </header>
               <div className="approvals-kanban-column__cards">
                 {cards.map((inv) => {
@@ -674,6 +737,16 @@ export function ApprovalsPage() {
                             documentTypes={documentTypes}
                             className="approvals-kanban-card__type-chip"
                           />
+                          {col.key === "approved" ? (
+                            isSystemFiledVaultTerminal(inv) ? (
+                              <EvaluationStatusBadge
+                                status={inv.evaluation_status}
+                                invoice={inv}
+                              />
+                            ) : (
+                              <StageBadge {...invoiceStageBadgeProps(inv)} />
+                            )
+                          ) : null}
                         </div>
                       </div>
                       {inv.duplicate_review_suggested ? (

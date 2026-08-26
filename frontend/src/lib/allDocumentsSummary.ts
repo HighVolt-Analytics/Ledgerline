@@ -24,7 +24,7 @@ export type PipelineStatusLabel = "Done" | "Pending" | "Failed" | "Not required"
 export type AllDocumentsNature = DocumentTypeClass | null;
 
 export type VaultCellValue =
-  | { kind: "vaulted"; label: "Vaulted" }
+  | { kind: "vaulted"; label: "Filed" }
   | { kind: "po"; label: string }
   | { kind: "so"; label: string }
   | { kind: "empty"; label: "—" };
@@ -53,14 +53,37 @@ export function documentNature(
   return normalizeDocumentTypeKlass(defn.klass);
 }
 
+const SHORT_MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+] as const;
+
+/** Display dates as `11 Sep 26` (DD MMM YY). Calendar-day only — no timezone shift. */
 export function formatDocDate(invoiceDate: string | null | undefined): string {
   const raw = (invoiceDate ?? "").trim();
   if (!raw) return "—";
-  const day = raw.slice(0, 10);
-  if (/^\d{4}-\d{2}-\d{2}$/.test(day)) return day;
+  const isoDay = raw.slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(isoDay)) {
+    const year = Number(isoDay.slice(0, 4));
+    const month = Number(isoDay.slice(5, 7));
+    const day = Number(isoDay.slice(8, 10));
+    if (month < 1 || month > 12 || day < 1 || day > 31) return raw;
+    return `${String(day).padStart(2, "0")} ${SHORT_MONTHS[month - 1]} ${String(year).slice(-2)}`;
+  }
   const parsed = Date.parse(raw);
   if (Number.isNaN(parsed)) return raw;
-  return new Date(parsed).toISOString().slice(0, 10);
+  const dt = new Date(parsed);
+  return `${String(dt.getUTCDate()).padStart(2, "0")} ${SHORT_MONTHS[dt.getUTCMonth()]} ${String(dt.getUTCFullYear()).slice(-2)}`;
 }
 
 function stageCell(
@@ -119,7 +142,7 @@ export function vaultCellValue(
   const evalStatus = (inv.evaluation_status ?? "").trim().toLowerCase();
   const route = (inv.route_target ?? "").trim();
   if (evalStatus === "vision_vaulted" || route === "Vault") {
-    return { kind: "vaulted", label: "Vaulted" };
+    return { kind: "vaulted", label: "Filed" };
   }
   const po = (inv.po_reference ?? "").trim();
   if (po) return { kind: "po", label: po };

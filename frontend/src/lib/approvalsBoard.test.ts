@@ -6,11 +6,15 @@ import {
   canShowRejectOnApprovedBoard,
   canShowReprocessOnBoard,
   columnForInvoice,
+  filterApprovedBoardRows,
+  isPostedApprovedRow,
   isPreClassificationReview,
+  isSystemFiledVaultTerminal,
   mergeBoardRowWithLocal,
   needsReviewQueueCount,
   reviewQueueCount,
   shouldClearProcessingId,
+  systemFiledDocumentTypeOptions,
 } from "@/lib/approvalsBoard";
 
 function inv(
@@ -286,5 +290,50 @@ describe("mergeBoardRowWithLocal", () => {
       document_type_code: "DT-01",
     });
     expect(mergeBoardRowWithLocal(remote, local, new Set([7]))).toEqual(remote);
+  });
+});
+
+describe("system-filed Approved filters", () => {
+  it("isSystemFiledVaultTerminal is vision_vaulted only", () => {
+    expect(
+      isSystemFiledVaultTerminal(inv(1, "exception", { evaluation_status: "vision_vaulted" }))
+    ).toBe(true);
+    expect(isPostedApprovedRow(inv(2, "processed"))).toBe(true);
+    expect(
+      isSystemFiledVaultTerminal(inv(3, "processed", { evaluation_status: "auto_coded" }))
+    ).toBe(false);
+  });
+
+  it("filterApprovedBoardRows splits Posted vs System filed", () => {
+    const posted = inv(1, "processed");
+    const filed = inv(2, "exception", {
+      evaluation_status: "vision_vaulted",
+      document_type_code: "DT-11",
+    });
+    const other = inv(3, "exception", { evaluation_status: "vision_vaulted", document_heading: "AWB" });
+    const rows = [posted, filed, other];
+    expect(filterApprovedBoardRows(rows, "posted").map((r) => r.id)).toEqual([1]);
+    expect(filterApprovedBoardRows(rows, "system_filed").map((r) => r.id)).toEqual([2, 3]);
+    expect(filterApprovedBoardRows(rows, "all").map((r) => r.id)).toEqual([1, 2, 3]);
+  });
+
+  it("DT filter matches system-filed rows by code or heading", () => {
+    const filedDt = inv(2, "exception", {
+      evaluation_status: "vision_vaulted",
+      document_type_code: "DT-11",
+    });
+    const filedHeading = inv(3, "exception", {
+      evaluation_status: "vision_vaulted",
+      document_heading: "AIR WAYBILL",
+    });
+    const posted = inv(1, "processed", { document_type_code: "DT-11" });
+    const rows = [posted, filedDt, filedHeading];
+    expect(systemFiledDocumentTypeOptions(rows)).toEqual(["AIR WAYBILL", "DT-11"]);
+    expect(
+      filterApprovedBoardRows(rows, "system_filed", "DT-11").map((r) => r.id)
+    ).toEqual([2]);
+    expect(
+      filterApprovedBoardRows(rows, "system_filed", "AIR WAYBILL").map((r) => r.id)
+    ).toEqual([3]);
   });
 });

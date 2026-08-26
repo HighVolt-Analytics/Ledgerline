@@ -223,3 +223,49 @@ export function canShowPermanentDelete(
 export function isPipelineSettled(status: string, sawPipeline: boolean): boolean {
   return SETTLED_AFTER_PIPELINE.has(status) && shouldClearProcessingId(status, sawPipeline);
 }
+
+/** Vault-only understood path: system-filed, never human-approved. */
+export function isSystemFiledVaultTerminal(
+  inv: Pick<Invoice, "evaluation_status">,
+): boolean {
+  return (inv.evaluation_status ?? "").trim() === "vision_vaulted";
+}
+
+export function isPostedApprovedRow(inv: Pick<Invoice, "status">): boolean {
+  return inv.status === "processed";
+}
+
+export type ApprovedKindFilter = "all" | "posted" | "system_filed";
+
+export function approvedRowDtKey(
+  inv: Pick<Invoice, "document_type_code" | "document_heading">,
+): string {
+  return (inv.document_type_code || inv.document_heading || "").trim();
+}
+
+export function systemFiledDocumentTypeOptions(
+  rows: readonly Pick<Invoice, "evaluation_status" | "document_type_code" | "document_heading">[],
+): string[] {
+  const keys = new Set<string>();
+  for (const inv of rows) {
+    if (!isSystemFiledVaultTerminal(inv)) continue;
+    const key = approvedRowDtKey(inv);
+    if (key) keys.add(key);
+  }
+  return [...keys].sort((a, b) => a.localeCompare(b));
+}
+
+export function filterApprovedBoardRows(
+  rows: Invoice[],
+  kind: ApprovedKindFilter,
+  documentType?: string | null,
+): Invoice[] {
+  let out = rows;
+  if (kind === "posted") out = out.filter(isPostedApprovedRow);
+  if (kind === "system_filed") out = out.filter(isSystemFiledVaultTerminal);
+  const dt = (documentType ?? "").trim();
+  if (kind === "system_filed" && dt) {
+    out = out.filter((inv) => approvedRowDtKey(inv) === dt);
+  }
+  return out;
+}

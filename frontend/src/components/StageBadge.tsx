@@ -15,6 +15,7 @@ const stageToneByName: Record<string, KpiModuleColor> = {
   Approved: "sage",
   Processed: "green",
   Posted: "blue",
+  Filed: "sage",
   Vaulted: "sage",
   "Header review": "rust",
   Rejected: "rose",
@@ -93,7 +94,7 @@ export function invoiceStage(
   if (["mapping", "journaling", "reconciling"].includes(s)) return "Mapped";
   if (s === "exception") {
     const evalStatus = (inv?.evaluation_status ?? "").trim();
-    if (evalStatus === "vision_vaulted") return "Vaulted";
+    if (evalStatus === "vision_vaulted") return "Filed";
     if (evalStatus === "vision_header_review") return "Header review";
     if (evalStatus === "awaiting_classification") return "Parsed";
     return "Validated";

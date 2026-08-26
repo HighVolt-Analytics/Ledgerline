@@ -124,9 +124,12 @@ describe("documentNature", () => {
 });
 
 describe("formatDocDate", () => {
-  it("formats ISO dates and blanks", () => {
-    expect(formatDocDate("2026-03-15")).toBe("2026-03-15");
-    expect(formatDocDate("2026-03-15T12:00:00Z")).toBe("2026-03-15");
+  it("formats ISO dates as DD MMM YY without timezone shift", () => {
+    expect(formatDocDate("2026-03-15")).toBe("15 Mar 26");
+    expect(formatDocDate("2026-03-15T12:00:00Z")).toBe("15 Mar 26");
+    expect(formatDocDate("2026-09-11")).toBe("11 Sep 26");
+    expect(formatDocDate("2026-08-27")).toBe("27 Aug 26");
+    expect(formatDocDate("2026-09-05")).toBe("05 Sep 26");
     expect(formatDocDate(null)).toBe("—");
     expect(formatDocDate("")).toBe("—");
   });
@@ -162,7 +165,7 @@ describe("paymentStatusForNature", () => {
 });
 
 describe("vaultCellValue", () => {
-  it("prefers Vaulted over PO/SO refs", () => {
+  it("prefers Filed over PO/SO refs", () => {
     expect(
       vaultCellValue({
         evaluation_status: "vision_vaulted",
@@ -170,7 +173,7 @@ describe("vaultCellValue", () => {
         po_reference: "PO-1",
         so_reference: null,
       })
-    ).toEqual({ kind: "vaulted", label: "Vaulted" });
+    ).toEqual({ kind: "vaulted", label: "Filed" });
 
     expect(
       vaultCellValue({
@@ -179,7 +182,7 @@ describe("vaultCellValue", () => {
         po_reference: null,
         so_reference: null,
       })
-    ).toEqual({ kind: "vaulted", label: "Vaulted" });
+    ).toEqual({ kind: "vaulted", label: "Filed" });
   });
 
   it("falls back to PO then SO then empty", () => {

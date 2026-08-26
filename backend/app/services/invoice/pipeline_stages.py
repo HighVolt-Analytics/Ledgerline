@@ -1384,7 +1384,7 @@ def derive_list_stage(
             eval_status == "awaiting_classification" and has_vision_bundle
         ):
             # Understood path finished at vault (incl. legacy soft-bundle rows).
-            return "Vaulted", "done"
+            return "Filed", "done"
         if eval_status == "vision_header_review":
             return "Header review", "pending"
         if eval_status == "awaiting_classification":
@@ -1459,6 +1459,7 @@ def derive_resolution_hint(
         detect_invoice_blockers(inv, configured_keys=configured_keys)
     )
 
+    from app.services.invoice.invoice_amounts import invoice_amounts_inconsistent_for_posting
     from app.services.invoice.vision_posting_continue import (
         EXTRACTED_AMOUNT_INCONSISTENCY,
         EXTRACTED_AMOUNT_UNGROUNDED,
@@ -1469,10 +1470,21 @@ def derive_resolution_hint(
     # later branch for it is unreachable. Persist flags (not audit events) so
     # this still works at render time. Skip vaulted DTs — amount holds are for
     # documents that were meant to post.
+    # extracted_bool_flag never lazy-loads deferred extracted_fields (matrix
+    # list). Inconsistency can also be read from loaded amount columns so
+    # Processing cards still distinguish "amounts do not add up".
+    # GAP: ungrounded-amount is JSON-only. Unlike inconsistency it cannot be
+    # reconstructed from subtotal/gst/total (those values may still be present).
+    # List/board therefore falls back to the generic header-incomplete hint until
+    # a loaded scalar column exists. Do not treat that fallback as the product
+    # intent — see test_deferred_ungrounded_amount_falls_back_to_generic_header_hint.
     if eval_status != "vision_vaulted":
         if extracted_bool_flag(inv, EXTRACTED_AMOUNT_UNGROUNDED):
             return "Fields tab — Amount could not be verified against document text"
-        if extracted_bool_flag(inv, EXTRACTED_AMOUNT_INCONSISTENCY):
+        if extracted_bool_flag(inv, EXTRACTED_AMOUNT_INCONSISTENCY) or (
+            eval_status == "vision_header_review"
+            and invoice_amounts_inconsistent_for_posting(inv)
+        ):
             return "Fields tab — Amounts do not add up"
 
     # Specific eval statuses that are not about missing currency/total.

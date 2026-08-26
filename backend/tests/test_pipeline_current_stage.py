@@ -210,7 +210,7 @@ def test_list_stage_understood_path_vaulted() -> None:
         extracted_fields={"vision_bundle_kind": "soft"},
     )
     label, state = derive_list_stage(inv)
-    assert label == "Vaulted"
+    assert label == "Filed"
     assert state == "done"
 
     inv.evaluation_status = "vision_header_review"
@@ -221,7 +221,7 @@ def test_list_stage_understood_path_vaulted() -> None:
     # Legacy soft-bundle still tagged awaiting_classification.
     inv.evaluation_status = "awaiting_classification"
     label, state = derive_list_stage(inv)
-    assert label == "Vaulted"
+    assert label == "Filed"
     assert state == "done"
 
 

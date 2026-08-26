@@ -13,7 +13,7 @@ function evaluationChipClass(status: NonNullable<Invoice["evaluation_status"]>):
     case "auto_coded":
       return kpiStatusChipClass("green");
     case "vision_vaulted":
-      return kpiStatusChipClass("green");
+      return kpiStatusChipClass("sage");
     case "needs_review":
       return needsReviewStatusChipClass();
     case "vision_header_review":

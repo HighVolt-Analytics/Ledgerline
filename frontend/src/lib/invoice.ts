@@ -524,7 +524,7 @@ export function evaluationStatusLabel(
   if (status === "needs_review") return "Needs review";
   if (status === "pending_approval") return "Pending approval";
   if (status === "awaiting_classification") return "Awaiting classification";
-  if (status === "vision_vaulted") return "Vision vaulted";
+  if (status === "vision_vaulted") return "Filed — not reviewed";
   if (status === "vision_header_review") return "Vision header review";
   if (status === "line_gl_review") return "Line GL review";
   if (status === "line_items_review") return "Line items review";
@@ -557,7 +557,7 @@ export function evaluationStatusDescription(
     return "LLM confidence was below the auto-route threshold — confirm document type on the document.";
   }
   if (status === "vision_vaulted") {
-    return "Vision understood this document — soft-bundled and stored in the vault (no OCR classification).";
+    return "System-filed — never human-confirmed. Stored from the understood path (not an approver sign-off).";
   }
   if (status === "vision_header_review") {
     return "Vision understood the file but header extraction was incomplete — complete Fields, then Confirm & process.";

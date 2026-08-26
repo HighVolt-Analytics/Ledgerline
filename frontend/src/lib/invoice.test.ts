@@ -419,7 +419,7 @@ describe("evaluationStatusLabel", () => {
   });
 
   it("shows dedicated understood-path evaluation tags", () => {
-    expect(evaluationStatusLabel("vision_vaulted")).toBe("Vision vaulted");
+    expect(evaluationStatusLabel("vision_vaulted")).toBe("Filed — not reviewed");
     expect(evaluationStatusLabel("vision_header_review")).toBe("Vision header review");
   });
 });
@@ -428,5 +428,10 @@ describe("evaluationStatusDescription", () => {
   it("points sales holds to customer masters", () => {
     expect(evaluationStatusDescription("pending_vendor", ROUTE_SALES)).toContain("Customers");
     expect(evaluationStatusDescription("pending_vendor", ROUTE_PURCHASE)).toContain("Vendors");
+  });
+
+  it("marks vision_vaulted as system-filed, not human-approved", () => {
+    expect(evaluationStatusDescription("vision_vaulted")).toMatch(/never human-confirmed/i);
+    expect(evaluationStatusDescription("auto_coded")).not.toMatch(/never human-confirmed/i);
   });
 });
