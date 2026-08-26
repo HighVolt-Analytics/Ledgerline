@@ -297,6 +297,20 @@ async def test_derive_matrix_flag_skips_deferred_ocr_blobs(
     assert flag == "Anomaly Detected"
     assert reason is not None
 
+    from app.services.invoice.invoice_response_service import invoice_to_response
+    from app.services.invoice.pipeline_stages import derive_resolution_hint
+    from app.services.invoice.vision_posting_continue import (
+        EXTRACTED_AMOUNT_UNGROUNDED,
+        extracted_bool_flag,
+    )
+
+    assert extracted_bool_flag(deferred, EXTRACTED_AMOUNT_UNGROUNDED) is False
+    hint = derive_resolution_hint(deferred, [])
+    assert hint is not None
+    assert "complete header fields" in hint.lower()
+    response = invoice_to_response(deferred, for_list=True, has_stored_file=False)
+    assert response.resolution_hint == hint
+
 
 def _te_dt(*, budget_control: bool = True, advance_control: bool = True):
     from app.schemas.document_type import DocumentTypeDefinition
@@ -524,3 +538,101 @@ def test_derive_resolution_hint_generic_header_when_no_amount_flags() -> None:
     hint = derive_resolution_hint(inv, [])
     assert hint is not None
     assert "complete header fields" in hint.lower()
+
+
+@pytest.mark.asyncio
+async def test_derive_resolution_hint_inconsistent_amounts_when_extracted_fields_deferred(
+    db_session: AsyncSession,
+) -> None:
+    """Matrix list defers JSON flags; column math still names the amount hold."""
+    from sqlalchemy import select
+
+    from app.services.invoice.invoice_response_service import (
+        invoice_list_load_options,
+        invoice_to_response,
+    )
+    from app.services.invoice.pipeline_stages import derive_resolution_hint
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Deferred Amounts",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="vision_header_review",
+        document_type_code="DT-07",
+        currency="AUD",
+        subtotal=Decimal("100.00"),
+        gst=Decimal("10.00"),
+        total=Decimal("999.00"),
+        extracted_fields={"amount_inconsistency": True},
+        file_hash="matrix-defer-amount-math",
+        capture_source="upload",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+    invoice_id = inv.id
+    db_session.expire_all()
+
+    deferred = (
+        await db_session.execute(
+            select(Invoice)
+            .options(*invoice_list_load_options())
+            .where(Invoice.id == invoice_id)
+        )
+    ).scalar_one()
+    hint = derive_resolution_hint(deferred, [])
+    assert hint is not None
+    assert "do not add up" in hint.lower()
+    response = invoice_to_response(deferred, for_list=True, has_stored_file=False)
+    assert "do not add up" in (response.resolution_hint or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_deferred_ungrounded_amount_falls_back_to_generic_header_hint(
+    db_session: AsyncSession,
+) -> None:
+    """GAP: ungrounded-amount lives in deferred JSON, not a loaded scalar.
+
+    Inconsistency can be re-derived from subtotal/gst/total on the list row.
+    Ungrounded cannot — the amounts may still be present. Until a boolean
+    column is added, Processing cards cannot tell this hold apart from a
+    weak-identity header hold. This test locks the current fallback so the
+    gap stays visible; do not "fix" it by undeferring extracted_fields.
+    """
+    from sqlalchemy import select
+
+    from app.services.invoice.invoice_response_service import (
+        invoice_list_load_options,
+        invoice_to_response,
+    )
+    from app.services.invoice.pipeline_stages import derive_resolution_hint
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Deferred Ungrounded",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="vision_header_review",
+        document_type_code="DT-07",
+        currency="AUD",
+        total=Decimal("50.00"),
+        extracted_fields={"amount_ungrounded": True},
+        file_hash="matrix-defer-ungrounded-gap",
+        capture_source="upload",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+    invoice_id = inv.id
+    db_session.expire_all()
+
+    deferred = (
+        await db_session.execute(
+            select(Invoice)
+            .options(*invoice_list_load_options())
+            .where(Invoice.id == invoice_id)
+        )
+    ).scalar_one()
+    hint = derive_resolution_hint(deferred, [])
+    assert hint is not None
+    assert "complete header fields" in hint.lower()
+    assert "could not be verified" not in hint.lower()
+    response = invoice_to_response(deferred, for_list=True, has_stored_file=False)
+    assert "complete header fields" in (response.resolution_hint or "").lower()

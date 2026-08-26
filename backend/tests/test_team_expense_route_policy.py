@@ -165,3 +165,32 @@ def test_employee_channel_force_keeps_when_only_invoice_number_hint() -> None:
     )
     assert inv.route_target == ROUTE_TEAM
     assert inv.document_type_code == "DT-04"
+
+
+def test_should_apply_honours_explicit_force_override_and_still_skips_commercial() -> None:
+    employee = EmployeeMaster(
+        id="e1", name="Priya", email="priya@acme.com", status="Active"
+    )
+    unknown = _InvoiceStub(
+        capture_source="email",
+        email_sender="not-an-employee@acme.com",
+        extracted_fields={"document_role_hints": {"has_po_reference": "true"}},
+    )
+    assert should_apply_employee_channel_te_force(unknown, [employee]) is False
+    assert (
+        should_apply_employee_channel_te_force(
+            unknown, [employee], force_team_expenses=True
+        )
+        is False
+    )
+    claimish = _InvoiceStub(
+        capture_source="email",
+        email_sender="not-an-employee@acme.com",
+        extracted_fields={"document_role_hints": {"has_invoice_number": "true"}},
+    )
+    assert (
+        should_apply_employee_channel_te_force(
+            claimish, [employee], force_team_expenses=True
+        )
+        is True
+    )

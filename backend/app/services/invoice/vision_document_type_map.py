@@ -802,20 +802,25 @@ async def map_vision_label_to_document_type_with_llm_fallback(
     ):
         return rule
 
+    from app.services.purchase.team_expense_route_policy import (
+        invoice_role_hints,
+        role_hints_look_commercial,
+        should_apply_employee_channel_te_force,
+    )
+
+    hints = invoice_role_hints(invoice)
     channel_force = _resolve_force_team_expenses(
         invoice=invoice,
         employees=employees,
         force_team_expenses=force_team_expenses,
     )
-    from app.services.purchase.team_expense_route_policy import (
-        invoice_role_hints,
-        role_hints_look_commercial,
+    # Shared predicate — same skip as pipeline safety net, posting continue,
+    # and evaluation. Do not re-derive commercial vs channel here.
+    force_te = should_apply_employee_channel_te_force(
+        invoice,
+        employees,
+        force_team_expenses=force_team_expenses,
     )
-
-    hints = invoice_role_hints(invoice)
-    # Content is the skip. Employee-matrix membership never auto-rejects or
-    # auto-forces on its own — empty/unknown hints keep the channel force.
-    force_te = bool(channel_force) and not role_hints_look_commercial(hints)
     if channel_force and role_hints_look_commercial(hints):
         await _log_te_channel_event(
             session,

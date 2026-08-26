@@ -134,6 +134,52 @@ async def test_document_matrix_flags_exception(client: AsyncClient, db_session: 
 
 
 @pytest.mark.asyncio
+async def test_matrix_processing_column_survives_deferred_extracted_fields(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """GET /api/matrix with production defer() must not MissingGreenlet.
+
+    Unit tests against in-memory Invoice() miss this: extracted_fields is a
+    Python attr there, not an unloaded deferred column. This is the path
+    that 500'd after Fix 3 grew a new JSON read in derive_resolution_hint.
+    """
+    db_session.add(
+        Invoice(
+            tenant_id=TESTING_TENANT_UUID,
+            vendor="Deferred Processing Hold",
+            status=InvoiceStatus.EXCEPTION,
+            evaluation_status="vision_header_review",
+            document_type_code="DT-07",
+            currency="AUD",
+            total=Decimal("50.00"),
+            document_text="ocr body that must stay deferred " * 200,
+            extracted_fields={
+                "amount_ungrounded": True,
+                "vision_header_confidence": "0.9",
+            },
+            file_hash="matrix-http-defer-processing",
+            capture_source="upload",
+        )
+    )
+    await db_session.flush()
+    db_session.expire_all()
+
+    res = await client.get(
+        "/api/matrix?page=1&page_size=10&approval_board_column=processing"
+    )
+    assert res.status_code == 200, res.text
+    row = next(
+        r
+        for r in res.json()["data"]
+        if r["invoice"]["vendor"] == "Deferred Processing Hold"
+    )
+    assert row["invoice"].get("extracted_fields") in (None, {})
+    assert row["invoice"].get("document_text") in (None, "")
+    hint = row["invoice"].get("resolution_hint") or ""
+    assert hint
+
+
+@pytest.mark.asyncio
 async def test_list_invoices_vendor_and_date_filters(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:

@@ -148,14 +148,27 @@ def role_hints_look_commercial(hints: dict[str, str] | None) -> bool:
 
 
 def should_apply_employee_channel_te_force(
-    invoice: Any, employees: Sequence[Any] | None
+    invoice: Any,
+    employees: Sequence[Any] | None,
+    *,
+    force_team_expenses: bool | None = None,
 ) -> bool:
     """Channel+employee match, unless document content looks commercial.
 
     ``should_force_team_expenses`` is identity/channel only. Role hints are the
     authoritative skip. Employee-matrix membership is never a hard gate.
+
+    ``force_team_expenses`` is the DT-map explicit override (same meaning as
+    ``_resolve_force_team_expenses``): True/False short-circuits identity lookup.
     """
-    if not should_force_team_expenses(invoice, employees):
+    if force_team_expenses is False:
+        return False
+    channel = (
+        bool(force_team_expenses)
+        if force_team_expenses is not None
+        else should_force_team_expenses(invoice, employees)
+    )
+    if not channel:
         return False
     return not role_hints_look_commercial(invoice_role_hints(invoice))
 
