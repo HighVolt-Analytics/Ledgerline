@@ -312,17 +312,22 @@ export function buildPartyReferences(
   }));
 }
 
+function extractedString(extracted: Record<string, unknown>, key: string): string {
+  const raw = extracted[key];
+  return raw == null ? "" : String(raw);
+}
+
 function shouldOmitBillingAddress(
   billingAddress: string | null,
   parties: PartyPreviewBlock[],
-  extracted: Record<string, string>
+  extracted: Record<string, unknown>
 ): boolean {
   if (!billingAddress?.trim()) return true;
   const buyerBlock = parties.find((p) => p.key === "bill_to");
   if (buyerBlock?.address && addressMatches(billingAddress, buyerBlock.address)) {
     return true;
   }
-  const buyerAddr = extracted.buyer_address?.trim();
+  const buyerAddr = extractedString(extracted, "buyer_address").trim();
   if (buyerAddr && addressMatches(billingAddress, buyerAddr)) return true;
   return false;
 }
@@ -340,12 +345,14 @@ function shouldSkipExtractedReference(
   token: string,
   value: string,
   headerCounterparty: string,
-  extracted: Record<string, string>
+  extracted: Record<string, unknown>
 ): boolean {
   if (INTERNAL_EXTRACTED_KEYS.has(token)) return true;
   if (PARTY_REFERENCE_KEYS.has(token)) return true;
   if (valuesEqual(value, headerCounterparty)) return true;
-  if (token === "customer" && valuesEqual(value, extracted.buyer_name)) return true;
+  if (token === "customer" && valuesEqual(value, extractedString(extracted, "buyer_name"))) {
+    return true;
+  }
   return false;
 }
 
@@ -676,7 +683,7 @@ function buildLineItemHeaderValues(inv: InvoiceDetails): Set<string> {
   add(inv.cost_centre);
   const extracted = inv.extracted_fields ?? {};
   for (const key of HEADER_DEDUP_EXTRACTED_FIELD_KEYS) {
-    add(extracted[key]);
+    add(extractedString(extracted, key));
   }
   return values;
 }

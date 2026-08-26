@@ -28,7 +28,10 @@ function applyInvoiceToVendorDraft(draft: VendorMaster, invoice: Invoice): Vendo
       ...draft.bank,
       bsb: fillIfEmpty(draft.bank.bsb ?? "", invoice.bank_bsb) || draft.bank.bsb,
       accountNumber: fillIfEmpty(draft.bank.accountNumber, invoice.bank_account),
-      bankName: fillIfEmpty(draft.bank.bankName, extracted.bank_name),
+      bankName: fillIfEmpty(
+        draft.bank.bankName,
+        typeof extracted.bank_name === "string" ? extracted.bank_name : undefined,
+      ),
     },
     defaultLedger: fillIfEmpty(draft.defaultLedger, invoice.account_name),
   };

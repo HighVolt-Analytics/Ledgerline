@@ -52,7 +52,7 @@ export type EvaluationStatusBadgeInvoice = Pick<
   | "status"
   | "resolution_hint"
   | "extracted_fields"
->;
+> & { total?: Invoice["total"] };
 
 export function EvaluationStatusBadge({
   status,

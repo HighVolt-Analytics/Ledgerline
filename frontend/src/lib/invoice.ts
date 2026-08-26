@@ -643,7 +643,7 @@ export function evaluationReviewTooltip(
     | "status"
     | "resolution_hint"
     | "extracted_fields"
-  >,
+  > & { total?: Invoice["total"] },
   reviewReasons?: string[]
 ): string {
   const apiHint = (inv.resolution_hint ?? "").trim();
