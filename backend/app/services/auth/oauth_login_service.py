@@ -80,16 +80,16 @@ def parse_oauth_state(state: str) -> dict[str, Any]:
 
 
 def _microsoft_authority() -> str:
-    settings = get_settings()
-    tenant = settings.microsoft_oauth_authority_tenant.strip() or "common"
-    # Single-tenant Entra apps (AzureADMyOrg) reject /common (AADSTS50194).
-    # Prefer AZURE_TENANT_ID when authority was left at the "common" default.
-    if tenant.lower() == "common":
-        import os
+    """Authorize/token host for Microsoft login/signup.
 
-        azure_tid = (os.environ.get("AZURE_TENANT_ID") or "").strip()
-        if azure_tid and azure_tid.lower() != "common":
-            tenant = azure_tid
+    Defaults to /common so users outside the High Volt Entra tenant can sign in.
+    AZURE_TENANT_ID must never drive this — that GUID is only for Graph/mailbox.
+    Requires a Multitenant Entra app registration (single-tenant + /common → AADSTS50194).
+    """
+    settings = get_settings()
+    tenant = (settings.microsoft_oauth_authority_tenant or "").strip() or "common"
+    if tenant.lower() in {"organizations", "consumers", "common"}:
+        return f"https://login.microsoftonline.com/{tenant.lower()}"
     return f"https://login.microsoftonline.com/{tenant}"
 
 
