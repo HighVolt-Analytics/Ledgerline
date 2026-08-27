@@ -25,18 +25,20 @@ _SECRET = "app-secrets"
 _PROD_BASE = "https://ledgerlink.highvolt.tech"
 
 # Confidential client + backend callback (not SPA localhost).
-# Authority must be the home tenant for single-tenant Entra apps (AzureADMyOrg).
-# Using "common" causes AADSTS50194.
+# SaaS multi-tenant login uses /common (requires Multitenant Entra app).
+# Never copy AZURE_TENANT_ID into MICROSOFT_OAUTH_AUTHORITY_TENANT — that GUID
+# is for Graph/mailbox only.
 _CONFIG_VALUES_BASE = {
     "FRONTEND_URL": _PROD_BASE,
     "MICROSOFT_OAUTH_REDIRECT_URI": f"{_PROD_BASE}/api/auth/oauth/microsoft/callback",
     "MICROSOFT_OAUTH_PUBLIC_CLIENT": "false",
     "GOOGLE_OAUTH_REDIRECT_URI": f"{_PROD_BASE}/api/auth/oauth/google/callback",
+    "MICROSOFT_OAUTH_AUTHORITY_TENANT": "common",
 }
 
 
-def _authority_tenant() -> str:
-    """Resolve Entra tenant id from production app-secrets (AZURE_TENANT_ID)."""
+def _explicit_login_authority_from_secrets() -> str | None:
+    """Optional override from app-secrets MICROSOFT_OAUTH_AUTHORITY_TENANT only."""
     import base64
 
     proc = subprocess.run(
@@ -46,25 +48,20 @@ def _authority_tenant() -> str:
         text=True,
     )
     if proc.returncode != 0:
-        raise RuntimeError(proc.stderr.strip() or "failed to read production app-secrets")
+        return None
     data = (json.loads(proc.stdout).get("data") or {})
-    raw = data.get("AZURE_TENANT_ID") or data.get("MICROSOFT_OAUTH_AUTHORITY_TENANT")
+    raw = data.get("MICROSOFT_OAUTH_AUTHORITY_TENANT")
     if not raw:
-        raise RuntimeError("AZURE_TENANT_ID missing from production app-secrets")
+        return None
     tenant = base64.b64decode(raw).decode("utf-8").strip()
-    if not tenant or tenant.lower() == "common":
-        raise RuntimeError(
-            "Production AZURE_TENANT_ID must be a real tenant GUID "
-            "(single-tenant apps cannot use /common)"
-        )
-    return tenant
+    return tenant or None
 
 
 def _patch_configmap() -> int:
-    values = {
-        **_CONFIG_VALUES_BASE,
-        "MICROSOFT_OAUTH_AUTHORITY_TENANT": _authority_tenant(),
-    }
+    values = dict(_CONFIG_VALUES_BASE)
+    explicit = _explicit_login_authority_from_secrets()
+    if explicit:
+        values["MICROSOFT_OAUTH_AUTHORITY_TENANT"] = explicit
     patch = json.dumps({"data": values})
     cmd = [
         "kubectl",
