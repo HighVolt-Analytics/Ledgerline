@@ -1,17 +1,18 @@
 import { useEffect, useState } from "react";
 import { Check, ExternalLink, HelpCircle, X } from "lucide-react";
 import type { InvoiceStatus } from "@/api/types";
-import { ApprovalPolicyNote } from "@/components/ApprovalPolicyNote";
-import { ApproverChip } from "@/components/ApproverChip";
 import { DocumentAuditTrail } from "@/components/DocumentAuditTrail";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { NumericInput } from "@/components/ui/numeric-input";
 import { cn } from "@/lib/cn";
 import { money } from "@/lib/format";
 import type { ExpenseBudget, ExpenseClaim } from "@/lib/v4MockData";
 import type { TeamExpenseKind } from "@/lib/v4RuleBookTypes";
-import { BudgetUtilBar } from "./BudgetUtilBar";
+import {
+  ClaimAdvanceBlock,
+  ClaimApprovalChainBlock,
+  ClaimBudgetBlock,
+} from "@/components/team-expenses/InvoiceClaimReviewSection";
 import { ClaimKindField } from "./ClaimKindField";
 import { ExpenseStateBadge } from "./ExpenseBadges";
 import { ReceiptThumb } from "./ReceiptThumb";
@@ -61,6 +62,10 @@ export function ClaimDetailPanel({
   advanceLedger = "",
   settlementLedger = "",
   advanceBalance,
+  /** When false, advance shows honest gap instead of a silent 0. Default true when balance provided. */
+  advanceMatched,
+  /** Show budget gap when no budget row (Expenses Management). Team Expenses uses onChangeKind. */
+  showBudgetGap = false,
   currency,
   onApprove,
   onReject,
@@ -79,7 +84,9 @@ export function ClaimDetailPanel({
   canRequestInfo: boolean;
   advanceLedger?: string;
   settlementLedger?: string;
-  advanceBalance?: number;
+  advanceBalance?: number | null;
+  advanceMatched?: boolean;
+  showBudgetGap?: boolean;
   /** Document currency when set; otherwise org/institution currency. */
   currency: string;
   onApprove: () => void | Promise<void>;
@@ -100,9 +107,16 @@ export function ClaimDetailPanel({
     (claim.state === "New" || claim.state === "In Review") &&
     invoiceStatus !== "processed" &&
     invoiceStatus !== "rejected";
-  const netAdvance = advanceBalance ?? claim.advanceBalance ?? 0;
+  const rawAdvance =
+    advanceBalance !== undefined ? advanceBalance : claim.advanceBalance;
+  const netAdvance =
+    rawAdvance != null && Number.isFinite(Number(rawAdvance))
+      ? Number(rawAdvance)
+      : 0;
   const claimAmount = Number.isFinite(amount) ? amount : claim.amount;
   const fmt = (n: number) => money(n, currency);
+  const employeeMatched =
+    advanceMatched ?? Boolean(claim.employeeId?.trim());
 
   return (
     <div>
@@ -152,7 +166,6 @@ export function ClaimDetailPanel({
           <DetailField label="GST" value={fmt(claim.gst)} mono />
           <DetailField label="Business purpose" value={claim.purpose} />
           <DetailField label="Project tag" value={claim.projectTag} mono />
-          <DetailField label="Advance left" value={fmt(netAdvance)} mono />
         </div>
       </div>
 
@@ -175,38 +188,32 @@ export function ClaimDetailPanel({
         </p>
       )}
 
-      {budget && (
-        <Card className="p-3 mt-3 bg-muted/30">
-          <div className="text-xs font-medium mb-1.5">
-            {budget.category} — {budget.period} · {fmt(budget.used)} used of{" "}
-            {fmt(budget.monthlyBudget)} ({Math.round((budget.used / budget.monthlyBudget) * 100)}
-            %)
-          </div>
-          <BudgetUtilBar used={budget.used} total={budget.monthlyBudget} />
-        </Card>
-      )}
+      {onChangeKind ? (
+        <ClaimAdvanceBlock
+          matched={employeeMatched}
+          advanceBalance={rawAdvance}
+          currency={currency}
+        />
+      ) : null}
 
-      <div className="mt-3">
-        <div className="text-[11px] text-muted-foreground uppercase tracking-wide mb-1.5">
-          Approval chain
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          {claim.approvers.length > 0 ? (
-            claim.approvers.map((a) => <ApproverChip key={a.id} {...a} />)
-          ) : (
-            <span className="text-xs text-muted-foreground">Awaiting first approval</span>
-          )}
-        </div>
-        {claim.approvers.some((a) => a.state === "pending") && (
-          <p className="text-xs text-muted-foreground mt-1">
-            {claim.approvers.filter((a) => a.state === "approved").length} of{" "}
-            {claim.approvers.length} approved
-          </p>
-        )}
-        <div className="mt-1.5">
-          <ApprovalPolicyNote />
-        </div>
-      </div>
+      {budget ? (
+        <ClaimBudgetBlock
+          category={budget.category}
+          period={budget.period}
+          allocated={budget.monthlyBudget}
+          consumed={budget.used}
+          currency={currency}
+        />
+      ) : onChangeKind || showBudgetGap ? (
+        <ClaimBudgetBlock
+          category={claim.category}
+          allocated={null}
+          consumed={null}
+          currency={currency}
+        />
+      ) : null}
+
+      <ClaimApprovalChainBlock approvers={claim.approvers} />
 
       <div className="flex flex-wrap gap-2 mt-4">
         <Button

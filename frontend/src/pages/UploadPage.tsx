@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { CloudUpload, Plus } from "lucide-react";
 import { api } from "@/api/client";
@@ -47,64 +47,18 @@ import {
   watchInvoiceIdsForVendorHold,
 } from "@/lib/bulkUpload";
 import { UploadDropZone } from "@/components/upload/UploadDropZone";
-import { PageLoader } from "@/components/PageLoader";
 import { canAccessModulePath } from "@/lib/tenantModules";
 import { useTenantModules } from "@/hooks/useTenantModules";
-
-const TeamExpensesPage = lazy(() =>
-  import("@/pages/TeamExpensesPage").then((m) => ({ default: m.TeamExpensesPage }))
-);
-const ExpensesManagementPage = lazy(() =>
-  import("@/pages/ExpensesManagementPage").then((m) => ({
-    default: m.ExpensesManagementPage,
-  }))
-);
-const PurchaseManagementPage = lazy(() =>
-  import("@/pages/PurchaseManagementPage").then((m) => ({
-    default: m.PurchaseManagementPage,
-  }))
-);
-const SalesManagementPage = lazy(() =>
-  import("@/pages/SalesManagementPage").then((m) => ({
-    default: m.SalesManagementPage,
-  }))
-);
+import {
+  UPLOAD_ROUTE_FILTERS,
+  isUploadRouteFilter,
+  routeTargetForUploadFilter,
+  uploadRouteFilterLabel,
+  type UploadRouteFilterValue,
+} from "@/lib/uploadRouteFilter";
 
 type ChannelTab = AllDocumentsChannelTab;
-
-const OPERATIONS_VIEW_TABS = [
-  {
-    value: "team-expenses",
-    label: "Team Expenses",
-    moduleKey: "team_expenses",
-    testid: "tab-upload-team-expenses",
-  },
-  {
-    value: "expenses",
-    label: "Expenses Management",
-    moduleKey: "expenses",
-    testid: "tab-upload-expenses",
-  },
-  {
-    value: "purchases",
-    label: "Purchase Management",
-    moduleKey: "purchase",
-    testid: "tab-upload-purchases",
-  },
-  {
-    value: "sales",
-    label: "Sales Management",
-    moduleKey: "sales",
-    testid: "tab-upload-sales",
-  },
-] as const;
-
-type OperationsViewTab = (typeof OPERATIONS_VIEW_TABS)[number]["value"];
-type ViewTab = "summary" | "setup" | OperationsViewTab;
-
-function isOperationsViewTab(value: string | null): value is OperationsViewTab {
-  return OPERATIONS_VIEW_TABS.some((tab) => tab.value === value);
-}
+type ViewTab = "summary" | "setup" | UploadRouteFilterValue;
 
 function parseChannelTab(value: string | null): ChannelTab {
   return parseUploadChannelTab(value);
@@ -114,22 +68,58 @@ function channelHasSetupTab(channel: ChannelTab): boolean {
   return channel === "email" || channel === "whatsapp" || channel === "viber";
 }
 
+function channelDocsTitle(channel: ChannelTab, routeLabel: string | null): string {
+  if (routeLabel) {
+    if (channel === "all") return routeLabel;
+    const channelShort =
+      channel === "upload"
+        ? "Direct upload"
+        : channel === "email"
+          ? "Email"
+          : channel === "whatsapp"
+            ? "WhatsApp"
+            : "Viber";
+    return `${channelShort} · ${routeLabel}`;
+  }
+  if (channel === "all") return "All documents";
+  if (channel === "upload") return "Direct upload";
+  if (channel === "email") return "Email documents";
+  if (channel === "whatsapp") return "WhatsApp documents";
+  return "Viber documents";
+}
+
+function channelEmptyTitle(channel: ChannelTab, routeLabel: string | null): string {
+  if (routeLabel) return `No ${routeLabel} documents yet`;
+  if (channel === "email") return "No email documents yet";
+  if (channel === "whatsapp") return "No WhatsApp documents yet";
+  if (channel === "viber") return "No Viber documents yet";
+  return "No documents yet";
+}
+
+function channelEmptyHint(channel: ChannelTab, routeLabel: string | null): string {
+  if (routeLabel) {
+    return `Documents classified and routed to ${routeLabel} appear here.`;
+  }
+  if (channel === "all") {
+    return "Upload files from the Upload tab, or capture documents from Email, WhatsApp, or Viber.";
+  }
+  if (channel === "upload") {
+    return "Drop files above to upload, or capture documents from the Email, WhatsApp, or Viber tabs. Team expense claims use Email / WhatsApp / Viber when the sender is in Employees.";
+  }
+  if (channel === "email") {
+    return "Connect a mailbox and fetch mail. Messages from employees in the registry route to Team Expenses.";
+  }
+  if (channel === "whatsapp") {
+    return "Connect WhatsApp to capture employee claims (sender must match Employees).";
+  }
+  return "Connect Viber to capture employee claims (sender must match Employees).";
+}
+
 function parseViewTab(searchParams: URLSearchParams, channel: ChannelTab): ViewTab {
   const view = searchParams.get("view") ?? searchParams.get("tab");
   if (view === "setup" && channelHasSetupTab(channel)) return "setup";
-  if (isOperationsViewTab(view) && channel === "all") return view;
+  if (isUploadRouteFilter(view)) return view;
   return "summary";
-}
-
-function OperationsWorkspace({ view }: { view: OperationsViewTab }) {
-  return (
-    <Suspense fallback={<PageLoader variant="kpi-tabs" />}>
-      {view === "team-expenses" ? <TeamExpensesPage embedded /> : null}
-      {view === "expenses" ? <ExpensesManagementPage embedded /> : null}
-      {view === "purchases" ? <PurchaseManagementPage embedded /> : null}
-      {view === "sales" ? <SalesManagementPage embedded /> : null}
-    </Suspense>
-  );
 }
 
 const PROCESSING_WAIT_MS = 120_000;
@@ -168,12 +158,14 @@ export function UploadPage() {
   const queryClient = useQueryClient();
   const isAdmin = user?.role === "admin";
   const enabledModules = useTenantModules();
-  const operationsTabs = OPERATIONS_VIEW_TABS.filter((tab) =>
+  const routeFilterTabs = UPLOAD_ROUTE_FILTERS.filter((tab) =>
     canAccessModulePath(`/${tab.value}`, enabledModules, tab.moduleKey)
   );
   const [searchParams, setSearchParams] = useSearchParams();
   const channelTab = parseChannelTab(searchParams.get("channel"));
   const viewTab = parseViewTab(searchParams, channelTab);
+  const routeFilter = isUploadRouteFilter(viewTab) ? viewTab : null;
+  const routeTarget = routeFilter ? routeTargetForUploadFilter(routeFilter) : undefined;
 
   useEffect(() => {
     const view = searchParams.get("view");
@@ -185,7 +177,6 @@ export function UploadPage() {
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
   const showSetupTab = channelHasSetupTab(channelTab);
-  const showOperationsTabs = channelTab === "all";
   const approvalParam = searchParams.get("approval");
   const approvalFilter = useMemo(
     () => parseUploadApprovalFilter(approvalParam),
@@ -272,7 +263,7 @@ export function UploadPage() {
 
   useEffect(() => {
     setBoardCounts(EMPTY_UPLOAD_APPROVAL_COUNTS);
-  }, [channelTab]);
+  }, [channelTab, routeTarget]);
 
   const setChannelTab = (tab: ChannelTab) => {
     const next = new URLSearchParams(searchParams);
@@ -282,9 +273,6 @@ export function UploadPage() {
     if (!channelHasSetupTab(tab) && (next.get("view") === "setup" || viewTab === "setup")) {
       next.delete("view");
     }
-    if (tab !== "all" && isOperationsViewTab(viewTab)) {
-      next.delete("view");
-    }
     setSearchParams(next, { replace: true });
   };
 
@@ -292,7 +280,7 @@ export function UploadPage() {
     const next = new URLSearchParams(searchParams);
     next.delete("tab");
     if (tab === "setup") next.set("view", "setup");
-    else if (isOperationsViewTab(tab)) next.set("view", tab);
+    else if (isUploadRouteFilter(tab)) next.set("view", tab);
     else next.delete("view");
     setSearchParams(next, { replace: true });
   };
@@ -657,13 +645,11 @@ export function UploadPage() {
               testid: "tab-upload-summary",
               label: "Summary",
             },
-            ...(showOperationsTabs
-              ? operationsTabs.map((tab) => ({
-                  value: tab.value,
-                  testid: tab.testid,
-                  label: tab.label,
-                }))
-              : []),
+            ...routeFilterTabs.map((tab) => ({
+              value: tab.value,
+              testid: tab.testid,
+              label: tab.label,
+            })),
             ...(showSetupTab
               ? [
                   {
@@ -680,7 +666,7 @@ export function UploadPage() {
             <Plus className="h-4 w-4 mr-1.5 shrink-0" />
             Add mailbox
           </Button>
-        ) : viewTab !== "setup" && !isOperationsViewTab(viewTab) ? (
+        ) : viewTab !== "setup" ? (
           <UploadApprovalFilter
             value={approvalFilter}
             onChange={setApprovalFilter}
@@ -721,51 +707,19 @@ export function UploadPage() {
   const channelCaptureSource =
     channelTab === "all" ? undefined : channelTab;
   const showUploadSourceColumn = channelTab === "all";
-  const channelDocsTitle =
-    channelTab === "all"
-      ? "All documents"
-      : channelTab === "upload"
-        ? "Direct upload"
-        : channelTab === "email"
-          ? "Email documents"
-          : channelTab === "whatsapp"
-            ? "WhatsApp documents"
-            : "Viber documents";
-
-  const emptyHint =
-    channelTab === "all"
-      ? "Upload files from the Upload tab, or capture documents from Email, WhatsApp, or Viber."
-      : channelTab === "upload"
-      ? "Drop files above to upload, or capture documents from the Email, WhatsApp, or Viber tabs. Team expense claims use Email / WhatsApp / Viber when the sender is in Employees."
-      : channelTab === "email"
-        ? "Connect a mailbox and fetch mail. Messages from employees in the registry route to Team Expenses."
-        : channelTab === "whatsapp"
-          ? "Connect WhatsApp to capture employee claims (sender must match Employees)."
-          : "Connect Viber to capture employee claims (sender must match Employees).";
-
-  const emptyTitle =
-    channelTab === "all"
-      ? "No documents yet"
-      : channelTab === "upload"
-      ? "No documents yet"
-      : channelTab === "email"
-        ? "No email documents yet"
-        : channelTab === "whatsapp"
-          ? "No WhatsApp documents yet"
-          : "No Viber documents yet";
+  const routeLabel = routeFilter ? uploadRouteFilterLabel(routeFilter) : null;
 
   return workspaceShell(
     viewTab === "setup" ? (
       setupPanel
-    ) : isOperationsViewTab(viewTab) ? (
-      <OperationsWorkspace view={viewTab} />
     ) : (
       <AllDocumentsDetailedTable
         captureSource={channelCaptureSource}
+        routeTarget={routeTarget}
         showUploadSource={showUploadSourceColumn}
-        title={channelDocsTitle}
-        emptyTitle={emptyTitle}
-        emptyHint={emptyHint}
+        title={channelDocsTitle(channelTab, routeLabel)}
+        emptyTitle={channelEmptyTitle(channelTab, routeLabel)}
+        emptyHint={channelEmptyHint(channelTab, routeLabel)}
         onGoUpload={
           channelTab === "all" || channelTab === "upload"
             ? () => setChannelTab("upload")

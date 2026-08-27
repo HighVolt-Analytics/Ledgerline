@@ -305,10 +305,18 @@ def test_invoice_number_field_is_not_invoice_title() -> None:
     assert infer_page_document_kind("INVOICE 9300667281\nPage : 1 of 3") == "invoice"
 
 
-def test_advance_requisition_not_a_hardcoded_heading_kind() -> None:
-    """TE form titles are catalogue-matched, not a fixed HeadingKind."""
+def test_advance_requisition_is_a_heading_kind() -> None:
+    """TE form titles share HeadingKind / HEADING_KIND_TOKENS with step 4."""
     from app.services.extraction.document_heading_utils import infer_page_document_kind
 
-    assert infer_page_document_kind("Advance Requisition\nName: Khushi") is None
-    assert infer_page_document_kind("ADVANCE REQUEST FORM\nAmount 20000") is None
+    assert infer_page_document_kind("Advance Requisition\nName: Khushi") == (
+        "advance_requisition"
+    )
+    assert infer_page_document_kind("ADVANCE REQUEST FORM\nAmount 20000") == (
+        "advance_requisition"
+    )
+    assert infer_page_document_kind("Expense against advance\nAmount 20000") == (
+        "expense_against_advance"
+    )
+    # Payment voucher stays catalogue-matched; it is not a heading kind.
     assert infer_page_document_kind("Payment Voucher\nPaid to vendor") is None

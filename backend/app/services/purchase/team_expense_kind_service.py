@@ -23,7 +23,8 @@ def infer_team_expense_kind_from_labels(*labels: str) -> TeamExpenseKind | None:
     blob = " ".join((label or "").strip().lower() for label in labels if label).strip()
     if not blob:
         return None
-    # Legacy / claim wording wins over bare "advance" substrings.
+    # Settlement wording first — both titles contain "advance". Keep these
+    # phrases in sync with HEADING_KIND_TOKENS / _KIND_FROM_LABEL.
     if "expense against advance" in blob:
         return TEAM_EXPENSE_KIND_CLAIM
     if "expense claim" in blob or "reimbursement" in blob:

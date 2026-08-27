@@ -303,6 +303,8 @@ def infer_preferred_team_expense_kind(
 
         document_type_team_expense_kind,
 
+        infer_team_expense_kind_from_labels,
+
     )
 
 
@@ -364,6 +366,20 @@ def infer_preferred_team_expense_kind(
     if existing:
 
         return existing
+
+    fields = getattr(invoice, "extracted_fields", None) or {}
+
+    canonical = ""
+
+    if isinstance(fields, dict):
+
+        canonical = str(fields.get("canonical_document_type") or "").strip()
+
+    inferred = infer_team_expense_kind_from_labels(heading, canonical)
+
+    if inferred:
+
+        return inferred
 
     return None
 

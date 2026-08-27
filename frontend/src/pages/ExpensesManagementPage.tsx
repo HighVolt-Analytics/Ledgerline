@@ -14,7 +14,7 @@ import { Card } from "@/components/ui/card";
 import { useExpenseClaimActions } from "@/hooks/useExpenseClaimActions";
 import { useRuleBookExpenseRules } from "@/hooks/useRuleBookConfig";
 import { useRoutedInvoices } from "@/hooks/useRoutedInvoices";
-import { useExpensesWorkspaceKpis } from "@/hooks/useTeamExpenseReports";
+import { useExpensesWorkspaceKpis, useTeamExpenseDepartmentBudgetUtilization } from "@/hooks/useTeamExpenseReports";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { cn } from "@/lib/cn";
 import { matchesListSearch } from "@/lib/listSearch";
@@ -33,6 +33,7 @@ export function ExpensesManagementPage({ embedded = false }: { embedded?: boolea
   );
   const { data: expenseRules = [] } = useRuleBookExpenseRules();
   const { data: workspaceKpis } = useExpensesWorkspaceKpis();
+  const { data: glBudgetUtil = [] } = useTeamExpenseDepartmentBudgetUtilization(!isLoading);
   const actions = useExpenseClaimActions(ROUTE_TARGET);
 
   const claims = useMemo(() => routed.map(invoiceToBusinessExpense), [routed]);
@@ -104,6 +105,24 @@ export function ExpensesManagementPage({ embedded = false }: { embedded?: boolea
     [claims, searchQuery]
   );
   const selectedInvoice = selected ? invoiceById.get(Number(selected.id)) : undefined;
+  const selectedGl =
+    (selectedInvoice?.account_name || selectedInvoice?.account_code || "").trim() ||
+    categories.find((c) => c.category === selected?.category)?.glAccount ||
+    "";
+  const glBudgetRow = selectedGl
+    ? glBudgetUtil.find(
+        (b) => b.gl_ledger.trim().toLowerCase() === selectedGl.trim().toLowerCase()
+      )
+    : undefined;
+  const budget = glBudgetRow
+    ? {
+        category: glBudgetRow.gl_ledger,
+        owner: glBudgetRow.gl_ledger,
+        period: "MTD",
+        monthlyBudget: glBudgetRow.allocated,
+        used: glBudgetRow.consumed,
+      }
+    : undefined;
 
   return (
     <div>
@@ -243,6 +262,8 @@ export function ExpensesManagementPage({ embedded = false }: { embedded?: boolea
                     invoiceId={selectedInvoice.id}
                     invoiceStatus={selectedInvoice.status}
                     hasStoredFile={selectedInvoice.has_stored_file}
+                    budget={budget}
+                    showBudgetGap
                     busy={actions.busyId === selectedInvoice.id}
                     canApprove={actions.canApproveClaim(selectedInvoice.status)}
                     canReject={actions.canRejectClaim(selectedInvoice.status)}

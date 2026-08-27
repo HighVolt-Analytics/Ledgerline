@@ -529,6 +529,12 @@ _FLAGGED_EVAL = (
 )
 
 
+def _apply_route_target(query, route_target: str | None):
+    if not route_target or not route_target.strip():
+        return query
+    return query.where(Invoice.route_target == route_target.strip())
+
+
 def _apply_capture_source(query, capture_source: str | None):
     if not capture_source or not capture_source.strip():
         return query
@@ -774,9 +780,8 @@ def _scoped_invoice_query(tenant_id: uuid.UUID, params: MatrixListRequest):
         except ValueError:
             pass
     if params.route_target and params.route_target.strip():
-        token = params.route_target.strip()
-        stmt = stmt.where(Invoice.route_target == token)
-        count_stmt = count_stmt.where(Invoice.route_target == token)
+        stmt = _apply_route_target(stmt, params.route_target)
+        count_stmt = _apply_route_target(count_stmt, params.route_target)
     if params.evaluation_status and params.evaluation_status.strip():
         token = params.evaluation_status.strip()
         stmt = stmt.where(Invoice.evaluation_status == token)
@@ -812,6 +817,7 @@ async def _matrix_summary(
     """KPI totals for the scoped matrix (independent of the current page)."""
     base_ids = select(Invoice.id).where(Invoice.tenant_id == tenant_id)
     base_ids = _apply_capture_source(base_ids, params.capture_source)
+    base_ids = _apply_route_target(base_ids, params.route_target)
 
     flagged_or_dup = (
         await db.execute(
@@ -885,6 +891,7 @@ async def _approval_board_counts(
         Invoice.tenant_id == tenant_id
     )
     stmt = _apply_capture_source(stmt, params.capture_source)
+    stmt = _apply_route_target(stmt, params.route_target)
     stmt = _apply_search(stmt, params.q)
     stmt = stmt.group_by(col)
     counts = {"review": 0, "processing": 0, "approved": 0, "rejected": 0}

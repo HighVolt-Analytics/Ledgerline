@@ -20,6 +20,7 @@ from app.schemas.rule_book_config import (
 from app.services.invoice.invoice_evaluation_service import EVAL_PENDING_APPROVAL, ROUTE_TEAM
 from app.services.purchase.team_expense_approval import (
     apply_team_expense_approval_gate,
+    assert_team_expense_amount_approvable,
     requires_manual_approval,
 )
 from app.services.purchase.team_expense_service import record_team_expense_processed
@@ -69,6 +70,35 @@ def test_advance_requisition_always_requires_approval_even_under_threshold() -> 
         playbook_auto_approve_below=50.0,
     )
     _ = team_rule_policy
+
+
+def test_te_approve_blocks_null_and_zero_amount() -> None:
+    """Manager hold is not enough — a click-through would journal total-or-0."""
+    missing = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        route_target=ROUTE_TEAM,
+        total=None,
+        team_expense_kind=TEAM_EXPENSE_KIND_ADVANCE,
+    )
+    with pytest.raises(ValueError, match="missing or zero"):
+        assert_team_expense_amount_approvable(missing)
+
+    zero = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        route_target=ROUTE_TEAM,
+        total=Decimal("0.00"),
+        team_expense_kind=TEAM_EXPENSE_KIND_ADVANCE,
+    )
+    with pytest.raises(ValueError, match="missing or zero"):
+        assert_team_expense_amount_approvable(zero)
+
+    funded = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        route_target=ROUTE_TEAM,
+        total=Decimal("20000.00"),
+        team_expense_kind=TEAM_EXPENSE_KIND_ADVANCE,
+    )
+    assert_team_expense_amount_approvable(funded)
 
 
 def test_expense_claim_respects_auto_approve_threshold(

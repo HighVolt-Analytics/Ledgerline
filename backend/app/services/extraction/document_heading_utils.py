@@ -27,6 +27,8 @@ HeadingKind = Literal[
     "certificate_of_origin",
     "transport_doc",
     "customs_permit",
+    "advance_requisition",
+    "expense_against_advance",
 ]
 
 HeadingKindSource = Literal["title_line", "body_keyword"]
@@ -139,6 +141,8 @@ _STRONG_PAGE_KINDS: frozenset[HeadingKind] = frozenset(
         "quote",
         "contract",
         "timesheet",
+        "advance_requisition",
+        "expense_against_advance",
     }
 )
 
@@ -174,7 +178,12 @@ _STANDALONE_TITLE = re.compile(
     r"cargo\s+clearance\s+permit|"
     r"air\s+freight\s+services|"
     r"(?:house|air)\s+waybill|"
-    r"bill\s+of\s+lading"
+    r"bill\s+of\s+lading|"
+    # Team Expenses form titles — must stay in sync with HEADING_KIND_TOKENS
+    # and infer_team_expense_kind_from_labels. Expense-against-advance first
+    # so it is not swallowed by the advance-requisition pattern.
+    r"expense\s+against\s+advance(?:\s+form)?|"
+    r"(?:cash\s+)?advance\s+(?:requisition|request)(?:\s+form)?"
     r")\s*\.?$",
     re.I,
 )
@@ -195,6 +204,10 @@ _TRAILING_TITLE = re.compile(
 )
 
 _KIND_FROM_LABEL: list[tuple[re.Pattern[str], HeadingKind]] = [
+    # TE forms before commercial titles. "expense against advance" must beat
+    # "advance requisition" because both contain the word "advance".
+    (re.compile(r"expense\s+against\s+advance", re.I), "expense_against_advance"),
+    (re.compile(r"(?:cash\s+)?advance\s+(?:requisition|request)", re.I), "advance_requisition"),
     (re.compile(r"^tax\s+invoice$", re.I), "tax_invoice"),
     (re.compile(r"^commercial\s+invoice$", re.I), "commercial_invoice"),
     (re.compile(rf"^invoice{_INVOICE_FIELD_LOOKAHEAD}", re.I), "invoice"),

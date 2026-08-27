@@ -1,4 +1,5 @@
 import type { LucideIcon } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 export type ActionChipTone =
@@ -17,6 +18,9 @@ type ActionChipProps = {
   label: string;
   variant?: "filled" | "outline";
   disabled?: boolean;
+  busy?: boolean;
+  /** Hide the text label (keep aria-label / title). */
+  iconOnly?: boolean;
   title?: string;
   onClick?: () => void;
   testId?: string;
@@ -31,6 +35,8 @@ export function ActionChip({
   label,
   variant = "filled",
   disabled,
+  busy,
+  iconOnly,
   title,
   onClick,
   testId,
@@ -40,6 +46,7 @@ export function ActionChip({
 }: ActionChipProps) {
   const toneClass =
     tone === "reprocess" ? "approvals-action-chip--kpi-rust" : `approvals-action-chip--${tone}`;
+  const tip = title ?? label;
 
   return (
     <button
@@ -49,18 +56,25 @@ export function ActionChip({
         toneClass,
         variant === "outline" && "approvals-action-chip--outline",
         isStatic && "approvals-action-chip--static",
+        iconOnly && "approvals-action-chip--icon-only px-1.5",
         className
       )}
-      disabled={disabled}
-      title={title}
+      disabled={disabled || busy}
+      title={tip}
+      aria-label={label}
       onClick={(e) => {
         e.stopPropagation();
+        if (busy) return;
         onClick?.();
       }}
       data-testid={testId}
     >
-      <Icon className={cn("approvals-action-chip__icon", iconClassName)} />
-      {label}
+      {busy ? (
+        <Loader2 className={cn("approvals-action-chip__icon animate-spin", iconClassName)} />
+      ) : (
+        <Icon className={cn("approvals-action-chip__icon", iconClassName)} />
+      )}
+      {iconOnly ? null : busy ? "…" : label}
     </button>
   );
 }

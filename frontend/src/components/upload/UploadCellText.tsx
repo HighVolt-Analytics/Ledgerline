@@ -57,6 +57,8 @@ export function UploadDetailedColGroup({ showSource }: { showSource: boolean }) 
       <col style={{ width: "5.5rem" }} />
       <col style={{ width: "6rem" }} />
       <col style={{ width: "5.5rem" }} />
+      <col style={{ width: "9.5rem" }} />
+      <col style={{ width: "8rem" }} />
     </colgroup>
   );
 }

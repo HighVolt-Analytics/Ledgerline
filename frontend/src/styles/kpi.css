@@ -333,6 +333,11 @@ table.all-docs-table-fixed th {
   text-overflow: ellipsis;
 }
 
+table.all-docs-table-fixed td.all-docs-actions-cell {
+  overflow: visible;
+  white-space: nowrap;
+}
+
 .all-docs-clip,
 .all-docs-clip-wrap {
   display: block;

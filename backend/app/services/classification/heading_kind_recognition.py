@@ -20,6 +20,8 @@ NON_INVOICE_NUMBER_KINDS: frozenset[HeadingKind] = frozenset(
         "timesheet",
         "statement",
         "remittance",
+        "advance_requisition",
+        "expense_against_advance",
     }
 )
 

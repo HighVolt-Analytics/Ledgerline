@@ -1106,6 +1106,352 @@ def test_team_expense_channel_force_sets_runner_up_from_prior_rule() -> None:
     assert forced.runner_up_score == 0.97
 
 
+def _inv752_te_catalogue() -> list[DocumentTypeDefinition]:
+    """Live posting-test TE family: claim vs advance vs expense-against-advance."""
+    return [
+        DocumentTypeDefinition(
+            code="DT-08",
+            title="Employee expense claim / reimbursement",
+            shortTitle="Expense claim",
+            klass="Transactional",
+            posting="Yes",
+            recognitionMode="prompt",
+            recognitionSignals=[],
+            llmPrompt=(
+                "Employee expense claim for reimbursement: the staff member paid "
+                "from their own pocket and is asking the company to pay them back. "
+                "Headings include Expense Claim, Expense Claim Form."
+            ),
+            routeTarget="Team Expenses",
+            enabled=True,
+            playbookProfile="employee_claim",
+            teamExpenseKind="expense_claim",
+        ),
+        DocumentTypeDefinition(
+            code="DT-09",
+            title="Employee advance request",
+            shortTitle="Advance request",
+            klass="Transactional",
+            posting="Yes",
+            recognitionMode="prompt",
+            recognitionSignals=[],
+            llmPrompt=(
+                "Employee advance request form: a staff member asking for money "
+                "before any spending has happened. Headings include Advance Requisition."
+            ),
+            routeTarget="Team Expenses",
+            enabled=True,
+            playbookProfile="standard_transactional",
+            teamExpenseKind="advance_requisition",
+        ),
+        DocumentTypeDefinition(
+            code="DT-10",
+            title="Expense against advance",
+            shortTitle="Expense against advance",
+            klass="Transactional",
+            posting="Yes",
+            recognitionMode="prompt",
+            recognitionSignals=[],
+            llmPrompt=(
+                "Employee expense settlement against an advance already drawn. "
+                "Headings include Expense against advance."
+            ),
+            routeTarget="Team Expenses",
+            enabled=True,
+            playbookProfile="standard_transactional",
+            teamExpenseKind="expense_claim",
+        ),
+    ]
+
+
+def _inv752_title_scores(heading: str) -> dict[str, float]:
+    from app.services.classification.catalogue_title_match import (
+        score_definition_for_vision_title,
+    )
+
+    return {
+        row.code: score_definition_for_vision_title(heading, row)
+        for row in _inv752_te_catalogue()
+    }
+
+
+def test_channel_force_picks_advance_dt_when_te_title_scores_tie() -> None:
+    """Inv 752: Advance Requisition ties DT-09 and DT-10 inside the 0.05
+    margin, so step 2 aborts. Force must still pick the advance DT.
+
+    Tie-break is not a default-to-DT-09: it keeps the tied row whose
+    teamExpenseKind matches infer_team_expense_kind_from_labels (here
+    ``advance requisition`` → advance_requisition → DT-09).
+    """
+    from app.models.invoice import Invoice, InvoiceStatus
+    from app.schemas.rule_book_config import TEAM_EXPENSE_KIND_ADVANCE
+    from app.services.classification.catalogue_title_match import (
+        match_catalogue_dt_by_vision_title,
+    )
+    from app.services.invoice.vision_document_type_map import (
+        _best_team_expense_dt_for_channel_force,
+        _team_expense_channel_map_result,
+    )
+    from app.services.purchase.team_expense_kind_service import (
+        infer_team_expense_kind_from_labels,
+    )
+    from app.tenant_ids import TESTING_TENANT_UUID
+
+    catalogue = _inv752_te_catalogue()
+    scores = _inv752_title_scores("Advance Requisition")
+    assert scores["DT-09"] >= 0.94
+    assert scores["DT-10"] >= 0.94
+    assert abs(scores["DT-09"] - scores["DT-10"]) < 0.05
+    assert (
+        match_catalogue_dt_by_vision_title(
+            document_heading="Advance Requisition",
+            document_types=catalogue,
+        )
+        is None
+    )
+    assert (
+        infer_team_expense_kind_from_labels(
+            "Advance Requisition",
+            "Cash Advance Requisition",
+        )
+        == TEAM_EXPENSE_KIND_ADVANCE
+    )
+    picked = _best_team_expense_dt_for_channel_force(
+        catalogue,
+        labels=["Advance Requisition", "Cash Advance Requisition"],
+        preferred_kind=TEAM_EXPENSE_KIND_ADVANCE,
+    )
+    assert picked is not None
+    assert picked.code == "DT-09"
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PARSING,
+        document_heading="Advance Requisition",
+        capture_source="email",
+        email_sender="codevishnu321@gmail.com",
+        extracted_fields={"canonical_document_type": "Cash Advance Requisition"},
+    )
+    forced = _team_expense_channel_map_result(
+        invoice=inv,
+        document_types=catalogue,
+        heading_kind=None,
+        rule_reason="no_kind",
+        prior_code=None,
+    )
+    assert forced is not None
+    assert forced.code == "DT-09"
+    assert forced.method == "te_employee_channel"
+    assert forced.reason == "employee_channel_forced"
+
+
+def test_channel_force_picks_dt10_on_same_title_tie_when_kind_is_claim() -> None:
+    """Same 0.94-class title scores as inv 752, opposite kind → DT-10.
+
+    Proves the tie-break is content-directed, not a default that always
+    prefers DT-09. A genuine expense-against-advance heading unique-matches
+    DT-10 (see test below); this case is the actual 09/10 score tie with
+    the settlement kind forced in, the mirror of the requisition kind.
+    """
+    from app.schemas.rule_book_config import TEAM_EXPENSE_KIND_CLAIM
+    from app.services.invoice.vision_document_type_map import (
+        _best_team_expense_dt_for_channel_force,
+    )
+
+    catalogue = _inv752_te_catalogue()
+    scores = _inv752_title_scores("Advance Requisition")
+    assert abs(scores["DT-09"] - scores["DT-10"]) < 0.05
+    picked = _best_team_expense_dt_for_channel_force(
+        catalogue,
+        labels=["Advance Requisition"],
+        preferred_kind=TEAM_EXPENSE_KIND_CLAIM,
+    )
+    assert picked is not None
+    assert picked.code == "DT-10"
+
+
+def test_channel_force_picks_expense_against_advance_dt() -> None:
+    """Genuine DT-10 document: heading contains 'expense against advance'.
+
+    That heading does *not* hit the 0.94/0.94 tie — DT-10 unique-matches at
+    1.0 because the catalogue title is the same phrase. Force must still
+    land on DT-10, not DT-08 (the other expense_claim row) or DT-09.
+    """
+    from app.models.invoice import Invoice, InvoiceStatus
+    from app.schemas.rule_book_config import TEAM_EXPENSE_KIND_CLAIM
+    from app.services.classification.catalogue_title_match import (
+        match_catalogue_dt_by_vision_title,
+    )
+    from app.services.invoice.vision_document_type_map import (
+        _team_expense_channel_map_result,
+    )
+    from app.services.purchase.team_expense_kind_service import (
+        infer_team_expense_kind_from_labels,
+    )
+    from app.tenant_ids import TESTING_TENANT_UUID
+
+    catalogue = _inv752_te_catalogue()
+    heading = "Expense against advance"
+    scores = _inv752_title_scores(heading)
+    assert scores["DT-10"] == 1.0
+    # DT-09 still scores 0.94 because shortTitle "Advance request" cores to
+    # "advance", which sits inside this heading. Margin 0.06 is enough for
+    # step 2 to unique-match DT-10 — unlike "Advance Requisition", where
+    # both rows stay inside the 0.05 tie band.
+    assert scores["DT-10"] - scores["DT-09"] >= 0.05
+    assert scores["DT-08"] < 0.92
+    hit = match_catalogue_dt_by_vision_title(
+        document_heading=heading,
+        document_types=catalogue,
+    )
+    assert hit is not None
+    assert hit[0].code == "DT-10"
+    assert infer_team_expense_kind_from_labels(heading) == TEAM_EXPENSE_KIND_CLAIM
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PARSING,
+        document_heading=heading,
+        capture_source="email",
+        email_sender="codevishnu321@gmail.com",
+        extracted_fields={"canonical_document_type": heading},
+    )
+    forced = _team_expense_channel_map_result(
+        invoice=inv,
+        document_types=catalogue,
+        heading_kind="expense_against_advance",
+        rule_reason="matched",
+        prior_code=None,
+    )
+    assert forced is not None
+    assert forced.code == "DT-10"
+    assert forced.method == "te_employee_channel"
+
+
+def test_heading_kind_scorer_distinguishes_advance_vs_against_advance() -> None:
+    """Step 4 / PDF-segment classify share HEADING_KIND_TOKENS for TE forms."""
+    from app.services.classification.segment_heading_classification import (
+        HEADING_KIND_TOKENS,
+        score_document_type_for_heading,
+    )
+    from app.services.extraction.document_heading_utils import infer_page_document_kind
+
+    catalogue = _inv752_te_catalogue()
+    dt09, dt10 = catalogue[1], catalogue[2]
+    assert "advance_requisition" in HEADING_KIND_TOKENS
+    assert "expense_against_advance" in HEADING_KIND_TOKENS
+    assert infer_page_document_kind("Advance Requisition\nName: Khushi") == (
+        "advance_requisition"
+    )
+    assert infer_page_document_kind("Expense against advance\nName: Khushi") == (
+        "expense_against_advance"
+    )
+    assert infer_page_document_kind("Cash Advance Requisition\nForm 3182") == (
+        "advance_requisition"
+    )
+    advance_scores = {
+        row.code: score_document_type_for_heading(row, "advance_requisition")
+        for row in catalogue
+    }
+    against_scores = {
+        row.code: score_document_type_for_heading(row, "expense_against_advance")
+        for row in catalogue
+    }
+    assert advance_scores["DT-09"] >= 0.82
+    assert advance_scores["DT-09"] - advance_scores["DT-10"] >= 0.05
+    assert against_scores["DT-10"] >= 0.82
+    assert against_scores["DT-10"] - against_scores["DT-09"] >= 0.05
+    assert dt09.code == "DT-09"
+    assert dt10.code == "DT-10"
+
+
+@pytest.mark.asyncio
+async def test_employee_email_advance_requisition_does_not_default_to_claim() -> None:
+    from app.models.invoice import Invoice, InvoiceStatus
+    from app.schemas.rule_book_config import EmployeeMaster
+    from app.tenant_ids import TESTING_TENANT_UUID
+
+    employee = EmployeeMaster(
+        id="e1",
+        name="Vishnu",
+        email="codevishnu321@gmail.com",
+        status="Active",
+    )
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PARSING,
+        document_heading="Advance Requisition",
+        capture_source="email",
+        email_sender="codevishnu321@gmail.com",
+        extracted_fields={"canonical_document_type": "Cash Advance Requisition"},
+    )
+    result = await map_vision_label_to_document_type_with_llm_fallback(
+        document_heading="Advance Requisition",
+        canonical_document_type="Cash Advance Requisition",
+        document_types=_inv752_te_catalogue(),
+        invoice=inv,
+        employees=[employee],
+    )
+    assert result.code == "DT-09"
+    assert result.method == "te_employee_channel"
+
+
+@pytest.mark.asyncio
+async def test_employee_email_expense_against_advance_picks_dt10() -> None:
+    from app.models.invoice import Invoice, InvoiceStatus
+    from app.schemas.rule_book_config import EmployeeMaster
+    from app.tenant_ids import TESTING_TENANT_UUID
+
+    employee = EmployeeMaster(
+        id="e1",
+        name="Vishnu",
+        email="codevishnu321@gmail.com",
+        status="Active",
+    )
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PARSING,
+        document_heading="Expense against advance",
+        capture_source="email",
+        email_sender="codevishnu321@gmail.com",
+        extracted_fields={"canonical_document_type": "Expense against advance"},
+    )
+    result = await map_vision_label_to_document_type_with_llm_fallback(
+        document_heading="Expense against advance",
+        canonical_document_type="Expense against advance",
+        document_types=_inv752_te_catalogue(),
+        invoice=inv,
+        employees=[employee],
+    )
+    assert result.code == "DT-10"
+    # Step 2 unique-matches this heading (1.0 vs 0.94), so the employee
+    # force never runs. That is the correct path — not a swapped default.
+    assert result.method == "catalogue_title_match"
+
+
+def test_step4_heading_kind_picks_advance_when_title_match_ties() -> None:
+    """Upload / no employee-channel: step 4 must not be no_kind on this title."""
+    result = map_vision_label_to_document_type(
+        document_heading="Advance Requisition",
+        canonical_document_type="Cash Advance Requisition",
+        document_types=_inv752_te_catalogue(),
+    )
+    assert result.code == "DT-09"
+    assert result.heading_kind == "advance_requisition"
+    assert result.method == "heading_kind_score"
+    assert result.reason == "matched"
+
+
+def test_step2_unique_matches_expense_against_advance() -> None:
+    result = map_vision_label_to_document_type(
+        document_heading="Expense against advance",
+        canonical_document_type="Expense against advance",
+        document_types=_inv752_te_catalogue(),
+    )
+    assert result.code == "DT-10"
+    assert result.method == "catalogue_title_match"
+
+
 @pytest.mark.asyncio
 async def test_employee_whatsapp_advance_heading_picks_advance_dt() -> None:
     from app.models.invoice import Invoice, InvoiceStatus

@@ -1,5 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
-import type { MatrixRow } from "@/api/types";
+import type { Invoice, MatrixRow } from "@/api/types";
+import { api } from "@/api/client";
 import { EmptyState } from "@/components/EmptyState";
 import { ListSearchInput } from "@/components/ListSearchInput";
 import { MappedDocumentTypeBadge } from "@/components/inbox/DocumentTypeDisplay";
@@ -22,7 +23,9 @@ import {
   UploadDetailedColGroup,
 } from "@/components/upload/UploadCellText";
 import { UploadColumnCell, UploadColumnProcessingIndicator } from "@/components/upload/UploadColumnCell";
+import { UploadDocumentRowActions } from "@/components/upload/UploadDocumentRowActions";
 import { useAuth } from "@/context/AuthContext";
+import { useToast } from "@/context/ToastContext";
 import { useLatestRef } from "@/hooks/useLatestRef";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import { useRuleBookDocumentTypes } from "@/hooks/useRuleBookConfig";
@@ -37,12 +40,16 @@ import {
 import {
   documentNature,
   formatDocDate,
+  formatUploadedAt,
   postingStatusLabel,
   toMatrixPaymentStatus,
 } from "@/lib/allDocumentsSummary";
 import { StatusPill } from "@/components/StatusPill";
 import { documentDisplayRef, money } from "@/lib/format";
 import { counterpartyName, glPostingApplicable, invoiceSourceKind, invoiceSourceLabel } from "@/lib/invoice";
+import { approveAndProcess } from "@/lib/invoiceActions";
+import type { DocumentRowDrawerTab } from "@/lib/documentRowActions";
+import type { InvoiceDrawerTab } from "@/components/InvoiceDetailDrawer";
 import {
   fetchMatrixPage,
   sortMatrixRowsNewestFirst,
@@ -63,6 +70,8 @@ import {
 } from "@/lib/tenantSession";
 import type { UploadApprovalBoardCounts } from "@/lib/uploadApprovalFilter";
 import { EMPTY_UPLOAD_APPROVAL_FILTER } from "@/lib/uploadApprovalFilter";
+import { queryKeys } from "@/lib/queryClient";
+import { useQueryClient } from "@tanstack/react-query";
 
 const InvoiceDetailDrawer = lazy(() =>
   import("@/components/InvoiceDetailDrawer").then((m) => ({
@@ -133,6 +142,7 @@ export function AllDocumentsDetailedTable({
   searchQuery: controlledSearch,
   onSearchChange,
   captureSource,
+  routeTarget,
   showUploadSource = true,
   title = "All documents",
   emptyTitle = "No documents yet",
@@ -147,6 +157,8 @@ export function AllDocumentsDetailedTable({
   searchQuery?: string;
   onSearchChange?: (value: string) => void;
   captureSource?: "upload" | "email" | "whatsapp" | "viber";
+  /** Exact Invoice.route_target (e.g. "Team Expenses"). Omits filter when unset. */
+  routeTarget?: string;
   showUploadSource?: boolean;
   title?: string;
   emptyTitle?: string;
@@ -155,6 +167,8 @@ export function AllDocumentsDetailedTable({
   onBoardCounts?: (counts: UploadApprovalBoardCounts) => void;
 }) {
   const { user } = useAuth();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
   const tenantScope = user?.tenant_id ?? null;
   const { data: documentTypes } = useRuleBookDocumentTypes();
   const loadSeq = useRef(0);
@@ -168,7 +182,9 @@ export function AllDocumentsDetailedTable({
   const [localSearch, setLocalSearch] = useState("");
   const [drawerInvoiceId, setDrawerInvoiceId] = useState<number | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerInitialTab, setDrawerInitialTab] = useState<InvoiceDrawerTab>("fields");
   const [processingIds, setProcessingIds] = useState<Set<number>>(() => new Set());
+  const [busyActionId, setBusyActionId] = useState<number | null>(null);
 
   const searchQuery = controlledSearch ?? localSearch;
   const setSearchQuery = onSearchChange ?? setLocalSearch;
@@ -187,11 +203,14 @@ export function AllDocumentsDetailedTable({
     setError(null);
     setDrawerInvoiceId(null);
     setDrawerOpen(false);
+    setDrawerInitialTab("fields");
     setProcessingIds(new Set());
+    setBusyActionId(null);
     setLoading(true);
   });
 
-  function openInvoiceDrawer(invoiceId: number) {
+  function openInvoiceDrawer(invoiceId: number, tab: DocumentRowDrawerTab | InvoiceDrawerTab = "fields") {
+    setDrawerInitialTab(tab === "po" ? "po" : "fields");
     setDrawerInvoiceId(invoiceId);
     setDrawerOpen(true);
   }
@@ -199,12 +218,13 @@ export function AllDocumentsDetailedTable({
   const matrixQueryParams = useMemo(() => {
     const params: Record<string, string> = {};
     if (captureSource) params.capture_source = captureSource;
+    if (routeTarget) params.route_target = routeTarget;
     if (debouncedSearch) params.q = debouncedSearch;
     if (approvalBoardKey) {
       params.approval_board_column = approvalBoardKey;
     }
     return params;
-  }, [captureSource, debouncedSearch, approvalBoardKey]);
+  }, [captureSource, routeTarget, debouncedSearch, approvalBoardKey]);
 
   const load = useCallback(
     async (options?: { silent?: boolean; fresh?: boolean }) => {
@@ -254,13 +274,56 @@ export function AllDocumentsDetailedTable({
     [tenantScope, page, matrixQueryParams]
   );
 
+  const refreshAfterRowAction = useCallback(async () => {
+    await load({ silent: true, fresh: true });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.navBadges() });
+  }, [load, queryClient]);
+
+  async function handleRowApprove(inv: Invoice) {
+    setBusyActionId(inv.id);
+    setProcessingIds((prev) => new Set(prev).add(inv.id));
+    try {
+      await approveAndProcess(inv.id, refreshAfterRowAction);
+      toast({ title: "Approved" });
+    } catch (e) {
+      toast({
+        title: e instanceof Error ? e.message : "Approve failed",
+        variant: "destructive",
+      });
+    } finally {
+      setBusyActionId(null);
+      setProcessingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(inv.id);
+        return next;
+      });
+    }
+  }
+
+  async function handleRowReject(inv: Invoice) {
+    if (!window.confirm(`Reject ${inv.vendor ?? documentDisplayRef(inv)}?`)) return;
+    setBusyActionId(inv.id);
+    try {
+      await api.reject(inv.id);
+      await refreshAfterRowAction();
+      toast({ title: "Rejected" });
+    } catch (e) {
+      toast({
+        title: e instanceof Error ? e.message : "Reject failed",
+        variant: "destructive",
+      });
+    } finally {
+      setBusyActionId(null);
+    }
+  }
+
   useEffect(() => {
     void load();
   }, [load]);
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, captureSource, approvalBoardKey]);
+  }, [debouncedSearch, captureSource, routeTarget, approvalBoardKey]);
 
   useEffect(() => {
     if (!refreshRef) return;
@@ -376,6 +439,7 @@ export function AllDocumentsDetailedTable({
                       <UploadColumnCell mode={modes.invoiceDate}>
                         {formatDocDate(inv.invoice_date)}
                         {inv.due_date ? ` · due ${formatDocDate(inv.due_date)}` : ""}
+                        {` · uploaded ${formatUploadedAt(inv.created_at)}`}
                       </UploadColumnCell>
                     </div>
                     <div className="text-[11px] text-muted-foreground mt-1 flex flex-wrap gap-2">
@@ -416,6 +480,22 @@ export function AllDocumentsDetailedTable({
                   <UploadColumnCell mode={modes.derived}>
                     <AuthSyncBadge label={matrixRow.acc_sync} quietPending={quietAuthPending} />
                   </UploadColumnCell>
+                  <span
+                    className="ml-auto"
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => e.stopPropagation()}
+                  >
+                    <UploadDocumentRowActions
+                      inv={inv}
+                      documentTypes={documentTypes}
+                      busy={busyActionId === inv.id}
+                      pipelineActive={modes.active}
+                      iconOnly
+                      onOpenDrawer={(tab) => openInvoiceDrawer(inv.id, tab ?? "fields")}
+                      onApprove={() => void handleRowApprove(inv)}
+                      onReject={() => void handleRowReject(inv)}
+                    />
+                  </span>
                 </div>
               </button>
             );
@@ -425,7 +505,7 @@ export function AllDocumentsDetailedTable({
         <div className="hidden md:block overflow-x-auto">
           <table
             className="all-docs-pills all-docs-table-fixed text-sm"
-            style={{ tableLayout: "fixed", width: showUploadSource ? "108rem" : "102rem" }}
+            style={{ tableLayout: "fixed", width: showUploadSource ? "125.5rem" : "119.5rem" }}
           >
             <UploadDetailedColGroup showSource={showUploadSource} />
             <thead>
@@ -451,6 +531,8 @@ export function AllDocumentsDetailedTable({
                 <th className="px-2 py-1.5 font-medium" title="Posting">Posting</th>
                 <th className="px-2 py-1.5 font-medium" title="Payment auth">Payment auth</th>
                 <th className="px-2 py-1.5 font-medium" title="Acc sync">Acc sync</th>
+                <th className="px-2 py-1.5 font-medium" title="Actions">Actions</th>
+                <th className="px-2 py-1.5 font-medium" title="When this document was uploaded">Uploaded</th>
               </tr>
             </thead>
             <tbody>
@@ -597,6 +679,27 @@ export function AllDocumentsDetailedTable({
                         </UploadCellClip>
                       </UploadColumnCell>
                     </td>
+                    <td
+                      className="all-docs-actions-cell px-2 py-2"
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => e.stopPropagation()}
+                    >
+                      <UploadDocumentRowActions
+                        inv={inv}
+                        documentTypes={documentTypes}
+                        busy={busyActionId === inv.id}
+                        pipelineActive={modes.active}
+                        onOpenDrawer={(tab) => openInvoiceDrawer(inv.id, tab ?? "fields")}
+                        onApprove={() => void handleRowApprove(inv)}
+                        onReject={() => void handleRowReject(inv)}
+                      />
+                    </td>
+                    <td className="px-2 py-2">
+                      <UploadCellText
+                        value={formatUploadedAt(inv.created_at)}
+                        className="tnum text-xs"
+                      />
+                    </td>
                   </tr>
                 );
               })}
@@ -636,9 +739,11 @@ export function AllDocumentsDetailedTable({
           <InvoiceDetailDrawer
             invoiceId={drawerInvoiceId}
             open={drawerOpen}
+            initialTab={drawerInitialTab}
             onClose={() => {
               setDrawerOpen(false);
               setDrawerInvoiceId(null);
+              setDrawerInitialTab("fields");
             }}
             onUpdated={() => void load({ silent: true, fresh: true })}
             onPipelineStart={(invoice) => {

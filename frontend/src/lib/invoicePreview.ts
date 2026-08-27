@@ -132,38 +132,6 @@ const INTERNAL_EXTRACTED_KEYS = new Set([
 ]);
 
 /**
- * Extracted keys present on the invoice but not in the DT's configured
- * extraction_fields list — shown read-only under "Additional extracted fields"
- * so vision/OCR extras are not silently hidden after DT classification.
- *
- * Party keys (seller_abn, etc.) are included here: the Fields tab does not
- * render party blocks (those live on Summary).
- */
-export function additionalExtractedFieldKeys(
-  inv: Pick<Invoice, "extracted_fields">,
-  extractionFieldKeys: string[]
-): string[] {
-  const configured = new Set(
-    (extractionFieldKeys ?? []).map((k) => k.trim().toLowerCase()).filter(Boolean)
-  );
-  const fields = inv.extracted_fields;
-  if (!fields || typeof fields !== "object") return [];
-  const out: string[] = [];
-  for (const [rawKey, rawValue] of Object.entries(fields)) {
-    const key = rawKey.trim();
-    if (!key) continue;
-    const token = key.toLowerCase();
-    if (configured.has(token)) continue;
-    if (INTERNAL_EXTRACTED_KEYS.has(token)) continue;
-    if (token === "vision_header_confidence" || token === "field_confidence") continue;
-    if (rawValue == null) continue;
-    const text = String(rawValue).trim();
-    if (!text) continue;
-    out.push(key);
-  }
-  return out.sort((a, b) => a.localeCompare(b));
-}
-/**
  * Vision can-understand hold: awaiting classification without OCR body.
  * Summary / Fields should show header fields only — not OCR empty-state copy.
  * Field keys for Fields tab come from API `document_type_extraction_fields`
