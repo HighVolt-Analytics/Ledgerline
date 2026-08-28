@@ -36,9 +36,8 @@ export default function Footer() {
       <div className="mx-auto max-w-[1200px] px-5 py-12 sm:px-8 sm:py-14">
         <div className="grid grid-cols-1 gap-10 sm:grid-cols-3">
           <div>
-            <div className="inline-flex items-center gap-2">
+            <div className="inline-flex items-center">
               <Logo />
-              <span className="text-base font-semibold tracking-tight text-foreground">Quantum Ledgerlink</span>
             </div>
             <p className="mt-4 max-w-xs text-sm leading-relaxed text-muted-foreground">
               Invoices in. Ledgers out. Payments through. Zero touch.
