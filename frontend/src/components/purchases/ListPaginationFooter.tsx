@@ -1,6 +1,85 @@
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/cn";
 
 const MAX_PAGE_BUTTONS = 7;
+
+export type PaginationItem = number | "ellipsis";
+
+/** Compact page list with first/last and ellipsis gaps, matching 1 2 … 4 5. */
+export function paginationItems(page: number, totalPages: number): PaginationItem[] {
+  if (totalPages <= 1) return totalPages === 1 ? [1] : [];
+  if (totalPages <= 5) {
+    return Array.from({ length: totalPages }, (_, i) => i + 1);
+  }
+
+  const current = Math.min(Math.max(1, page), totalPages);
+  const items: PaginationItem[] = [1];
+  const start = Math.max(2, current - 1);
+  const end = Math.min(totalPages - 1, current + 1);
+
+  if (start > 2) items.push("ellipsis");
+  for (let n = start; n <= end; n++) items.push(n);
+  if (end < totalPages - 1) items.push("ellipsis");
+  items.push(totalPages);
+  return items;
+}
+
+function CirclePager({
+  page,
+  totalPages,
+  onPageChange,
+}: {
+  page: number;
+  totalPages: number;
+  onPageChange: (page: number) => void;
+}) {
+  const items = paginationItems(page, totalPages);
+
+  return (
+    <nav className="table-circle-pager" aria-label="Pagination">
+      <button
+        type="button"
+        className="table-circle-pager__btn"
+        onClick={() => onPageChange(Math.max(1, page - 1))}
+        disabled={page <= 1}
+        aria-label="Previous page"
+      >
+        <ChevronLeft className="h-4 w-4" />
+      </button>
+      {items.map((item, index) =>
+        item === "ellipsis" ? (
+          <span key={`ellipsis-${index}`} className="table-circle-pager__ellipsis" aria-hidden>
+            …
+          </span>
+        ) : (
+          <button
+            key={item}
+            type="button"
+            aria-label={`Page ${item}`}
+            aria-current={item === page ? "page" : undefined}
+            className={cn(
+              "table-circle-pager__btn tnum",
+              item === page && "table-circle-pager__btn--active"
+            )}
+            onClick={() => onPageChange(item)}
+          >
+            {item}
+          </button>
+        )
+      )}
+      <button
+        type="button"
+        className="table-circle-pager__btn"
+        onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+        disabled={page >= totalPages}
+        aria-label="Next page"
+      >
+        <ChevronRight className="h-4 w-4" />
+      </button>
+    </nav>
+  );
+}
 
 export function ListPaginationFooter({
   page,
@@ -62,6 +141,33 @@ export function ListPaginationFooter({
           Next
         </Button>
       </div>
+    </div>
+  );
+}
+
+/** Upload-table footer: Total on the left, circled page numbers on the right. No page-size control or divider. */
+export function TableCirclePagination({
+  page,
+  totalPages,
+  total,
+  onPageChange,
+}: {
+  page: number;
+  totalPages: number;
+  total: number;
+  onPageChange: (page: number) => void;
+}) {
+  if (total <= 0) return null;
+
+  return (
+    <div className="flex shrink-0 items-center justify-between gap-3 px-3 sm:px-4 py-3">
+      <p className="text-sm text-foreground">
+        <span className="font-semibold">Total</span>{" "}
+        <span className="tnum">{total}</span>
+      </p>
+      {totalPages >= 1 ? (
+        <CirclePager page={page} totalPages={Math.max(1, totalPages)} onPageChange={onPageChange} />
+      ) : null}
     </div>
   );
 }

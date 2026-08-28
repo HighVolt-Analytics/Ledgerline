@@ -30,14 +30,12 @@ import {
   useVendorMasters,
 } from "@/hooks/useMasterData";
 import { cn } from "@/lib/cn";
-import { fmtAud } from "@/lib/v4MockData";
-import { BUSINESS_REGISTRATION_NUMBER_LABEL, normalizeCurrencyCode } from "@/lib/format";
-import { useInstitutionSettings } from "@/hooks/useInstitutionSettings";
+import { BUSINESS_REGISTRATION_NUMBER_LABEL } from "@/lib/format";
+import { formatDocDate } from "@/lib/allDocumentsSummary";
 import type { PendingVendorRecord } from "@/lib/masterDataApi";
 import type { VendorDetectionConfig, VendorMaster } from "@/lib/v4RuleBookTypes";
 import { PageTabPanel, PageTabs } from "@/components/PageTabs";
 import { AccountBadge } from "./AccountBadge";
-import { ConfidenceBar } from "./ConfidenceBar";
 import { VendorDetailPanel } from "./VendorDetailPanel";
 import { VendorDetectionTest } from "./VendorDetectionTest";
 import {
@@ -108,8 +106,6 @@ export function VendorsTab({
   const { toast } = useToast();
   const { permissions } = usePermissions();
   const canRevealBank = permissions?.can_reveal_bank === true;
-  const { data: institution } = useInstitutionSettings();
-  const booksCurrency = normalizeCurrencyCode(institution?.currency) ?? "";
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [pinToTopId, setPinToTopId] = useState<string | null>(null);
   const [revealBank, setRevealBank] = useState(false);
@@ -513,9 +509,8 @@ export function VendorsTab({
                 <th className="px-3 py-2 font-medium">Bank account number</th>
                 <th className="px-3 py-2 font-medium">Default ledger</th>
                 <th className="px-3 py-2 font-medium">Status</th>
-                <th className="px-3 py-2 font-medium text-right">YTD spend</th>
-                <th className="px-3 py-2 font-medium text-right">Inv</th>
-                <th className="px-3 py-2 font-medium text-left">Last match</th>
+                <th className="px-3 py-2 font-medium">Created</th>
+                <th className="px-3 py-2 font-medium">Approved by</th>
               </tr>
             </thead>
             <tbody>
@@ -584,10 +579,13 @@ export function VendorsTab({
                       <td className="px-3 py-2">
                         <StatusDot status={dirty ? draft.status : v.status} />
                       </td>
-                      <td className="px-3 py-2 text-right tnum">{fmtAud(v.totalSpendYTD, booksCurrency)}</td>
-                      <td className="px-3 py-2 text-right tnum">{v.invoiceCount}</td>
-                      <td className="px-3 py-2 text-left">
-                        <ConfidenceBar value={v.matchConfidence ?? 0} />
+                      <td className="px-3 py-2 text-xs tnum whitespace-nowrap">
+                        {formatDocDate(v.createdAt || v.registeredOn)}
+                      </td>
+                      <td className="px-3 py-2">
+                        {(v.approvedBy ?? "").trim() || (
+                          <span className="text-muted-foreground">—</span>
+                        )}
                       </td>
                     </tr>
                     {open && (

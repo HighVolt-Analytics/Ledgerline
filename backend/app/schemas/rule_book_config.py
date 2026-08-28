@@ -165,6 +165,8 @@ class VendorMaster(BaseModel):
     payment_terms: str = ""
     status: str = ""
     registered_on: str = ""
+    approved_by: str = ""
+    created_at: datetime | None = None
     total_spend_ytd: float = Field(default=0, ge=0)
     invoice_count: int = Field(default=0, ge=0)
     match_confidence: float = Field(default=0, ge=0, le=100)

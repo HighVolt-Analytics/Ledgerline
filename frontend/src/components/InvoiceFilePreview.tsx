@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Download, FileText, Loader2, Minus, Plus, RotateCcw } from "lucide-react";
+import { createPortal } from "react-dom";
+import { Download, FileText, Loader2, Maximize2, Minus, Plus, RotateCcw, X } from "lucide-react";
 import { api } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { PageTabs } from "@/components/PageTabs";
@@ -18,6 +19,18 @@ const ZOOM_STEP = 0.25;
 function clampZoom(value: number): number {
   const rounded = Math.round(value * 100) / 100;
   return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, rounded));
+}
+
+function isPdfPreview(mimeType?: string | null, filename?: string | null): boolean {
+  const mime = (mimeType || "").toLowerCase();
+  const name = (filename || "").toLowerCase();
+  return mime.includes("pdf") || name.endsWith(".pdf");
+}
+
+function isImagePreview(mimeType?: string | null, filename?: string | null): boolean {
+  const mime = (mimeType || "").toLowerCase();
+  const name = (filename || "").toLowerCase();
+  return mime.startsWith("image/") || /\.(png|jpe?g|webp|gif|bmp|tiff?)$/.test(name);
 }
 
 export function useInvoiceFilePreview(invoiceId: number | null, enabled: boolean) {
@@ -89,15 +102,32 @@ export function InvoiceDocumentViewer({
 }: InvoiceDocumentViewerProps) {
   const { preview, loading, error, reload } = useInvoiceFilePreview(invoiceId, true);
   const [zoom, setZoom] = useState(1);
+  const [fullscreen, setFullscreen] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
 
-  const isPdf = preview?.mimeType === "application/pdf";
-  const isImage = preview?.mimeType?.startsWith("image/") ?? false;
+  const isPdf = isPdfPreview(preview?.mimeType, preview?.filename);
+  const isImage = isImagePreview(preview?.mimeType, preview?.filename);
   const canZoom = Boolean(preview && (isPdf || isImage) && !loading && !error);
+  const canExpand = canZoom;
 
   useEffect(() => {
     setZoom(1);
+    setFullscreen(false);
   }, [invoiceId]);
+
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setFullscreen(false);
+    };
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [fullscreen]);
 
   const zoomIn = useCallback(() => setZoom((z) => clampZoom(z + ZOOM_STEP)), []);
   const zoomOut = useCallback(() => setZoom((z) => clampZoom(z - ZOOM_STEP)), []);
@@ -120,13 +150,14 @@ export function InvoiceDocumentViewer({
   const zoomPercent = `${Math.round(zoom * 100)}%`;
 
   return (
+    <>
     <div className={cn("invoice-document-viewer", className)} data-testid={testId}>
       <div className="invoice-document-toolbar">
-        <div className="flex items-center gap-2 min-w-0 text-xs text-muted-foreground">
+        <div className="invoice-document-toolbar__name flex items-center gap-2 min-w-0 text-xs text-muted-foreground">
           <FileText className="h-3.5 w-3.5 shrink-0" />
           <span className="truncate">{preview?.filename ?? "Original document"}</span>
         </div>
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="invoice-document-toolbar__actions flex items-center gap-1 shrink-0">
           {canZoom ? (
             <div
               className="flex items-center gap-0.5 mr-1"
@@ -187,14 +218,29 @@ export function InvoiceDocumentViewer({
               type="button"
               variant="ghost"
               size="sm"
-              className="h-7 px-2 text-xs shrink-0"
+              className="h-7 w-7 p-0 shrink-0"
+              aria-label="Download"
+              title="Download"
               data-testid="button-download-document"
               onClick={() => void api.downloadInvoiceFile(invoiceId)}
             >
-              <Download className="h-3.5 w-3.5 mr-1" />
-              Download
+              <Download className="h-3.5 w-3.5" />
             </Button>
           )}
+          {canExpand ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 p-0 shrink-0"
+              aria-label="Expand original document"
+              title="Expand"
+              data-testid="button-expand-document"
+              onClick={() => setFullscreen(true)}
+            >
+              <Maximize2 className="h-3.5 w-3.5" />
+            </Button>
+          ) : null}
         </div>
       </div>
 
@@ -267,6 +313,45 @@ export function InvoiceDocumentViewer({
         )}
       </div>
     </div>
+    {fullscreen && preview && (isPdf || isImage)
+      ? createPortal(
+          <div
+            className="invoice-document-fullscreen"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Original document"
+            data-testid="invoice-document-fullscreen"
+          >
+            <div className="invoice-document-fullscreen__bar">
+              <button
+                type="button"
+                className="invoice-document-fullscreen__close"
+                aria-label="Close"
+                title="Close"
+                data-testid="button-close-document-fullscreen"
+                onClick={() => setFullscreen(false)}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            {isPdf ? (
+              <iframe
+                title="Invoice document fullscreen"
+                src={preview.url}
+                className="invoice-document-fullscreen__frame"
+              />
+            ) : (
+              <img
+                src={preview.url}
+                alt="Invoice attachment fullscreen"
+                className="invoice-document-fullscreen__image"
+              />
+            )}
+          </div>,
+          document.body
+        )
+      : null}
+    </>
   );
 }
 

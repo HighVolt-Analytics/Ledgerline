@@ -530,9 +530,12 @@ _FLAGGED_EVAL = (
 
 
 def _apply_route_target(query, route_target: str | None):
-    if not route_target or not route_target.strip():
+    tokens = parse_route_target_filter(route_target)
+    if not tokens:
         return query
-    return query.where(Invoice.route_target == route_target.strip())
+    if len(tokens) == 1:
+        return query.where(Invoice.route_target == tokens[0])
+    return query.where(Invoice.route_target.in_(tokens))
 
 
 def _apply_capture_source(query, capture_source: str | None):
@@ -767,6 +770,16 @@ class MatrixListResult:
     processing_count: int = 0
     approved_count: int = 0
     rejected_count: int = 0
+
+
+def parse_route_target_filter(raw: str | None) -> list[str]:
+    """Comma-separated route targets; order preserved, blanks dropped."""
+    tokens: list[str] = []
+    for part in (raw or "").split(","):
+        token = part.strip()
+        if token and token not in tokens:
+            tokens.append(token)
+    return tokens
 
 
 def _scoped_invoice_query(tenant_id: uuid.UUID, params: MatrixListRequest):

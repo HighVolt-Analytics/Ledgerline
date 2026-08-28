@@ -28,6 +28,7 @@ class VendorMasterCreate(BaseModel):
     payment_terms: str = ""
     status: str = "Pending registration"
     registered_on: str = ""
+    approved_by: str = ""
     total_spend_ytd: float = Field(default=0, ge=0)
     invoice_count: int = Field(default=0, ge=0)
     match_confidence: float = Field(default=0, ge=0, le=100)

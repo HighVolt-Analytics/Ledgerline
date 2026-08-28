@@ -32,6 +32,7 @@ class VendorMasterRecord(Base):
     payment_terms: Mapped[str] = mapped_column(String(100), default="")
     status: Mapped[str] = mapped_column(String(50), default="")
     registered_on: Mapped[str] = mapped_column(String(32), default="")
+    approved_by: Mapped[str] = mapped_column(String(255), default="")
     total_spend_ytd: Mapped[float] = mapped_column(Float, default=0)
     invoice_count: Mapped[int] = mapped_column(Integer, default=0)
     match_confidence: Mapped[float] = mapped_column(Float, default=0)

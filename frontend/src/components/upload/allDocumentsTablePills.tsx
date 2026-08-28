@@ -1,11 +1,13 @@
 import { AlertTriangle, Clock } from "lucide-react";
+import type { ReactNode } from "react";
 import type { MatrixRow } from "@/api/types";
-import { DocumentTypeChip } from "@/components/inbox/DocumentTypeChip";
-import { StatusPill } from "@/components/StatusPill";
 import { cn } from "@/lib/cn";
 import type { AllDocumentsNature, PipelineStatusLabel } from "@/lib/allDocumentsSummary";
-import { KLASS_TRANSACTIONAL } from "@/lib/documentTypeKlass";
-import { storedDocumentTypeCode, visionDocumentTypeLabel } from "@/lib/documentTypeResolve";
+import {
+  documentTypeLabelForCode,
+  storedDocumentTypeCode,
+  visionDocumentTypeLabel,
+} from "@/lib/documentTypeResolve";
 import {
   approvalStatusChipClass,
   kpiStatusChipClass,
@@ -14,47 +16,77 @@ import {
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
 import type { MatrixPaymentStatus } from "@/lib/v4MatrixMockData";
 
-/** Status / nature / payment tags — fully rounded pills. Type badges stay square with rounded corners. */
-export const TABLE_PILL = "!rounded-full";
+export type TableStatusTone = "ok" | "approved" | "pending" | "fail" | "muted" | "hold" | "rose";
 
-const PILL_SHELL = "font-normal border-border bg-muted/50";
+export function TableStatusTag({
+  tone,
+  children,
+  title,
+  className,
+  testId,
+  showDot = true,
+}: {
+  tone: TableStatusTone;
+  children: ReactNode;
+  title?: string;
+  className?: string;
+  testId?: string;
+  showDot?: boolean;
+}) {
+  const withDot = showDot && tone !== "muted";
+  return (
+    <span
+      className={cn("all-docs-status-tag", `all-docs-status-tag--${tone}`, className)}
+      title={title}
+      data-testid={testId}
+    >
+      {withDot ? <span className="all-docs-status-tag__dot" aria-hidden /> : null}
+      <span className="all-docs-status-tag__label">{children}</span>
+    </span>
+  );
+}
 
 export function TypeBadge({
   inv,
-  documentTypes,
 }: {
   inv: MatrixRow["invoice"];
   documentTypes?: DocumentTypeDefinition[] | null;
 }) {
   const vision = visionDocumentTypeLabel(inv);
   if (!vision) {
-    return <span className="text-xs text-muted-foreground" />;
+    return <span className="text-xs text-muted-foreground">—</span>;
   }
   return (
-    <DocumentTypeChip
-      code={storedDocumentTypeCode(inv) || undefined}
-      label={vision}
-      display={vision}
-      title={vision}
-      purchaseKind={inv.purchase_document_type}
-      documentTypes={documentTypes}
-      className="all-docs-type-badge max-w-full truncate font-normal !rounded-md"
-    />
+    <span className="text-xs truncate" title={vision}>
+      {vision}
+    </span>
+  );
+}
+
+export function RouteText({
+  inv,
+  documentTypes,
+}: {
+  inv: MatrixRow["invoice"];
+  documentTypes?: DocumentTypeDefinition[] | null;
+}) {
+  const code = storedDocumentTypeCode(inv);
+  const typeLabel =
+    (documentTypes?.length ? documentTypeLabelForCode(documentTypes, code) : null) || code;
+  if (!code) {
+    return <span className="text-xs text-muted-foreground">Not classified</span>;
+  }
+  return (
+    <span className="text-xs truncate" title={typeLabel}>
+      {typeLabel}
+    </span>
   );
 }
 
 export function NatureBadge({ nature }: { nature: AllDocumentsNature }) {
   if (!nature) return <span className="text-muted-foreground text-xs">—</span>;
-  const transactional = nature === KLASS_TRANSACTIONAL;
   return (
-    <span
-      className={cn(
-        transactional ? kpiStatusChipClass("blue") : approvalStatusChipClass("muted"),
-        TABLE_PILL,
-        "max-w-full truncate"
-      )}
-      title={nature}
-    >
+    <span className="text-xs truncate" title={nature}>
       {nature}
     </span>
   );
@@ -63,38 +95,30 @@ export function NatureBadge({ nature }: { nature: AllDocumentsNature }) {
 export function PipelineStatusBadge({ label }: { label: PipelineStatusLabel }) {
   if (label === "Done" || label === "Posted") {
     return (
-      <StatusPill
-        className={cn(PILL_SHELL, "all-docs-status-done max-w-full truncate")}
-        style={{ color: "#16a34a" }}
-        title={label}
-      >
+      <TableStatusTag tone="ok" title={label}>
         {label}
-      </StatusPill>
+      </TableStatusTag>
     );
   }
   if (label === "Failed") {
     return (
-      <span className={cn(approvalStatusChipClass("reject"), TABLE_PILL, "max-w-full truncate")} title={label}>
+      <TableStatusTag tone="fail" title={label}>
         {label}
-      </span>
+      </TableStatusTag>
     );
   }
   if (label === "Pending") {
     return (
-      <StatusPill
-        className={cn(PILL_SHELL, "all-docs-status-pending max-w-full truncate")}
-        style={{ color: "#e6a800" }}
-        title={label}
-      >
+      <TableStatusTag tone="pending" title={label}>
         {label}
-      </StatusPill>
+      </TableStatusTag>
     );
   }
   if (label === "Not required" || label === "N/A") {
     return (
-      <span className={cn(approvalStatusChipClass("muted"), TABLE_PILL, "max-w-full truncate")} title={label}>
+      <TableStatusTag tone="muted" title={label}>
         {label}
-      </span>
+      </TableStatusTag>
     );
   }
   return (
@@ -106,50 +130,56 @@ export function PipelineStatusBadge({ label }: { label: PipelineStatusLabel }) {
 
 export function DuplicatePossibleBadge({ label }: { label: string }) {
   return (
-    <span className={cn(kpiStatusChipClass("rose"), TABLE_PILL, "max-w-full truncate")} title={label}>
+    <TableStatusTag tone="rose" title={label} showDot={false}>
       {label}
-    </span>
+    </TableStatusTag>
   );
 }
 
 export function PaymentStatusPill({ status }: { status: MatrixPaymentStatus }) {
-  if (status === "Paid" || status === "Payment Approved") {
+  if (status === "Paid") {
     return (
-      <StatusPill
-        className={cn(PILL_SHELL, "all-docs-status-done max-w-full truncate")}
-        style={{ color: "#16a34a" }}
-        title={status}
-      >
+      <TableStatusTag tone="ok" title={status}>
         {status}
-      </StatusPill>
+      </TableStatusTag>
+    );
+  }
+  if (status === "Payment Approved") {
+    return (
+      <TableStatusTag tone="approved" title={status}>
+        {status}
+      </TableStatusTag>
     );
   }
   if (status === "Awaiting Payment") {
     return (
-      <StatusPill
-        className={cn(PILL_SHELL, "all-docs-status-pending max-w-full truncate")}
-        style={{ color: "#e6a800" }}
-        title={status}
-      >
+      <TableStatusTag tone="pending" title={status}>
         {status}
-      </StatusPill>
+      </TableStatusTag>
     );
   }
   if (status === "On Hold") {
     return (
-      <span className={cn(approvalStatusChipClass("muted"), TABLE_PILL, "max-w-full truncate")} title={status}>
+      <TableStatusTag tone="hold" title={status}>
         {status}
-      </span>
+      </TableStatusTag>
     );
   }
   if (status === "Failed") {
     return (
-      <span className={cn(approvalStatusChipClass("reject"), TABLE_PILL, "max-w-full truncate")} title={status}>
+      <TableStatusTag tone="fail" title={status}>
         {status}
-      </span>
+      </TableStatusTag>
     );
   }
   return <span className="text-muted-foreground text-xs font-normal">—</span>;
+}
+
+export function authSyncStatusTone(label: string): TableStatusTone {
+  if (label === "Done" || label === "Synced") return "ok";
+  if (label === "Failed") return "fail";
+  if (label === "Pending") return "pending";
+  return "muted";
 }
 
 const ACTION_TAG =

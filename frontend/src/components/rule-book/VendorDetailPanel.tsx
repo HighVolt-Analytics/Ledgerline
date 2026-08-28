@@ -217,22 +217,22 @@ export function VendorDetailPanel({
           <Shield className="h-3.5 w-3.5 text-primary" />
           Posting preview
         </div>
-        <ul className="space-y-1 text-xs">
-          <li>
+        <div className="flex items-center overflow-x-auto text-xs whitespace-nowrap divide-x divide-border">
+          <span className="pr-8">
             <span className="text-muted-foreground">Invoice received:</span> Dr{" "}
             <span className="font-medium">{ledgerValue || "—"}</span> · Cr{" "}
             <span className="font-medium">Accounts Payable</span>
-          </li>
-          <li>
+          </span>
+          <span className="px-8">
             <span className="text-muted-foreground">Payment executed:</span> Dr{" "}
             <span className="font-medium">Accounts Payable</span> · Cr{" "}
             <span className="font-medium">Stripe Wallet</span>
-          </li>
-          <li>
+          </span>
+          <span className="pl-8">
             <span className="text-muted-foreground">Reconciliation:</span> posted to Ledger Link
             export
-          </li>
-        </ul>
+          </span>
+        </div>
       </div>
     </div>
   );

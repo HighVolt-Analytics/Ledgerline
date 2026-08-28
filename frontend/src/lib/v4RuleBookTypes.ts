@@ -172,6 +172,8 @@ export type VendorMaster = {
   paymentTerms: string;
   status: string;
   registeredOn: string;
+  approvedBy?: string;
+  createdAt?: string | null;
   totalSpendYTD: number;
   invoiceCount: number;
   matchConfidence: number;

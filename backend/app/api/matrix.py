@@ -20,7 +20,7 @@ async def document_matrix(
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
     status: Annotated[str | None, Query()] = None,
     route_target: Annotated[
-        str | None, Query(description="Filter by rule book route target")
+        str | None, Query(description="Comma-separated rule book route targets")
     ] = None,
     evaluation_status: Annotated[
         str | None, Query(description="Filter by evaluation status")

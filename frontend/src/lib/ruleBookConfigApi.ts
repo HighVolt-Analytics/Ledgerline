@@ -240,6 +240,8 @@ export function mapVendor(raw: Record<string, unknown>): VendorMaster {
     paymentTerms: String(raw.payment_terms ?? ""),
     status: String(raw.status ?? ""),
     registeredOn: String(raw.registered_on ?? ""),
+    approvedBy: String(raw.approved_by ?? ""),
+    createdAt: raw.created_at != null ? String(raw.created_at) : null,
     totalSpendYTD: Number(raw.total_spend_ytd ?? 0),
     invoiceCount: Number(raw.invoice_count ?? 0),
     matchConfidence: Number(raw.match_confidence ?? 0),

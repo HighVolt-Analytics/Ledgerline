@@ -28,7 +28,7 @@ export function ListSearchInput({
         placeholder={placeholder}
         data-testid={testId}
         aria-label={placeholder}
-        className="h-8 w-full min-w-[12rem] rounded-md border border-border bg-field pl-8 pr-3 text-xs outline-none focus:border-primary/40"
+        className="h-8 w-full min-w-0 rounded-md border border-border bg-field pl-8 pr-3 text-xs outline-none focus:border-primary/40"
       />
     </div>
   );

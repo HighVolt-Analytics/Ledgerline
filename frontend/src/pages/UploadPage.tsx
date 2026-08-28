@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
-import { CloudUpload, Plus } from "lucide-react";
+import { CloudUpload } from "lucide-react";
 import { api } from "@/api/client";
 import type { ConnectedMailbox, MailboxBackfillJob } from "@/api/types";
 import { ConnectMailboxDialog } from "@/components/ConnectMailboxDialog";
@@ -12,20 +12,27 @@ import { useRuleBookIngestStats } from "@/hooks/useRuleBookConfig";
 import { useRuleBookDraft } from "@/hooks/useRuleBookDraft";
 import { canRenderTenantOwnedUi } from "@/lib/tenantSession";
 import { MailboxImportDialog } from "@/components/mailboxes/MailboxImportDialog";
+import { NotificationBell } from "@/components/NotificationBell";
 import { PageHeader } from "@/components/PageHeader";
 import { PageTabs } from "@/components/PageTabs";
+import { ListSearchInput } from "@/components/ListSearchInput";
 import { AllDocumentsDetailedTable } from "@/components/upload/AllDocumentsDetailedTable";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { UploadApprovalFilter } from "@/components/upload/UploadApprovalFilter";
+import { UploadTableFilterRail } from "@/components/upload/UploadTableFilterRail";
 import { parseUploadChannelTab, type AllDocumentsChannelTab } from "@/lib/allDocumentsSummary";
 import {
   EMPTY_UPLOAD_APPROVAL_COUNTS,
   approvalBoardCountsEqual,
   parseUploadApprovalFilter,
+  parseUploadDocumentAreas,
+  routeTargetsForDocumentAreas,
   serializeUploadApprovalFilter,
+  serializeUploadDocumentAreas,
+  UPLOAD_DOCUMENT_AREA_FILTERS,
   type UploadApprovalBoardCounts,
   type UploadApprovalStatusKey,
+  type UploadDocumentAreaKey,
 } from "@/lib/uploadApprovalFilter";
 import { fetchMatrixPage } from "@/lib/matrixApi";
 import { invalidateUploadInvoiceList } from "@/hooks/useUploadInvoiceList";
@@ -49,16 +56,10 @@ import {
 import { UploadDropZone } from "@/components/upload/UploadDropZone";
 import { canAccessModulePath } from "@/lib/tenantModules";
 import { useTenantModules } from "@/hooks/useTenantModules";
-import {
-  UPLOAD_ROUTE_FILTERS,
-  isUploadRouteFilter,
-  routeTargetForUploadFilter,
-  uploadRouteFilterLabel,
-  type UploadRouteFilterValue,
-} from "@/lib/uploadRouteFilter";
+import { isUploadRouteFilter } from "@/lib/uploadRouteFilter";
 
 type ChannelTab = AllDocumentsChannelTab;
-type ViewTab = "summary" | "setup" | UploadRouteFilterValue;
+type ViewTab = "summary" | "setup";
 
 function parseChannelTab(value: string | null): ChannelTab {
   return parseUploadChannelTab(value);
@@ -66,26 +67,6 @@ function parseChannelTab(value: string | null): ChannelTab {
 
 function channelHasSetupTab(channel: ChannelTab): boolean {
   return channel === "email" || channel === "whatsapp" || channel === "viber";
-}
-
-function channelDocsTitle(channel: ChannelTab, routeLabel: string | null): string {
-  if (routeLabel) {
-    if (channel === "all") return routeLabel;
-    const channelShort =
-      channel === "upload"
-        ? "Direct upload"
-        : channel === "email"
-          ? "Email"
-          : channel === "whatsapp"
-            ? "WhatsApp"
-            : "Viber";
-    return `${channelShort} · ${routeLabel}`;
-  }
-  if (channel === "all") return "All documents";
-  if (channel === "upload") return "Direct upload";
-  if (channel === "email") return "Email documents";
-  if (channel === "whatsapp") return "WhatsApp documents";
-  return "Viber documents";
 }
 
 function channelEmptyTitle(channel: ChannelTab, routeLabel: string | null): string {
@@ -118,7 +99,6 @@ function channelEmptyHint(channel: ChannelTab, routeLabel: string | null): strin
 function parseViewTab(searchParams: URLSearchParams, channel: ChannelTab): ViewTab {
   const view = searchParams.get("view") ?? searchParams.get("tab");
   if (view === "setup" && channelHasSetupTab(channel)) return "setup";
-  if (isUploadRouteFilter(view)) return view;
   return "summary";
 }
 
@@ -158,22 +138,40 @@ export function UploadPage() {
   const queryClient = useQueryClient();
   const isAdmin = user?.role === "admin";
   const enabledModules = useTenantModules();
-  const routeFilterTabs = UPLOAD_ROUTE_FILTERS.filter((tab) =>
-    canAccessModulePath(`/${tab.value}`, enabledModules, tab.moduleKey)
-  );
+  const visibleDocumentAreas = UPLOAD_DOCUMENT_AREA_FILTERS.filter((item) =>
+    canAccessModulePath(item.path, enabledModules, item.moduleKey)
+  ).map((item) => item.key);
   const [searchParams, setSearchParams] = useSearchParams();
   const channelTab = parseChannelTab(searchParams.get("channel"));
   const viewTab = parseViewTab(searchParams, channelTab);
-  const routeFilter = isUploadRouteFilter(viewTab) ? viewTab : null;
-  const routeTarget = routeFilter ? routeTargetForUploadFilter(routeFilter) : undefined;
 
   useEffect(() => {
     const view = searchParams.get("view");
     const tab = searchParams.get("tab");
-    if (view !== "detailed" && tab !== "detailed") return;
     const next = new URLSearchParams(searchParams);
-    if (next.get("view") === "detailed") next.delete("view");
-    if (next.get("tab") === "detailed") next.delete("tab");
+    let changed = false;
+    const retired = new Set(["detailed"]);
+    if (retired.has(view ?? "")) {
+      next.delete("view");
+      changed = true;
+    }
+    if (retired.has(tab ?? "")) {
+      next.delete("tab");
+      changed = true;
+    }
+    const viewToken = view && !retired.has(view) ? view : tab && !retired.has(tab) ? tab : null;
+    if (viewToken && isUploadRouteFilter(viewToken)) {
+      if (!next.get("area")) {
+        const serialized = serializeUploadDocumentAreas(
+          parseUploadDocumentAreas(null, viewToken)
+        );
+        if (serialized) next.set("area", serialized);
+      }
+      if (next.get("view") === viewToken) next.delete("view");
+      if (next.get("tab") === viewToken) next.delete("tab");
+      changed = true;
+    }
+    if (!changed) return;
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
   const showSetupTab = channelHasSetupTab(channelTab);
@@ -181,6 +179,12 @@ export function UploadPage() {
   const approvalFilter = useMemo(
     () => parseUploadApprovalFilter(approvalParam),
     [approvalParam]
+  );
+  const areaParam = searchParams.get("area");
+  const viewParam = searchParams.get("view");
+  const documentAreas = useMemo(
+    () => parseUploadDocumentAreas(areaParam, viewParam),
+    [areaParam, viewParam]
   );
   const [boardCounts, setBoardCounts] = useState<UploadApprovalBoardCounts>(
     EMPTY_UPLOAD_APPROVAL_COUNTS
@@ -263,7 +267,7 @@ export function UploadPage() {
 
   useEffect(() => {
     setBoardCounts(EMPTY_UPLOAD_APPROVAL_COUNTS);
-  }, [channelTab, routeTarget]);
+  }, [channelTab, areaParam]);
 
   const setChannelTab = (tab: ChannelTab) => {
     const next = new URLSearchParams(searchParams);
@@ -280,8 +284,7 @@ export function UploadPage() {
     const next = new URLSearchParams(searchParams);
     next.delete("tab");
     if (tab === "setup") next.set("view", "setup");
-    else if (isUploadRouteFilter(tab)) next.set("view", tab);
-    else next.delete("view");
+    else if (next.get("view") === "setup") next.delete("view");
     setSearchParams(next, { replace: true });
   };
 
@@ -290,6 +293,16 @@ export function UploadPage() {
     const serialized = serializeUploadApprovalFilter(value);
     if (!serialized) next.delete("approval");
     else next.set("approval", serialized);
+    setSearchParams(next, { replace: true });
+  };
+
+  const setDocumentAreas = (value: UploadDocumentAreaKey[]) => {
+    const next = new URLSearchParams(searchParams);
+    const serialized = serializeUploadDocumentAreas(value);
+    if (!serialized) next.delete("area");
+    else next.set("area", serialized);
+    if (isUploadRouteFilter(next.get("view"))) next.delete("view");
+    if (isUploadRouteFilter(next.get("tab"))) next.delete("tab");
     setSearchParams(next, { replace: true });
   };
 
@@ -593,6 +606,7 @@ export function UploadPage() {
             ]}
           />
         }
+        actions={<NotificationBell variant="header" />}
       />
       {channelTab === "upload" ? (
         <>
@@ -633,7 +647,13 @@ export function UploadPage() {
             : "scanning mailbox"}
         </Card>
       ) : null}
-      <div className="upload-workspace__view-row">
+      <div
+        className={
+          viewTab !== "setup"
+            ? "upload-workspace__view-row upload-workspace__view-row--filters"
+            : "upload-workspace__view-row"
+        }
+      >
         <PageTabs
           className="mb-0"
           value={viewTab}
@@ -645,11 +665,6 @@ export function UploadPage() {
               testid: "tab-upload-summary",
               label: "Summary",
             },
-            ...routeFilterTabs.map((tab) => ({
-              value: tab.value,
-              testid: tab.testid,
-              label: tab.label,
-            })),
             ...(showSetupTab
               ? [
                   {
@@ -661,19 +676,33 @@ export function UploadPage() {
               : []),
           ]}
         />
-        {viewTab === "setup" && channelTab === "email" && isAdmin ? (
-          <Button data-testid="button-add-mailbox" onClick={() => setAddOpen(true)}>
-            <Plus className="h-4 w-4 mr-1.5 shrink-0" />
-            Add mailbox
-          </Button>
-        ) : viewTab !== "setup" ? (
-          <UploadApprovalFilter
-            value={approvalFilter}
-            onChange={setApprovalFilter}
+        {viewTab !== "setup" ? (
+          <UploadTableFilterRail
+            area={documentAreas}
+            onAreaChange={setDocumentAreas}
+            status={approvalFilter}
+            onStatusChange={setApprovalFilter}
             counts={boardCounts}
+            visibleAreas={visibleDocumentAreas}
           />
         ) : null}
+        {viewTab === "setup" && channelTab === "email" && isAdmin ? (
+          <Button data-testid="button-add-mailbox" onClick={() => setAddOpen(true)}>
+            Add mailbox
+          </Button>
+        ) : null}
       </div>
+      {viewTab !== "setup" ? (
+        <div className="upload-table-toolbar">
+          <ListSearchInput
+            value={searchQuery}
+            onChange={setSearchQuery}
+            placeholder="Search documents…"
+            testId="input-all-documents-summary-search"
+            className="upload-table-toolbar__search"
+          />
+        </div>
+      ) : null}
       {content}
 
       <ConnectMailboxDialog
@@ -707,7 +736,8 @@ export function UploadPage() {
   const channelCaptureSource =
     channelTab === "all" ? undefined : channelTab;
   const showUploadSourceColumn = channelTab === "all";
-  const routeLabel = routeFilter ? uploadRouteFilterLabel(routeFilter) : null;
+  const documentRouteTarget = routeTargetsForDocumentAreas(documentAreas);
+  const routeLabel = documentRouteTarget ?? null;
 
   return workspaceShell(
     viewTab === "setup" ? (
@@ -715,9 +745,9 @@ export function UploadPage() {
     ) : (
       <AllDocumentsDetailedTable
         captureSource={channelCaptureSource}
-        routeTarget={routeTarget}
+        routeTarget={documentRouteTarget}
         showUploadSource={showUploadSourceColumn}
-        title={channelDocsTitle(channelTab, routeLabel)}
+        showSearchHeader={false}
         emptyTitle={channelEmptyTitle(channelTab, routeLabel)}
         emptyHint={channelEmptyHint(channelTab, routeLabel)}
         onGoUpload={

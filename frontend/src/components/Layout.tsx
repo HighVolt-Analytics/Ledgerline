@@ -2,13 +2,10 @@ import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState, type FocusEvent, type PointerEvent } from "react";
 import {
   BarChart3,
-  BookOpen,
-  CheckCircle2,
   ChevronRight,
   Coins,
   CreditCard,
   FolderKanban,
-  LayoutGrid,
   Link2,
   Pin,
   PinOff,
@@ -31,6 +28,7 @@ import { ProfileSidebarMenu } from "@/components/ProfileSidebarMenu";
 import { SettingsSidebarMenu } from "@/components/SettingsSidebarMenu";
 import { useAuth } from "@/context/AuthContext";
 import { useNavBadges } from "@/hooks/useNavBadges";
+import { useUnpinnedSidebarHover } from "@/hooks/useUnpinnedSidebarHover";
 import { canAccessNavPath, usePermissions } from "@/hooks/usePermissions";
 import type { FlatNavItem } from "@/lib/appNavigation";
 import { canAccessModulePath } from "@/lib/tenantModules";
@@ -133,18 +131,22 @@ const DASHBOARD_ITEM: NavItem = {
   iconTone: "violet",
 };
 
-const WORKSPACE_GROUPS: NavGroup[] = [
-  {
-    label: "",
-    nested: false,
-    items: [
-      { to: "/upload", label: "Upload", icon: Upload, badge: "upload", iconTone: "sky" },
-      { to: "/creations", label: "Contacts", icon: Users, iconTone: "rose" },
-      { to: "/approvals", label: "Approvals", icon: CheckCircle2, badge: "approvals", iconTone: "rust" },
-      { to: "/rules", label: "Rule Book", icon: BookOpen, moduleKey: "rule_book", iconTone: "violet" },
-    ],
-  },
-];
+const UPLOAD_ITEM: NavItem = {
+  to: "/upload",
+  label: "Upload",
+  icon: Upload,
+  badge: "upload",
+  iconTone: "sky",
+};
+
+const CONTACTS_ITEM: NavItem = {
+  to: "/creations",
+  label: "Contacts",
+  icon: Users,
+  iconTone: "rose",
+};
+
+const TOP_LEVEL_ITEMS: NavItem[] = [DASHBOARD_ITEM, UPLOAD_ITEM, CONTACTS_ITEM];
 
 const OPERATIONS_GROUPS: NavGroup[] = [
   {
@@ -207,7 +209,6 @@ type PrimarySection = {
 };
 
 const MAIN_PRIMARY_SECTIONS: PrimarySection[] = [
-  { id: "workspace", label: "Workspace", icon: LayoutGrid, groups: WORKSPACE_GROUPS, iconTone: "blue" },
   { id: "operations", label: "Operations", icon: FolderKanban, groups: OPERATIONS_GROUPS, iconTone: "rust" },
   { id: "finance", label: "Finance", icon: Wallet, groups: FINANCE_GROUPS, iconTone: "amber" },
 ];
@@ -225,7 +226,7 @@ const ALL_SECTIONS: PrimarySection[] = [...MAIN_PRIMARY_SECTIONS, SETTINGS_SECTI
 const MOBILE_NAV: NavItem[] = [
   { to: "/", label: "Dashboard", icon: DashboardIcon, iconTone: "violet" },
   { to: "/upload", label: "Upload", icon: Upload, badge: "upload", iconTone: "sky" },
-  { to: "/approvals", label: "Approvals", icon: CheckCircle2, badge: "approvals", iconTone: "rust" },
+  { to: "/creations", label: "Contacts", icon: Users, iconTone: "rose" },
   { to: "/settings", label: "Settings", icon: Settings, iconTone: "muted" },
 ];
 
@@ -242,8 +243,9 @@ function pathMatchesItem(pathname: string, to: string) {
 
 function sectionForPath(pathname: string): string {
   if (pathname === "/") return "";
+  if (TOP_LEVEL_ITEMS.some((item) => pathMatchesItem(pathname, item.to))) return "";
   if (pathMatchesItem(pathname, REPORTS_ITEM.to)) return "";
-  let bestSection = "workspace";
+  let bestSection = "";
   let bestPathLen = -1;
   for (const section of ALL_SECTIONS) {
     for (const group of section.groups) {
@@ -261,7 +263,7 @@ function sectionForPath(pathname: string): string {
 function isNavItemActive(pathname: string, to: string): boolean {
   if (!pathMatchesItem(pathname, to)) return false;
   const allItems = [
-    DASHBOARD_ITEM,
+    ...TOP_LEVEL_ITEMS,
     REPORTS_ITEM,
     ...ALL_SECTIONS.flatMap((section) => section.groups.flatMap((group) => group.items)),
   ];
@@ -280,7 +282,7 @@ function isNavItemActive(pathname: string, to: string): boolean {
 function navLinkEnd(to: string): boolean {
   if (to === "/") return true;
   const allItems = [
-    DASHBOARD_ITEM,
+    ...TOP_LEVEL_ITEMS,
     REPORTS_ITEM,
     ...ALL_SECTIONS.flatMap((section) => section.groups.flatMap((group) => group.items)),
   ];
@@ -347,7 +349,6 @@ export function Layout() {
     sectionForPath(pathname)
   );
   const [searchOpen, setSearchOpen] = useState(false);
-  const [sidebarHovered, setSidebarHovered] = useState(false);
   const [sidebarPinned, setSidebarPinned] = useState(() => {
     try {
       return localStorage.getItem(SIDEBAR_PIN_STORAGE_KEY) === "true";
@@ -355,6 +356,15 @@ export function Layout() {
       return false;
     }
   });
+  const {
+    sidebarHovered,
+    setSidebarHovered,
+    sidebarRef,
+    closeHover,
+    onSidebarPointerEnter,
+    onSidebarPointerLeave,
+    showDismiss,
+  } = useUnpinnedSidebarHover(sidebarPinned, pathname);
   const prevPathname = useRef(pathname);
   const accessToken = getAccessToken();
 
@@ -417,11 +427,15 @@ export function Layout() {
 
   const searchableNavItems = useMemo((): FlatNavItem[] => {
     const items: FlatNavItem[] = [];
-    if (canShowNavItem(DASHBOARD_ITEM)) {
+    for (const item of TOP_LEVEL_ITEMS) {
+      if (!canShowNavItem(item)) continue;
       items.push({
-        ...DASHBOARD_ITEM,
-        icon: DASHBOARD_ITEM.icon as FlatNavItem["icon"],
-        group: "Dashboard",
+        to: item.to,
+        label: item.label,
+        icon: item.icon as FlatNavItem["icon"],
+        badge: item.badge,
+        moduleKey: item.moduleKey,
+        group: item.label,
       });
     }
     for (const section of ALL_SECTIONS) {
@@ -569,28 +583,43 @@ export function Layout() {
       </div>
 
       <nav className="primary-sidebar__nav" aria-label="Main sections">
-        {canShowNavItem(DASHBOARD_ITEM) && (
+        {TOP_LEVEL_ITEMS.filter(canShowNavItem).map((item) => (
           <NavLink
-            to={DASHBOARD_ITEM.to}
-            end
-            onPointerEnter={() => prefetchRoute(DASHBOARD_ITEM.to)}
-            aria-label={iconOnly ? DASHBOARD_ITEM.label : undefined}
-            data-sidebar-tip={iconOnly ? DASHBOARD_ITEM.label : undefined}
-            data-testid={navTestId(DASHBOARD_ITEM.label)}
+            key={item.to}
+            to={item.to}
+            end={item.to === "/" ? true : navLinkEnd(item.to)}
+            onPointerEnter={() => prefetchRoute(item.to)}
+            aria-label={iconOnly ? item.label : undefined}
+            data-sidebar-tip={iconOnly ? item.label : undefined}
+            data-testid={navTestId(item.label)}
             className={cn(
-              "primary-sidebar__topic primary-sidebar__topic--dashboard",
+              "primary-sidebar__topic",
+              item.to === "/" && "primary-sidebar__topic--dashboard",
               iconOnly && "primary-sidebar__topic--icon-only",
-              isNavItemActive(pathname, DASHBOARD_ITEM.to) && "primary-sidebar__topic--active"
+              isNavItemActive(pathname, item.to) && "primary-sidebar__topic--active"
             )}
           >
-            <SidebarIconTile tone={DASHBOARD_ITEM.iconTone}>
-              <DASHBOARD_ITEM.icon className="primary-sidebar__topic-icon" aria-hidden />
+            <SidebarIconTile tone={item.iconTone}>
+              <item.icon className="primary-sidebar__topic-icon" aria-hidden />
             </SidebarIconTile>
             {!iconOnly && (
-              <span className="primary-sidebar__topic-label">{DASHBOARD_ITEM.label}</span>
+              <>
+                <span className="primary-sidebar__topic-label">{item.label}</span>
+                {badgeCount(item.badge, counts) > 0 ? (
+                  <span className="primary-sidebar__nav-item-badge tnum">
+                    {badgeCount(item.badge, counts)}
+                  </span>
+                ) : null}
+              </>
             )}
+            {iconOnly && badgeCount(item.badge, counts) > 0 ? (
+              <span
+                className="primary-sidebar__nav-item-dot"
+                aria-label={`${badgeCount(item.badge, counts)} pending`}
+              />
+            ) : null}
           </NavLink>
-        )}
+        ))}
         {visiblePrimarySections.map(({ id, label, icon: Icon, iconTone, groups }) => (
           <div key={id} className="primary-sidebar__section">
             <button
@@ -693,7 +722,17 @@ export function Layout() {
         sidebarPinned && "app-shell--primary-pinned"
       )}
     >
+      {showDismiss ? (
+        <div
+          className="primary-sidebar__dismiss"
+          aria-hidden="true"
+          data-testid="primary-sidebar-dismiss"
+          onPointerEnter={closeHover}
+          onPointerDown={closeHover}
+        />
+      ) : null}
       <aside
+        ref={sidebarRef}
         className={cn(
           "primary-sidebar",
           !sidebarPinned && "primary-sidebar--icon-rail",
@@ -701,8 +740,8 @@ export function Layout() {
           sidebarPinned && "primary-sidebar--pinned"
         )}
         data-testid="primary-sidebar"
-        onMouseEnter={!sidebarPinned ? () => setSidebarHovered(true) : undefined}
-        onMouseLeave={!sidebarPinned ? () => setSidebarHovered(false) : undefined}
+        onPointerEnter={!sidebarPinned ? onSidebarPointerEnter : undefined}
+        onPointerLeave={!sidebarPinned ? onSidebarPointerLeave : undefined}
         onPointerOver={!sidebarPinned && !sidebarHovered ? onSidebarTipIntent : undefined}
         onFocusCapture={!sidebarPinned && !sidebarHovered ? onSidebarTipIntent : undefined}
       >
@@ -711,7 +750,11 @@ export function Layout() {
         ) : (
           <>
             <div className="primary-sidebar__rail">{renderSidebarBody(true)}</div>
-            <div className="primary-sidebar__flyout" aria-hidden={!sidebarExpanded}>
+            <div
+              className="primary-sidebar__flyout"
+              aria-hidden={!sidebarExpanded}
+              onPointerLeave={!sidebarPinned ? onSidebarPointerLeave : undefined}
+            >
               {renderSidebarBody(false)}
             </div>
           </>

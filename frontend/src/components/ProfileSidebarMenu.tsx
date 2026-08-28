@@ -271,7 +271,10 @@ export function ProfileSidebarMenu({
                             "profile-menu__flyout-item",
                             themePreference === opt.id && "profile-menu__flyout-item--theme-selected"
                           )}
-                          onClick={() => setThemePreference(opt.id)}
+                          onClick={() => {
+                            setThemePreference(opt.id);
+                            closeMenu();
+                          }}
                         >
                           <span>{opt.label}</span>
                           {themePreference === opt.id && (
