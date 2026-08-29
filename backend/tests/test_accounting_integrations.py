@@ -5,7 +5,6 @@ from __future__ import annotations
 import uuid
 from unittest.mock import AsyncMock, MagicMock
 
-import jwt
 import pytest
 
 from app.config import get_settings
@@ -83,7 +82,7 @@ def test_oauth_state_rejects_provider_mismatch() -> None:
         tenant_id=TESTING_TENANT_UUID,
         user_id=1,
     )
-    with pytest.raises(jwt.InvalidTokenError):
+    with pytest.raises(ValueError):
         parse_oauth_state(state, provider=AccountingProvider.QUICKBOOKS_ONLINE.value)
 
 
@@ -247,16 +246,17 @@ async def test_exchange_xero_code_stores_encrypted_tokens(
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
     monkeypatch.setattr(
-        "app.services.integration.accounting_integration_service.httpx.AsyncClient",
+        "app.integrations.xero.oauth.httpx.AsyncClient",
         lambda *args, **kwargs: mock_client,
     )
 
-    row = await complete_oauth_callback(
+    from app.integrations.xero.connect_api import complete_oauth_callback as xero_complete
+
+    row = await xero_complete(
         db_session,
-        provider=AccountingProvider.XERO.value,
-        code="auth-code",
         tenant_id=TESTING_TENANT_UUID,
         user_id=admin.id,
+        code="auth-code",
     )
     assert row.status == AccountingIntegrationStatus.CONNECTED.value
     assert row.display_name == "Demo Company"

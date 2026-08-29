@@ -118,15 +118,10 @@ async def validate_oauth_state_replay(state_payload: dict[str, Any]) -> None:
 
 
 def build_xero_authorize_url(*, state: str) -> str:
-    settings = get_settings()
-    params = {
-        "response_type": "code",
-        "client_id": settings.xero_client_id.strip(),
-        "redirect_uri": settings.xero_redirect_uri.strip(),
-        "scope": resolve_xero_scopes(),
-        "state": state,
-    }
-    return f"{settings.xero_authorize_url}?{urlencode(params)}"
+    # STAGE 2: original URL builder commented — use app.integrations.xero.oauth.authorize_url
+    from app.integrations.xero.oauth import authorize_url
+
+    return authorize_url(state=state)
 
 
 def build_quickbooks_authorize_url(*, state: str) -> str:
@@ -633,75 +628,10 @@ async def _exchange_xero_code(
     user_id: int,
     code: str,
 ) -> AccountingIntegration:
-    settings = get_settings()
-    auth = base64.b64encode(
-        f"{settings.xero_client_id.strip()}:{settings.xero_client_secret.strip()}".encode()
-    ).decode("ascii")
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        token_resp = await client.post(
-            get_settings().xero_token_url,
-            headers={
-                "Authorization": f"Basic {auth}",
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
-            data={
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": settings.xero_redirect_uri.strip(),
-            },
-        )
-        if token_resp.status_code >= 400:
-            raise RuntimeError("Xero token exchange failed")
-        token_data = token_resp.json()
-        access_token = str(token_data.get("access_token") or "")
-        if not access_token:
-            raise RuntimeError("Xero token exchange returned no access token")
-        refresh_token = token_data.get("refresh_token")
-        expires_in = int(token_data.get("expires_in") or 0)
-        expires_at = (
-            datetime.now(timezone.utc) + timedelta(seconds=expires_in)
-            if expires_in > 0
-            else None
-        )
-        scopes = token_data.get("scope")
+    # STAGE 2: original token exchange commented — use app.integrations.xero.connect_api
+    from app.integrations.xero.connect_api import complete_oauth_callback as new_complete
 
-        connections_resp = await client.get(
-            get_settings().xero_connections_url,
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Accept": "application/json",
-            },
-        )
-        if connections_resp.status_code >= 400:
-            raise RuntimeError("Failed to load Xero organisation connections")
-        connections = connections_resp.json()
-        if not connections:
-            raise RuntimeError("No Xero organisations available for this account")
-
-    integration = await _upsert_integration(
-        db,
-        tenant_id=tenant_id,
-        provider=AccountingProvider.XERO.value,
-        user_id=user_id,
-        provider_tenant_id=None,
-        display_name=None,
-        access_token=access_token,
-        refresh_token=str(refresh_token) if refresh_token else None,
-        expires_at=expires_at,
-        scopes=str(scopes) if scopes else resolve_xero_scopes(),
-        status=AccountingIntegrationStatus.ORGANISATION_SELECTION_REQUIRED.value,
-    )
-    persisted = await _upsert_xero_connections(
-        db,
-        integration=integration,
-        tenant_id=tenant_id,
-        connections=connections,
-    )
-    return await _apply_xero_org_selection(
-        db,
-        integration=integration,
-        connections=persisted,
-    )
+    return await new_complete(db, tenant_id=tenant_id, user_id=user_id, code=code)
 
 
 def _quickbooks_api_base() -> str:

@@ -29,21 +29,28 @@ from app.schemas.accounting_integration import (
     XeroSyncSettingsResponse,
 )
 from app.schemas.common import ApiEnvelope
+from app.integrations.core.oauth_state import (
+    parse_oauth_state as parse_xero_oauth_state,
+    validate_oauth_state_replay as validate_xero_oauth_replay,
+)
+from app.integrations.xero.connect_api import (
+    build_connect_url as xero_build_connect_url,
+    complete_oauth_callback as xero_complete_oauth_callback,
+    list_xero_connections,
+    select_xero_connection,
+)
+from app.integrations.xero.oauth import OAUTH_STATE_TYP, PROVIDER as XERO_PROVIDER, is_configured as xero_configured
 from app.services.integration.accounting_integration_service import (
     build_connect_url,
     complete_oauth_callback,
     disconnect_integration,
-    
     integration_status_item,
     list_integrations,
-    list_xero_connections,
     parse_oauth_state,
     provider_label,
     quickbooks_configured,
     record_integration_error,
-    select_xero_connection,
     validate_oauth_state_replay,
-    xero_configured,
 )
 from app.services.integration.xero.xero_client import XeroApiError
 from app.services.integration.xero.xero_push_service import get_invoice_xero_status, push_invoice_to_xero
@@ -136,8 +143,7 @@ async def xero_connect(
 ) -> ApiEnvelope[AccountingConnectResponse]:
     if not xero_configured():
         raise HTTPException(503, _OAUTH_ERRORS["not_configured"])
-    url = build_connect_url(
-        provider=AccountingProvider.XERO.value,
+    url = xero_build_connect_url(
         tenant_id=ctx.tenant_id,
         user_id=ctx.user_id or 0,
     )
@@ -343,12 +349,12 @@ async def xero_oauth_callback(
         return RedirectResponse(url=url, status_code=302)
 
     try:
-        payload = parse_oauth_state(state, provider=provider)
+        payload = parse_xero_oauth_state(state, provider=XERO_PROVIDER, typ=OAUTH_STATE_TYP)
         tenant_id = parse_tenant_id(payload["org_id"])
         if tenant_id is None:
             raise ValueError("Invalid OAuth session")
         user_id = int(payload["sub"])
-        await validate_oauth_state_replay(payload)
+        await validate_xero_oauth_replay(payload)
     except Exception as exc:
         logger.warning("xero_oauth_state_invalid", error=str(exc))
         url = _append_query(return_base, {query_key: "error", "reason": "invalid_state"})
@@ -362,12 +368,11 @@ async def xero_oauth_callback(
         return RedirectResponse(url=url, status_code=302)
 
     try:
-        row = await complete_oauth_callback(
+        row = await xero_complete_oauth_callback(
             db,
-            provider=provider,
-            code=code,
             tenant_id=tenant_id,
             user_id=user_id,
+            code=code,
         )
         user = await db.get(User, user_id)
         await log_event(
