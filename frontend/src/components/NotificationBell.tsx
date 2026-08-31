@@ -16,6 +16,8 @@ import { kpiModuleIconClass } from "@/lib/kpiModuleColors";
 
 type NotificationBellProps = {
   collapsed?: boolean;
+  /** Compact icon for page headers. Sidebar is the default. */
+  variant?: "sidebar" | "header";
 };
 
 function severityKpiTone(severity: NotificationItem["severity"]): "rose" | "rust" | "blue" {
@@ -79,11 +81,12 @@ function NotificationCard({
   );
 }
 
-export function NotificationBell({ collapsed = false }: NotificationBellProps) {
+export function NotificationBell({ collapsed = false, variant = "sidebar" }: NotificationBellProps) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const { data, isLoading, markAllRead } = useNotifications();
+  const isHeader = variant === "header";
 
   const unreadCount = data?.unread_count ?? 0;
   const badgeLabel = formatUnreadBadge(unreadCount);
@@ -123,27 +126,46 @@ export function NotificationBell({ collapsed = false }: NotificationBellProps) {
       <button
         type="button"
         className={cn(
-          "primary-sidebar__topic primary-sidebar__notifications-trigger",
-          open && "primary-sidebar__topic--active"
+          isHeader
+            ? "page-notifications-trigger"
+            : "primary-sidebar__topic primary-sidebar__notifications-trigger",
+          open && (isHeader ? "page-notifications-trigger--active" : "primary-sidebar__topic--active")
         )}
-        data-testid="button-notifications"
+        data-testid={isHeader ? "button-notifications-page" : "button-notifications"}
         aria-label={unreadCount > 0 ? `${unreadCount} unread notifications` : "Notifications"}
         aria-expanded={open}
         aria-haspopup="dialog"
-        data-sidebar-tip={collapsed ? "Notifications" : undefined}
+        data-sidebar-tip={!isHeader && collapsed ? "Notifications" : undefined}
         onClick={() => setOpen(true)}
       >
-        <span className="primary-sidebar__notifications-icon-wrap">
-          <span className={cn("sidebar-icon-tile", kpiModuleIconClass("rose"))} aria-hidden>
-            <Bell className="primary-sidebar__topic-icon" />
-          </span>
+        <span
+          className={
+            isHeader
+              ? "page-notifications-trigger__icon-wrap"
+              : "primary-sidebar__notifications-icon-wrap"
+          }
+        >
+          {isHeader ? (
+            <Bell className="page-notifications-trigger__icon" aria-hidden />
+          ) : (
+            <span className={cn("sidebar-icon-tile", kpiModuleIconClass("rose"))} aria-hidden>
+              <Bell className="primary-sidebar__topic-icon" />
+            </span>
+          )}
           {badgeLabel ? (
-            <span className="primary-sidebar__notifications-badge" aria-hidden>
+            <span
+              className={
+                isHeader
+                  ? "page-notifications-trigger__badge"
+                  : "primary-sidebar__notifications-badge"
+              }
+              aria-hidden
+            >
               {badgeLabel}
             </span>
           ) : null}
         </span>
-        {!collapsed && (
+        {!isHeader && !collapsed && (
           <span className="primary-sidebar__topic-label">Notifications</span>
         )}
       </button>
@@ -164,7 +186,7 @@ export function NotificationBell({ collapsed = false }: NotificationBellProps) {
                 role="dialog"
                 aria-modal="true"
                 aria-label="Notifications"
-                data-testid="menu-notifications"
+                data-testid={isHeader ? "menu-notifications-page" : "menu-notifications"}
                 data-state={open ? "open" : "closed"}
                 className={cn(
                   "invoice-drawer-panel invoice-drawer-panel--sheet notifications-drawer",

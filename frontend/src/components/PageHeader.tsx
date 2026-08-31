@@ -27,7 +27,7 @@ export function PageHeader({
         <div
           className={cn(
             "page-header flex flex-wrap justify-between gap-4",
-            headline ? "items-end" : "items-start"
+            headline && actions ? "items-center" : headline ? "items-end" : "items-start"
           )}
         >
           {hasIntro ? (

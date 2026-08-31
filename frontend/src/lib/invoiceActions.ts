@@ -233,6 +233,18 @@ export function validateInvoiceReadyForApproval(
   fieldsOverride?: ApprovalFieldBag
 ): { ok: true } | { ok: false; message: string } {
   const fields = approvalFieldsFromInvoice(fieldsOverride ?? inv);
+  if ((inv.route_target || "").trim() === "Team Expenses" ||
+      (inv.route_target || "").trim() === "Expenses Management") {
+    const raw = String(fields.total ?? "").trim();
+    const n = Number(raw);
+    if (!raw || Number.isNaN(n) || n <= 0) {
+      return {
+        ok: false,
+        message:
+          "Cannot approve: amount is missing or zero. Enter the amount on the Fields tab, save, then approve.",
+      };
+    }
+  }
   const compulsory = compulsoryFieldsForInvoice(inv, documentTypes);
   return validateInvoiceFieldsForApproval(fields, compulsory.length ? compulsory : undefined);
 }

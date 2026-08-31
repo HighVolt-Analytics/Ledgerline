@@ -22,6 +22,8 @@ from app.services.payments.journal_generator import (
     is_balanced,
 )
 from app.services.payments.journal_persist_service import persist_journal_lines
+from app.services.payments.fiscal_period_service import PeriodClosedError
+from app.services.payments.journal_reversal_service import reverse_batches_for_entries
 from app.services.master_data.journal_counterparty_resolver import (
     resolve_counterparty_registry_ids_for_journal,
 )
@@ -157,11 +159,25 @@ async def _regenerate_journal_entries(
             )
         )
     ).scalars().all()
-    for entry in existing_entries:
-        await session.delete(entry)
-    await session.flush()
+    await reverse_batches_for_entries(
+        session, existing_entries, reason="remap_regenerate"
+    )
 
-    persist_journal_lines(session, invoice, lines, base_currency=base_currency)
+    try:
+        await persist_journal_lines(session, invoice, lines, base_currency=base_currency)
+    except PeriodClosedError:
+        logger.warning(
+            "remap_journal_regen_skipped_period_closed",
+            invoice_id=invoice.id,
+            tenant_id=str(invoice.tenant_id),
+        )
+        await log_event(
+            session,
+            "journal_period_closed",
+            invoice_id=invoice.id,
+            detail={"context": "remap_skip"},
+        )
+        return False
     return True
 
 

@@ -7,7 +7,9 @@ Hybrid resolve order:
 3) Known employee on email/WhatsApp/Viber → catalogue Team Expenses DT
    (expense claim vs advance requisition), unless type-suggest role hints
    show commercial structure (PO / SO / credit note). Empty hints keep this
-   force. Invoice/receipt number alone is not commercial.
+   force. Invoice/receipt number alone is not commercial. The force then
+   scores Team Expenses catalogue rows against the vision heading and
+   breaks title-score ties with the claim-kind those titles imply.
 4) Deterministic heading-kind scoring (same scorer as PDF segment classify)
 5) Tenant heading learning (exact normalized title → prior human_confirmed_dt)
 6) Configured classifiers (recognition / playbook identity signals)
@@ -378,6 +380,94 @@ async def _log_te_channel_event(
     await log_event(session, event, invoice_id=invoice_id, detail=detail)
 
 
+def _invoice_vision_title_labels(invoice: Any | None) -> list[str]:
+    """Printed title / canonical type already persisted from type-suggest."""
+    labels: list[str] = []
+    if invoice is None:
+        return labels
+    heading = (getattr(invoice, "document_heading", None) or "").strip()
+    if heading:
+        labels.append(heading)
+    raw_fields = getattr(invoice, "extracted_fields", None) or {}
+    if isinstance(raw_fields, str):
+        try:
+            raw_fields = json.loads(raw_fields)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raw_fields = {}
+    if isinstance(raw_fields, dict):
+        for key in ("canonical_document_type", "document_heading"):
+            value = str(raw_fields.get(key) or "").strip()
+            if value and value not in labels:
+                labels.append(value)
+    return labels
+
+
+def _best_team_expense_dt_for_channel_force(
+    document_types: Sequence[DocumentTypeDefinition],
+    *,
+    labels: Sequence[str],
+    preferred_kind: str | None,
+) -> DocumentTypeDefinition | None:
+    """Pick a TE-family DT from vision titles already on the invoice.
+
+    Full-catalogue title match (step 2) can abort on a tie — e.g. both
+    ``Employee advance request`` and ``Expense against advance`` score 0.94
+    on ``Advance Requisition`` because the scorer strips ``requisition`` down
+    to ``advance``. Restrict scoring to Team Expenses rows and break remaining
+    ties with the claim-kind those titles imply:
+    ``expense against advance`` → claim (DT-10); ``advance requisition`` /
+    ``advance request`` → advance (DT-09). Same phrases as
+    ``HEADING_KIND_TOKENS`` / ``infer_team_expense_kind_from_labels``.
+    """
+    from app.services.classification.catalogue_title_match import (
+        score_definition_for_vision_title,
+    )
+    from app.services.classification.document_type_catalog import (
+        team_expenses_document_types,
+    )
+    from app.services.purchase.team_expense_kind_service import (
+        document_type_team_expense_kind,
+    )
+
+    te_rows = team_expenses_document_types(document_types)
+    if not te_rows:
+        return None
+
+    needles = [str(label).strip() for label in labels if str(label).strip()]
+    scored: list[tuple[DocumentTypeDefinition, float]] = []
+    for definition in te_rows:
+        best = 0.0
+        for needle in needles:
+            best = max(best, score_definition_for_vision_title(needle, definition))
+        if best > 0:
+            scored.append((definition, best))
+    if not scored:
+        return None
+
+    scored.sort(
+        key=lambda item: (
+            item[1],
+            -int(getattr(item[0].classifier, "priority", 100) or 100),
+        ),
+        reverse=True,
+    )
+    top_def, top_score = scored[0]
+    runner_score = scored[1][1] if len(scored) > 1 else None
+    if runner_score is None or (top_score - runner_score) >= _AMBIGUITY_MARGIN:
+        return top_def
+
+    kind = (preferred_kind or "").strip().lower()
+    if not kind:
+        return None
+    tied = [
+        definition
+        for definition, score in scored
+        if (top_score - score) < _AMBIGUITY_MARGIN
+        and document_type_team_expense_kind(definition) == kind
+    ]
+    return tied[0] if len(tied) == 1 else None
+
+
 def _team_expense_channel_map_result(
     *,
     invoice: Any | None,
@@ -387,26 +477,55 @@ def _team_expense_channel_map_result(
     prior_code: str | None = None,
     prior_confidence: float | None = None,
 ) -> VisionDocumentTypeMapResult | None:
-    """Pick claim vs advance TE DT for employee-channel force path."""
+    """Pick claim vs advance TE DT for employee-channel force path.
+
+    The force itself is gated elsewhere (Fix 4). This only chooses *which*
+    Team Expenses catalogue row to land on. Title-score ties are broken with
+    ``infer_team_expense_kind_from_labels`` (requisition/request vs
+    ``expense against advance``), not a default row. Step 4 uses the same
+    phrases via ``HEADING_KIND_TOKENS``.
+    """
     from app.schemas.rule_book_config import TEAM_EXPENSE_KIND_CLAIM
+    from app.services.classification.document_type_catalog import (
+        team_expenses_document_types,
+    )
+    from app.services.purchase.team_expense_kind_service import (
+        infer_team_expense_kind_from_labels,
+    )
     from app.services.purchase.team_expense_route_policy import (
         infer_preferred_team_expense_kind,
         primary_team_expenses_document_type,
     )
 
+    labels = _invoice_vision_title_labels(invoice)
     preferred = infer_preferred_team_expense_kind(invoice, document_types)
-    preferred_code = (prior_code or "").strip().upper() or None
-    primary = primary_team_expenses_document_type(
+    if not preferred:
+        preferred = infer_team_expense_kind_from_labels(*labels)
+
+    primary = _best_team_expense_dt_for_channel_force(
         document_types,
-        preferred_kind=preferred or TEAM_EXPENSE_KIND_CLAIM,
-        preferred_code=preferred_code,
+        labels=labels,
+        preferred_kind=preferred,
     )
+    te_codes = {
+        (row.code or "").strip().upper()
+        for row in team_expenses_document_types(document_types)
+        if (row.code or "").strip()
+    }
+    prior = (prior_code or "").strip().upper() or None
+    preferred_code = prior if prior in te_codes and primary is None and not preferred else None
+    if primary is None:
+        primary = primary_team_expenses_document_type(
+            document_types,
+            preferred_kind=preferred or TEAM_EXPENSE_KIND_CLAIM,
+            preferred_code=preferred_code,
+        )
     if primary is None:
         return None
     code = (primary.code or "").strip().upper() or None
     if not code:
         return None
-    runner_up = (prior_code or "").strip().upper() or None
+    runner_up = prior if prior and prior != code else None
     return VisionDocumentTypeMapResult(
         code=code,
         confidence=0.95,

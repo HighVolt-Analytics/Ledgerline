@@ -115,6 +115,9 @@ const CustomersPage = lazy(() =>
 const PaymentsPage = lazy(() =>
   import("@/pages/PaymentsPage").then((m) => ({ default: m.PaymentsPage }))
 );
+const BankFeedsPage = lazy(() =>
+  import("@/pages/BankFeedsPage").then((m) => ({ default: m.BankFeedsPage }))
+);
 const LedgerLinkPage = lazy(() =>
   import("@/pages/LedgerLinkPage").then((m) => ({ default: m.LedgerLinkPage }))
 );
@@ -377,6 +380,16 @@ export default function App() {
                 <ModuleRoute moduleKey="payments">
                   <LazyPage>
                     <PaymentsPage />
+                  </LazyPage>
+                </ModuleRoute>
+              }
+            />
+            <Route
+              path="bank-feeds"
+              element={
+                <ModuleRoute moduleKey="bank_feeds">
+                  <LazyPage>
+                    <BankFeedsPage />
                   </LazyPage>
                 </ModuleRoute>
               }

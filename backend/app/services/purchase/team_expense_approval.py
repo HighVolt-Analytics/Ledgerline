@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import attributes as orm_attributes
@@ -258,6 +260,37 @@ async def apply_team_expense_approval_gate(
     return True
 
 
+_MISSING_AMOUNT_MESSAGE = (
+    "Cannot approve: amount is missing or zero. "
+    "Enter the amount on the Fields tab, save, then approve."
+)
+
+
+def posting_amount_for_approval(invoice: Invoice) -> Decimal | None:
+    """Invoice total as a posting amount, or None when absent/unparseable."""
+    raw = invoice.total
+    if raw is None:
+        return None
+    try:
+        return Decimal(str(raw))
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+
+
+def assert_team_expense_amount_approvable(invoice: Invoice) -> None:
+    """Block TE approve when a journal would post nothing.
+
+    ``advance_requisition_requires_approval`` only holds for a manager. Without
+    this check a reviewer can click through a null/zero total and the journal
+    builder posts ``total or 0``.
+    """
+    if invoice.route_target != ROUTE_TEAM:
+        return
+    amount = posting_amount_for_approval(invoice)
+    if amount is None or amount <= 0:
+        raise ValueError(_MISSING_AMOUNT_MESSAGE)
+
+
 async def assert_team_expense_approvable(
     session: AsyncSession,
     invoice: Invoice,
@@ -265,6 +298,8 @@ async def assert_team_expense_approvable(
     """Raise ValueError when team policy blocks manual approval."""
     if invoice.route_target != ROUTE_TEAM:
         return
+
+    assert_team_expense_amount_approvable(invoice)
 
     config = await load_config_for_tenant(session, invoice.tenant_id)
     team_rule = team_rule_for_invoice(invoice, config)

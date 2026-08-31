@@ -15,7 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.customer import CustomerRegistry
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import EntryType, JournalEntry
+from app.models.journal_batch import JournalBatch, JournalBatchStatus
 from app.models.vendor import VendorRegistry
+from tests.journal_test_helpers import seed_journal_batch
 from app.schemas.rule_book_config import ChartOfAccountEntry, PostingDefaults, RuleBookConfigPayload
 from app.services.invoice.remap_service import remap_invoices_for_tenant
 from app.services.master_data.journal_counterparty_resolver import (
@@ -318,20 +320,9 @@ async def test_payment_and_journal_ap_line_share_vendor_registry_id(
         customer_registry_id=customer_reg_id,
     )
     ap_line = [ln for ln in lines if ln.credit > 0][0]
-    db_session.add(
-        JournalEntry(
-            tenant_id=inv.tenant_id,
-            invoice_id=inv.id,
-            date=ap_line.date,
-            account_code=ap_line.account_code,
-            account_name=ap_line.account_name,
-            debit=ap_line.debit,
-            credit=ap_line.credit,
-            entry_type=ap_line.entry_type,
-            vendor_registry_id=ap_line.vendor_registry_id,
-            customer_registry_id=ap_line.customer_registry_id,
-        )
-    )
+    from app.services.payments.journal_persist_service import persist_journal_lines
+
+    await persist_journal_lines(db_session, inv, lines)
     await db_session.flush()
 
     payment = await ensure_payment_for_invoice(db_session, inv)
@@ -382,24 +373,15 @@ async def test_remap_regenerates_journal_with_vendor_registry_id(
     )
     db_session.add(inv)
     await db_session.flush()
-    for code, name, dr, cr, et in [
-        ("6100", "Software", Decimal("100"), Decimal("0"), EntryType.DEBIT),
-        ("1400", "GST Paid", Decimal("10"), Decimal("0"), EntryType.DEBIT),
-        ("2000", "Accounts Payable", Decimal("0"), Decimal("110"), EntryType.CREDIT),
-    ]:
-        db_session.add(
-            JournalEntry(
-                tenant_id=inv.tenant_id,
-                invoice_id=inv.id,
-                date=inv.invoice_date,
-                account_code=code,
-                account_name=name,
-                debit=dr,
-                credit=cr,
-                entry_type=et,
-            )
-        )
-    await db_session.flush()
+    await seed_journal_batch(
+        db_session,
+        inv,
+        [
+            ("6100", "Software", Decimal("100"), Decimal("0"), EntryType.DEBIT),
+            ("1400", "GST Paid", Decimal("10"), Decimal("0"), EntryType.DEBIT),
+            ("2000", "Accounts Payable", Decimal("0"), Decimal("110"), EntryType.CREDIT),
+        ],
+    )
 
     async def _load_config(_session, _tenant_id):
         return config
@@ -415,6 +397,7 @@ async def test_remap_regenerates_journal_with_vendor_registry_id(
         "app.services.invoice.remap_service.map_invoice_to_account",
         _map_invoice,
     )
+
     async def _no_reclassify(*_args, **_kwargs):
         return False
 
@@ -437,18 +420,22 @@ async def test_remap_regenerates_journal_with_vendor_registry_id(
     result = await remap_invoices_for_tenant(db_session, tenant_id=TESTING_TENANT_UUID)
     assert result.journals_regenerated == 1
 
-    entries = (
+    live_entries = (
         await db_session.execute(
-            select(JournalEntry).where(
+            select(JournalEntry)
+            .join(JournalBatch, JournalBatch.id == JournalEntry.batch_id)
+            .where(
                 *journal_entries_for_invoice(inv.tenant_id, inv.id),
+                JournalBatch.status == JournalBatchStatus.POSTED.value,
+                JournalBatch.reversal_reason.is_(None),
             )
         )
     ).scalars().all()
-    ap_lines = [entry for entry in entries if entry.credit > 0]
+    ap_lines = [entry for entry in live_entries if entry.credit > 0]
     assert len(ap_lines) == 1
     assert ap_lines[0].vendor_registry_id == vendor.id
     assert ap_lines[0].customer_registry_id is None
 
-    non_ap = [entry for entry in entries if entry.credit == 0]
+    non_ap = [entry for entry in live_entries if entry.credit == 0]
     assert all(entry.vendor_registry_id is None for entry in non_ap)
     assert all(entry.customer_registry_id is None for entry in non_ap)

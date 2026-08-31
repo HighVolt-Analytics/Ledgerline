@@ -215,12 +215,21 @@ def _line_effective_amount_groups(
     header_subtotal: Decimal,
 ) -> list[tuple[str, Decimal]]:
     """Group line net amounts by effective ledger; residual to parent when needed."""
+    from sqlalchemy import inspect as sa_inspect
+
     from app.services.invoice.line_item_gl_service import effective_line_ledger
+
+    # generate_entries is sync — never trigger async lazy-load of line_items.
+    state = sa_inspect(invoice)
+    if state is not None and "line_items" in state.unloaded:
+        line_items: list = []
+    else:
+        line_items = list(getattr(invoice, "line_items", None) or [])
 
     parent = (parent_ledger or "").strip()
     amounts: dict[str, Decimal] = {}
     ordered: list[str] = []
-    for line in getattr(invoice, "line_items", None) or []:
+    for line in line_items:
         raw = getattr(line, "amount", None)
         if raw is None:
             continue

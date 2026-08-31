@@ -2,13 +2,10 @@ import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState, type FocusEvent, type PointerEvent } from "react";
 import {
   BarChart3,
-  BookOpen,
-  CheckCircle2,
   ChevronRight,
   Coins,
   CreditCard,
   FolderKanban,
-  LayoutGrid,
   Link2,
   Pin,
   PinOff,
@@ -31,6 +28,7 @@ import { ProfileSidebarMenu } from "@/components/ProfileSidebarMenu";
 import { SettingsSidebarMenu } from "@/components/SettingsSidebarMenu";
 import { useAuth } from "@/context/AuthContext";
 import { useNavBadges } from "@/hooks/useNavBadges";
+import { useUnpinnedSidebarHover } from "@/hooks/useUnpinnedSidebarHover";
 import { canAccessNavPath, usePermissions } from "@/hooks/usePermissions";
 import type { FlatNavItem } from "@/lib/appNavigation";
 import { canAccessModulePath } from "@/lib/tenantModules";
@@ -55,6 +53,7 @@ const ROUTE_PREFETCH: Record<string, () => Promise<unknown>> = {
   "/expenses": () => import("@/pages/ExpensesManagementPage"),
   "/collections": () => import("@/pages/CollectionsPage"),
   "/payments": () => import("@/pages/PaymentsPage"),
+  "/bank-feeds": () => import("@/pages/BankFeedsPage"),
   "/customers": () => import("@/pages/CustomersPage"),
   "/vendors": () => import("@/pages/VendorsPage"),
   "/ledger-link": () => import("@/pages/LedgerLinkPage"),
@@ -133,18 +132,22 @@ const DASHBOARD_ITEM: NavItem = {
   iconTone: "violet",
 };
 
-const WORKSPACE_GROUPS: NavGroup[] = [
-  {
-    label: "",
-    nested: false,
-    items: [
-      { to: "/upload", label: "Upload", icon: Upload, badge: "upload", iconTone: "sky" },
-      { to: "/creations", label: "Contacts", icon: Users, iconTone: "rose" },
-      { to: "/approvals", label: "Approvals", icon: CheckCircle2, badge: "approvals", iconTone: "rust" },
-      { to: "/rules", label: "Rule Book", icon: BookOpen, moduleKey: "rule_book", iconTone: "violet" },
-    ],
-  },
-];
+const UPLOAD_ITEM: NavItem = {
+  to: "/upload",
+  label: "Upload",
+  icon: Upload,
+  badge: "upload",
+  iconTone: "sky",
+};
+
+const CONTACTS_ITEM: NavItem = {
+  to: "/creations",
+  label: "Contacts",
+  icon: Users,
+  iconTone: "rose",
+};
+
+const TOP_LEVEL_ITEMS: NavItem[] = [DASHBOARD_ITEM, UPLOAD_ITEM, CONTACTS_ITEM];
 
 const OPERATIONS_GROUPS: NavGroup[] = [
   {
@@ -207,7 +210,6 @@ type PrimarySection = {
 };
 
 const MAIN_PRIMARY_SECTIONS: PrimarySection[] = [
-  { id: "workspace", label: "Workspace", icon: LayoutGrid, groups: WORKSPACE_GROUPS, iconTone: "blue" },
   { id: "operations", label: "Operations", icon: FolderKanban, groups: OPERATIONS_GROUPS, iconTone: "rust" },
   { id: "finance", label: "Finance", icon: Wallet, groups: FINANCE_GROUPS, iconTone: "amber" },
 ];
@@ -225,7 +227,7 @@ const ALL_SECTIONS: PrimarySection[] = [...MAIN_PRIMARY_SECTIONS, SETTINGS_SECTI
 const MOBILE_NAV: NavItem[] = [
   { to: "/", label: "Dashboard", icon: DashboardIcon, iconTone: "violet" },
   { to: "/upload", label: "Upload", icon: Upload, badge: "upload", iconTone: "sky" },
-  { to: "/approvals", label: "Approvals", icon: CheckCircle2, badge: "approvals", iconTone: "rust" },
+  { to: "/creations", label: "Contacts", icon: Users, iconTone: "rose" },
   { to: "/settings", label: "Settings", icon: Settings, iconTone: "muted" },
 ];
 
@@ -235,20 +237,32 @@ function navTestId(label: string) {
   return `nav-${label.toLowerCase().replace(/\s+|&/g, "-")}`;
 }
 
-function pathMatchesItem(pathname: string, to: string) {
+function pathMatchesItem(pathname: string, to: string, search = "") {
+  if (to.includes("?")) {
+    const [path, queryPart] = to.split("?", 2);
+    if (pathname !== path) return false;
+    const expected = new URLSearchParams(queryPart);
+    const actual = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+    for (const [key, value] of expected.entries()) {
+      if (actual.get(key) !== value) return false;
+    }
+    return true;
+  }
   if (to === "/") return pathname === "/";
-  return pathname === to || pathname.startsWith(`${to}/`);
+  if (pathname !== to && !pathname.startsWith(`${to}/`)) return false;
+  return true;
 }
 
-function sectionForPath(pathname: string): string {
+function sectionForPath(pathname: string, search = ""): string {
   if (pathname === "/") return "";
-  if (pathMatchesItem(pathname, REPORTS_ITEM.to)) return "";
-  let bestSection = "workspace";
+  if (TOP_LEVEL_ITEMS.some((item) => pathMatchesItem(pathname, item.to, search))) return "";
+  if (pathMatchesItem(pathname, REPORTS_ITEM.to, search)) return "";
+  let bestSection = "";
   let bestPathLen = -1;
   for (const section of ALL_SECTIONS) {
     for (const group of section.groups) {
       for (const item of group.items) {
-        if (pathMatchesItem(pathname, item.to) && item.to.length > bestPathLen) {
+        if (pathMatchesItem(pathname, item.to, search) && item.to.length > bestPathLen) {
           bestSection = section.id;
           bestPathLen = item.to.length;
         }
@@ -258,10 +272,10 @@ function sectionForPath(pathname: string): string {
   return bestSection;
 }
 
-function isNavItemActive(pathname: string, to: string): boolean {
-  if (!pathMatchesItem(pathname, to)) return false;
+function isNavItemActive(pathname: string, to: string, search = ""): boolean {
+  if (!pathMatchesItem(pathname, to, search)) return false;
   const allItems = [
-    DASHBOARD_ITEM,
+    ...TOP_LEVEL_ITEMS,
     REPORTS_ITEM,
     ...ALL_SECTIONS.flatMap((section) => section.groups.flatMap((group) => group.items)),
   ];
@@ -269,7 +283,7 @@ function isNavItemActive(pathname: string, to: string): boolean {
     if (
       item.to !== to &&
       item.to.length > to.length &&
-      pathMatchesItem(pathname, item.to)
+      pathMatchesItem(pathname, item.to, search)
     ) {
       return false;
     }
@@ -280,7 +294,7 @@ function isNavItemActive(pathname: string, to: string): boolean {
 function navLinkEnd(to: string): boolean {
   if (to === "/") return true;
   const allItems = [
-    DASHBOARD_ITEM,
+    ...TOP_LEVEL_ITEMS,
     REPORTS_ITEM,
     ...ALL_SECTIONS.flatMap((section) => section.groups.flatMap((group) => group.items)),
   ];
@@ -324,7 +338,7 @@ function badgeCount(
 }
 
 export function Layout() {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const { user } = useAuth();
   const { data: badges } = useNavBadges();
   const { permissions } = usePermissions();
@@ -344,10 +358,9 @@ export function Layout() {
     collections: badges?.collections_queue_count ?? 0,
   };
   const [expandedSection, setExpandedSection] = useState<string | null>(() =>
-    sectionForPath(pathname)
+    sectionForPath(pathname, search)
   );
   const [searchOpen, setSearchOpen] = useState(false);
-  const [sidebarHovered, setSidebarHovered] = useState(false);
   const [sidebarPinned, setSidebarPinned] = useState(() => {
     try {
       return localStorage.getItem(SIDEBAR_PIN_STORAGE_KEY) === "true";
@@ -355,18 +368,29 @@ export function Layout() {
       return false;
     }
   });
+  const {
+    sidebarHovered,
+    setSidebarHovered,
+    sidebarRef,
+    closeHover,
+    onSidebarPointerEnter,
+    onSidebarPointerLeave,
+    showDismiss,
+  } = useUnpinnedSidebarHover(sidebarPinned, pathname);
   const prevPathname = useRef(pathname);
+  const prevSearch = useRef(search);
   const accessToken = getAccessToken();
 
-  const routeSection = sectionForPath(pathname);
+  const routeSection = sectionForPath(pathname, search);
 
   useEffect(() => {
-    const section = sectionForPath(pathname);
-    if (prevPathname.current !== pathname) {
+    const section = sectionForPath(pathname, search);
+    if (prevPathname.current !== pathname || search !== prevSearch.current) {
       setExpandedSection(section);
     }
     prevPathname.current = pathname;
-  }, [pathname]);
+    prevSearch.current = search;
+  }, [pathname, search]);
 
   useEffect(() => {
     if (sidebarHovered || sidebarPinned) {
@@ -417,11 +441,15 @@ export function Layout() {
 
   const searchableNavItems = useMemo((): FlatNavItem[] => {
     const items: FlatNavItem[] = [];
-    if (canShowNavItem(DASHBOARD_ITEM)) {
+    for (const item of TOP_LEVEL_ITEMS) {
+      if (!canShowNavItem(item)) continue;
       items.push({
-        ...DASHBOARD_ITEM,
-        icon: DASHBOARD_ITEM.icon as FlatNavItem["icon"],
-        group: "Dashboard",
+        to: item.to,
+        label: item.label,
+        icon: item.icon as FlatNavItem["icon"],
+        badge: item.badge,
+        moduleKey: item.moduleKey,
+        group: item.label,
       });
     }
     for (const section of ALL_SECTIONS) {
@@ -455,7 +483,7 @@ export function Layout() {
     level: "subfield" | "nested",
     iconOnly: boolean
   ) => {
-    const active = isNavItemActive(pathname, item.to);
+    const active = isNavItemActive(pathname, item.to, search);
     const count = badgeCount(item.badge, counts);
     const ItemIcon = item.icon;
     return (
@@ -569,28 +597,43 @@ export function Layout() {
       </div>
 
       <nav className="primary-sidebar__nav" aria-label="Main sections">
-        {canShowNavItem(DASHBOARD_ITEM) && (
+        {TOP_LEVEL_ITEMS.filter(canShowNavItem).map((item) => (
           <NavLink
-            to={DASHBOARD_ITEM.to}
-            end
-            onPointerEnter={() => prefetchRoute(DASHBOARD_ITEM.to)}
-            aria-label={iconOnly ? DASHBOARD_ITEM.label : undefined}
-            data-sidebar-tip={iconOnly ? DASHBOARD_ITEM.label : undefined}
-            data-testid={navTestId(DASHBOARD_ITEM.label)}
+            key={item.to}
+            to={item.to}
+            end={item.to === "/" ? true : navLinkEnd(item.to)}
+            onPointerEnter={() => prefetchRoute(item.to)}
+            aria-label={iconOnly ? item.label : undefined}
+            data-sidebar-tip={iconOnly ? item.label : undefined}
+            data-testid={navTestId(item.label)}
             className={cn(
-              "primary-sidebar__topic primary-sidebar__topic--dashboard",
+              "primary-sidebar__topic",
+              item.to === "/" && "primary-sidebar__topic--dashboard",
               iconOnly && "primary-sidebar__topic--icon-only",
-              isNavItemActive(pathname, DASHBOARD_ITEM.to) && "primary-sidebar__topic--active"
+              isNavItemActive(pathname, item.to) && "primary-sidebar__topic--active"
             )}
           >
-            <SidebarIconTile tone={DASHBOARD_ITEM.iconTone}>
-              <DASHBOARD_ITEM.icon className="primary-sidebar__topic-icon" aria-hidden />
+            <SidebarIconTile tone={item.iconTone}>
+              <item.icon className="primary-sidebar__topic-icon" aria-hidden />
             </SidebarIconTile>
             {!iconOnly && (
-              <span className="primary-sidebar__topic-label">{DASHBOARD_ITEM.label}</span>
+              <>
+                <span className="primary-sidebar__topic-label">{item.label}</span>
+                {badgeCount(item.badge, counts) > 0 ? (
+                  <span className="primary-sidebar__nav-item-badge tnum">
+                    {badgeCount(item.badge, counts)}
+                  </span>
+                ) : null}
+              </>
             )}
+            {iconOnly && badgeCount(item.badge, counts) > 0 ? (
+              <span
+                className="primary-sidebar__nav-item-dot"
+                aria-label={`${badgeCount(item.badge, counts)} pending`}
+              />
+            ) : null}
           </NavLink>
-        )}
+        ))}
         {visiblePrimarySections.map(({ id, label, icon: Icon, iconTone, groups }) => (
           <div key={id} className="primary-sidebar__section">
             <button
@@ -693,7 +736,17 @@ export function Layout() {
         sidebarPinned && "app-shell--primary-pinned"
       )}
     >
+      {showDismiss ? (
+        <div
+          className="primary-sidebar__dismiss"
+          aria-hidden="true"
+          data-testid="primary-sidebar-dismiss"
+          onPointerEnter={closeHover}
+          onPointerDown={closeHover}
+        />
+      ) : null}
       <aside
+        ref={sidebarRef}
         className={cn(
           "primary-sidebar",
           !sidebarPinned && "primary-sidebar--icon-rail",
@@ -701,8 +754,8 @@ export function Layout() {
           sidebarPinned && "primary-sidebar--pinned"
         )}
         data-testid="primary-sidebar"
-        onMouseEnter={!sidebarPinned ? () => setSidebarHovered(true) : undefined}
-        onMouseLeave={!sidebarPinned ? () => setSidebarHovered(false) : undefined}
+        onPointerEnter={!sidebarPinned ? onSidebarPointerEnter : undefined}
+        onPointerLeave={!sidebarPinned ? onSidebarPointerLeave : undefined}
         onPointerOver={!sidebarPinned && !sidebarHovered ? onSidebarTipIntent : undefined}
         onFocusCapture={!sidebarPinned && !sidebarHovered ? onSidebarTipIntent : undefined}
       >
@@ -711,7 +764,11 @@ export function Layout() {
         ) : (
           <>
             <div className="primary-sidebar__rail">{renderSidebarBody(true)}</div>
-            <div className="primary-sidebar__flyout" aria-hidden={!sidebarExpanded}>
+            <div
+              className="primary-sidebar__flyout"
+              aria-hidden={!sidebarExpanded}
+              onPointerLeave={!sidebarPinned ? onSidebarPointerLeave : undefined}
+            >
               {renderSidebarBody(false)}
             </div>
           </>
@@ -745,7 +802,7 @@ export function Layout() {
 
         <nav className="app-mobile-nav" aria-label="Mobile navigation">
           {MOBILE_NAV.filter(canShowNavItem).map(({ to, label, icon: Icon }) => {
-            const active = isNavItemActive(pathname, to);
+            const active = isNavItemActive(pathname, to, search);
             return (
               <NavLink
                 key={to}

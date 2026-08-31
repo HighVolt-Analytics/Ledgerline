@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import EntryType, JournalEntry, JournalEntryKind
+from app.models.journal_batch import JournalBatch, JournalBatchStatus
 from app.services.reconciliation.reconciliation_service import (
     RC1_COUNTABLE_STATUSES,
     RC1_EXCLUDED_STATUSES,
@@ -20,6 +21,7 @@ from app.services.reconciliation.stranded_journal_remediation import (
     purge_stranded_accrual_journals,
 )
 from app.tenant_ids import TESTING_TENANT_UUID
+from tests.journal_test_helpers import seed_journal_batch
 
 
 def test_rc1_status_policy_partitions_all_invoice_statuses() -> None:
@@ -62,23 +64,15 @@ async def test_purge_stranded_accruals_removes_exception_keeps_processed(
     await db_session.flush()
 
     for inv in (stranded, completed):
-        for code, name, dr, cr, et in [
-            ("6100", "Operating Expenses", inv.total, Decimal("0"), EntryType.DEBIT),
-            ("2000", "Accounts Payable", Decimal("0"), inv.total, EntryType.CREDIT),
-        ]:
-            db_session.add(
-                JournalEntry(
-                    invoice_id=inv.id,
-                    date=d,
-                    account_code=code,
-                    account_name=name,
-                    debit=dr,
-                    credit=cr,
-                    entry_type=et,
-                    entry_kind=JournalEntryKind.INVOICE_ACCRUAL,
-                )
-            )
-    await db_session.flush()
+        await seed_journal_batch(
+            db_session,
+            inv,
+            [
+                ("6100", "Operating Expenses", inv.total, Decimal("0"), EntryType.DEBIT),
+                ("2000", "Accounts Payable", Decimal("0"), inv.total, EntryType.CREDIT),
+            ],
+            entry_date=d,
+        )
 
     result = await purge_stranded_accrual_journals(
         db_session,
@@ -89,7 +83,21 @@ async def test_purge_stranded_accruals_removes_exception_keeps_processed(
     assert result.invoice_ids == [stranded.id]
     assert result.entries_deleted == 2
 
-    stranded_left = (
+    # Append-only: original rows remain; live non-reversal accrual batches are gone.
+    stranded_live = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(JournalEntry)
+            .join(JournalBatch, JournalBatch.id == JournalEntry.batch_id)
+            .where(
+                JournalEntry.invoice_id == stranded.id,
+                JournalEntry.entry_kind == JournalEntryKind.INVOICE_ACCRUAL,
+                JournalBatch.status == JournalBatchStatus.POSTED.value,
+                JournalBatch.reversal_reason.is_(None),
+            )
+        )
+    ).scalar_one()
+    stranded_total = (
         await db_session.execute(
             select(func.count())
             .select_from(JournalEntry)
@@ -103,7 +111,8 @@ async def test_purge_stranded_accruals_removes_exception_keeps_processed(
             .where(JournalEntry.invoice_id == completed.id)
         )
     ).scalar_one()
-    assert stranded_left == 0
+    assert stranded_live == 0
+    assert stranded_total == 4  # 2 original + 2 reversing
     assert completed_left == 2
 
 
@@ -124,39 +133,41 @@ async def test_purge_does_not_remove_payment_settlement_rows(
     )
     db_session.add(inv)
     await db_session.flush()
-    db_session.add(
-        JournalEntry(
-            invoice_id=inv.id,
-            date=d,
-            account_code="2000",
-            account_name="AP",
-            debit=Decimal("0"),
-            credit=Decimal("100"),
-            entry_type=EntryType.CREDIT,
-            entry_kind=JournalEntryKind.INVOICE_ACCRUAL,
-        )
+    await seed_journal_batch(
+        db_session,
+        inv,
+        [
+            ("6100", "Expense", Decimal("100"), Decimal("0"), EntryType.DEBIT),
+            ("2000", "AP", Decimal("0"), Decimal("100"), EntryType.CREDIT),
+        ],
+        entry_date=d,
+        entry_kind=JournalEntryKind.INVOICE_ACCRUAL,
     )
-    db_session.add(
-        JournalEntry(
-            invoice_id=inv.id,
-            date=d,
-            account_code="2000",
-            account_name="AP",
-            debit=Decimal("100"),
-            credit=Decimal("0"),
-            entry_type=EntryType.DEBIT,
-            entry_kind=JournalEntryKind.PAYMENT_SETTLEMENT,
-        )
+    await seed_journal_batch(
+        db_session,
+        inv,
+        [
+            ("2000", "AP", Decimal("100"), Decimal("0"), EntryType.DEBIT),
+            ("1000", "Bank", Decimal("0"), Decimal("100"), EntryType.CREDIT),
+        ],
+        entry_date=d,
+        entry_kind=JournalEntryKind.PAYMENT_SETTLEMENT,
+        payment_id=99,
     )
-    await db_session.flush()
 
     result = await purge_stranded_accrual_journals(
         db_session, tenant_id=TESTING_TENANT_UUID, invoice_id=inv.id
     )
-    assert result.entries_deleted == 1
-    kinds = (
+    assert result.entries_deleted == 2
+    live_settlement = (
         await db_session.execute(
-            select(JournalEntry.entry_kind).where(JournalEntry.invoice_id == inv.id)
+            select(JournalEntry.entry_kind)
+            .join(JournalBatch, JournalBatch.id == JournalEntry.batch_id)
+            .where(
+                JournalEntry.invoice_id == inv.id,
+                JournalBatch.status == JournalBatchStatus.POSTED.value,
+                JournalBatch.reversal_reason.is_(None),
+            )
         )
     ).scalars().all()
-    assert kinds == [JournalEntryKind.PAYMENT_SETTLEMENT]
+    assert set(live_settlement) == {JournalEntryKind.PAYMENT_SETTLEMENT}

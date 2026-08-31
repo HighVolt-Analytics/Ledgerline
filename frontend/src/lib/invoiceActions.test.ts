@@ -86,6 +86,50 @@ describe("validateInvoiceReadyForApproval", () => {
     );
     expect(result).toEqual({ ok: true });
   });
+
+  it("blocks Team Expenses approve when amount is missing, even if VR03 is off", () => {
+    const vr03OffTypes = [
+      {
+        code: "DT-09",
+        requiredFields: ["total"],
+        validationRules: [{ code: "VR03", enabled: false, severity: "block" as const }],
+      },
+    ] as unknown as DocumentTypeDefinition[];
+
+    const missing = validateInvoiceReadyForApproval(
+      {
+        document_type_code: "DT-09",
+        route_target: "Team Expenses",
+        vendor: "R&B",
+        total: null,
+      },
+      vr03OffTypes
+    );
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) {
+      expect(missing.message).toMatch(/missing or zero/i);
+    }
+
+    const zero = validateInvoiceReadyForApproval(
+      {
+        document_type_code: "DT-09",
+        route_target: "Team Expenses",
+        total: "0",
+      },
+      vr03OffTypes
+    );
+    expect(zero.ok).toBe(false);
+
+    const funded = validateInvoiceReadyForApproval(
+      {
+        document_type_code: "DT-09",
+        route_target: "Team Expenses",
+        total: "20000",
+      },
+      vr03OffTypes
+    );
+    expect(funded).toEqual({ ok: true });
+  });
 });
 
 describe("compulsoryFieldsForInvoice", () => {

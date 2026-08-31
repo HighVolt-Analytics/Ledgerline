@@ -62,6 +62,14 @@ HEADING_KIND_TOKENS: dict[str, tuple[str, ...]] = {
     "remittance": ("remittance",),
     "proforma": ("pro forma", "proforma"),
     "timesheet": ("timesheet", "time sheet"),
+    # Shared with infer_team_expense_kind_from_labels / _KIND_FROM_LABEL.
+    # Do not add a bare "advance" token — that would retie DT-09 and DT-10.
+    "advance_requisition": (
+        "advance requisition",
+        "advance request",
+        "cash advance requisition",
+    ),
+    "expense_against_advance": ("expense against advance",),
 }
 
 

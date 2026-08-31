@@ -5,6 +5,7 @@ import {
   approvalStatusLabel,
   documentNature,
   formatDocDate,
+  formatUploadedAt,
   parseUploadChannelTab,
   paymentStatusForNature,
   postingStatusLabel,
@@ -104,6 +105,7 @@ describe("parseUploadChannelTab", () => {
     expect(parseUploadChannelTab("email")).toBe("email");
     expect(parseUploadChannelTab("whatsapp")).toBe("whatsapp");
     expect(parseUploadChannelTab("viber")).toBe("viber");
+    expect(parseUploadChannelTab("bank-feeds")).toBe("bank-feeds");
   });
 });
 
@@ -132,6 +134,30 @@ describe("formatDocDate", () => {
     expect(formatDocDate("2026-09-05")).toBe("05 Sep 26");
     expect(formatDocDate(null)).toBe("—");
     expect(formatDocDate("")).toBe("—");
+  });
+});
+
+describe("formatUploadedAt", () => {
+  it("returns em dash for blank values", () => {
+    expect(formatUploadedAt(null)).toBe("—");
+    expect(formatUploadedAt("")).toBe("—");
+  });
+
+  it("returns the raw string when it is not a date", () => {
+    expect(formatUploadedAt("not-a-date")).toBe("not-a-date");
+  });
+
+  it("formats an ISO instant as DD MMM YY, HH:MM in local time", () => {
+    const iso = "2026-08-26T11:49:00.000Z";
+    const dt = new Date(iso);
+    const expected = `${String(dt.getDate()).padStart(2, "0")} ${
+      ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][
+        dt.getMonth()
+      ]
+    } ${String(dt.getFullYear()).slice(-2)}, ${String(dt.getHours()).padStart(2, "0")}:${String(
+      dt.getMinutes()
+    ).padStart(2, "0")}`;
+    expect(formatUploadedAt(iso)).toBe(expected);
   });
 });
 

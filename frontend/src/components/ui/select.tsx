@@ -44,6 +44,8 @@ type SelectProps = {
   size?: keyof typeof triggerSize;
   /** Force search UI; auto-enabled when options.length > 20. */
   searchable?: boolean;
+  /** Prefer label-only search (hide internal option values from filter matching). */
+  searchInValue?: boolean;
 };
 
 export function Select({
@@ -57,6 +59,7 @@ export function Select({
   "data-testid": testId,
   size = "sm",
   searchable,
+  searchInValue = true,
 }: SelectProps) {
   const listId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -72,10 +75,12 @@ export function Select({
   const filteredOptions = useMemo(() => {
     const q = filter.trim().toLowerCase();
     if (!q) return options;
-    return options.filter(
-      (o) => o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q)
-    );
-  }, [filter, options]);
+    return options.filter((o) => {
+      if (o.label.toLowerCase().includes(q)) return true;
+      if (searchInValue && o.value.toLowerCase().includes(q)) return true;
+      return false;
+    });
+  }, [filter, options, searchInValue]);
 
   const updatePosition = useCallback(() => {
     const trigger = triggerRef.current;

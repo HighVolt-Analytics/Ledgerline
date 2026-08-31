@@ -14,6 +14,7 @@ from app.services.integration.collection_service import ensure_receivable_for_in
 from app.services.invoice.invoice_evaluation_service import load_config_for_tenant
 from app.services.payments.journal_generator import is_balanced
 from app.services.payments.journal_persist_service import persist_journal_lines
+from app.services.payments.fiscal_period_service import PeriodClosedError
 from app.services.payments.payment_service import ensure_payment_for_invoice
 from app.services.payments.settlement_journal_service import (
     generate_collection_settlement_entries,
@@ -146,14 +147,28 @@ async def post_payment_settlement_journal(
         )
         return False
 
-    persist_journal_lines(
-        session,
-        invoice,
-        lines,
-        entry_kind=JournalEntryKind.PAYMENT_SETTLEMENT,
-        payment_id=payment.id,
-        base_currency=base_currency,
-    )
+    try:
+        await persist_journal_lines(
+            session,
+            invoice,
+            lines,
+            entry_kind=JournalEntryKind.PAYMENT_SETTLEMENT,
+            payment_id=payment.id,
+            base_currency=base_currency,
+        )
+    except PeriodClosedError as exc:
+        await log_event(
+            session,
+            "settlement_journal_skipped",
+            invoice_id=invoice.id,
+            detail={
+                "kind": "payment",
+                "reason": "period_closed",
+                "payment_id": payment.id,
+                "detail": str(exc),
+            },
+        )
+        return False
     await log_event(
         session,
         "settlement_journal_posted",
@@ -245,14 +260,28 @@ async def post_collection_settlement_journal(
         )
         return False
 
-    persist_journal_lines(
-        session,
-        invoice,
-        lines,
-        entry_kind=JournalEntryKind.COLLECTION_SETTLEMENT,
-        collection_id=collection.id,
-        base_currency=base_currency,
-    )
+    try:
+        await persist_journal_lines(
+            session,
+            invoice,
+            lines,
+            entry_kind=JournalEntryKind.COLLECTION_SETTLEMENT,
+            collection_id=collection.id,
+            base_currency=base_currency,
+        )
+    except PeriodClosedError as exc:
+        await log_event(
+            session,
+            "settlement_journal_skipped",
+            invoice_id=invoice.id,
+            detail={
+                "kind": "collection",
+                "reason": "period_closed",
+                "collection_id": collection.id,
+                "detail": str(exc),
+            },
+        )
+        return False
     await log_event(
         session,
         "settlement_journal_posted",

@@ -53,6 +53,12 @@ export const TENANT_MODULE_CATALOG: TenantModuleDef[] = [
     group: "Finance",
   },
   {
+    key: "bank_feeds",
+    label: "Bank Feeds",
+    description: "Bank statement import and cash reconciliation.",
+    group: "Workspace",
+  },
+  {
     key: "ledger_link",
     label: "Accounting",
     description: "Export to accounting ledger.",
@@ -81,6 +87,7 @@ export const PATH_TO_MODULE: Record<string, string> = {
   "/rules": "rule_book",
   "/vault": "vault",
   "/payments": "payments",
+  "/bank-feeds": "bank_feeds",
   "/ledger-link": "ledger_link",
   "/reports": "reports",
 };

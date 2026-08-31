@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { AlertCircle, ChevronDown, ChevronRight, ClipboardCheck, ExternalLink, Loader2, Plus, Trash2, X } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -40,11 +40,20 @@ function StatusDot({ status }: { status: string }) {
 }
 
 /** GL defaults, aliases, and billing used in sales routing. */
-export function CustomerMastersPanel() {
+export function CustomerMastersPanel({
+  view = "list",
+  focusCustomerId = null,
+  onOpenInList,
+}: {
+  view?: "list" | "pending";
+  focusCustomerId?: string | null;
+  onOpenInList?: (customerId: string) => void;
+}) {
   const { toast } = useToast();
   const { data: institution } = useInstitutionSettings();
   const booksCurrency = normalizeCurrencyCode(institution?.currency) ?? "";
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [pinToTopId, setPinToTopId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, CustomerMaster>>({});
   const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set());
   const [quickName, setQuickName] = useState("");
@@ -64,6 +73,23 @@ export function CustomerMastersPanel() {
     () => customers.filter((customer) => customer.status !== "Pending registration"),
     [customers],
   );
+
+  const visibleCustomers = useMemo(() => {
+    if (!pinToTopId) return activeCustomers;
+    const idx = activeCustomers.findIndex((customer) => customer.id === pinToTopId);
+    if (idx > 0) {
+      return [activeCustomers[idx]!, ...activeCustomers.slice(0, idx), ...activeCustomers.slice(idx + 1)];
+    }
+    if (idx === 0) return activeCustomers;
+    const pinned = customers.find((customer) => customer.id === pinToTopId);
+    return pinned ? [pinned, ...activeCustomers] : activeCustomers;
+  }, [activeCustomers, customers, pinToTopId]);
+
+  useEffect(() => {
+    if (view !== "list" || !focusCustomerId) return;
+    setPinToTopId(focusCustomerId);
+    setExpandedId(focusCustomerId);
+  }, [focusCustomerId, view]);
 
   const getDraft = (customer: CustomerMaster) => drafts[customer.id] ?? customer;
 
@@ -146,11 +172,13 @@ export function CustomerMastersPanel() {
       {
         onSuccess: (customer) => {
           setExpandedId(customer.id);
+          setPinToTopId(customer.id);
           setLinkMasterByPendingId((prev) => {
             const next = { ...prev };
             delete next[pendingId];
             return next;
           });
+          onOpenInList?.(customer.id);
           toast({
             title: masterId ? "Linked to existing customer" : "Customer created",
             description: masterId
@@ -180,6 +208,134 @@ export function CustomerMastersPanel() {
     });
   };
 
+  const pendingQueueCard = (
+    <Card
+      className="p-4 border-destructive/30 bg-destructive/5"
+      data-testid="pending-customer-queue"
+    >
+      <div className="flex items-center gap-2 mb-3">
+        <AlertCircle className="h-4 w-4 text-destructive" />
+        <h3 className="text-sm font-semibold">Pending registration queue</h3>
+      </div>
+      {pendingQueue.length === 0 && registrationPending.length === 0 ? (
+        <p className="text-xs text-muted-foreground">No customers pending registration.</p>
+      ) : (
+        <div className="space-y-2">
+          {pendingQueue.map((item) => (
+            <div
+              key={`pending-${item.id}`}
+              className="flex items-center justify-between gap-3 flex-wrap rounded-lg border border-border bg-transparent p-3"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium">{item.detectedName}</div>
+                <div className="text-xs text-muted-foreground">
+                  Detected on sales document · match confidence {item.confidence}% (below threshold)
+                  {item.detectedAbn ? ` · Business registration number ${item.detectedAbn}` : ""}
+                  {item.sourceInvoiceId ? (
+                    <>
+                      {" · "}
+                      <Link
+                        to={`/upload?doc=${item.sourceInvoiceId}`}
+                        className="inline-flex items-center gap-1 text-primary hover:underline"
+                      >
+                        View source invoice
+                        <ExternalLink className="h-3 w-3" />
+                      </Link>
+                    </>
+                  ) : null}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap shrink-0 ml-auto">
+                {activeCustomers.length > 0 ? (
+                  <Select
+                    value={linkMasterByPendingId[item.id] ?? ""}
+                    onValueChange={(value) =>
+                      setLinkMasterByPendingId((prev) => ({ ...prev, [item.id]: value }))
+                    }
+                    options={activeCustomers.map((customer) => ({
+                      value: customer.id,
+                      label: customer.name,
+                    }))}
+                    placeholder="Link to existing…"
+                    size="sm"
+                    className="w-[200px] h-8 text-xs"
+                  />
+                ) : null}
+                {linkMasterByPendingId[item.id] ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={promoteMutation.isPending}
+                    onClick={() =>
+                      completePendingRegistration(
+                        item.id,
+                        item.detectedName,
+                        linkMasterByPendingId[item.id],
+                      )
+                    }
+                    data-testid={`link-existing-pending-customer-${item.id}`}
+                  >
+                    Link to master
+                  </Button>
+                ) : null}
+                <Button
+                  size="sm"
+                  disabled={promoteMutation.isPending}
+                  onClick={() => completePendingRegistration(item.id, item.detectedName)}
+                  data-testid={`complete-registration-pending-customer-${item.id}`}
+                >
+                  <ClipboardCheck className="h-4 w-4 mr-1" />
+                  Complete Registration
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={dismissMutation.isPending}
+                  onClick={() => dismissPending(item.id, item.detectedName)}
+                  data-testid={`dismiss-pending-customer-${item.id}`}
+                >
+                  <X className="h-4 w-4 mr-1" />
+                  Dismiss
+                </Button>
+              </div>
+            </div>
+          ))}
+          {registrationPending.map((customer) => (
+            <div
+              key={`in-progress-${customer.id}`}
+              className="flex items-center justify-between gap-3 flex-wrap rounded-lg border border-border bg-transparent p-3"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium">{customer.name}</div>
+                <div className="text-xs text-muted-foreground">
+                  Registration in progress · match confidence {customer.matchConfidence}% · complete
+                  GL details
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap shrink-0 ml-auto">
+                {activeCustomers.length > 0 ? (
+                  <div className="hidden sm:block w-[200px] shrink-0" aria-hidden />
+                ) : null}
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    setPinToTopId(customer.id);
+                    setExpandedId(customer.id);
+                    onOpenInList?.(customer.id);
+                  }}
+                  data-testid={`resume-registration-${customer.id}`}
+                >
+                  <ClipboardCheck className="h-4 w-4 mr-1" />
+                  Complete Registration
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+
   if (isLoading) {
     return (
       <div className="space-y-4" data-testid="customer-masters-panel">
@@ -188,12 +344,19 @@ export function CustomerMastersPanel() {
     );
   }
 
+  if (view === "pending") {
+    return (
+      <div className="space-y-4" data-testid="customer-masters-panel">
+        {pendingQueueCard}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4" data-testid="customer-masters-panel">
       <p className="text-sm text-muted-foreground max-w-2xl">
         Canonical customer records for sales GL routing, aliases, and billing. Unknown customers
-        from sales documents are flagged for registration. For email sender matching, use Capture
-        registry.
+        from sales documents are flagged on Pending for registration.
       </p>
 
       <Card className="p-3 flex flex-wrap items-end gap-2">
@@ -238,14 +401,14 @@ export function CustomerMastersPanel() {
             </tr>
           </thead>
           <tbody>
-            {customers.length === 0 ? (
+            {visibleCustomers.length === 0 ? (
               <tr>
                 <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
                   No customer masters yet.
                 </td>
               </tr>
             ) : (
-              customers.map((customer) => {
+              visibleCustomers.map((customer) => {
                 const draft = getDraft(customer);
                 const expanded = expandedId === customer.id;
                 const dirty = dirtyIds.has(customer.id);
@@ -316,123 +479,7 @@ export function CustomerMastersPanel() {
           </tbody>
         </table>
       </Card>
-
-      <Card
-        className="p-4 border-destructive/30 bg-destructive/5"
-        data-testid="pending-customer-queue"
-      >
-        <div className="flex items-center gap-2 mb-3">
-          <AlertCircle className="h-4 w-4 text-destructive" />
-          <h3 className="text-sm font-semibold">Pending customer registration queue</h3>
-        </div>
-        {pendingQueue.length === 0 && registrationPending.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No customers pending registration.</p>
-        ) : (
-          <div className="space-y-2">
-            {pendingQueue.map((item) => (
-              <div
-                key={`pending-${item.id}`}
-                className="flex items-center justify-between gap-3 flex-wrap rounded-lg border border-border bg-transparent p-3"
-              >
-                <div className="min-w-0">
-                  <div className="text-sm font-medium">{item.detectedName}</div>
-                  <div className="text-xs text-muted-foreground">
-                    Detected on sales document · match confidence {item.confidence}% (below threshold)
-                    {item.detectedAbn ? ` · Business registration number ${item.detectedAbn}` : ""}
-                    {item.sourceInvoiceId ? (
-                      <>
-                        {" · "}
-                        <Link
-                          to={`/upload?doc=${item.sourceInvoiceId}`}
-                          className="inline-flex items-center gap-1 text-primary hover:underline"
-                        >
-                          View source invoice
-                          <ExternalLink className="h-3 w-3" />
-                        </Link>
-                      </>
-                    ) : null}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  {activeCustomers.length > 0 ? (
-                    <Select
-                      value={linkMasterByPendingId[item.id] ?? ""}
-                      onValueChange={(value) =>
-                        setLinkMasterByPendingId((prev) => ({ ...prev, [item.id]: value }))
-                      }
-                      options={activeCustomers.map((customer) => ({
-                        value: customer.id,
-                        label: customer.name,
-                      }))}
-                      placeholder="Link to existing…"
-                      size="sm"
-                      className="w-[200px] h-8 text-xs"
-                    />
-                  ) : null}
-                  {linkMasterByPendingId[item.id] ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={promoteMutation.isPending}
-                      onClick={() =>
-                        completePendingRegistration(
-                          item.id,
-                          item.detectedName,
-                          linkMasterByPendingId[item.id],
-                        )
-                      }
-                      data-testid={`link-existing-pending-customer-${item.id}`}
-                    >
-                      Link to master
-                    </Button>
-                  ) : null}
-                  <Button
-                    size="sm"
-                    disabled={promoteMutation.isPending}
-                    onClick={() => completePendingRegistration(item.id, item.detectedName)}
-                    data-testid={`complete-registration-pending-customer-${item.id}`}
-                  >
-                    <ClipboardCheck className="h-4 w-4 mr-1" />
-                    Complete Registration
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={dismissMutation.isPending}
-                    onClick={() => dismissPending(item.id, item.detectedName)}
-                    data-testid={`dismiss-pending-customer-${item.id}`}
-                  >
-                    <X className="h-4 w-4 mr-1" />
-                    Dismiss
-                  </Button>
-                </div>
-              </div>
-            ))}
-            {registrationPending.map((customer) => (
-              <div
-                key={`in-progress-${customer.id}`}
-                className="flex items-center justify-between gap-3 flex-wrap rounded-lg border border-border bg-transparent p-3"
-              >
-                <div className="min-w-0">
-                  <div className="text-sm font-medium">{customer.name}</div>
-                  <div className="text-xs text-muted-foreground">
-                    Registration in progress · match confidence {customer.matchConfidence}% · complete
-                    GL details
-                  </div>
-                </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setExpandedId(customer.id)}
-                  data-testid={`resume-registration-${customer.id}`}
-                >
-                  Resume
-                </Button>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
     </div>
   );
 }
+

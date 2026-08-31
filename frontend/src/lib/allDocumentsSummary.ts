@@ -17,7 +17,7 @@ import { stagesToCells } from "@/lib/matrixApi";
 import type { MatrixFlagType, MatrixPaymentStatus } from "@/lib/v4MatrixMockData";
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
 
-export type AllDocumentsChannelTab = "all" | "upload" | "email" | "whatsapp" | "viber";
+export type AllDocumentsChannelTab = "all" | "upload" | "email" | "whatsapp" | "viber" | "bank-feeds";
 
 export type PipelineStatusLabel = "Done" | "Pending" | "Failed" | "Not required" | "Posted" | "N/A";
 
@@ -35,7 +35,8 @@ export function parseUploadChannelTab(value: string | null): AllDocumentsChannel
     value === "upload" ||
     value === "email" ||
     value === "whatsapp" ||
-    value === "viber"
+    value === "viber" ||
+    value === "bank-feeds"
   ) {
     return value;
   }
@@ -84,6 +85,21 @@ export function formatDocDate(invoiceDate: string | null | undefined): string {
   if (Number.isNaN(parsed)) return raw;
   const dt = new Date(parsed);
   return `${String(dt.getUTCDate()).padStart(2, "0")} ${SHORT_MONTHS[dt.getUTCMonth()]} ${String(dt.getUTCFullYear()).slice(-2)}`;
+}
+
+/** Upload instant as `26 Aug 26, 14:03` in the viewer's local timezone. */
+export function formatUploadedAt(iso: string | null | undefined): string {
+  const raw = (iso ?? "").trim();
+  if (!raw) return "—";
+  const parsed = Date.parse(raw);
+  if (Number.isNaN(parsed)) return raw;
+  const dt = new Date(parsed);
+  const day = String(dt.getDate()).padStart(2, "0");
+  const mon = SHORT_MONTHS[dt.getMonth()];
+  const yy = String(dt.getFullYear()).slice(-2);
+  const hh = String(dt.getHours()).padStart(2, "0");
+  const mm = String(dt.getMinutes()).padStart(2, "0");
+  return `${day} ${mon} ${yy}, ${hh}:${mm}`;
 }
 
 function stageCell(

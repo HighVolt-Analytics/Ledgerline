@@ -123,6 +123,8 @@ export function vendorMasterToCreateBody(vendor: Partial<VendorMaster>) {
     matchConfidence: vendor.matchConfidence ?? 0,
     contactEmail: vendor.contactEmail ?? "",
     contactPhone: vendor.contactPhone ?? "",
+    approvedBy: vendor.approvedBy ?? "",
+    createdAt: vendor.createdAt ?? null,
   });
   const { id, ...body } = api;
   return { ...body, master_id: id || undefined };

@@ -11,7 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import EntryType, JournalEntry, JournalEntryKind
+from app.models.journal_batch import JournalBatch, JournalBatchStatus
 from app.models.vendor import VendorRegistry
+from tests.journal_test_helpers import seed_journal_batch
 from app.schemas.rule_book_config import (
     ChartOfAccountEntry,
     PostingDefaults,
@@ -226,36 +228,29 @@ async def test_remap_preserves_settlement_journals(
     await db_session.flush()
 
     child_code = party_sub_ledger_code(vendor.vendor_slug)
-    db_session.add_all(
+    await seed_journal_batch(
+        db_session,
+        inv,
         [
-            JournalEntry(
-                tenant_id=inv.tenant_id,
-                invoice_id=inv.id,
-                date=date(2026, 4, 1),
-                account_code=child_code,
-                account_name="Remap Vendor",
-                debit=Decimal("0"),
-                credit=Decimal("100"),
-                entry_type=EntryType.CREDIT,
-                vendor_registry_id=vendor.id,
-                entry_kind=JournalEntryKind.INVOICE_ACCRUAL,
-            ),
-            JournalEntry(
-                tenant_id=inv.tenant_id,
-                invoice_id=inv.id,
-                date=date(2026, 4, 5),
-                account_code=child_code,
-                account_name="Remap Vendor",
-                debit=Decimal("100"),
-                credit=Decimal("0"),
-                entry_type=EntryType.DEBIT,
-                vendor_registry_id=vendor.id,
-                entry_kind=JournalEntryKind.PAYMENT_SETTLEMENT,
-                payment_id=42,
-            ),
-        ]
+            ("6100", "Software", Decimal("100"), Decimal("0"), EntryType.DEBIT),
+            (child_code, "Remap Vendor", Decimal("0"), Decimal("100"), EntryType.CREDIT),
+        ],
+        entry_date=date(2026, 4, 1),
+        entry_kind=JournalEntryKind.INVOICE_ACCRUAL,
+        vendor_registry_id=vendor.id,
     )
-    await db_session.flush()
+    await seed_journal_batch(
+        db_session,
+        inv,
+        [
+            (child_code, "Remap Vendor", Decimal("100"), Decimal("0"), EntryType.DEBIT),
+            ("1000", "Bank Account", Decimal("0"), Decimal("100"), EntryType.CREDIT),
+        ],
+        entry_date=date(2026, 4, 5),
+        entry_kind=JournalEntryKind.PAYMENT_SETTLEMENT,
+        payment_id=42,
+        vendor_registry_id=vendor.id,
+    )
 
     monkeypatch.setattr(
         "app.services.invoice.remap_service.map_invoice_to_account",
@@ -267,13 +262,20 @@ async def test_remap_preserves_settlement_journals(
     regenerated = await _regenerate_journal_entries(db_session, inv, config=payload)
     assert regenerated is True
 
-    kinds = (
+    live_kinds = (
         await db_session.execute(
-            select(JournalEntry.entry_kind).where(JournalEntry.invoice_id == inv.id)
+            select(JournalEntry.entry_kind)
+            .join(JournalBatch, JournalBatch.id == JournalEntry.batch_id)
+            .where(
+                JournalEntry.invoice_id == inv.id,
+                JournalBatch.status == JournalBatchStatus.POSTED.value,
+                JournalBatch.reversal_reason.is_(None),
+            )
         )
     ).scalars().all()
-    assert kinds.count(JournalEntryKind.PAYMENT_SETTLEMENT) == 1
-    assert JournalEntryKind.INVOICE_ACCRUAL in kinds
+    assert live_kinds.count(JournalEntryKind.PAYMENT_SETTLEMENT) == 2  # Dr AP + Cr Bank
+    assert JournalEntryKind.INVOICE_ACCRUAL in live_kinds
+    assert JournalEntryKind.PAYMENT_SETTLEMENT in live_kinds
 
 
 @pytest.mark.asyncio
@@ -325,21 +327,16 @@ async def test_ap_balance_totals_ignore_pagination(
         db_session.add(inv)
         await db_session.flush()
         code = party_sub_ledger_code(vendor.vendor_slug)
-        db_session.add(
-            JournalEntry(
-                tenant_id=inv.tenant_id,
-                invoice_id=inv.id,
-                date=date(2026, 5, 1),
-                account_code=code,
-                account_name=vendor.vendor_name,
-                debit=Decimal("0"),
-                credit=Decimal("100"),
-                entry_type=EntryType.CREDIT,
-                vendor_registry_id=vendor.id,
-                entry_kind=JournalEntryKind.INVOICE_ACCRUAL,
-            )
+        await seed_journal_batch(
+            db_session,
+            inv,
+            [
+                ("6100", "Software", Decimal("100"), Decimal("0"), EntryType.DEBIT),
+                (code, vendor.vendor_name, Decimal("0"), Decimal("100"), EntryType.CREDIT),
+            ],
+            entry_date=date(2026, 5, 1),
+            vendor_registry_id=vendor.id,
         )
-    await db_session.flush()
 
     page = await fetch_ap_balances(
         db_session,

@@ -1,8 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
   BarChart3,
-  BookOpen,
-  CheckCircle2,
   Coins,
   CreditCard,
   Gauge,
@@ -37,13 +35,12 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [{ to: "/", label: "Dashboard", icon: Gauge }],
   },
   {
-    label: "Workspace",
-    items: [
-      { to: "/upload", label: "Upload", icon: Upload, badge: "upload" },
-      { to: "/creations", label: "Contacts", icon: Users },
-      { to: "/approvals", label: "Approvals", icon: CheckCircle2, badge: "approvals" },
-      { to: "/rules", label: "Rule Book", icon: BookOpen, moduleKey: "rule_book" },
-    ],
+    label: "Upload",
+    items: [{ to: "/upload", label: "Upload", icon: Upload, badge: "upload" }],
+  },
+  {
+    label: "Contacts",
+    items: [{ to: "/creations", label: "Contacts", icon: Users }],
   },
   {
     label: "Reports",
@@ -109,7 +106,7 @@ export const NAV_GROUPS: NavGroup[] = [
 export const MOBILE_NAV: NavItem[] = [
   { to: "/", label: "Dashboard", icon: Gauge },
   { to: "/upload", label: "Upload", icon: Upload, badge: "upload" },
-  { to: "/approvals", label: "Approvals", icon: CheckCircle2, badge: "approvals" },
+  { to: "/creations", label: "Contacts", icon: Users },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 

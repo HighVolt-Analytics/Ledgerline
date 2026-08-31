@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { CheckCircle2, ChevronDown, ChevronRight, Eye, Scale } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ type LedgerOverviewProps = {
   loading?: boolean;
   currency?: string;
   onViewInvoice?: (invoiceId: number) => void;
+  children?: ReactNode;
 };
 
 export function LedgerOverview({
@@ -21,6 +22,7 @@ export function LedgerOverview({
   loading = false,
   currency = "",
   onViewInvoice,
+  children,
 }: LedgerOverviewProps) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const fmtBase = (v: number) => money(v, currency);
@@ -29,14 +31,22 @@ export function LedgerOverview({
   const fmtMap = (totals: Record<string, number>) => formatMoneyByCurrencyMap(totals);
 
   if (loading) {
-    return <LedgerOverviewSkeleton />;
+    return (
+      <div>
+        <LedgerOverviewSkeleton />
+        {children}
+      </div>
+    );
   }
 
   if (!recon) {
     return (
-      <Card className="p-6 text-sm text-muted-foreground">
-        No processed journal entries yet. Post invoices through the pipeline to see reconciliation here.
-      </Card>
+      <div>
+        <Card className="p-6 text-sm text-muted-foreground mb-6">
+          No processed journal entries yet. Post invoices through the pipeline to see reconciliation here.
+        </Card>
+        {children}
+      </div>
     );
   }
 
@@ -104,6 +114,8 @@ export function LedgerOverview({
           </div>
         ) : null}
       </Card>
+
+      {children}
 
       <div className="space-y-3">
         {recon.byDate.map((day) => (

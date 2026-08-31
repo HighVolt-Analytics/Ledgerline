@@ -529,6 +529,15 @@ _FLAGGED_EVAL = (
 )
 
 
+def _apply_route_target(query, route_target: str | None):
+    tokens = parse_route_target_filter(route_target)
+    if not tokens:
+        return query
+    if len(tokens) == 1:
+        return query.where(Invoice.route_target == tokens[0])
+    return query.where(Invoice.route_target.in_(tokens))
+
+
 def _apply_capture_source(query, capture_source: str | None):
     if not capture_source or not capture_source.strip():
         return query
@@ -763,6 +772,16 @@ class MatrixListResult:
     rejected_count: int = 0
 
 
+def parse_route_target_filter(raw: str | None) -> list[str]:
+    """Comma-separated route targets; order preserved, blanks dropped."""
+    tokens: list[str] = []
+    for part in (raw or "").split(","):
+        token = part.strip()
+        if token and token not in tokens:
+            tokens.append(token)
+    return tokens
+
+
 def _scoped_invoice_query(tenant_id: uuid.UUID, params: MatrixListRequest):
     stmt = select(Invoice).where(Invoice.tenant_id == tenant_id)
     count_stmt = select(func.count(Invoice.id)).where(Invoice.tenant_id == tenant_id)
@@ -774,9 +793,8 @@ def _scoped_invoice_query(tenant_id: uuid.UUID, params: MatrixListRequest):
         except ValueError:
             pass
     if params.route_target and params.route_target.strip():
-        token = params.route_target.strip()
-        stmt = stmt.where(Invoice.route_target == token)
-        count_stmt = count_stmt.where(Invoice.route_target == token)
+        stmt = _apply_route_target(stmt, params.route_target)
+        count_stmt = _apply_route_target(count_stmt, params.route_target)
     if params.evaluation_status and params.evaluation_status.strip():
         token = params.evaluation_status.strip()
         stmt = stmt.where(Invoice.evaluation_status == token)
@@ -812,6 +830,7 @@ async def _matrix_summary(
     """KPI totals for the scoped matrix (independent of the current page)."""
     base_ids = select(Invoice.id).where(Invoice.tenant_id == tenant_id)
     base_ids = _apply_capture_source(base_ids, params.capture_source)
+    base_ids = _apply_route_target(base_ids, params.route_target)
 
     flagged_or_dup = (
         await db.execute(
@@ -885,6 +904,7 @@ async def _approval_board_counts(
         Invoice.tenant_id == tenant_id
     )
     stmt = _apply_capture_source(stmt, params.capture_source)
+    stmt = _apply_route_target(stmt, params.route_target)
     stmt = _apply_search(stmt, params.q)
     stmt = stmt.group_by(col)
     counts = {"review": 0, "processing": 0, "approved": 0, "rejected": 0}

@@ -75,13 +75,16 @@ async def create_vendor_master_record(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_admin),
 ) -> ApiEnvelope[VendorMasterResponse]:
+    actor_name, actor_email = await actor_from_context(db, ctx)
+    stamped = body.model_copy(
+        update={"approved_by": (actor_name or actor_email or "").strip()}
+    )
     try:
-        row = await create_vendor_master(db, ctx.tenant_id, body)
+        row = await create_vendor_master(db, ctx.tenant_id, stamped)
     except ValueError as exc:
         message = str(exc)
         status = 409 if "already exists" in message.lower() else 400
         raise HTTPException(status, message) from exc
-    actor_name, actor_email = await actor_from_context(db, ctx)
     client_ip = request.client.host if request.client else None
     await log_event(
         db,

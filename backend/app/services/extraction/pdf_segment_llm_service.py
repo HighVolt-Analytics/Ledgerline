@@ -91,6 +91,8 @@ _HEADING_KINDS: tuple[str, ...] = (
     "certificate_of_origin",
     "transport_doc",
     "customs_permit",
+    "advance_requisition",
+    "expense_against_advance",
 )
 
 

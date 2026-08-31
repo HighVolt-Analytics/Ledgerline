@@ -448,18 +448,7 @@ export function CapturedDocumentsSkeleton({ rows = 8 }: { rows?: number }) {
     "minmax(6rem,1.2fr) minmax(5rem,1fr) minmax(7rem,1.3fr) minmax(4rem,0.8fr) minmax(5rem,1fr) minmax(4.5rem,0.9fr) minmax(4rem,0.75fr) minmax(3.5rem,0.65fr)";
 
   return (
-    <Card className="overflow-hidden" aria-busy aria-label="Loading captured documents">
-      <div className="flex flex-col gap-3 px-3 sm:px-4 py-3 border-b border-border sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-2 shrink-0">
-          <Skeleton circle className="h-4 w-4" />
-          <Skeleton className="h-4 w-36" />
-          <Skeleton className="h-3 w-8" />
-        </div>
-        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:ml-auto">
-          <Skeleton className="h-8 w-full sm:w-64 rounded-md" />
-          <Skeleton className="h-8 w-full sm:w-[220px] rounded-md" />
-        </div>
-      </div>
+    <Card className="all-docs-table-card overflow-hidden" aria-busy aria-label="Loading captured documents">
       <div className="overflow-x-auto">
         <div className="min-w-[48rem]">
           <div
@@ -507,7 +496,7 @@ export function UploadPageSkeleton() {
   return (
     <div data-testid="upload-page-skeleton" aria-busy aria-label="Loading upload">
       <div className="page-top-sticky">
-        <div className="page-header flex flex-wrap justify-between gap-4 items-end">
+        <div className="page-header flex flex-wrap justify-between gap-4 items-center">
           <div className="page-header__main min-w-0 flex-1">
             <div className="page-header__headline-tabs">
               <div className="app-underline-tabs" role="presentation">
@@ -523,21 +512,37 @@ export function UploadPageSkeleton() {
               </div>
             </div>
           </div>
-          <Skeleton pill className="h-8 w-24 shrink-0" />
+          <Skeleton className="h-8 w-8 shrink-0 rounded-md" />
         </div>
       </div>
 
       <UploadDropZoneSkeleton className="mb-6" />
 
-      <div className="app-underline-tabs mb-5" role="presentation">
-        {Array.from({ length: 2 }).map((_, i) => (
-          <div key={i} className="app-underline-tabs__tab pointer-events-none" aria-hidden>
-            <Skeleton className="h-4 w-20" />
+      <div className="upload-workspace__view-row upload-workspace__view-row--filters">
+        <div className="app-underline-tabs mb-0" role="presentation">
+          <div className="app-underline-tabs__tab pointer-events-none" aria-hidden>
+            <Skeleton className="h-4 w-16" />
           </div>
-        ))}
+        </div>
+        <div className="upload-table-filter-rail">
+          <div className="upload-table-filter-rail__group">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={`area-${i}`} pill className="h-7 w-[5.5rem] shrink-0" />
+            ))}
+          </div>
+          <div className="upload-table-filter-rail__group upload-table-filter-rail__group--status">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={`status-${i}`} pill className="h-7 w-[5rem] shrink-0" />
+            ))}
+          </div>
+        </div>
       </div>
 
-      <MatrixPanelSkeleton showKpis={false} showControls rows={6} />
+      <div className="upload-table-toolbar">
+        <Skeleton className="h-8 flex-1 min-w-[10rem] rounded-md" />
+      </div>
+
+      <MatrixPanelSkeleton showKpis={false} showControls={false} rows={6} />
     </div>
   );
 }

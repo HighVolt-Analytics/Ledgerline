@@ -732,11 +732,12 @@ class Settings(BaseSettings):
     )
     microsoft_oauth_authority_tenant: str = Field(
         default="common",
-        validation_alias=AliasChoices(
-            "MICROSOFT_OAUTH_AUTHORITY_TENANT",
-            "AZURE_TENANT_ID",
+        validation_alias="MICROSOFT_OAUTH_AUTHORITY_TENANT",
+        description=(
+            "Entra authority for Microsoft login/signup: 'common' (default) for SaaS "
+            "multi-tenant sign-in. Do not alias AZURE_TENANT_ID here — that GUID is for "
+            "Graph/mailbox. Set an explicit tenant GUID only for single-tenant apps."
         ),
-        description="Entra tenant id or 'common' for multi-tenant login",
     )
     google_oauth_login_redirect_uri: str = Field(
         default="http://localhost:8001/api/auth/oauth/google/callback",

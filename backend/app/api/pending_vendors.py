@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import AuthContext, get_auth_context, get_db
+from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_db
 from app.schemas.common import ApiEnvelope
 from app.schemas.master_data import (
     PendingVendorCreate,
@@ -48,8 +48,15 @@ async def promote_pending_vendor_record(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[VendorMasterResponse]:
+    actor_name, actor_email = await actor_from_context(db, ctx)
     try:
-        vendor = await promote_pending_vendor(db, ctx.tenant_id, pending_id, body)
+        vendor = await promote_pending_vendor(
+            db,
+            ctx.tenant_id,
+            pending_id,
+            body,
+            approved_by=(actor_name or actor_email or "").strip(),
+        )
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
     return ApiEnvelope(

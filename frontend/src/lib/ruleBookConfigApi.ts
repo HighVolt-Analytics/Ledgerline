@@ -2,6 +2,7 @@ import type { RuleBookConfig, RuleBookRulesPayload } from "@/api/types";
 import type {
   EmployeeMaster,
   ExpenseRule,
+  BankNarrationRule,
   OrgContextConfig,
   PurchaseRule,
   SalesRule,
@@ -96,6 +97,26 @@ function expenseMatchOnToApi(matchOn: ExpenseRule["matchOn"]): Record<string, un
     out.description_contains = matchOn.descriptionContains;
   }
   if (matchOn.vendorContains != null) out.vendor_contains = matchOn.vendorContains;
+  return out;
+}
+
+function mapBankNarrationMatchOn(raw: Record<string, unknown>): BankNarrationRule["matchOn"] {
+  return {
+    descriptionContains: raw.description_contains as string | undefined,
+    descriptionPattern: raw.description_pattern as string | undefined,
+  };
+}
+
+function bankNarrationMatchOnToApi(
+  matchOn: BankNarrationRule["matchOn"]
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (matchOn.descriptionContains != null) {
+    out.description_contains = matchOn.descriptionContains;
+  }
+  if (matchOn.descriptionPattern != null) {
+    out.description_pattern = matchOn.descriptionPattern;
+  }
   return out;
 }
 
@@ -240,6 +261,8 @@ export function mapVendor(raw: Record<string, unknown>): VendorMaster {
     paymentTerms: String(raw.payment_terms ?? ""),
     status: String(raw.status ?? ""),
     registeredOn: String(raw.registered_on ?? ""),
+    approvedBy: String(raw.approved_by ?? ""),
+    createdAt: raw.created_at != null ? String(raw.created_at) : null,
     totalSpendYTD: Number(raw.total_spend_ytd ?? 0),
     invoiceCount: Number(raw.invoice_count ?? 0),
     matchConfidence: Number(raw.match_confidence ?? 0),
@@ -857,6 +880,23 @@ export function teamExpenseRulesFromRuleBookApi(
   }));
 }
 
+export function bankNarrationRulesFromRuleBookApi(
+  api: Pick<RuleBookConfig, "bank_narration_rules">
+): BankNarrationRule[] {
+  return (api.bank_narration_rules ?? []).map((rule, index) => ({
+    id: rule.id,
+    name: rule.name,
+    enabled: rule.enabled,
+    priority: rule.priority ?? 100 + index * 10,
+    matchOn: mapBankNarrationMatchOn((rule.match_on ?? {}) as Record<string, unknown>),
+    postTo: {
+      ledger: rule.post_to?.ledger ?? "",
+      subLedger: rule.post_to?.sub_ledger ?? "",
+    },
+    matchedCount: rule.matched_count,
+  }));
+}
+
 export function ruleBookConfigFromApi(api: RuleBookConfig): RuleBookConfigState {
   return {
     documentTypes: documentTypesFromRuleBookApi(api),
@@ -895,6 +935,7 @@ export function ruleBookConfigFromApi(api: RuleBookConfig): RuleBookConfigState 
     salesRules: salesRulesFromRuleBookApi(api),
     expenseRules: expenseRulesFromRuleBookApi(api),
     teamExpenseRules: teamExpenseRulesFromRuleBookApi(api),
+    bankNarrationRules: bankNarrationRulesFromRuleBookApi(api),
     vendorMasters: (api.vendor_masters ?? []).map(mapVendor),
     vendorDetectionConfig: {
       weights: api.vendor_detection_config?.weights ?? DEFAULT_VENDOR_DETECTION_CONFIG.weights,
@@ -988,6 +1029,18 @@ export function ruleBookConfigToApi(state: RuleBookConfigState): RuleBookRulesPa
         require_receipt: rule.policy.requireReceipt,
         receipt_threshold: rule.policy.receiptThreshold,
         auto_approve_below: rule.policy.autoApproveBelow,
+      },
+      matched_count: rule.matchedCount,
+    })),
+    bank_narration_rules: (state.bankNarrationRules ?? []).map((rule) => ({
+      id: rule.id,
+      name: rule.name,
+      enabled: rule.enabled,
+      priority: rule.priority ?? 100,
+      match_on: bankNarrationMatchOnToApi(rule.matchOn),
+      post_to: {
+        ledger: rule.postTo.ledger,
+        sub_ledger: rule.postTo.subLedger,
       },
       matched_count: rule.matchedCount,
     })),

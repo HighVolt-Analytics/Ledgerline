@@ -2194,6 +2194,15 @@ export interface RuleBookConfig {
     };
     matched_count: number;
   }>;
+  bank_narration_rules?: Array<{
+    id: string;
+    name: string;
+    enabled: boolean;
+    priority?: number;
+    match_on: Record<string, unknown>;
+    post_to: { ledger: string; sub_ledger: string };
+    matched_count: number;
+  }>;
   vendor_masters: Array<Record<string, unknown>>;
   vendor_detection_config: {
     weights: { name: number; abn: number; bank: number; address: number };
@@ -2983,3 +2992,130 @@ export interface InvoiceClassificationAudit {
   citation_failed?: string[];
   citation_verified?: string[];
 }
+
+export interface BankAccount {
+  id: number;
+  name: string;
+  currency: string;
+  account_mask: string | null;
+  coa_account_code: string;
+  coa_account_name: string;
+  connection_type: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BankFeedImport {
+  id: number;
+  bank_account_id: number;
+  source: string;
+  filename: string | null;
+  file_sha256: string;
+  status: string;
+  row_count: number;
+  accepted_count: number;
+  duplicate_count: number;
+  error_count: number;
+  categorized_count?: number;
+  error_report: Record<string, unknown> | unknown[] | null;
+  actor_user_id: number | null;
+  imported_at: string;
+  reused_existing: boolean;
+}
+
+export interface BankFeedImportList {
+  items: BankFeedImport[];
+}
+
+export interface BankTransactionNote {
+  id: number;
+  bank_transaction_id: number;
+  body: string;
+  author_user_id: number | null;
+  created_at: string;
+}
+
+export interface BankTransactionMatch {
+  id: number;
+  bank_transaction_id: number;
+  matched_type: string;
+  matched_id: number;
+  allocated_amount: number;
+  match_confidence: number;
+  match_method: string;
+  match_reasons: Record<string, unknown> | null;
+  matched_by: string | null;
+  matched_at: string;
+  unmatched_at: string | null;
+  unmatch_reason: string | null;
+  party_name?: string | null;
+  invoice_no?: string | null;
+  display_label?: string | null;
+}
+
+export interface BankMatchTarget {
+  id: number;
+  matched_type: "payment" | "collection";
+  party_name: string | null;
+  invoice_no: string | null;
+  amount: number;
+  currency: string;
+  status: string;
+  display_label: string;
+}
+
+export interface BankTransaction {
+  id: number;
+  bank_account_id: number;
+  import_id: number | null;
+  txn_date: string;
+  posted_date: string | null;
+  description: string;
+  amount: number;
+  currency: string;
+  money_flow: "in" | "out";
+  balance: number | null;
+  reference: string | null;
+  match_status: string;
+  category_coa: string | null;
+  category_source?: "rule" | "manual" | null;
+  category_rule_name?: string | null;
+  category_matched_snippet?: string | null;
+  possible_duplicate_of: number[] | null;
+  posted_journal_batch_id?: number | null;
+  created_at: string;
+  updated_at: string;
+  matches: BankTransactionMatch[];
+}
+
+export interface BankCategorizeRunItem {
+  transaction_id: number;
+  categorized: boolean;
+  category_coa: string | null;
+  rule_id: string | null;
+  rule_name: string | null;
+}
+
+export interface BankCategorizeRunResult {
+  items: BankCategorizeRunItem[];
+  categorized_count: number;
+}
+
+export interface BankTransactionList {
+  items: BankTransaction[];
+}
+
+export interface BankMatchRunItem {
+  transaction_id: number;
+  status: string;
+  matches_written: number;
+  auto_matched: boolean;
+  tie_demoted: boolean;
+}
+
+export interface BankMatchRunResult {
+  items: BankMatchRunItem[];
+}
+
+export type BankFeedQueueTab = "reconcile" | "matched" | "posted" | "excluded";

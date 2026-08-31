@@ -60,6 +60,7 @@ export function vendorDraftFromPending(
     paymentTerms: "",
     status: "Active",
     registeredOn: "",
+    approvedBy: "",
     totalSpendYTD: 0,
     invoiceCount: 0,
     matchConfidence: item.confidence,

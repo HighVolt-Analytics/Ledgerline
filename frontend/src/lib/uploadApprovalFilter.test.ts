@@ -4,7 +4,13 @@ import {
   EMPTY_UPLOAD_APPROVAL_FILTER,
   approvalBoardCountsEqual,
   parseUploadApprovalFilter,
+  parseUploadDocumentArea,
+  parseUploadDocumentAreas,
+  routeTargetsForDocumentAreas,
+  serializeUploadDocumentAreas,
   toggleUploadApprovalFilter,
+  toggleUploadDocumentArea,
+  selectUploadDocumentArea,
 } from "@/lib/uploadApprovalFilter";
 
 describe("parseUploadApprovalFilter", () => {
@@ -45,5 +51,33 @@ describe("approvalBoardCountsEqual", () => {
         all: 1,
       })
     ).toBe(false);
+  });
+});
+
+describe("upload document area filters", () => {
+  it("parses a single area and comma-separated areas", () => {
+    expect(parseUploadDocumentAreas("purchase")).toEqual(["purchase"]);
+    expect(parseUploadDocumentAreas("expenses,purchase")).toEqual(["expenses", "purchase"]);
+    expect(parseUploadDocumentAreas("sales, team, unknown")).toEqual(["team", "sales"]);
+  });
+
+  it("selects one area at a time and clears back to Summary", () => {
+    expect(selectUploadDocumentArea([], "team")).toEqual(["team"]);
+    expect(selectUploadDocumentArea(["team"], "expenses")).toEqual(["expenses"]);
+    expect(selectUploadDocumentArea(["team"], "team")).toEqual([]);
+  });
+
+  it("serializes empty as no URL param and maps areas to route targets", () => {
+    expect(serializeUploadDocumentAreas([])).toBeNull();
+    expect(serializeUploadDocumentAreas(["expenses", "purchase"])).toBe("expenses,purchase");
+    expect(routeTargetsForDocumentAreas(["expenses", "purchase"])).toBe(
+      "Expenses Management,Purchase Management"
+    );
+    expect(routeTargetsForDocumentAreas([])).toBeUndefined();
+  });
+
+  it("falls back to a single operations view token", () => {
+    expect(parseUploadDocumentAreas(null, "purchases")).toEqual(["purchase"]);
+    expect(parseUploadDocumentArea(null, "purchases")).toBe("purchase");
   });
 });

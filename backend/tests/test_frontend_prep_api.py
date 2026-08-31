@@ -134,6 +134,77 @@ async def test_document_matrix_flags_exception(client: AsyncClient, db_session: 
 
 
 @pytest.mark.asyncio
+async def test_document_matrix_filters_by_route_target(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    te_vendor = "RouteFilter Team Expenses"
+    po_vendor = "RouteFilter Purchase"
+    sales_vendor = "RouteFilter Sales"
+    db_session.add_all(
+        [
+            Invoice(
+                tenant_id=TESTING_TENANT_UUID,
+                vendor=te_vendor,
+                status=InvoiceStatus.PROCESSED,
+                currency="AUD",
+                file_hash="route-filter-te",
+                route_target="Team Expenses",
+                capture_source="upload",
+            ),
+            Invoice(
+                tenant_id=TESTING_TENANT_UUID,
+                vendor=po_vendor,
+                status=InvoiceStatus.PROCESSED,
+                currency="AUD",
+                file_hash="route-filter-po",
+                route_target="Purchase Management",
+                capture_source="upload",
+            ),
+            Invoice(
+                tenant_id=TESTING_TENANT_UUID,
+                vendor=sales_vendor,
+                status=InvoiceStatus.PROCESSED,
+                currency="AUD",
+                file_hash="route-filter-sales",
+                route_target="Sales Management",
+                capture_source="email",
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    res = await client.get(
+        "/api/matrix?page=1&page_size=100&route_target=Team%20Expenses"
+    )
+    assert res.status_code == 200, res.text
+    vendors = {row["invoice"]["vendor"] for row in res.json()["data"]}
+    assert te_vendor in vendors
+    assert po_vendor not in vendors
+    assert sales_vendor not in vendors
+
+    purchase = await client.get(
+        "/api/matrix?page=1&page_size=100&route_target=Purchase%20Management"
+    )
+    assert purchase.status_code == 200, purchase.text
+    purchase_vendors = {row["invoice"]["vendor"] for row in purchase.json()["data"]}
+    assert po_vendor in purchase_vendors
+    assert te_vendor not in purchase_vendors
+
+    email_sales = await client.get(
+        "/api/matrix?page=1&page_size=100"
+        "&route_target=Sales%20Management&capture_source=email"
+    )
+    assert email_sales.status_code == 200, email_sales.text
+    email_sales_vendors = {
+        row["invoice"]["vendor"] for row in email_sales.json()["data"]
+    }
+    assert sales_vendor in email_sales_vendors
+    assert te_vendor not in email_sales_vendors
+    assert po_vendor not in email_sales_vendors
+
+
+
+@pytest.mark.asyncio
 async def test_matrix_processing_column_survives_deferred_extracted_fields(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:

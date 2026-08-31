@@ -3,6 +3,7 @@ import { useEffect, useState, type FocusEvent, type PointerEvent } from "react";
 import { Building2, Code2, Pin, PinOff, Settings2 } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { ProfileSidebarMenu } from "@/components/ProfileSidebarMenu";
+import { useUnpinnedSidebarHover } from "@/hooks/useUnpinnedSidebarHover";
 import { cn } from "@/lib/cn";
 
 const PIN_STORAGE_KEY = "ledgerline_superadmin_sidebar_pinned";
@@ -60,7 +61,6 @@ function onSidebarTipIntent(event: PointerEvent | FocusEvent) {
 
 export function SuperAdminLayout() {
   const { pathname } = useLocation();
-  const [sidebarHovered, setSidebarHovered] = useState(false);
   const [sidebarPinned, setSidebarPinned] = useState(() => {
     try {
       return localStorage.getItem(PIN_STORAGE_KEY) === "true";
@@ -68,6 +68,15 @@ export function SuperAdminLayout() {
       return false;
     }
   });
+  const {
+    sidebarHovered,
+    setSidebarHovered,
+    sidebarRef,
+    closeHover,
+    onSidebarPointerEnter,
+    onSidebarPointerLeave,
+    showDismiss,
+  } = useUnpinnedSidebarHover(sidebarPinned, pathname);
 
   useEffect(() => {
     try {
@@ -160,7 +169,17 @@ export function SuperAdminLayout() {
         sidebarPinned && "app-shell--primary-pinned"
       )}
     >
+      {showDismiss ? (
+        <div
+          className="primary-sidebar__dismiss"
+          aria-hidden="true"
+          data-testid="primary-sidebar-dismiss"
+          onPointerEnter={closeHover}
+          onPointerDown={closeHover}
+        />
+      ) : null}
       <aside
+        ref={sidebarRef}
         className={cn(
           "primary-sidebar",
           !sidebarPinned && "primary-sidebar--icon-rail",
@@ -168,8 +187,8 @@ export function SuperAdminLayout() {
           sidebarPinned && "primary-sidebar--pinned"
         )}
         data-testid="primary-sidebar"
-        onMouseEnter={!sidebarPinned ? () => setSidebarHovered(true) : undefined}
-        onMouseLeave={!sidebarPinned ? () => setSidebarHovered(false) : undefined}
+        onPointerEnter={!sidebarPinned ? onSidebarPointerEnter : undefined}
+        onPointerLeave={!sidebarPinned ? onSidebarPointerLeave : undefined}
         onPointerOver={!sidebarPinned && !sidebarHovered ? onSidebarTipIntent : undefined}
         onFocusCapture={!sidebarPinned && !sidebarHovered ? onSidebarTipIntent : undefined}
       >
@@ -178,7 +197,11 @@ export function SuperAdminLayout() {
         ) : (
           <>
             <div className="primary-sidebar__rail">{renderSidebarBody(true)}</div>
-            <div className="primary-sidebar__flyout" aria-hidden={!sidebarExpanded}>
+            <div
+              className="primary-sidebar__flyout"
+              aria-hidden={!sidebarExpanded}
+              onPointerLeave={!sidebarPinned ? onSidebarPointerLeave : undefined}
+            >
               {renderSidebarBody(false)}
             </div>
           </>

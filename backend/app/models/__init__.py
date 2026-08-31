@@ -1,10 +1,17 @@
-﻿from app.models.accounting_sync_job import AccountingSyncJob
+from app.models.accounting_sync_job import AccountingSyncJob
 from app.models.accounting_integration import AccountingIntegration
 from app.models.accounting_entity_mapping import AccountingEntityMapping
 from app.models.accounting_export_ledger import AccountingExportLedger
 from app.models.external_accounting_ref import ExternalAccountingRef
 from app.models.audit import AuditLog
 from app.models.auth_account import AuthAccount
+from app.models.bank_feed import (
+    BankAccount,
+    BankFeedImport,
+    BankTransaction,
+    BankTransactionMatch,
+    BankTransactionNote,
+)
 from app.models.classification_learning import ClassificationLearningEvent, InvoiceOcrArtifact
 from app.models.collection import Collection
 from app.models.connected_mailbox import ConnectedMailbox
@@ -21,6 +28,8 @@ from app.models.goods_receipt_line import GoodsReceiptLine
 from app.models.invoice import Invoice
 from app.models.invoice_page_fingerprint import InvoicePageFingerprint
 from app.models.journal import JournalEntry
+from app.models.journal_batch import JournalBatch
+from app.models.fiscal_period import FiscalPeriod
 from app.models.line_item import LineItem
 from app.models.mailbox_connection_request import MailboxConnectionRequest
 from app.models.mailbox_message import MailboxMessage
@@ -88,6 +97,10 @@ __all__ = [
     "ExternalAccountingRef",
     "AuditLog",
     "AuthAccount",
+    "BankAccount",
+    "BankFeedImport",
+    "BankTransaction",
+    "BankTransactionMatch",
     "ClassificationLearningEvent",
     "Collection",
     "CustomerMasterRecord",

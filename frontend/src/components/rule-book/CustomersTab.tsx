@@ -1,26 +1,29 @@
 import { useEffect, useState } from "react";
 import { PageTabPanel, PageTabs } from "@/components/PageTabs";
 import { CustomerMastersPanel } from "./CustomerMastersPanel";
-import { CustomerRegistryPanel } from "./CustomerRegistryPanel";
 
 const CUSTOMER_SECTIONS = [
-  { value: "capture", label: "Pending" },
-  { value: "masters", label: "Customer list" },
+  { value: "pending", label: "Pending", testid: "tab-customers-pending" },
+  { value: "masters", label: "Customer list", testid: "tab-customers-masters" },
 ] as const;
 
 type CustomerSection = (typeof CUSTOMER_SECTIONS)[number]["value"];
 
+function resolveSection(raw?: string | null): CustomerSection {
+  if (raw === "masters" || raw === "list") return "masters";
+  return "pending";
+}
+
 export function CustomersTab({
-  defaultSection = "capture",
+  defaultSection = "pending",
 }: {
   defaultSection?: CustomerSection | string | null;
 }) {
-  const initialSection: CustomerSection =
-    defaultSection === "masters" ? "masters" : "capture";
-  const [section, setSection] = useState<CustomerSection>(initialSection);
+  const [section, setSection] = useState<CustomerSection>(() => resolveSection(defaultSection));
+  const [focusCustomerId, setFocusCustomerId] = useState<string | null>(null);
 
   useEffect(() => {
-    setSection(defaultSection === "masters" ? "masters" : "capture");
+    setSection(resolveSection(defaultSection));
   }, [defaultSection]);
 
   return (
@@ -32,16 +35,22 @@ export function CustomersTab({
         tabs={CUSTOMER_SECTIONS.map((row) => ({
           value: row.value,
           label: row.label,
-          testid: `tab-customers-${row.value}`,
+          testid: row.testid,
           secondary: true,
         }))}
       />
 
-      <PageTabPanel value="capture" active={section} className="mt-0">
-        <CustomerRegistryPanel />
+      <PageTabPanel value="pending" active={section} className="mt-0">
+        <CustomerMastersPanel
+          view="pending"
+          onOpenInList={(customerId) => {
+            setFocusCustomerId(customerId);
+            setSection("masters");
+          }}
+        />
       </PageTabPanel>
       <PageTabPanel value="masters" active={section} className="mt-0">
-        <CustomerMastersPanel />
+        <CustomerMastersPanel view="list" focusCustomerId={focusCustomerId} />
       </PageTabPanel>
     </div>
   );

@@ -653,3 +653,13 @@ async def test_deferred_ungrounded_amount_falls_back_to_generic_header_hint(
     assert "could not be verified" not in hint.lower()
     response = invoice_to_response(deferred, for_list=True, has_stored_file=False)
     assert "complete header fields" in (response.resolution_hint or "").lower()
+
+
+def test_parse_route_target_filter_splits_and_dedupes() -> None:
+    from app.services.reports.matrix_service import parse_route_target_filter
+
+    assert parse_route_target_filter(None) == []
+    assert parse_route_target_filter("Purchase Management") == ["Purchase Management"]
+    assert parse_route_target_filter(
+        "Expenses Management,Purchase Management,Expenses Management"
+    ) == ["Expenses Management", "Purchase Management"]

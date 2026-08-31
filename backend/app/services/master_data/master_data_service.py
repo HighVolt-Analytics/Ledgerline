@@ -73,6 +73,8 @@ def vendor_record_to_schema(row: VendorMasterRecord) -> VendorMasterResponse:
         payment_terms=row.payment_terms or "",
         status=row.status or "",
         registered_on=row.registered_on or "",
+        approved_by=row.approved_by or "",
+        created_at=row.created_at,
         total_spend_ytd=row.total_spend_ytd or 0,
         invoice_count=row.invoice_count or 0,
         match_confidence=row.match_confidence or 0,
@@ -118,6 +120,7 @@ def vendor_master_to_dict(vendor: VendorMaster) -> dict[str, Any]:
     data = vendor.model_dump()
     data.pop("db_id", None)
     data.pop("bank_masked", None)
+    data.pop("created_at", None)
     return data
 
 
@@ -191,6 +194,7 @@ async def import_masters_from_config_file(db: AsyncSession, tenant_id: uuid.UUID
                 payment_terms=str(item.get("payment_terms") or ""),
                 status=str(item.get("status") or ""),
                 registered_on=str(item.get("registered_on") or ""),
+                approved_by=str(item.get("approved_by") or ""),
                 total_spend_ytd=float(item.get("total_spend_ytd") or 0),
                 invoice_count=int(item.get("invoice_count") or 0),
                 match_confidence=float(item.get("match_confidence") or 0),
@@ -407,6 +411,10 @@ async def create_vendor_master(
     if existing:
         raise ValueError(f"Vendor master id '{master_id}' already exists")
 
+    registered_on = (body.registered_on or "").strip()
+    if not registered_on or registered_on == "—":
+        registered_on = datetime.now(UTC).date().isoformat()
+
     row = VendorMasterRecord(
         tenant_id=tenant_id,
         master_id=master_id,
@@ -419,7 +427,8 @@ async def create_vendor_master(
         default_sub_ledger=body.default_sub_ledger,
         payment_terms=body.payment_terms,
         status=body.status,
-        registered_on=body.registered_on,
+        registered_on=registered_on,
+        approved_by=(body.approved_by or "").strip(),
         total_spend_ytd=body.total_spend_ytd,
         invoice_count=body.invoice_count,
         match_confidence=body.match_confidence,
@@ -744,6 +753,8 @@ async def promote_pending_vendor(
     tenant_id: uuid.UUID | int | str,
     pending_id: int,
     body: PendingVendorPromote,
+    *,
+    approved_by: str = "",
 ) -> VendorMasterResponse:
     tid = _tenant_id(tenant_id)
     row = await db.get(PendingVendor, pending_id)
@@ -822,6 +833,7 @@ async def promote_pending_vendor(
             status=body.status,
             match_confidence=row.confidence,
             billing_address=BillingAddress(street=row.detected_address or ""),
+            approved_by=approved_by,
         ),
     )
     row.status = "promoted"

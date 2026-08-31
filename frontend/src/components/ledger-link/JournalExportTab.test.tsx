@@ -2,7 +2,7 @@
  * @vitest-environment happy-dom
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { JournalExportTab } from "@/components/ledger-link/JournalExportTab";
 import type { LedgerLinkExports } from "@/api/types";
@@ -10,8 +10,7 @@ import type { LedgerLinkExports } from "@/api/types";
 const {
   exportXeroInvoice,
   getXeroExportQueue,
-  getXeroExportLedger,
-  getXeroExportHistory,
+  getXeroReadiness,
 } = vi.hoisted(() => ({
   exportXeroInvoice: vi.fn(async () => ({
     evidence: {
@@ -60,56 +59,23 @@ const {
       },
     ],
   })),
-  getXeroExportLedger: vi.fn(async () => ({
-    total: 1,
-    items: [
-      {
-        sync_id: 1,
-        source_invoice_id: 10,
-        qll_transaction_id: "qll-10",
-        status: "SUCCESS",
-        external_id: "xero-10",
-        external_number: "INV-10",
-        external_status: "DRAFT",
-        external_total: 50,
-        attachment_status: "success",
-        attempt_count: 1,
-        error_bucket: null,
-        error_code: null,
-        error_message: null,
-        created_at: "2026-07-01T00:00:00Z",
-        updated_at: "2026-07-01T00:00:00Z",
-      },
-    ],
-  })),
-  getXeroExportHistory: vi.fn(async () => ({
-    total: 1,
-    items: [
-      {
-        id: 1,
-        invoice_id: 10,
-        external_entity_id: "xero-10",
-        external_number: "INV-10",
-        external_status: "DRAFT",
-        sync_direction: "outbound",
-        sync_status: "synced",
-        reconciliation_status: null,
-        last_pushed_at: "2026-07-01T00:00:00Z",
-        last_reconciled_at: null,
-        amount_due: null,
-        amount_paid: null,
-        is_fully_paid: null,
-        sync_error_message: null,
-      },
-    ],
+  getXeroReadiness: vi.fn(async () => ({
+    configured: true,
+    connected: false,
+    ready: false,
+    status: "disconnected",
+    organisation_selected: false,
+    provider_tenant_id: null,
+    display_name: null,
+    connection_count: 0,
+    last_error: null,
   })),
 }));
 
 vi.mock("@/api/client", () => ({
   api: {
     getXeroExportQueue,
-    getXeroExportLedger,
-    getXeroExportHistory,
+    getXeroReadiness,
     exportXeroInvoice,
   },
 }));
@@ -155,7 +121,7 @@ describe("JournalExportTab", () => {
     vi.clearAllMocks();
   });
 
-  it("loads Xero export queue and shows Ready/Blocked with blocking errors", async () => {
+  it("loads Xero queue counts and shows the not-ready error line", async () => {
     wrap(<JournalExportTab exports={sampleExports} currency="AUD" />);
 
     await waitFor(() => {
@@ -164,43 +130,37 @@ describe("JournalExportTab", () => {
       expect(screen.getByText(/1 ready/)).toBeTruthy();
     });
 
-    const queue = screen.getByTestId("xero-export-queue");
-    expect(within(queue).getByText("Blocked")).toBeTruthy();
-    expect(within(queue).getByText("Ready")).toBeTruthy();
-    expect(within(queue).getByText("supplier has no Xero contact")).toBeTruthy();
-
-    const actions = within(queue).getAllByTestId("xero-export-action");
-    expect((actions[0] as HTMLButtonElement).disabled).toBe(true);
-    expect((actions[1] as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByTestId("journal-export-error").textContent).toMatch(
+      /Xero integration is not ready/
+    );
+    expect(screen.queryByTestId("xero-export-queue")).toBeNull();
+    expect(screen.queryByTestId("journal-xero-export-ledger")).toBeNull();
+    expect(screen.queryByTestId("journal-xero-export-history")).toBeNull();
   });
 
-  it("exports via exportXeroInvoice and refreshes queue, ledger, and history", async () => {
+  it("exports ready invoices via Export ready to Xero", async () => {
     wrap(<JournalExportTab exports={sampleExports} currency="AUD" />);
     await waitFor(() => expect(getXeroExportQueue).toHaveBeenCalled());
 
-    const queue = screen.getByTestId("xero-export-queue");
-    const actions = within(queue).getAllByTestId("xero-export-action");
-    actions[1].click();
+    screen.getByTestId("button-export-xero").click();
 
     await waitFor(() => {
       expect(exportXeroInvoice).toHaveBeenCalledWith(10);
     });
     await waitFor(() => {
       expect(getXeroExportQueue.mock.calls.length).toBeGreaterThanOrEqual(2);
-      expect(getXeroExportLedger.mock.calls.length).toBeGreaterThanOrEqual(2);
-      expect(getXeroExportHistory.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
   });
 
-  it("keeps journal preview and CSV download for non-Xero targets", async () => {
+  it("shows the connected Xero target and CSV download with the journal preview", async () => {
     wrap(<JournalExportTab exports={sampleExports} currency="AUD" />);
     await waitFor(() => expect(screen.getByText("INV-1")).toBeTruthy());
 
-    screen.getByTestId("target-MYOB").click();
-    await waitFor(() => {
-      expect(screen.queryByTestId("journal-xero-export-queue")).toBeNull();
-      expect(screen.getByTestId("button-download-csv")).toBeTruthy();
-      expect(screen.getByText("INV-1")).toBeTruthy();
-    });
+    expect(screen.getByTestId("target-Xero")).toBeTruthy();
+    expect(screen.queryByTestId("target-MYOB")).toBeNull();
+    expect(screen.getByTestId("button-download-csv")).toBeTruthy();
+    expect(screen.getByTestId("button-refresh-queue")).toBeTruthy();
+    expect(screen.getByTestId("button-export-xero")).toBeTruthy();
+    expect(screen.getByText("Journal export preview")).toBeTruthy();
   });
 });

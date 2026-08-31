@@ -5,6 +5,7 @@ import {
   Check,
   Clock,
   FileText,
+  Link2,
   Loader2,
   Pencil,
   Plus,
@@ -55,7 +56,6 @@ import { vaultInvoiceLink } from "@/lib/vault";
 import { useSetupCatalogs } from "@/hooks/useSetupCatalogs";
 import type { CurrencyOption } from "@/data/orgSetup";
 import {
-  additionalExtractedFieldKeys,
   resolvePreviewLineItems,
   countPreviewLineItems,
   isVisionHeaderPipelineSummary,
@@ -90,13 +90,32 @@ import {
 } from "@/lib/invoice";
 import { useEmployeeMasters } from "@/hooks/useMasterData";
 import { usePermissions } from "@/hooks/usePermissions";
-import { matchEmployeeForSender } from "@/lib/routePageAdapters";
+import {
+  matchEmployeeForSender,
+  normalizeTeamExpenseKind,
+} from "@/lib/routePageAdapters";
 import type { EmployeeMaster } from "@/lib/v4RuleBookTypes";
 import { LineGlAccountCell } from "@/components/invoices/LineGlAccountCell";
 import { effectiveMatchPolicy, isTwoWayMatchMode } from "@/lib/documentPlaybookConfig";
 import { InvoicePurchaseDossierSection } from "@/components/invoices/InvoicePurchaseDossierSection";
 import { InvoiceSalesDossierSection } from "@/components/invoices/InvoiceSalesDossierSection";
-import { useRuleBookDocumentTypes } from "@/hooks/useRuleBookConfig";
+import {
+  InvoiceMatchReviewSection,
+  summarizePurchaseMatchReview,
+  summarizeSalesMatchReview,
+} from "@/components/invoices/InvoiceMatchReviewSection";
+import { InvoiceClaimReviewSection } from "@/components/team-expenses/InvoiceClaimReviewSection";
+import {
+  isClaimExpenseRoute,
+  isMatchRoute,
+} from "@/lib/documentRowActions";
+import {
+  useRuleBookDocumentTypes,
+  useRuleBookTeamExpensesWorkspace,
+} from "@/hooks/useRuleBookConfig";
+import { useTeamExpenseDepartmentBudgetUtilization } from "@/hooks/useTeamExpenseReports";
+import { usePurchaseMutations } from "@/hooks/usePurchaseMutations";
+import { useSalesMutations } from "@/hooks/useSalesMutations";
 import { useAuth } from "@/context/AuthContext";
 import {
   canRenderTenantOwnedUi,
@@ -140,6 +159,11 @@ const TAB_LABELS: Record<Tab, string> = {
   audit: "Processing",
   vault: "Vault",
 };
+
+function drawerTabsForRoute(route: string | null | undefined): Tab[] {
+  if (isMatchRoute(route)) return [...TABS];
+  return TABS.filter((t) => t !== "po");
+}
 
 function canEdit(status: string): boolean {
   return ["exception", "duplicate_skipped", "rejected"].includes(status);
@@ -1025,7 +1049,21 @@ export function InvoiceDetailDrawer({
   const revealBankRef = useRef(false);
   revealBankRef.current = revealBank && canRevealBank;
   const isTeamExpenseRoute = (inv?.route_target || "").trim() === ROUTE_TEAM;
+  const isClaimRoute = isClaimExpenseRoute(inv?.route_target);
+  const isPurchaseSalesRoute = isMatchRoute(inv?.route_target);
+  const visibleTabs = useMemo(
+    () => drawerTabsForRoute(inv?.route_target),
+    [inv?.route_target]
+  );
   const { data: employees = [] } = useEmployeeMasters(open && isTeamExpenseRoute);
+  const { data: teamExpenseWorkspace } = useRuleBookTeamExpensesWorkspace(
+    open && isTeamExpenseRoute
+  );
+  const { data: glBudgetUtil = [] } = useTeamExpenseDepartmentBudgetUtilization(
+    open && isClaimRoute
+  );
+  const purchaseMutations = usePurchaseMutations();
+  const salesMutations = useSalesMutations();
   const [loading, setLoading] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [sheetState, setSheetState] = useState<"open" | "closed">("closed");
@@ -1083,6 +1121,26 @@ export function InvoiceDetailDrawer({
     () => (inv ? settlementApprovalHint(inv) : null),
     [inv]
   );
+
+  const matchReviewSummary = useMemo(() => {
+    if (!inv || !isMatchRoute(inv.route_target)) return null;
+    const isSales = (inv.route_target ?? "").toLowerCase().includes("sales");
+    return isSales
+      ? summarizeSalesMatchReview(inv, salesDossier, dossierLoading)
+      : summarizePurchaseMatchReview(inv, dossier, dossierLoading);
+  }, [inv, salesDossier, dossier, dossierLoading]);
+
+  async function handleApproveMatchVariance() {
+    if (!inv || !matchReviewSummary?.orderId) return;
+    const isSales = (inv.route_target ?? "").toLowerCase().includes("sales");
+    if (isSales) {
+      await salesMutations.approveVariance(matchReviewSummary.orderId);
+    } else {
+      await purchaseMutations.approveVariance(matchReviewSummary.orderId);
+    }
+    reloadDossier();
+    onUpdated?.();
+  }
 
   const resolveClassification = async (confirmedDt: string) => {
     if (!activeInvoiceId) return;
@@ -1209,7 +1267,8 @@ export function InvoiceDetailDrawer({
   }, [inv?.id]);
 
   useEffect(() => {
-    if (!inv || tab !== "po") return;
+    if (!inv || !isMatchRoute(inv.route_target)) return;
+    // Prefetch for Fields review + footer; also refresh when Match tab is active.
     setDossierLoading(true);
     const isSales = (inv.route_target ?? "").toLowerCase().includes("sales");
     const request = isSales
@@ -1221,7 +1280,7 @@ export function InvoiceDetailDrawer({
         else setDossier(null);
       })
       .finally(() => setDossierLoading(false));
-  }, [inv, tab]);
+  }, [inv?.id, inv?.route_target]);
 
   useEffect(() => {
     if (!open || (tab !== "vault" && tab !== "audit") || activeInvoiceId == null) {
@@ -1380,15 +1439,34 @@ export function InvoiceDetailDrawer({
     return matchEmployeeForSender(inv.email_sender, employees, inv.employee_email);
   }, [inv, employees]);
 
-  const extraExtractedFieldKeys = useMemo(() => {
-    if (!inv) return [];
-    const extras = additionalExtractedFieldKeys(inv, extractionFieldKeys);
-    // TE: never surface OCR vendor leftovers as a second "Employee" row.
-    if ((inv.route_target || "").trim() === ROUTE_TEAM) {
-      return extras.filter((key) => key !== "vendor");
+  const claimBudgetRow = useMemo(() => {
+    if (!isClaimRoute || !inv) return undefined;
+    const gl = (inv.account_name || inv.account_code || "").trim().toLowerCase();
+    if (!gl) return undefined;
+    return glBudgetUtil.find(
+      (b) => b.gl_ledger.trim().toLowerCase() === gl
+    );
+  }, [isClaimRoute, inv, glBudgetUtil]);
+
+  const settlementLedger =
+    teamExpenseWorkspace?.teamExpensePosting?.settlementAccount ?? "";
+  const advanceLedgerForEmployee = useMemo(() => {
+    if (!matchedTeamEmployee) {
+      return teamExpenseWorkspace?.teamExpensePosting?.defaultAdvanceParentLedger ?? "";
     }
-    return extras;
-  }, [inv, extractionFieldKeys]);
+    return (
+      matchedTeamEmployee.advanceSubLedger ||
+      matchedTeamEmployee.advanceParentLedger ||
+      teamExpenseWorkspace?.teamExpensePosting?.defaultAdvanceParentLedger ||
+      ""
+    );
+  }, [matchedTeamEmployee, teamExpenseWorkspace]);
+
+  useEffect(() => {
+    if (!visibleTabs.includes(tab)) {
+      setTab(visibleTabs[0] ?? "fields");
+    }
+  }, [visibleTabs, tab]);
 
   const documentTypeInCatalogue = useMemo(() => {
     const code = resolvedDocumentTypeCode;
@@ -1892,6 +1970,21 @@ export function InvoiceDetailDrawer({
     }
   }
 
+  async function handleChangeClaimKind(kind: string) {
+    if (!inv || !isTeamExpenseRoute) return;
+    const targetId = inv.id;
+    setActionBusy(true);
+    try {
+      await api.setTeamExpenseKind(targetId, kind);
+      onUpdated?.();
+      await reloadInvoice(targetId);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Could not change claim kind");
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
   async function publish() {
     if (!inv || !invoiceCanPublishToLedger(inv)) return;
     const targetId = inv.id;
@@ -2032,7 +2125,7 @@ export function InvoiceDetailDrawer({
                 <PageTabs
                   value={tab}
                   onChange={(v) => selectTab(v as Tab)}
-                  tabs={TABS.map((t) => ({
+                  tabs={visibleTabs.map((t) => ({
                     value: t,
                     label: TAB_LABELS[t],
                   }))}
@@ -2265,35 +2358,71 @@ export function InvoiceDetailDrawer({
                         })()}
                       </>
                     )}
-                    {extraExtractedFieldKeys.length > 0 ? (
-                      <section className="invoice-drawer-field-section invoice-drawer-field-section--secondary">
-                        <h4 className="invoice-drawer-field-section__title">
-                          Additional extracted fields
-                        </h4>
-                        <p className="invoice-drawer-fields-tab__note">
-                          Present on the document but not configured on this document type —
-                          shown for review only.
-                        </p>
-                        <div className="invoice-drawer-field-section__grid">
-                          {extraExtractedFieldKeys.map((key) => (
-                            <FieldRow
-                              key={`extra-${key}`}
-                              label={extractionFieldDisplayLabel(key, inv, tax)}
-                              value={readExtractionFieldValue(
-                                key,
-                                inv,
-                                null,
-                                false,
-                                fmt,
-                                extractionFieldKeys,
-                                absentFields,
-                                sourceKind
-                              )}
-                              confidence={invoiceFieldConfidence(inv, key)}
-                            />
-                          ))}
-                        </div>
-                      </section>
+                    {isClaimRoute ? (
+                      <InvoiceClaimReviewSection
+                        showKind={isTeamExpenseRoute}
+                        kind={normalizeTeamExpenseKind(inv.team_expense_kind)}
+                        expenseLedger={inv.account_name ?? ""}
+                        advanceLedger={advanceLedgerForEmployee}
+                        settlementLedger={settlementLedger}
+                        claimAmount={parseFloat(String(inv.total ?? 0)) || 0}
+                        advanceAvailable={matchedTeamEmployee?.advanceBalance ?? 0}
+                        kindDisabled={
+                          actionBusy ||
+                          inv.status === "processed" ||
+                          inv.status === "rejected"
+                        }
+                        onChangeKind={
+                          isTeamExpenseRoute
+                            ? (kind) => void handleChangeClaimKind(kind)
+                            : undefined
+                        }
+                        showAdvance={isTeamExpenseRoute}
+                        matchedEmployee={Boolean(matchedTeamEmployee)}
+                        advanceBalance={
+                          matchedTeamEmployee
+                            ? (matchedTeamEmployee.advanceBalance ?? 0)
+                            : null
+                        }
+                        showBudget={isClaimRoute}
+                        budgetCategory={
+                          claimBudgetRow?.gl_ledger ?? inv.account_name ?? ""
+                        }
+                        budgetAllocated={claimBudgetRow?.allocated ?? null}
+                        budgetConsumed={claimBudgetRow?.consumed ?? null}
+                        currency={(inv.currency || "").trim().toUpperCase() || "MMK"}
+                        approvalChain={inv.approval_chain}
+                      />
+                    ) : null}
+                    {isPurchaseSalesRoute ? (
+                      <InvoiceMatchReviewSection
+                        inv={inv}
+                        purchaseDossier={dossier}
+                        salesDossier={salesDossier}
+                        loading={dossierLoading}
+                        busy={
+                          actionBusy ||
+                          purchaseMutations.busyId != null ||
+                          salesMutations.busyId != null
+                        }
+                        onOpenMatch={() => setTab("po")}
+                        onApproveVariance={async () => {
+                          const isSales = (inv.route_target ?? "")
+                            .toLowerCase()
+                            .includes("sales");
+                          if (isSales) {
+                            const orderId = salesDossier?.sales_order_id;
+                            if (orderId == null) return;
+                            await salesMutations.approveVariance(orderId);
+                          } else {
+                            const orderId = dossier?.purchase_order_id;
+                            if (orderId == null) return;
+                            await purchaseMutations.approveVariance(orderId);
+                          }
+                          reloadDossier();
+                          onUpdated?.();
+                        }}
+                      />
                     ) : null}
                   </div>
                 )}
@@ -2548,10 +2677,108 @@ export function InvoiceDetailDrawer({
                         size="sm"
                         data-testid="button-approve-process"
                         disabled={actionBusy || !inv.has_stored_file}
-                        onClick={() => void handleConfirmAndProcess()}
+                        onClick={() =>
+                          void (isClaimRoute
+                            ? handleApproveAndProcess()
+                            : handleConfirmAndProcess())
+                        }
+                      >
+                        {isClaimRoute ? (
+                          <>
+                            <Check className="h-4 w-4 mr-1" />
+                            Approve
+                          </>
+                        ) : (
+                          <>
+                            <Send className="h-4 w-4 mr-1" />
+                            Confirm &amp; process
+                          </>
+                        )}
+                      </Button>
+                    )}
+                  </div>
+                </>
+              ) : isClaimRoute ? (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-destructive"
+                    data-testid="button-reject"
+                    disabled={actionBusy || !canRejectClaim(inv.status)}
+                    onClick={() => void handleReject()}
+                  >
+                    <X className="h-4 w-4 mr-1" />
+                    Reject with reason
+                  </Button>
+                  <div className="flex gap-2">
+                    {inv.status === "rejected" && invoiceCanAttemptReprocess(inv) && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        data-testid="button-reprocess"
+                        disabled={actionBusy || !invoiceCanAttemptReprocess(inv)}
+                        onClick={() => void handleReprocess()}
+                      >
+                        {actionBusy ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                            Reprocessing…
+                          </>
+                        ) : (
+                          "Reprocess"
+                        )}
+                      </Button>
+                    )}
+                    {canEdit(inv.status) && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        data-testid="button-edit-invoice"
+                        disabled={actionBusy}
+                        onClick={startEditing}
+                      >
+                        <Pencil className="h-4 w-4 mr-1" />
+                        Edit
+                      </Button>
+                    )}
+                    {canRequestInfo(inv.status) && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        data-testid="button-request-approval"
+                        disabled={actionBusy}
+                        onClick={() => void handleRequestApproval()}
+                      >
+                        <Clock className="h-4 w-4 mr-1" />
+                        Request more info
+                      </Button>
+                    )}
+                    {canApproveFromDrawer(inv) && (
+                      <Button
+                        size="sm"
+                        data-testid="button-manager-approve"
+                        disabled={actionBusy || !inv.has_stored_file}
+                        title={
+                          !inv.has_stored_file
+                            ? "Upload a receipt before this claim can be approved."
+                            : undefined
+                        }
+                        onClick={() => void handleApproveAndProcess()}
+                      >
+                        <Check className="h-4 w-4 mr-1" />
+                        Approve
+                      </Button>
+                    )}
+                    {invoiceCanPublishToLedger(inv) && (
+                      <Button
+                        size="sm"
+                        data-testid="button-publish"
+                        disabled={actionBusy}
+                        onClick={() => void publish()}
                       >
                         <Send className="h-4 w-4 mr-1" />
-                        Confirm &amp; process
+                        Post to ledger
                       </Button>
                     )}
                   </div>
@@ -2612,9 +2839,41 @@ export function InvoiceDetailDrawer({
                       Request approval
                     </Button>
                     )}
+                    {matchReviewSummary?.canApproveVariance ? (
+                      <Button
+                        size="sm"
+                        data-testid="button-approve-variance-footer"
+                        disabled={
+                          actionBusy ||
+                          purchaseMutations.busyId != null ||
+                          salesMutations.busyId != null
+                        }
+                        onClick={() => void handleApproveMatchVariance()}
+                      >
+                        <Check className="h-4 w-4 mr-1" />
+                        Approve variance
+                      </Button>
+                    ) : null}
+                    {matchReviewSummary?.needsReceiptRecord &&
+                    matchReviewSummary.receiptLabel ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        data-testid="button-record-receipt-footer"
+                        onClick={() => setTab("po")}
+                      >
+                        <Link2 className="h-4 w-4 mr-1" />
+                        Record {matchReviewSummary.receiptLabel}
+                      </Button>
+                    ) : null}
                     {canApproveFromDrawer(inv) && (
                       <Button
-                        variant={canManagerApproveFromDrawer(inv) ? "outline" : "default"}
+                        variant={
+                          matchReviewSummary?.canApproveVariance ||
+                          canManagerApproveFromDrawer(inv)
+                            ? "outline"
+                            : "default"
+                        }
                         size="sm"
                         data-testid="button-approve-process"
                         disabled={actionBusy || !inv.has_stored_file}

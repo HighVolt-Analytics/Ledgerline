@@ -1,16 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { LazyInvoiceDetailDrawer } from "@/components/LazyInvoiceDetailDrawer";
 import { PageHeader } from "@/components/PageHeader";
 import { PageTabPanel, PageTabs } from "@/components/PageTabs";
 import { JournalExportTab } from "@/components/ledger-link/JournalExportTab";
 import { LedgerExportTable } from "@/components/ledger-link/LedgerExportTable";
-import { LedgerOverview } from "@/components/ledger-link/LedgerOverview";
 import { PageLoader } from "@/components/PageLoader";
 import { RuleBookPostingSection } from "@/components/rule-book/RuleBookPostingSection";
 import { useAuth } from "@/context/AuthContext";
 import { useLedgerLink, useLedgerLinkExports } from "@/hooks/useLedgerLink";
-import { mapReconciliationOverview } from "@/lib/reconciliation";
 
 const LL_TABS = [
   { value: "overview", label: "Overview", testid: "tab-ll-overview" },
@@ -19,38 +16,43 @@ const LL_TABS = [
   { value: "expenses", label: "Expenses", testid: "tab-ll-expenses" },
   { value: "purchases", label: "Purchases", testid: "tab-ll-purchases" },
   { value: "payments", label: "Payments", testid: "tab-ll-payments" },
-  { value: "export", label: "Journal Export", testid: "tab-ll-export" },
   { value: "posting", label: "Posting", testid: "tab-posting" },
 ];
+
+function resolveLedgerTab(value: string | null): string {
+  if (value === "export") return "overview";
+  if (value && LL_TABS.some((row) => row.value === value)) return value;
+  return "overview";
+}
 
 export function LedgerLinkPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tabFromUrl = searchParams.get("tab");
-  const [tab, setTab] = useState(() =>
-    tabFromUrl && LL_TABS.some((row) => row.value === tabFromUrl) ? tabFromUrl : "overview"
-  );
-  const [drawerInvoiceId, setDrawerInvoiceId] = useState<number | null>(null);
+  const [tab, setTab] = useState(() => resolveLedgerTab(tabFromUrl));
   const { user } = useAuth();
-  const { data, isLoading, error } = useLedgerLink(Boolean(user) && tab !== "posting");
-  const exportsEnabled = Boolean(user) && tab !== "overview" && tab !== "posting";
+  const { data, isLoading, error } = useLedgerLink(Boolean(user) && tab !== "posting" && tab !== "overview");
+  const exportsEnabled = Boolean(user) && tab !== "posting";
   const {
     data: exports,
     isLoading: exportsLoading,
     error: exportsError,
   } = useLedgerLinkExports(exportsEnabled);
 
-  const recon = useMemo(
-    () => (data?.overview ? mapReconciliationOverview(data.overview) : null),
-    [data?.overview]
-  );
   const currency = data?.overview.base_currency ?? "";
   const postingOnly = tab === "posting";
 
   useEffect(() => {
+    if (tabFromUrl === "export") {
+      const params = new URLSearchParams(searchParams);
+      params.set("tab", "overview");
+      setSearchParams(params, { replace: true });
+      setTab("overview");
+      return;
+    }
     if (tabFromUrl && LL_TABS.some((row) => row.value === tabFromUrl)) {
       setTab(tabFromUrl);
     }
-  }, [tabFromUrl]);
+  }, [tabFromUrl, searchParams, setSearchParams]);
 
   const changeTab = (next: string) => {
     setTab(next);
@@ -71,7 +73,7 @@ export function LedgerLinkPage() {
     );
   }
 
-  if (!postingOnly && isLoading && !data) {
+  if (!postingOnly && tab !== "overview" && isLoading && !data) {
     return (
       <div>
         <PageHeader
@@ -83,7 +85,7 @@ export function LedgerLinkPage() {
     );
   }
 
-  if (!postingOnly && error) {
+  if (!postingOnly && tab !== "overview" && error) {
     return (
       <div>
         <PageHeader
@@ -107,12 +109,13 @@ export function LedgerLinkPage() {
       </PageHeader>
 
       <PageTabPanel value="overview" active={tab} className="mt-4">
-        <LedgerOverview
-          recon={recon}
-          loading={isLoading}
-          currency={currency}
-          onViewInvoice={setDrawerInvoiceId}
-        />
+        {exportsLoading && !exports ? (
+          <PageLoader variant="table" />
+        ) : exportsError ? (
+          <p className="text-sm text-destructive">Could not load journal exports.</p>
+        ) : (
+          <JournalExportTab exports={exports} currency={currency} />
+        )}
       </PageTabPanel>
       <PageTabPanel value="invoices" active={tab} className="mt-4">
         {exportsLoading && !exports ? (
@@ -176,22 +179,9 @@ export function LedgerLinkPage() {
           />
         )}
       </PageTabPanel>
-      <PageTabPanel value="export" active={tab} className="mt-4">
-        {exportsLoading && !exports ? (
-          <PageLoader variant="table" />
-        ) : (
-          <JournalExportTab exports={exports} currency={currency} />
-        )}
-      </PageTabPanel>
       <PageTabPanel value="posting" active={tab} className="mt-4">
         <RuleBookPostingSection />
       </PageTabPanel>
-
-      <LazyInvoiceDetailDrawer
-        invoiceId={drawerInvoiceId}
-        open={drawerInvoiceId != null}
-        onClose={() => setDrawerInvoiceId(null)}
-      />
     </div>
   );
 }

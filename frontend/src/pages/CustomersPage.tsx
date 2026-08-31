@@ -5,7 +5,7 @@ export function CustomersPage() {
   const location = useLocation();
   const params = new URLSearchParams(location.search);
   if (!params.has("customersSection")) {
-    params.set("customersSection", "capture");
+    params.set("customersSection", "pending");
   }
   if (!params.has("tab")) {
     params.set("tab", "customers");

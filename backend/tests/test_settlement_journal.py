@@ -226,6 +226,12 @@ async def test_mark_collection_received_posts_settlement_journal(
     ).scalars().all()
     assert len(entries) == 2
     ar_line = [row for row in entries if row.credit > 0][0]
-    assert ar_line.account_code == "1200"
+    # Control account may be the parent AR code or the party child Sub-GL.
+    from app.services.master_data.party_coa_subledger_service import party_sub_ledger_code
+
+    assert ar_line.account_code in {
+        "1200",
+        party_sub_ledger_code(customer.customer_slug),
+    }
     assert ar_line.customer_registry_id == customer.id
     assert ar_line.entry_type == EntryType.CREDIT
