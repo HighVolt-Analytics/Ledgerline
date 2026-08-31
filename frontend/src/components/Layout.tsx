@@ -19,7 +19,6 @@ import {
   Users,
   Vault,
   Wallet,
-  Landmark,
 } from "lucide-react";
 import { GlobalSearchDialog } from "@/components/GlobalSearchBar";
 import { DashboardIcon } from "@/components/icons/DashboardIcon";
@@ -141,14 +140,6 @@ const UPLOAD_ITEM: NavItem = {
   iconTone: "sky",
 };
 
-const BANK_FEEDS_ITEM: NavItem = {
-  to: "/upload?channel=bank-feeds",
-  label: "Bank feeds",
-  icon: Landmark,
-  moduleKey: "bank_feeds",
-  iconTone: "indigo",
-};
-
 const CONTACTS_ITEM: NavItem = {
   to: "/creations",
   label: "Contacts",
@@ -156,12 +147,7 @@ const CONTACTS_ITEM: NavItem = {
   iconTone: "rose",
 };
 
-const TOP_LEVEL_ITEMS: NavItem[] = [
-  DASHBOARD_ITEM,
-  UPLOAD_ITEM,
-  BANK_FEEDS_ITEM,
-  CONTACTS_ITEM,
-];
+const TOP_LEVEL_ITEMS: NavItem[] = [DASHBOARD_ITEM, UPLOAD_ITEM, CONTACTS_ITEM];
 
 const OPERATIONS_GROUPS: NavGroup[] = [
   {
@@ -264,8 +250,6 @@ function pathMatchesItem(pathname: string, to: string, search = "") {
   }
   if (to === "/") return pathname === "/";
   if (pathname !== to && !pathname.startsWith(`${to}/`)) return false;
-  // /upload should not match when a more specific upload channel tab is active.
-  if (to === "/upload" && search.includes("channel=bank-feeds")) return false;
   return true;
 }
 
