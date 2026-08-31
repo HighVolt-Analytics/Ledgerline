@@ -250,7 +250,7 @@ export function BankFeedTxnDrawer({
       setActionError("Description is required");
       return;
     }
-    const partyType = moneyIn ? "customer" : "vendor";
+    const partyType: "vendor" | "customer" = moneyIn ? "customer" : "vendor";
     if (!partyChoice) {
       setActionError(moneyIn ? "Select a customer" : "Select a vendor");
       return;

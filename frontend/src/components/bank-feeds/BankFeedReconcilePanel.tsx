@@ -59,7 +59,7 @@ export function useReconcileFormState(txn: BankTransaction | undefined) {
     setShowSplit(false);
     setTransferAccountId("");
     setTransferDescription(txn?.description ?? "");
-    const suggested = activeMatches(txn ?? { matches: [] } as BankTransaction).filter(
+    const suggested = (txn ? activeMatches(txn) : []).filter(
       (m) => m.match_method === "suggested"
     );
     setSelectedSuggestionId(suggested[0]?.id ?? null);
@@ -112,7 +112,7 @@ export function BankFeedReconcilePanel({
   canPost: boolean;
   busy: boolean;
   onPostNote: (body: string) => Promise<void>;
-  matchTargetRef?: RefObject<HTMLDivElement | null>;
+  matchTargetRef?: RefObject<HTMLDivElement>;
   onFindMatch?: () => void;
 }) {
   const {
@@ -497,7 +497,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 
 export function isReconcileOkEnabled(
   tab: ReconcileTab,
-  txn: BankTransaction,
+  _txn: BankTransaction,
   form: ReturnType<typeof useReconcileFormState>
 ): boolean {
   if (tab === "discuss") return false;

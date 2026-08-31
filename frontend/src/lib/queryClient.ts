@@ -91,7 +91,6 @@ const baseKeys = {
   customerMasters: ["customer-masters"] as const,
   customers: ["customers"] as const,
   vendors: ["vendors"] as const,
-  vendors: ["vendors"] as const,
   payments: ["payments"] as const,
   paymentsWorkspaceKpis: ["payments", "workspace-kpis"] as const,
   bankFeedAccounts: ["bank-feeds", "accounts"] as const,
