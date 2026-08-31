@@ -11,6 +11,7 @@ from app.config import get_settings
 from app.integrations.core.dispatch import send
 from app.integrations.core.oauth_state import create_oauth_state, parse_oauth_state
 from app.integrations.core.token_crypto import decrypt_secret, encrypt_secret
+from app.integrations.xero.accpay import validate_accpay_payload
 from app.integrations.xero.client import accounting_headers
 from app.integrations.xero.connect_api import build_connect_url
 from app.integrations.xero.oauth import authorize_url, is_configured, resolve_scopes
@@ -92,6 +93,19 @@ def test_accounting_headers() -> None:
     assert headers["xero-tenant-id"] == "org-guid"
 
 
+def test_accpay_payload_requires_contact() -> None:
+    errors = validate_accpay_payload(
+        {
+            "Type": "ACCPAY",
+            "Status": "DRAFT",
+            "Contact": {},
+            "LineItems": [{"Description": "x", "Quantity": 1, "UnitAmount": 1}],
+            "CurrencyCode": "AUD",
+        }
+    )
+    assert any(item["code"] == "contact_not_mapped" for item in errors)
+
+
 @pytest.mark.asyncio
 async def test_dispatch_rejects_unknown_adapter() -> None:
     with pytest.raises(ValueError, match="unsupported"):
@@ -99,6 +113,6 @@ async def test_dispatch_rejects_unknown_adapter() -> None:
 
 
 @pytest.mark.asyncio
-async def test_dispatch_xero_not_implemented_yet() -> None:
-    with pytest.raises(NotImplementedError):
+async def test_dispatch_xero_requires_session() -> None:
+    with pytest.raises(ValueError, match="db and tenant_id"):
         await send({"invoice_id": 1}, ["xero"])

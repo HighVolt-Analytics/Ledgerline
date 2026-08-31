@@ -1,18 +1,35 @@
-# Stage 3 — After Connect (not the current build)
+# Stage 3 — After Connect (sync, mapping, export)
 
-Do **not** start this until Stage 2 exit criteria are met.
+**Status: implemented** (webhooks not in this stage).
 
-Still **no UI redesign**. Use existing buttons/APIs; implement behind them in `integrations/xero` + `core` (canonical + dispatch).
+Still **no UI redesign**. Existing Integrations buttons/APIs now run through `app/integrations/xero` + `core` (canonical + dispatch).
 
-| Later step | What | You may need to provide |
-|------------|------|-------------------------|
-| Org already selected | Single-org auto-bind vs picker | How many demo orgs the user has |
-| Sync settings/contacts | Pull COA, tax, tracking, contacts | Demo company with COA |
-| Mapping | Existing mapping UI → new mapping store/API if old one is commented | Which GL/tax/supplier to use for a test bill |
-| Export | `core` canonical from **existing invoice** → `xero` ACCPAY DRAFT + PDF | A supplier invoice in this tenant |
-| Multi-adapter send | `dispatch` to several adapters | Second adapter not in v1 |
-| Webhooks | HMAC to existing `/api/webhooks/xero` | Webhook key + ngrok |
+| Step | What | You may need to provide |
+|------|------|-------------------------|
+| Org already selected | Stage 2 Connect | Demo org already connected |
+| Sync settings/contacts | Pull org, COA, tax, tracking, contacts | Demo company with a chart of accounts |
+| Mapping | Existing mapping UI / APIs | Which GL / tax / supplier to use for a test bill |
+| Export | Canonical from existing invoice → ACCPAY DRAFT + PDF | A processed supplier invoice in this tenant |
+| Multi-adapter send | `dispatch` to several adapters | Not in v1 (Xero only) |
+| Webhooks | HMAC to existing `/api/webhooks/xero` | **Not this stage** — needs webhook key + ngrok later |
 
-`Temp.md` payload/HMAC details apply here, not at Connect.
+---
 
-Old export/sync modules: comment out when those routes are switched, same as Connect.
+## Implemented
+
+- `POST /api/integrations/xero/sync/settings` and `.../sync/contacts` → `integrations/xero/sync.py` (new HTTP client + token refresh).
+- Canonical snapshot: `integrations/core/canonical.py` (existing invoice/lines/PDF, no new extraction).
+- ACCPAY DRAFT mapper: `integrations/xero/accpay.py`.
+- Export + PDF attach: `integrations/xero/export.py` via `POST /api/integrations/xero/invoices/{id}/push`.
+- `integrations/core/dispatch.py` sends v1 to Xero only.
+- Webhooks left on the old handler until you have `XERO_WEBHOOK_KEY` and a public URL.
+
+---
+
+## Exit criteria
+
+- [ ] Sync settings completes without a 401/403 from Xero
+- [ ] Sync contacts shows contacts in the existing UI
+- [ ] Mapping still uses the existing screens
+- [ ] Push a processed supplier invoice → Draft bill in Xero demo + PDF attached when a PDF exists
+- [ ] No webhook setup required for this stage

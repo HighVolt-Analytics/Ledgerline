@@ -51,7 +51,7 @@ from app.services.integration.xero.xero_accpay_adapter import (
     assert_draft_status,
     build_accpay_draft_payload,
 )
-from app.services.integration.xero.xero_client import XeroApiError
+from app.integrations.xero.client import XeroApiError
 from app.services.integration.xero.xero_contact_resolution_service import (
     resolve_supplier_contact,
 )
@@ -242,7 +242,7 @@ async def test_mapping_completeness_and_inactive(db_session):
     inv = await _seed_invoice(db_session)
     # Without mappings / tax mapping ΓÇö validation fails for tax
     with patch(
-        "app.services.integration.xero.xero_export_service.require_xero_ready",
+        "app.integrations.xero.export.require_xero_ready",
         AsyncMock(return_value=(MagicMock(provider_tenant_id="xero-org-1"), "xero-org-1")),
     ):
         result = await validate_invoice_for_xero_export(
@@ -331,7 +331,7 @@ async def test_validation_allows_auto_create_when_no_supplier_match(db_session):
     )
     await db_session.flush()
     with patch(
-        "app.services.integration.xero.xero_export_service.require_xero_ready",
+        "app.integrations.xero.export.require_xero_ready",
         AsyncMock(return_value=(MagicMock(provider_tenant_id="xero-org-1"), "xero-org-1")),
     ):
         result = await validate_invoice_for_xero_export(
@@ -406,7 +406,7 @@ async def test_export_auto_creates_supplier_when_no_match(db_session, tmp_path):
 
     with (
         patch(
-            "app.services.integration.xero.xero_export_service.require_xero_ready",
+            "app.integrations.xero.export.require_xero_ready",
             AsyncMock(return_value=(integration, "xero-org-1")),
         ),
         patch(
@@ -414,19 +414,19 @@ async def test_export_auto_creates_supplier_when_no_match(db_session, tmp_path):
             AsyncMock(return_value=(integration, "xero-org-1")),
         ),
         patch(
-            "app.services.integration.xero.xero_export_service.XeroClient",
+            "app.integrations.xero.export.XeroApiClient",
             return_value=mock_client,
         ),
         patch(
-            "app.services.integration.xero.xero_contact_resolution_service.XeroClient",
+            "app.services.integration.xero.xero_contact_resolution_service.XeroApiClient",
             return_value=mock_client,
         ),
         patch(
-            "app.services.integration.xero.xero_attachment_service.XeroClient",
+            "app.integrations.xero.attachments.XeroApiClient",
             return_value=mock_client,
         ),
         patch(
-            "app.services.integration.xero.xero_attachment_service.open_pdf_for_reading",
+            "app.integrations.xero.attachments.open_pdf_for_reading",
         ) as open_pdf,
     ):
         open_pdf.return_value.__enter__ = lambda s: MagicMock(
@@ -493,7 +493,7 @@ def test_accpay_draft_enforced():
 
 
 def test_error_classification_transient_and_terminal():
-    t = classify_error(exc=XeroApiError(status_code=429, error_code="rate", message="slow"))
+    t = classify_error(exc=XeroApiError(429, "slow", error_code="rate"))
     assert t.bucket == ERROR_TRANSIENT
     assert t.retryable is True
     term = classify_error(code="unsupported_currency", message="bad currency", status_code=400)
@@ -510,7 +510,7 @@ async def test_export_currency_blank_source_is_currency_missing(db_session):
     inv = await _seed_invoice(db_session, currency="")
     assert inv.currency == ""
     with patch(
-        "app.services.integration.xero.xero_export_service.require_xero_ready",
+        "app.integrations.xero.export.require_xero_ready",
         AsyncMock(return_value=(MagicMock(provider_tenant_id="xero-org-1"), "xero-org-1")),
     ):
         result = await validate_invoice_for_xero_export(
@@ -528,7 +528,7 @@ async def test_export_currency_foreign_not_supported_when_not_synced(db_session)
     await _seed_xero_ready(db_session)
     inv = await _seed_invoice(db_session, currency="USD")
     with patch(
-        "app.services.integration.xero.xero_export_service.require_xero_ready",
+        "app.integrations.xero.export.require_xero_ready",
         AsyncMock(return_value=(MagicMock(provider_tenant_id="xero-org-1"), "xero-org-1")),
     ):
         result = await validate_invoice_for_xero_export(
@@ -565,7 +565,7 @@ async def test_export_currency_document_usd_when_synced(db_session):
     await db_session.flush()
     inv = await _seed_invoice(db_session, currency=" usd ")
     with patch(
-        "app.services.integration.xero.xero_export_service.require_xero_ready",
+        "app.integrations.xero.export.require_xero_ready",
         AsyncMock(return_value=(MagicMock(provider_tenant_id="xero-org-1"), "xero-org-1")),
     ):
         result = await validate_invoice_for_xero_export(
@@ -603,7 +603,7 @@ async def test_export_currency_success_ledger_immutable_on_retry(db_session):
     inv.currency = "USD"
     await db_session.flush()
     with patch(
-        "app.services.integration.xero.xero_export_service.require_xero_ready",
+        "app.integrations.xero.export.require_xero_ready",
         AsyncMock(return_value=(MagicMock(provider_tenant_id="xero-org-1"), "xero-org-1")),
     ):
         result = await validate_invoice_for_xero_export(
@@ -646,7 +646,7 @@ async def test_export_currency_missing_document_blocks_without_500(db_session):
     await _seed_xero_ready(db_session)
     inv = await _seed_invoice(db_session, currency="")
     with patch(
-        "app.services.integration.xero.xero_export_service.require_xero_ready",
+        "app.integrations.xero.export.require_xero_ready",
         AsyncMock(return_value=(MagicMock(provider_tenant_id="xero-org-1"), "xero-org-1")),
     ):
         result = await validate_invoice_for_xero_export(
@@ -710,19 +710,19 @@ async def test_successful_export_idempotent_and_attachment_retry(db_session, tmp
 
     with (
         patch(
-            "app.services.integration.xero.xero_export_service.require_xero_ready",
+            "app.integrations.xero.export.require_xero_ready",
             AsyncMock(return_value=(MagicMock(provider_tenant_id="xero-org-1"), "xero-org-1")),
         ),
         patch(
-            "app.services.integration.xero.xero_export_service.XeroClient",
+            "app.integrations.xero.export.XeroApiClient",
             return_value=mock_client,
         ),
         patch(
-            "app.services.integration.xero.xero_attachment_service.XeroClient",
+            "app.integrations.xero.attachments.XeroApiClient",
             return_value=mock_client,
         ),
         patch(
-            "app.services.integration.xero.xero_attachment_service.open_pdf_for_reading",
+            "app.integrations.xero.attachments.open_pdf_for_reading",
         ) as open_pdf,
     ):
         from contextlib import contextmanager
@@ -797,15 +797,15 @@ async def test_transient_retry_vs_terminal(db_session):
 
     mock_client = MagicMock()
     mock_client.post_json = AsyncMock(
-        side_effect=XeroApiError(status_code=503, error_code="unavailable", message="down")
+        side_effect=XeroApiError(503, "down", error_code="unavailable")
     )
     with (
         patch(
-            "app.services.integration.xero.xero_export_service.require_xero_ready",
+            "app.integrations.xero.export.require_xero_ready",
             AsyncMock(return_value=(MagicMock(provider_tenant_id="xero-org-1"), "xero-org-1")),
         ),
         patch(
-            "app.services.integration.xero.xero_export_service.XeroClient",
+            "app.integrations.xero.export.XeroApiClient",
             return_value=mock_client,
         ),
     ):
@@ -825,17 +825,15 @@ async def test_transient_retry_vs_terminal(db_session):
         assert ledger.status == STATUS_RETRY_PENDING
 
     mock_client.post_json = AsyncMock(
-        side_effect=XeroApiError(
-            status_code=400, error_code="ValidationException", message="bad tax"
-        )
+        side_effect=XeroApiError(400, "bad tax", error_code="ValidationException")
     )
     with (
         patch(
-            "app.services.integration.xero.xero_export_service.require_xero_ready",
+            "app.integrations.xero.export.require_xero_ready",
             AsyncMock(return_value=(MagicMock(provider_tenant_id="xero-org-1"), "xero-org-1")),
         ),
         patch(
-            "app.services.integration.xero.xero_export_service.XeroClient",
+            "app.integrations.xero.export.XeroApiClient",
             return_value=mock_client,
         ),
     ):
@@ -892,7 +890,7 @@ async def test_ambiguous_supplier_human_review(db_session):
         xero_tenant_id="xero-org-1",
     )
     with patch(
-        "app.services.integration.xero.xero_export_service.require_xero_ready",
+        "app.integrations.xero.export.require_xero_ready",
         AsyncMock(return_value=(MagicMock(provider_tenant_id="xero-org-1"), "xero-org-1")),
     ):
         from app.services.integration.xero.xero_export_service import XeroExportError

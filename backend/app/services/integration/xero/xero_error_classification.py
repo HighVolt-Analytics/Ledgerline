@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from app.services.integration.xero.xero_client import XeroApiError
-
 ERROR_TRANSIENT = "TRANSIENT"
 ERROR_RECOVERABLE = "RECOVERABLE"
 ERROR_TERMINAL = "TERMINAL"
@@ -62,11 +60,11 @@ def classify_error(
     err_message = (message or str(exc) if exc else "Export failed")[:512]
     details: dict[str, Any] | None = None
 
-    if isinstance(exc, XeroApiError):
-        status_code = exc.status_code
-        err_code = exc.error_code or err_code
-        err_message = exc.message[:512]
-        details = exc.details
+    if exc is not None and hasattr(exc, "status_code") and hasattr(exc, "message"):
+        status_code = getattr(exc, "status_code", status_code)
+        err_code = getattr(exc, "error_code", None) or err_code
+        err_message = str(getattr(exc, "message", err_message))[:512]
+        details = getattr(exc, "details", None)
 
     if status_code in {429, 500, 502, 503, 504} or status_code == 0:
         return ClassifiedError(

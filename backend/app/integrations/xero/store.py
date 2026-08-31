@@ -231,3 +231,23 @@ async def select_connection(
     integration.last_error_code = None
     await db.flush()
     return integration
+
+
+async def require_xero_ready(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> tuple[AccountingIntegration, str]:
+    integration = await get_xero_integration(db, tenant_id)
+    if integration is None:
+        raise RuntimeError("Xero integration is not ready")
+    if integration.status == AccountingIntegrationStatus.ORGANISATION_SELECTION_REQUIRED.value:
+        raise RuntimeError("Select a Xero organisation before continuing")
+    if integration.status == AccountingIntegrationStatus.NEEDS_REAUTH.value:
+        raise RuntimeError("Xero connection requires re-authentication")
+    if (
+        integration.status != AccountingIntegrationStatus.CONNECTED.value
+        or not integration.provider_tenant_id
+        or not integration.access_token_encrypted
+    ):
+        raise RuntimeError("Xero integration is not ready")
+    return integration, integration.provider_tenant_id

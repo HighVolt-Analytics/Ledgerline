@@ -14,7 +14,7 @@ from app.models.accounting_entity_mapping import MAPPING_SUPPLIER
 from app.models.xero_contact import MAPPING_MAPPED, XeroContact
 from app.services.integration.accounting_integration_service import require_xero_ready
 from app.services.integration.accounting_mapping_service import get_mapping, upsert_mapping
-from app.services.integration.xero.xero_client import XeroApiError, XeroClient
+from app.integrations.xero.client import XeroApiClient, XeroApiError
 
 
 MatchOutcome = Literal["matched", "ambiguous", "none", "mapped"]
@@ -270,7 +270,7 @@ async def create_xero_supplier_contact(
     if existing.outcome == "ambiguous":
         raise ValueError("ambiguous_supplier_match")
 
-    client = XeroClient(db=db, tenant_id=tenant_id, xero_tenant_id=xero_tenant_id)
+    client = XeroApiClient(db=db, tenant_id=tenant_id, xero_tenant_id=xero_tenant_id)
     body: dict[str, Any] = {
         "Name": legal_name.strip(),
         "IsSupplier": True,

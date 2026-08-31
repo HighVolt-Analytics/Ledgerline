@@ -52,14 +52,14 @@ from app.services.integration.accounting_integration_service import (
     record_integration_error,
     validate_oauth_state_replay,
 )
-from app.services.integration.xero.xero_client import XeroApiError
-from app.services.integration.xero.xero_push_service import get_invoice_xero_status, push_invoice_to_xero
-from app.services.integration.xero.xero_readiness import get_xero_readiness_enriched
-from app.services.integration.xero.xero_sync_service import (
+from app.integrations.xero.client import XeroApiError
+from app.integrations.xero.push import get_invoice_xero_status, push_invoice_to_xero
+from app.integrations.xero.sync import (
     mark_sync_committed,
     sync_contacts,
     sync_settings,
 )
+from app.services.integration.xero.xero_readiness import get_xero_readiness_enriched
 from app.services.audit.audit_service import log_event
 from app.tenant_ids import parse_tenant_id
 from app.utils.logger import get_logger
