@@ -1,4 +1,4 @@
-"""Access-token refresh for the new Xero layer. Does not import legacy xero_token_service."""
+"""Access-token refresh for the Xero Accounting API."""
 
 from __future__ import annotations
 
@@ -41,6 +41,9 @@ def _expiring_soon(row: AccountingIntegration) -> bool:
     if expires.tzinfo is None:
         expires = expires.replace(tzinfo=timezone.utc)
     return expires <= margin
+
+
+_token_expiring_soon = _expiring_soon
 
 
 async def _acquire_lock(tenant_id: uuid.UUID) -> bool:

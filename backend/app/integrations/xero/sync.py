@@ -27,7 +27,7 @@ from app.integrations.xero.sync_counts import (
     SettingsSyncResult,
     payload_hash,
 )
-from app.services.integration.xero.xero_sync_job_service import (
+from app.integrations.xero.sync_jobs import (
     enqueue_sync_job,
     mark_job_completed,
     mark_job_failed,

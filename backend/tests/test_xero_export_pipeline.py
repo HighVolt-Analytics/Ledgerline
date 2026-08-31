@@ -410,7 +410,7 @@ async def test_export_auto_creates_supplier_when_no_match(db_session, tmp_path):
             AsyncMock(return_value=(integration, "xero-org-1")),
         ),
         patch(
-            "app.services.integration.xero.xero_contact_resolution_service.require_xero_ready",
+            "app.integrations.xero.contacts.require_xero_ready",
             AsyncMock(return_value=(integration, "xero-org-1")),
         ),
         patch(
@@ -418,7 +418,7 @@ async def test_export_auto_creates_supplier_when_no_match(db_session, tmp_path):
             return_value=mock_client,
         ),
         patch(
-            "app.services.integration.xero.xero_contact_resolution_service.XeroApiClient",
+            "app.integrations.xero.contacts.XeroApiClient",
             return_value=mock_client,
         ),
         patch(

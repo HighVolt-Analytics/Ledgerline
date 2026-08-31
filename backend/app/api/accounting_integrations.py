@@ -59,7 +59,7 @@ from app.integrations.xero.sync import (
     sync_contacts,
     sync_settings,
 )
-from app.services.integration.xero.xero_readiness import get_xero_readiness_enriched
+from app.integrations.xero.readiness import get_xero_readiness_enriched
 from app.services.audit.audit_service import log_event
 from app.tenant_ids import parse_tenant_id
 from app.utils.logger import get_logger

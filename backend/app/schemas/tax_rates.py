@@ -1,4 +1,4 @@
-"""Tenant tax rates (rule book config slice). Not synced to Xero yet."""
+"""Tenant tax rates. When a bill-processing platform is connected, Settings lists that platform's rates."""
 
 from __future__ import annotations
 
@@ -80,9 +80,20 @@ class TaxRateEntry(BaseModel):
         return round(sum(item.rate for item in self.components), 4)
 
 
+class BillProcessingTaxProvider(BaseModel):
+    """Which bill-processing platform currently owns tax rates in Settings."""
+
+    id: str = Field(..., min_length=1, max_length=64)
+    name: str = Field(..., min_length=1, max_length=80)
+    organisation_name: str | None = None
+    connected: bool = True
+
+
 class TaxRatesResponse(BaseModel):
     tax_rates: list[TaxRateEntry] = Field(default_factory=list)
     xero_connected: bool = False
+    source: Literal["none", "xero"] = "none"
+    provider: BillProcessingTaxProvider | None = None
 
     @classmethod
     def from_entries(
@@ -90,8 +101,18 @@ class TaxRatesResponse(BaseModel):
         entries: list[TaxRateEntry],
         *,
         xero_connected: bool = False,
+        source: Literal["none", "xero"] | None = None,
+        provider: BillProcessingTaxProvider | None = None,
     ) -> "TaxRatesResponse":
-        return cls(tax_rates=list(entries), xero_connected=xero_connected)
+        resolved_source: Literal["none", "xero"] = source or (
+            "xero" if xero_connected else "none"
+        )
+        return cls(
+            tax_rates=list(entries),
+            xero_connected=resolved_source == "xero",
+            source=resolved_source,
+            provider=provider,
+        )
 
 
 class CreateTaxRateRequest(BaseModel):

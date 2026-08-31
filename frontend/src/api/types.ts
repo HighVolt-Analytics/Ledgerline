@@ -218,9 +218,18 @@ export type OrgTaxRateWrite = Omit<OrgTaxRateRow, "id" | "total_rate" | "can_del
   tax_type: string;
 };
 
+export interface BillProcessingTaxProvider {
+  id: string;
+  name: string;
+  organisation_name?: string | null;
+  connected: boolean;
+}
+
 export interface TaxRatesPayload {
   tax_rates: OrgTaxRateRow[];
   xero_connected?: boolean;
+  source?: "none" | "xero" | string;
+  provider?: BillProcessingTaxProvider | null;
 }
 
 export interface PlatformTenantModule {

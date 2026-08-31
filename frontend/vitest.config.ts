@@ -61,6 +61,8 @@ export default defineConfig({
       "src/lib/allDocumentsDetailed.test.ts",
       "src/lib/bankFeedCopy.test.ts",
       "src/lib/taxRates.test.ts",
+      "src/lib/billProcessingTax.test.ts",
+      "src/components/settings/TaxRatesPanel.test.tsx",
       "src/lib/pageTenantIsolation.test.ts",
       "src/lib/publicSignupRoutes.test.ts",
       "src/lib/signupForm.test.ts",

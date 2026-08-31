@@ -52,11 +52,11 @@ from app.services.integration.canonical_transaction_builder import (
     load_invoice_for_export,
     resolve_organisation_posting_currency,
 )
-from app.services.integration.xero.xero_contact_resolution_service import (
+from app.integrations.xero.contacts import (
     resolve_supplier_contact,
     save_supplier_contact_mapping,
 )
-from app.services.integration.xero.xero_error_classification import (
+from app.integrations.xero.errors import (
     ERROR_TERMINAL,
     ERROR_TRANSIENT,
     classify_error,
@@ -454,7 +454,7 @@ async def export_supplier_invoice_to_xero(
     from app.schemas.canonical_accounting_transaction import (
         CanonicalAccountingTransaction,
     )
-    from app.services.integration.xero.xero_contact_resolution_service import (
+    from app.integrations.xero.contacts import (
         create_xero_supplier_contact,
     )
 

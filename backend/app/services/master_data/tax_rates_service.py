@@ -18,6 +18,7 @@ from app.integrations.xero.tax_rates import (
 )
 from app.schemas.rule_book_config import validate_rule_book_config_payload
 from app.schemas.tax_rates import (
+    BillProcessingTaxProvider,
     CreateTaxRateRequest,
     TaxRateEntry,
     TaxRatesResponse,
@@ -38,18 +39,37 @@ async def xero_connection(
         return None
 
 
+def _xero_tax_provider(integration: object) -> BillProcessingTaxProvider:
+    organisation = getattr(integration, "display_name", None)
+    organisation_name = str(organisation).strip() if organisation else None
+    return BillProcessingTaxProvider(
+        id="xero",
+        name="Xero",
+        organisation_name=organisation_name or None,
+        connected=True,
+    )
+
+
+def _xero_tax_response(entries: list[TaxRateEntry], integration: object) -> TaxRatesResponse:
+    return TaxRatesResponse.from_entries(
+        entries,
+        source="xero",
+        provider=_xero_tax_provider(integration),
+    )
+
+
 async def load_tax_rates(
     session: AsyncSession,
     tenant_id: uuid.UUID,
 ) -> TaxRatesResponse:
     connected = await xero_connection(session, tenant_id)
     if connected is not None:
-        _integration, xero_tenant_id = connected
+        integration, xero_tenant_id = connected
         entries = await list_synced_tax_rates(session, tenant_id, xero_tenant_id)
-        return TaxRatesResponse.from_entries(entries, xero_connected=True)
+        return _xero_tax_response(entries, integration)
     raw = await load_rule_book_config_dict(session, tenant_id)
     payload = validate_rule_book_config_payload(raw)
-    return TaxRatesResponse.from_entries(payload.tax_rates, xero_connected=False)
+    return TaxRatesResponse.from_entries(payload.tax_rates, source="none")
 
 
 async def save_tax_rates(
@@ -78,7 +98,7 @@ async def save_tax_rates(
         updated_by_user_id=updated_by_user_id,
     )
     clear_rule_book_cache()
-    return TaxRatesResponse.from_entries(updated.tax_rates, xero_connected=False)
+    return TaxRatesResponse.from_entries(updated.tax_rates, source="none")
 
 
 async def create_tax_rate(

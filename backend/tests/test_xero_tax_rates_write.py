@@ -124,6 +124,10 @@ async def test_get_tax_rates_from_xero_cache(
     assert res.status_code == 200, res.text
     body = res.json()["data"]
     assert body["xero_connected"] is True
+    assert body["source"] == "xero"
+    assert body["provider"]["id"] == "xero"
+    assert body["provider"]["name"] == "Xero"
+    assert body["provider"]["connected"] is True
     by_id = {row["id"]: row for row in body["tax_rates"]}
     assert by_id["OUTPUT"]["can_delete"] is False
     assert by_id["OUTPUT"]["can_edit"] is False

@@ -15,7 +15,7 @@ from app.integrations.xero.export import (
     list_export_ledger,
     push_invoice_to_xero_pipeline,
 )
-from app.services.integration.xero.xero_mapping_validation import (
+from app.integrations.xero.mapping import (
     XeroMappingValidationError,
     XeroMappingValidationResult,
 )

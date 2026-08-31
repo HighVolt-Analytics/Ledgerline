@@ -28,6 +28,9 @@ async def test_tax_rates_round_trip(client: AsyncClient) -> None:
     assert saved[0]["components"] == [{"name": "GST", "rate": 10.0}]
     assert saved[0]["total_rate"] == 10.0
     assert saved[0]["id"]
+    assert patch_res.json()["data"]["source"] == "none"
+    assert patch_res.json()["data"]["xero_connected"] is False
+    assert patch_res.json()["data"]["provider"] is None
 
     get_res = await client.get("/api/tenants/current/tax-rates")
     assert get_res.status_code == 200, get_res.text

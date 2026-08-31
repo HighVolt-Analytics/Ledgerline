@@ -70,13 +70,13 @@ from app.services.ingest.inline_mailbox_poller import (
     start_inline_mailbox_poller,
     stop_inline_mailbox_poller,
 )
-from app.services.integration.xero.xero_background_sync import (
+from app.integrations.xero.background_sync import (
     start_xero_background_sync,
     stop_xero_background_sync,
 )
 from app.services.rule_book.rule_book_save_buffer import flush_all_rule_book_save_buffers
 from app.services.integration.accounting_integration_service import XeroNotReadyError
-from app.services.integration.xero.xero_mapping_validation import XeroMappingValidationError
+from app.integrations.xero.mapping import XeroMappingValidationError
 from app.services.shared.public_app_url import build_oauth_frontend_path
 from app.services.tenant.tenant_context_service import get_or_create_default_tenant, sync_env_mailbox
 from app.services.tenant.tenant_module_service import require_module

@@ -17,10 +17,7 @@ from app.models.tenant_payment_provider import (
     TenantPaymentProviderAccount,
 )
 from app.services.audit.audit_service import log_event
-from app.services.integration.xero.xero_token_service import (
-    STATE_TTL_SECONDS,
-    consume_oauth_jti,
-)
+from app.integrations.core.oauth_state import STATE_TTL_SECONDS, consume_oauth_jti
 from app.services.payments.paypal_client import PaypalApiError, get_paypal_client
 from app.services.shared.token_vault import encrypt_secret
 from app.tenant_ids import parse_tenant_id
