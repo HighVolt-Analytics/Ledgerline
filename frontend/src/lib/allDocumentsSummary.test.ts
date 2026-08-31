@@ -105,6 +105,7 @@ describe("parseUploadChannelTab", () => {
     expect(parseUploadChannelTab("email")).toBe("email");
     expect(parseUploadChannelTab("whatsapp")).toBe("whatsapp");
     expect(parseUploadChannelTab("viber")).toBe("viber");
+    expect(parseUploadChannelTab("bank-feeds")).toBe("bank-feeds");
   });
 });
 

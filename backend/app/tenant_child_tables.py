@@ -88,6 +88,12 @@ def _sync_line_item_tenant(_mapper, connection: Connection, target: LineItem) ->
 @event.listens_for(JournalEntry, "before_insert")
 @event.listens_for(JournalEntry, "before_update")
 def _sync_journal_entry_tenant(_mapper, connection: Connection, target: JournalEntry) -> None:
+    if target.invoice_id is None:
+        if target.tenant_id is None:
+            raise TenantChildMismatchError(
+                "journal entry: tenant_id is required when invoice_id is null"
+            )
+        return
     target.tenant_id = _resolve_invoice_child_tenant(
         connection,
         tenant_id=target.tenant_id,

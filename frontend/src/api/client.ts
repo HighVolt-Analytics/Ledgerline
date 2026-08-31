@@ -14,6 +14,16 @@ import type {
   ActivityItem,
   ApiEnvelope,
   AppSettings,
+  BankAccount,
+  BankCategorizeRunResult,
+  BankFeedImport,
+  BankFeedImportList,
+  BankTransactionNote,
+  BankMatchRunResult,
+  BankTransaction,
+  BankTransactionList,
+  BankTransactionMatch,
+  BankMatchTarget,
   AccountingIntegrationsStatus,
   XeroConnectionsResponse,
   XeroInvoiceStatus,
@@ -2420,6 +2430,233 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     });
+  },
+
+  listBankAccounts: (includeArchived = false, options?: FreshRequestOptions) => {
+    const path = `/api/bank-feeds/accounts?include_archived=${includeArchived ? "true" : "false"}`;
+    if (options?.fresh) bustGetCache(path);
+    return request<BankAccount[]>(path);
+  },
+  createBankAccount: (body: {
+    name: string;
+    currency: string;
+    account_mask?: string | null;
+    coa_account_name?: string | null;
+  }) => {
+    bustGetCacheByPrefix("/api/bank-feeds");
+    return request<BankAccount>("/api/bank-feeds/accounts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  },
+  importBankFeedCsv: async (accountId: number, file: File): Promise<BankFeedImport> => {
+    const fd = new FormData();
+    fd.append("file", file);
+    bustGetCacheByPrefix("/api/bank-feeds");
+    const res = await fetch(
+      `${BASE}/api/bank-feeds/accounts/${accountId}/imports`,
+      {
+        method: "POST",
+        body: fd,
+        headers: getScopedAuthHeaders(),
+      }
+    );
+    if (!res.ok) {
+      const msg = await parseErrorResponse(res);
+      if (res.status === 401) {
+        void notifyUnauthorized();
+      }
+      throw new ApiError(msg, res.status);
+    }
+    const json = (await res.json()) as ApiEnvelope<BankFeedImport>;
+    if (json.error) throw new Error(json.error.message);
+    return json.data;
+  },
+  listBankTransactions: (
+    accountId: number,
+    params?: {
+      match_status?: string;
+      reconcile?: boolean;
+      date_from?: string;
+      date_to?: string;
+      page?: number;
+      page_size?: number;
+    },
+    options?: FreshRequestOptions
+  ) => {
+    const qs = new URLSearchParams();
+    if (params?.reconcile) qs.set("reconcile", "true");
+    else if (params?.match_status) qs.set("match_status", params.match_status);
+    if (params?.date_from) qs.set("date_from", params.date_from);
+    if (params?.date_to) qs.set("date_to", params.date_to);
+    if (params?.page != null) qs.set("page", String(params.page));
+    if (params?.page_size != null) qs.set("page_size", String(params.page_size));
+    const q = qs.toString();
+    const path = `/api/bank-feeds/accounts/${accountId}/transactions${q ? `?${q}` : ""}`;
+    if (options?.fresh) bustGetCache(path);
+    return requestWithMeta<BankTransactionList>(path);
+  },
+  listBankFeedImports: (
+    accountId: number,
+    params?: { page?: number; page_size?: number },
+    options?: FreshRequestOptions
+  ) => {
+    const qs = new URLSearchParams();
+    if (params?.page != null) qs.set("page", String(params.page));
+    if (params?.page_size != null) qs.set("page_size", String(params.page_size));
+    const q = qs.toString();
+    const path = `/api/bank-feeds/accounts/${accountId}/imports${q ? `?${q}` : ""}`;
+    if (options?.fresh) bustGetCache(path);
+    return requestWithMeta<BankFeedImportList>(path);
+  },
+  getBankTransaction: (transactionId: number, options?: FreshRequestOptions) => {
+    const path = `/api/bank-feeds/transactions/${transactionId}`;
+    if (options?.fresh) bustGetCache(path);
+    return request<BankTransaction>(path);
+  },
+  listBankTransactionAudit: (transactionId: number, options?: FreshRequestOptions) => {
+    const path = `/api/bank-feeds/transactions/${transactionId}/audit`;
+    if (options?.fresh) bustGetCache(path);
+    return request<AuditLogEntry[]>(path);
+  },
+  listBankMatchTargets: (
+    matchedType: "payment" | "collection",
+    options?: FreshRequestOptions & { q?: string; limit?: number }
+  ) => {
+    const params = new URLSearchParams();
+    params.set("matched_type", matchedType);
+    if (options?.q?.trim()) params.set("q", options.q.trim());
+    if (options?.limit != null) params.set("limit", String(options.limit));
+    const path = `/api/bank-feeds/match-targets?${params.toString()}`;
+    if (options?.fresh) bustGetCache(path);
+    return request<BankMatchTarget[]>(path);
+  },
+  runBankFeedMatch: (accountId: number) => {
+    bustGetCacheByPrefix("/api/bank-feeds");
+    return request<BankMatchRunResult>(`/api/bank-feeds/accounts/${accountId}/match-run`, {
+      method: "POST",
+    });
+  },
+  runBankFeedCategorize: (accountId: number) => {
+    bustGetCacheByPrefix("/api/bank-feeds");
+    return request<BankCategorizeRunResult>(
+      `/api/bank-feeds/accounts/${accountId}/categorize-run`,
+      { method: "POST" }
+    );
+  },
+  setBankTransactionCategory: (
+    transactionId: number,
+    body: {
+      category_coa?: string | null;
+      ledger?: string | null;
+      sub_ledger?: string | null;
+    }
+  ) => {
+    bustGetCacheByPrefix("/api/bank-feeds");
+    return request<BankTransaction>(`/api/bank-feeds/transactions/${transactionId}/category`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  },
+  createBankTransactionMatch: (
+    transactionId: number,
+    body: {
+      matched_type: "payment" | "collection";
+      matched_id: number;
+      allocated_amount?: number | null;
+    }
+  ) => {
+    bustGetCacheByPrefix("/api/bank-feeds");
+    return request<BankTransactionMatch>(
+      `/api/bank-feeds/transactions/${transactionId}/matches`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }
+    );
+  },
+  confirmBankMatch: (matchId: number) => {
+    bustGetCacheByPrefix("/api/bank-feeds");
+    return request<BankTransactionMatch>(`/api/bank-feeds/matches/${matchId}/confirm`, {
+      method: "POST",
+    });
+  },
+  unmatchBankMatch: (matchId: number, reason?: string | null) => {
+    bustGetCacheByPrefix("/api/bank-feeds");
+    return request<BankTransactionMatch>(`/api/bank-feeds/matches/${matchId}/unmatch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: reason ?? null }),
+    });
+  },
+  excludeBankTransaction: (transactionId: number, reason?: string | null) => {
+    bustGetCacheByPrefix("/api/bank-feeds");
+    return request<BankTransaction>(
+      `/api/bank-feeds/transactions/${transactionId}/exclude`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: reason ?? null }),
+      }
+    );
+  },
+  createBankJournal: (
+    transactionId: number,
+    body: {
+      party_type: "vendor" | "customer";
+      party_id?: number | null;
+      create_party?: { name: string } | null;
+      ledger: string;
+      description: string;
+      tax_rate_percent: number;
+    }
+  ) => {
+    bustGetCacheByPrefix("/api/bank-feeds");
+    return request<BankTransaction>(`/api/bank-feeds/transactions/${transactionId}/create`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  },
+  reverseBankCreate: (transactionId: number) => {
+    bustGetCacheByPrefix("/api/bank-feeds");
+    return request<BankTransaction>(
+      `/api/bank-feeds/transactions/${transactionId}/reverse-create`,
+      { method: "POST" }
+    );
+  },
+  transferBankTransaction: (
+    transactionId: number,
+    body: { to_bank_account_id: number; description: string }
+  ) => {
+    bustGetCacheByPrefix("/api/bank-feeds");
+    return request<BankTransaction>(
+      `/api/bank-feeds/transactions/${transactionId}/transfer`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }
+    );
+  },
+  listBankTransactionNotes: (transactionId: number, options?: FreshRequestOptions) => {
+    const path = `/api/bank-feeds/transactions/${transactionId}/notes`;
+    if (options?.fresh) bustGetCache(path);
+    return request<BankTransactionNote[]>(path);
+  },
+  createBankTransactionNote: (transactionId: number, body: { body: string }) => {
+    bustGetCacheByPrefix("/api/bank-feeds");
+    return request<BankTransactionNote>(
+      `/api/bank-feeds/transactions/${transactionId}/notes`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }
+    );
   },
 };
 

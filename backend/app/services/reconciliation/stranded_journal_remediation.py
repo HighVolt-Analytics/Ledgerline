@@ -19,6 +19,7 @@ from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import JournalEntry, JournalEntryKind
 from app.services.audit.audit_service import log_event
 from app.tenant_child_tables import journal_entries_for_invoice
+from app.services.payments.journal_reversal_service import reverse_batches_for_entries
 
 # Terminal / blocked statuses whose invoice totals do NOT enter RC1.
 # Accrual journals for these invoices are safe to purge.
@@ -44,7 +45,7 @@ async def purge_accrual_journals_for_invoice(
     reason: str,
     audit: bool = True,
 ) -> int:
-    """Delete INVOICE_ACCRUAL rows for one invoice (settlements kept)."""
+    """Reverse INVOICE_ACCRUAL rows for one invoice (settlements kept)."""
     entries = (
         await session.execute(
             select(JournalEntry).where(
@@ -55,9 +56,7 @@ async def purge_accrual_journals_for_invoice(
     ).scalars().all()
     if not entries:
         return 0
-    for entry in entries:
-        await session.delete(entry)
-    await session.flush()
+    await reverse_batches_for_entries(session, entries, reason=reason)
     if audit:
         await log_event(
             session,
@@ -115,8 +114,7 @@ async def purge_stranded_accrual_journals(
         ).scalars().all()
         if not entries:
             continue
-        for entry in entries:
-            await session.delete(entry)
+        await reverse_batches_for_entries(session, entries, reason=reason)
         deleted += len(entries)
         touched.append(inv.id)
         await log_event(

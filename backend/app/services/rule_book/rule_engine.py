@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import functools
 import re
 from dataclasses import dataclass
 from typing import Any, Literal
+
+import re2
 
 PurchaseDocumentType = Literal["po", "grn", "invoice"]
 PURCHASE_DOCUMENT_TYPES = frozenset({"po", "grn", "invoice"})
 
 from app.schemas.customer import CustomerMaster
 from app.schemas.rule_book_config import (
+    BankNarrationRule,
     EmailCaptureRule,
     ExpenseRule,
     PurchaseRule,
@@ -72,7 +76,7 @@ class CustomerMatch:
 @dataclass(frozen=True)
 class CategoryRuleHit:
     label: str
-    kind: Literal["Purchase", "Sales", "Expense", "Team"]
+    kind: Literal["Purchase", "Sales", "Expense", "Team", "Bank"]
 
 
 @dataclass(frozen=True)
@@ -352,8 +356,14 @@ def doc_to_sample_email(doc: EvalDocument, *, default_mailbox: str) -> SampleEma
 
 
 def _iter_category_rules(rules: list, *, enabled_only: bool) -> list:
-    filtered = (rule for rule in rules if rule.enabled == enabled_only)
-    return sorted(filtered, key=lambda rule: rule.priority)
+    """Enabled (or disabled) rules by ascending priority, then original list order."""
+    indexed = [
+        (index, rule)
+        for index, rule in enumerate(rules)
+        if rule.enabled == enabled_only
+    ]
+    indexed.sort(key=lambda pair: (pair[1].priority, pair[0]))
+    return [rule for _, rule in indexed]
 
 
 def _po_number_matches_rule(rule: PurchaseRule, po_number: str) -> bool:
@@ -579,6 +589,79 @@ def match_disabled_team_expense_rule(
             employee_department=employee_department,
         ):
             return rule
+    return None
+
+
+@dataclass(frozen=True)
+class BankNarrationRuleHit:
+    rule: BankNarrationRule
+    matched_on: Literal["contains", "pattern"]
+    matched_snippet: str
+
+
+@functools.lru_cache(maxsize=256)
+def _compile_bank_narration_pattern(pattern: str):
+    """Compile with RE2 so matching is linear-time (no catastrophic backtracking).
+
+    Case-insensitive via an inline flag — google-re2 has no IGNORECASE constant.
+    Unsupported PCRE (backrefs, lookaround) raises and is treated as no-match.
+    """
+    return re2.compile("(?i)" + pattern)
+
+
+def _bank_regex_search(pattern: str, text: str) -> bool:
+    """Return True if pattern matches; False on invalid or RE2-unsupported pattern."""
+    try:
+        compiled = _compile_bank_narration_pattern(pattern)
+        return compiled.search(text) is not None
+    except Exception:
+        return False
+
+
+def _bank_narration_rule_matches(
+    description: str,
+    rule: BankNarrationRule,
+) -> BankNarrationRuleHit | None:
+    """AND of configured fields: empty match_on never matches."""
+    match_on = rule.match_on
+    contains = (match_on.description_contains or "").strip()
+    pattern = (match_on.description_pattern or "").strip()
+    if not contains and not pattern:
+        return None
+
+    hay = description or ""
+    if contains:
+        if contains.lower() not in hay.lower():
+            return None
+    if pattern:
+        if not _bank_regex_search(pattern, hay):
+            return None
+
+    if contains and pattern:
+        matched_on: Literal["contains", "pattern"] = "contains"
+        snippet = contains
+    elif contains:
+        matched_on = "contains"
+        snippet = contains
+    else:
+        matched_on = "pattern"
+        snippet = pattern
+    return BankNarrationRuleHit(rule=rule, matched_on=matched_on, matched_snippet=snippet)
+
+
+def match_bank_narration_rule(
+    description: str,
+    rules: list[BankNarrationRule],
+) -> BankNarrationRuleHit | None:
+    """First enabled bank narration rule by ascending priority.
+
+    Isolated from Purchase/Sales/Expense/Team document evaluation — never call
+    this from match_category_rule. Regex uses RE2 (linear-time; no thread timeout).
+    """
+    for rule in _iter_category_rules(rules, enabled_only=True):
+        hit = _bank_narration_rule_matches(description, rule)
+        if hit is not None:
+            return hit
     return None
 
 

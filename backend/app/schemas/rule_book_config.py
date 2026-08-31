@@ -137,6 +137,23 @@ class TeamExpenseRule(BaseModel):
     matched_count: int = Field(default=0, ge=0)
 
 
+class BankNarrationMatchOn(BaseModel):
+    description_contains: str | None = None
+    description_pattern: str | None = None
+
+
+class BankNarrationRule(BaseModel):
+    """Bank statement narration → COA category (unmatched lines only)."""
+
+    id: str = Field(..., min_length=1, max_length=100)
+    name: str = Field(..., min_length=1, max_length=255)
+    enabled: bool = True
+    priority: int = Field(default=100, ge=1)
+    match_on: BankNarrationMatchOn = Field(default_factory=BankNarrationMatchOn)
+    post_to: PostToAccounts
+    matched_count: int = Field(default=0, ge=0)
+
+
 class BillingAddress(BaseModel):
     street: str = ""
     suburb: str = ""
@@ -577,6 +594,7 @@ class RuleBookConfigPayload(BaseModel):
     sales_rules: list[SalesRule] = Field(default_factory=list)
     expense_rules: list[ExpenseRule] = Field(default_factory=list)
     team_expense_rules: list[TeamExpenseRule] = Field(default_factory=list)
+    bank_narration_rules: list[BankNarrationRule] = Field(default_factory=list)
     vendor_masters: list[VendorMaster] = Field(default_factory=list)
     vendor_detection_config: VendorDetectionConfig = Field(
         default_factory=VendorDetectionConfig
@@ -644,6 +662,7 @@ class RuleBookRulesPayload(BaseModel):
     sales_rules: list[SalesRule] = Field(default_factory=list)
     expense_rules: list[ExpenseRule] = Field(default_factory=list)
     team_expense_rules: list[TeamExpenseRule] = Field(default_factory=list)
+    bank_narration_rules: list[BankNarrationRule] = Field(default_factory=list)
     vendor_detection_config: VendorDetectionConfig = Field(
         default_factory=VendorDetectionConfig
     )
@@ -683,7 +702,13 @@ class RuleBookRulesPayload(BaseModel):
 
 def _backfill_category_rule_priorities(data: dict[str, Any]) -> dict[str, Any]:
     """Assign priority 100, 110, … when missing (architecture §2.2)."""
-    for key in ("purchase_rules", "sales_rules", "expense_rules", "team_expense_rules"):
+    for key in (
+        "purchase_rules",
+        "sales_rules",
+        "expense_rules",
+        "team_expense_rules",
+        "bank_narration_rules",
+    ):
         rules = data.get(key)
         if not isinstance(rules, list):
             continue

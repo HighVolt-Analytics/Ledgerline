@@ -26,6 +26,12 @@ from app.services.tenant.org_ai_brief_service import (
 )
 from app.schemas.chart_of_accounts import ChartOfAccountsResponse, UpdateChartOfAccountsRequest
 from app.services.master_data.chart_of_accounts_service import load_chart_of_accounts, save_chart_of_accounts
+from app.schemas.fiscal_period import (
+    ClosePeriodRequest,
+    FiscalPeriodResponse,
+    ListFiscalPeriodsResponse,
+)
+from app.services.payments.fiscal_period_service import close_period, list_periods, reopen_period
 from app.schemas.setup_checklist import SetupChecklistStateResponse
 from app.services.tenant.tenant_setup_checklist_service import build_setup_checklist_state
 from app.jurisdiction.packs import jurisdiction_api_view, tenant_jurisdiction
@@ -251,6 +257,55 @@ async def update_chart_of_accounts(
         updated_by_user_id=ctx.user_id,
     )
     return ApiEnvelope(data=saved)
+
+
+@router.get("/current/fiscal-periods", response_model=ApiEnvelope[ListFiscalPeriodsResponse])
+async def get_fiscal_periods(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[ListFiscalPeriodsResponse]:
+    """Closed fiscal periods for the tenant. No matching period for a date = open."""
+    periods = await list_periods(db, ctx.tenant_id)
+    return ApiEnvelope(
+        data=ListFiscalPeriodsResponse(
+            periods=[FiscalPeriodResponse.model_validate(p) for p in periods]
+        )
+    )
+
+
+@router.post("/current/fiscal-periods/close", response_model=ApiEnvelope[FiscalPeriodResponse])
+async def close_fiscal_period(
+    body: ClosePeriodRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[FiscalPeriodResponse]:
+    if ctx.is_support_session:
+        raise HTTPException(403, "Support sessions cannot close fiscal periods")
+    period = await close_period(
+        db,
+        ctx.tenant_id,
+        period_start=body.period_start,
+        period_end=body.period_end,
+        closed_by=ctx.user_id,
+    )
+    return ApiEnvelope(data=FiscalPeriodResponse.model_validate(period))
+
+
+@router.post(
+    "/current/fiscal-periods/{period_id}/reopen", response_model=ApiEnvelope[FiscalPeriodResponse]
+)
+async def reopen_fiscal_period(
+    period_id: int,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[FiscalPeriodResponse]:
+    if ctx.is_support_session:
+        raise HTTPException(403, "Support sessions cannot reopen fiscal periods")
+    try:
+        period = await reopen_period(db, ctx.tenant_id, period_id, reopened_by=ctx.user_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return ApiEnvelope(data=FiscalPeriodResponse.model_validate(period))
 
 
 @router.patch("/current/institution", response_model=ApiEnvelope[InstitutionSettingsResponse])

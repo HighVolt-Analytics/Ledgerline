@@ -12,6 +12,7 @@ from app.api import (
     accounting_integrations,
     approval_policy,
     approvals,
+    bank_feeds,
     billing,
     collections,
     customer_masters,
@@ -230,6 +231,7 @@ app.include_router(purchases.router, prefix="/api", dependencies=_module_deps("p
 app.include_router(sales.router, prefix="/api", dependencies=_module_deps("sales"))
 app.include_router(collections.router, prefix="/api", dependencies=_module_deps("sales"))
 app.include_router(payments.router, prefix="/api", dependencies=_module_deps("payments"))
+app.include_router(bank_feeds.router, prefix="/api", dependencies=_module_deps("bank_feeds"))
 app.include_router(paypal_payments.router, prefix="/api", dependencies=_module_deps("payments"))
 app.include_router(ledger_link.router, prefix="/api", dependencies=_module_deps("ledger_link"))
 app.include_router(billing.router, prefix="/api", dependencies=_api_deps)

@@ -85,6 +85,20 @@ export type ExpenseRule = {
   matchedCount: number;
 };
 
+/** Bank statement narration → COA (unmatched lines only; metadata, no GL). */
+export type BankNarrationRule = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  priority?: number;
+  matchOn: {
+    descriptionContains?: string;
+    descriptionPattern?: string;
+  };
+  postTo: { ledger: string; subLedger: string };
+  matchedCount: number;
+};
+
 export type SalesRule = {
   id: string;
   name: string;
@@ -338,6 +352,7 @@ export type RuleBookConfigState = {
   salesRules: SalesRule[];
   expenseRules: ExpenseRule[];
   teamExpenseRules: TeamExpenseRule[];
+  bankNarrationRules: BankNarrationRule[];
   vendorMasters: VendorMaster[];
   vendorDetectionConfig: VendorDetectionConfig;
   employeeMasters: EmployeeMaster[];

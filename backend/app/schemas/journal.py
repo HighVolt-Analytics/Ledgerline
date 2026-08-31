@@ -14,13 +14,15 @@ class JournalEntryKind(str, Enum):
     INVOICE_ACCRUAL = "invoice_accrual"
     PAYMENT_SETTLEMENT = "payment_settlement"
     COLLECTION_SETTLEMENT = "collection_settlement"
+    BANK_CREATE = "bank_create"
+    BANK_TRANSFER = "bank_transfer"
 
 
 class JournalEntryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    invoice_id: int
+    invoice_id: int | None = None
     date: date
     account_code: str
     account_name: str

@@ -59,6 +59,13 @@ TENANT_MODULE_CATALOG: tuple[TenantModuleDef, ...] = (
         group="Finance",
     ),
     TenantModuleDef(
+        key="bank_feeds",
+        label="Bank Feeds",
+        description="Bank statement import and cash reconciliation.",
+        group="Finance",
+        default_active=False,
+    ),
+    TenantModuleDef(
         key="ledger_link",
         label="Ledger Link",
         description="Export to accounting ledger.",

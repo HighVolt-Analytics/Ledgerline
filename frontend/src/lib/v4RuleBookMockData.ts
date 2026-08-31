@@ -707,6 +707,7 @@ export function createDefaultRuleBookConfig(): RuleBookConfigState {
     salesRules: [],
     expenseRules: EXPENSE_RULES,
     teamExpenseRules: TEAM_EXPENSE_RULES,
+    bankNarrationRules: [],
     vendorMasters: VENDOR_MASTERS,
     vendorDetectionConfig: {
       weights: { name: 30, abn: 40, bank: 20, address: 10 },

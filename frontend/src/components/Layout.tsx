@@ -19,6 +19,7 @@ import {
   Users,
   Vault,
   Wallet,
+  Landmark,
 } from "lucide-react";
 import { GlobalSearchDialog } from "@/components/GlobalSearchBar";
 import { DashboardIcon } from "@/components/icons/DashboardIcon";
@@ -53,6 +54,7 @@ const ROUTE_PREFETCH: Record<string, () => Promise<unknown>> = {
   "/expenses": () => import("@/pages/ExpensesManagementPage"),
   "/collections": () => import("@/pages/CollectionsPage"),
   "/payments": () => import("@/pages/PaymentsPage"),
+  "/bank-feeds": () => import("@/pages/BankFeedsPage"),
   "/customers": () => import("@/pages/CustomersPage"),
   "/vendors": () => import("@/pages/VendorsPage"),
   "/ledger-link": () => import("@/pages/LedgerLinkPage"),
@@ -139,6 +141,14 @@ const UPLOAD_ITEM: NavItem = {
   iconTone: "sky",
 };
 
+const BANK_FEEDS_ITEM: NavItem = {
+  to: "/upload?channel=bank-feeds",
+  label: "Bank feeds",
+  icon: Landmark,
+  moduleKey: "bank_feeds",
+  iconTone: "indigo",
+};
+
 const CONTACTS_ITEM: NavItem = {
   to: "/creations",
   label: "Contacts",
@@ -146,7 +156,12 @@ const CONTACTS_ITEM: NavItem = {
   iconTone: "rose",
 };
 
-const TOP_LEVEL_ITEMS: NavItem[] = [DASHBOARD_ITEM, UPLOAD_ITEM, CONTACTS_ITEM];
+const TOP_LEVEL_ITEMS: NavItem[] = [
+  DASHBOARD_ITEM,
+  UPLOAD_ITEM,
+  BANK_FEEDS_ITEM,
+  CONTACTS_ITEM,
+];
 
 const OPERATIONS_GROUPS: NavGroup[] = [
   {
@@ -236,21 +251,34 @@ function navTestId(label: string) {
   return `nav-${label.toLowerCase().replace(/\s+|&/g, "-")}`;
 }
 
-function pathMatchesItem(pathname: string, to: string) {
+function pathMatchesItem(pathname: string, to: string, search = "") {
+  if (to.includes("?")) {
+    const [path, queryPart] = to.split("?", 2);
+    if (pathname !== path) return false;
+    const expected = new URLSearchParams(queryPart);
+    const actual = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+    for (const [key, value] of expected.entries()) {
+      if (actual.get(key) !== value) return false;
+    }
+    return true;
+  }
   if (to === "/") return pathname === "/";
-  return pathname === to || pathname.startsWith(`${to}/`);
+  if (pathname !== to && !pathname.startsWith(`${to}/`)) return false;
+  // /upload should not match when a more specific upload channel tab is active.
+  if (to === "/upload" && search.includes("channel=bank-feeds")) return false;
+  return true;
 }
 
-function sectionForPath(pathname: string): string {
+function sectionForPath(pathname: string, search = ""): string {
   if (pathname === "/") return "";
-  if (TOP_LEVEL_ITEMS.some((item) => pathMatchesItem(pathname, item.to))) return "";
-  if (pathMatchesItem(pathname, REPORTS_ITEM.to)) return "";
+  if (TOP_LEVEL_ITEMS.some((item) => pathMatchesItem(pathname, item.to, search))) return "";
+  if (pathMatchesItem(pathname, REPORTS_ITEM.to, search)) return "";
   let bestSection = "";
   let bestPathLen = -1;
   for (const section of ALL_SECTIONS) {
     for (const group of section.groups) {
       for (const item of group.items) {
-        if (pathMatchesItem(pathname, item.to) && item.to.length > bestPathLen) {
+        if (pathMatchesItem(pathname, item.to, search) && item.to.length > bestPathLen) {
           bestSection = section.id;
           bestPathLen = item.to.length;
         }
@@ -260,8 +288,8 @@ function sectionForPath(pathname: string): string {
   return bestSection;
 }
 
-function isNavItemActive(pathname: string, to: string): boolean {
-  if (!pathMatchesItem(pathname, to)) return false;
+function isNavItemActive(pathname: string, to: string, search = ""): boolean {
+  if (!pathMatchesItem(pathname, to, search)) return false;
   const allItems = [
     ...TOP_LEVEL_ITEMS,
     REPORTS_ITEM,
@@ -271,7 +299,7 @@ function isNavItemActive(pathname: string, to: string): boolean {
     if (
       item.to !== to &&
       item.to.length > to.length &&
-      pathMatchesItem(pathname, item.to)
+      pathMatchesItem(pathname, item.to, search)
     ) {
       return false;
     }
@@ -326,7 +354,7 @@ function badgeCount(
 }
 
 export function Layout() {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const { user } = useAuth();
   const { data: badges } = useNavBadges();
   const { permissions } = usePermissions();
@@ -346,7 +374,7 @@ export function Layout() {
     collections: badges?.collections_queue_count ?? 0,
   };
   const [expandedSection, setExpandedSection] = useState<string | null>(() =>
-    sectionForPath(pathname)
+    sectionForPath(pathname, search)
   );
   const [searchOpen, setSearchOpen] = useState(false);
   const [sidebarPinned, setSidebarPinned] = useState(() => {
@@ -366,17 +394,19 @@ export function Layout() {
     showDismiss,
   } = useUnpinnedSidebarHover(sidebarPinned, pathname);
   const prevPathname = useRef(pathname);
+  const prevSearch = useRef(search);
   const accessToken = getAccessToken();
 
-  const routeSection = sectionForPath(pathname);
+  const routeSection = sectionForPath(pathname, search);
 
   useEffect(() => {
-    const section = sectionForPath(pathname);
-    if (prevPathname.current !== pathname) {
+    const section = sectionForPath(pathname, search);
+    if (prevPathname.current !== pathname || search !== prevSearch.current) {
       setExpandedSection(section);
     }
     prevPathname.current = pathname;
-  }, [pathname]);
+    prevSearch.current = search;
+  }, [pathname, search]);
 
   useEffect(() => {
     if (sidebarHovered || sidebarPinned) {
@@ -469,7 +499,7 @@ export function Layout() {
     level: "subfield" | "nested",
     iconOnly: boolean
   ) => {
-    const active = isNavItemActive(pathname, item.to);
+    const active = isNavItemActive(pathname, item.to, search);
     const count = badgeCount(item.badge, counts);
     const ItemIcon = item.icon;
     return (
@@ -788,7 +818,7 @@ export function Layout() {
 
         <nav className="app-mobile-nav" aria-label="Mobile navigation">
           {MOBILE_NAV.filter(canShowNavItem).map(({ to, label, icon: Icon }) => {
-            const active = isNavItemActive(pathname, to);
+            const active = isNavItemActive(pathname, to, search);
             return (
               <NavLink
                 key={to}

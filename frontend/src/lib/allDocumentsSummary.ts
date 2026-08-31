@@ -17,7 +17,7 @@ import { stagesToCells } from "@/lib/matrixApi";
 import type { MatrixFlagType, MatrixPaymentStatus } from "@/lib/v4MatrixMockData";
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
 
-export type AllDocumentsChannelTab = "all" | "upload" | "email" | "whatsapp" | "viber";
+export type AllDocumentsChannelTab = "all" | "upload" | "email" | "whatsapp" | "viber" | "bank-feeds";
 
 export type PipelineStatusLabel = "Done" | "Pending" | "Failed" | "Not required" | "Posted" | "N/A";
 
@@ -35,7 +35,8 @@ export function parseUploadChannelTab(value: string | null): AllDocumentsChannel
     value === "upload" ||
     value === "email" ||
     value === "whatsapp" ||
-    value === "viber"
+    value === "viber" ||
+    value === "bank-feeds"
   ) {
     return value;
   }

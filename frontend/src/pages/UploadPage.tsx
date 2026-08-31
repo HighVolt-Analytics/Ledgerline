@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
-import { CloudUpload } from "lucide-react";
+import { CloudUpload, Landmark } from "lucide-react";
 import { api } from "@/api/client";
 import type { ConnectedMailbox, MailboxBackfillJob } from "@/api/types";
 import { ConnectMailboxDialog } from "@/components/ConnectMailboxDialog";
@@ -54,6 +54,7 @@ import {
   watchInvoiceIdsForVendorHold,
 } from "@/lib/bulkUpload";
 import { UploadDropZone } from "@/components/upload/UploadDropZone";
+import { BankFeedsWorkspace } from "@/components/bank-feeds/BankFeedsWorkspace";
 import { canAccessModulePath } from "@/lib/tenantModules";
 import { useTenantModules } from "@/hooks/useTenantModules";
 import { isUploadRouteFilter } from "@/lib/uploadRouteFilter";
@@ -86,6 +87,9 @@ function channelEmptyHint(channel: ChannelTab, routeLabel: string | null): strin
   }
   if (channel === "upload") {
     return "Drop files above to upload, or capture documents from the Email, WhatsApp, or Viber tabs. Team expense claims use Email / WhatsApp / Viber when the sender is in Employees.";
+  }
+  if (channel === "bank-feeds") {
+    return "Import bank CSV statements and reconcile lines on this tab.";
   }
   if (channel === "email") {
     return "Connect a mailbox and fetch mail. Messages from employees in the registry route to Team Expenses.";
@@ -141,9 +145,16 @@ export function UploadPage() {
   const visibleDocumentAreas = UPLOAD_DOCUMENT_AREA_FILTERS.filter((item) =>
     canAccessModulePath(item.path, enabledModules, item.moduleKey)
   ).map((item) => item.key);
+  const bankFeedsEnabled = canAccessModulePath("/bank-feeds", enabledModules, "bank_feeds");
   const [searchParams, setSearchParams] = useSearchParams();
   const channelTab = parseChannelTab(searchParams.get("channel"));
   const viewTab = parseViewTab(searchParams, channelTab);
+  const bankAccountId = useMemo(() => {
+    const raw = searchParams.get("account");
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }, [searchParams]);
 
   useEffect(() => {
     const view = searchParams.get("view");
@@ -603,6 +614,20 @@ export function UploadPage() {
                   </span>
                 ),
               },
+              ...(bankFeedsEnabled
+                ? [
+                    {
+                      value: "bank-feeds" as const,
+                      testid: "tab-upload-bank-feeds",
+                      label: (
+                        <span className="inline-flex items-center gap-2">
+                          <Landmark className="h-4 w-4 text-primary" />
+                          Bank feeds
+                        </span>
+                      ),
+                    },
+                  ]
+                : []),
             ]}
           />
         }
@@ -647,6 +672,7 @@ export function UploadPage() {
             : "scanning mailbox"}
         </Card>
       ) : null}
+      {channelTab !== "bank-feeds" ? (
       <div
         className={
           viewTab !== "setup"
@@ -692,7 +718,8 @@ export function UploadPage() {
           </Button>
         ) : null}
       </div>
-      {viewTab !== "setup" ? (
+      ) : null}
+      {channelTab !== "bank-feeds" && viewTab !== "setup" ? (
         <div className="upload-table-toolbar">
           <ListSearchInput
             value={searchQuery}
@@ -734,13 +761,15 @@ export function UploadPage() {
   );
 
   const channelCaptureSource =
-    channelTab === "all" ? undefined : channelTab;
+    channelTab === "all" || channelTab === "bank-feeds" ? undefined : channelTab;
   const showUploadSourceColumn = channelTab === "all";
   const documentRouteTarget = routeTargetsForDocumentAreas(documentAreas);
   const routeLabel = documentRouteTarget ?? null;
 
   return workspaceShell(
-    viewTab === "setup" ? (
+    channelTab === "bank-feeds" ? (
+      <BankFeedsWorkspace initialAccountId={bankAccountId} />
+    ) : viewTab === "setup" ? (
       setupPanel
     ) : (
       <AllDocumentsDetailedTable

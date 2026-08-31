@@ -7,11 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import EntryType, JournalEntry
+from app.models.journal_batch import JournalBatch, JournalBatchStatus
 from app.schemas.rule_book_config import ChartOfAccountEntry, PostingDefaults, RuleBookConfigPayload
 from app.services.invoice.remap_service import remap_invoices_for_tenant
 from app.services.rule_book.account_mapper import AccountMapping
 from app.tenant_child_tables import journal_entries_for_invoice
 from app.tenant_ids import TESTING_TENANT_UUID
+from tests.journal_test_helpers import seed_journal_batch
 
 
 @pytest.mark.asyncio
@@ -47,24 +49,15 @@ async def test_remap_regenerates_journal_entries(
     )
     db_session.add(inv)
     await db_session.flush()
-    for code, name, dr, cr, et in [
-        ("6100", "Software", Decimal("100"), Decimal("0"), EntryType.DEBIT),
-        ("1400", "GST Paid", Decimal("10"), Decimal("0"), EntryType.DEBIT),
-        ("2000", "Accounts Payable", Decimal("0"), Decimal("110"), EntryType.CREDIT),
-    ]:
-        db_session.add(
-            JournalEntry(
-                tenant_id=inv.tenant_id,
-                invoice_id=inv.id,
-                date=inv.invoice_date,
-                account_code=code,
-                account_name=name,
-                debit=dr,
-                credit=cr,
-                entry_type=et,
-            )
-        )
-    await db_session.flush()
+    await seed_journal_batch(
+        db_session,
+        inv,
+        [
+            ("6100", "Software", Decimal("100"), Decimal("0"), EntryType.DEBIT),
+            ("1400", "GST Paid", Decimal("10"), Decimal("0"), EntryType.DEBIT),
+            ("2000", "Accounts Payable", Decimal("0"), Decimal("110"), EntryType.CREDIT),
+        ],
+    )
 
     async def _load_config(_session, _tenant_id):
         return config
@@ -103,13 +96,27 @@ async def test_remap_regenerates_journal_entries(
     assert result.journals_regenerated == 1
     assert inv.account_code == "6200"
 
-    entries = (
+    # History is retained (original + reversal + new accrual); assert live POSTED
+    # non-reversal batches only — same net as the old delete/rewrite behaviour.
+    live_entries = (
         await db_session.execute(
-            select(JournalEntry).where(
+            select(JournalEntry)
+            .join(JournalBatch, JournalBatch.id == JournalEntry.batch_id)
+            .where(
                 *journal_entries_for_invoice(inv.tenant_id, inv.id),
+                JournalBatch.status == JournalBatchStatus.POSTED.value,
+                JournalBatch.reversal_reason.is_(None),
             )
         )
     ).scalars().all()
-    expense_lines = [entry for entry in entries if entry.debit > 0 and entry.account_code != "1400"]
+    expense_lines = [
+        entry for entry in live_entries if entry.debit > 0 and entry.account_code != "1400"
+    ]
     assert len(expense_lines) == 1
     assert expense_lines[0].account_code == "6200"
+    all_count = (
+        await db_session.execute(
+            select(JournalEntry).where(*journal_entries_for_invoice(inv.tenant_id, inv.id))
+        )
+    ).scalars().all()
+    assert len(all_count) == 9  # 3 original + 3 reversal + 3 regenerated

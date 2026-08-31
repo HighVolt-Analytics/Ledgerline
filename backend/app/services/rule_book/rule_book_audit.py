@@ -23,6 +23,7 @@ _RULE_LIST_KEYS = (
     "sales_rules",
     "expense_rules",
     "team_expense_rules",
+    "bank_narration_rules",
     "document_sets",
 )
 

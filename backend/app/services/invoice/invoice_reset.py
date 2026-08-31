@@ -14,6 +14,7 @@ from app.services.invoice.processing_override_catalog import (
     skip_steps_for,
 )
 from app.tenant_child_tables import journal_entries_for_invoice, line_items_for_invoice
+from app.services.payments.journal_reversal_service import reverse_batches_for_entries
 
 # Keys left by the not-understood (OCR → classify → full extract) path that must not
 # mix with vision-header fields when the understood path vaults.
@@ -135,12 +136,12 @@ async def reset_invoice_for_reprocess(
     inv.so_reference = None
     inv.sales_document_type = None
 
-    for entry in (
+    entries = (
         await session.execute(
             select(JournalEntry).where(*journal_entries_for_invoice(inv.tenant_id, inv.id))
         )
-    ).scalars().all():
-        await session.delete(entry)
+    ).scalars().all()
+    await reverse_batches_for_entries(session, entries, reason="reprocess_reset")
 
     for line in (
         await session.execute(select(LineItem).where(*line_items_for_invoice(inv.tenant_id, inv.id)))
@@ -177,8 +178,7 @@ async def reset_invoice_for_approval(session: AsyncSession, inv: Invoice) -> Non
                 select(JournalEntry).where(*journal_entries_for_invoice(inv.tenant_id, inv.id))
             )
         ).scalars().all()
-    for entry in entries:
-        await session.delete(entry)
+    await reverse_batches_for_entries(session, entries, reason="approval_reset")
 
     await session.flush()
 
@@ -189,12 +189,12 @@ async def clear_invoice_posting_artifacts(session: AsyncSession, inv: Invoice) -
     inv.account_name = None
     inv.validation_results = None
 
-    for entry in (
+    entries = (
         await session.execute(
             select(JournalEntry).where(*journal_entries_for_invoice(inv.tenant_id, inv.id))
         )
-    ).scalars().all():
-        await session.delete(entry)
+    ).scalars().all()
+    await reverse_batches_for_entries(session, entries, reason="reject_clear_artifacts")
 
     for line in (
         await session.execute(select(LineItem).where(*line_items_for_invoice(inv.tenant_id, inv.id)))
@@ -517,12 +517,12 @@ async def requeue_invoice_for_pipeline(
     inv.account_name = None
     inv.evaluation_status = None
 
-    for entry in (
+    entries = (
         await session.execute(
             select(JournalEntry).where(*journal_entries_for_invoice(inv.tenant_id, inv.id))
         )
-    ).scalars().all():
-        await session.delete(entry)
+    ).scalars().all()
+    await reverse_batches_for_entries(session, entries, reason="requeue_pipeline")
 
     # Clear before pipeline so phase_ocr cannot reuse pre-filter table_line_items
     await clear_ocr_artifacts_for_invoice(

@@ -13,6 +13,7 @@ from app.database import Base
 
 if TYPE_CHECKING:
     from app.models.invoice import Invoice
+    from app.models.journal_batch import JournalBatch
 
 
 class EntryType(str, enum.Enum):
@@ -24,19 +25,26 @@ class JournalEntryKind(str, enum.Enum):
     INVOICE_ACCRUAL = "invoice_accrual"
     PAYMENT_SETTLEMENT = "payment_settlement"
     COLLECTION_SETTLEMENT = "collection_settlement"
+    BANK_CREATE = "bank_create"
+    BANK_TRANSFER = "bank_transfer"
 
 
 class JournalEntry(Base):
     __tablename__ = "journal_entries"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("journal_batches.id", ondelete="RESTRICT"),
+        index=True,
+    )
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("tenants.id", ondelete="CASCADE"),
         index=True,
     )
-    invoice_id: Mapped[int] = mapped_column(
+    invoice_id: Mapped[int | None] = mapped_column(
         ForeignKey("invoices.id", ondelete="CASCADE"),
+        nullable=True,
         index=True,
     )
     date: Mapped[date] = mapped_column(Date)
@@ -89,4 +97,8 @@ class JournalEntry(Base):
         index=True,
     )
 
-    invoice: Mapped["Invoice"] = relationship(back_populates="journal_entries")
+    invoice: Mapped["Invoice | None"] = relationship(back_populates="journal_entries")
+    batch: Mapped["JournalBatch"] = relationship(
+        back_populates="entries",
+        foreign_keys=[batch_id],
+    )

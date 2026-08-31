@@ -153,6 +153,7 @@ from app.services.payments.journal_generator import (
     is_balanced,
 )
 from app.services.payments.journal_persist_service import persist_journal_lines
+from app.services.payments.fiscal_period_service import PeriodClosedError
 from app.services.master_data.journal_counterparty_resolver import (
     resolve_counterparty_registry_ids_for_journal,
 )
@@ -2015,9 +2016,20 @@ async def resume_invoice_posting_pipeline(
         )
         send_notification(invoice, InvoiceStatus.EXCEPTION)
         return
-    persist_journal_lines(
-        session, invoice, journal_lines, base_currency=base_currency
-    )
+    try:
+        await persist_journal_lines(
+            session, invoice, journal_lines, base_currency=base_currency
+        )
+    except PeriodClosedError as exc:
+        invoice.status = InvoiceStatus.EXCEPTION
+        await log_event(
+            session,
+            "journal_period_closed",
+            invoice_id=invoice.id,
+            detail={"reason": str(exc), "route_target": invoice.route_target},
+        )
+        send_notification(invoice, InvoiceStatus.EXCEPTION)
+        return
 
     invoice.status = InvoiceStatus.RECONCILING
     await session.flush()
@@ -4443,9 +4455,20 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         )
         send_notification(invoice, InvoiceStatus.EXCEPTION)
         return
-    persist_journal_lines(
-        session, invoice, journal_lines, base_currency=base_currency
-    )
+    try:
+        await persist_journal_lines(
+            session, invoice, journal_lines, base_currency=base_currency
+        )
+    except PeriodClosedError as exc:
+        invoice.status = InvoiceStatus.EXCEPTION
+        await log_event(
+            session,
+            "journal_period_closed",
+            invoice_id=invoice.id,
+            detail={"reason": str(exc), "route_target": invoice.route_target},
+        )
+        send_notification(invoice, InvoiceStatus.EXCEPTION)
+        return
 
     invoice.status = InvoiceStatus.RECONCILING
     await session.flush()

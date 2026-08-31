@@ -90,8 +90,17 @@ const baseKeys = {
   collectionsWorkspaceKpis: ["collections", "workspace-kpis"] as const,
   customerMasters: ["customer-masters"] as const,
   customers: ["customers"] as const,
+  vendors: ["vendors"] as const,
+  vendors: ["vendors"] as const,
   payments: ["payments"] as const,
   paymentsWorkspaceKpis: ["payments", "workspace-kpis"] as const,
+  bankFeedAccounts: ["bank-feeds", "accounts"] as const,
+  bankFeedTransactions: ["bank-feeds", "transactions"] as const,
+  bankFeedTransaction: ["bank-feeds", "transaction"] as const,
+  bankFeedTxnAudit: ["bank-feeds", "txn-audit"] as const,
+  bankFeedMatchTargets: ["bank-feeds", "match-targets"] as const,
+  bankFeedImports: ["bank-feeds", "imports"] as const,
+  bankFeedTxnNotes: ["bank-feeds", "txn-notes"] as const,
   walletSummary: ["payments", "wallet-summary"] as const,
   stripeAccount: ["stripeAccount"] as const,
   stripeBalance: ["stripeBalance"] as const,
@@ -194,11 +203,43 @@ export const queryKeys = {
   collectionsWorkspaceKpis: () => tenantQueryKey(baseKeys.collectionsWorkspaceKpis),
   customerMasters: () => tenantQueryKey(baseKeys.customerMasters),
   customers: () => tenantQueryKey(baseKeys.customers),
+  vendors: () => tenantQueryKey(baseKeys.vendors),
   payments: (status?: string) =>
     status
       ? tenantQueryKey([...baseKeys.payments, status] as const)
       : tenantQueryKey(baseKeys.payments),
   paymentsWorkspaceKpis: () => tenantQueryKey(baseKeys.paymentsWorkspaceKpis),
+  bankFeedAccounts: (includeArchived = false) =>
+    tenantQueryKey([...baseKeys.bankFeedAccounts, includeArchived] as const),
+  bankFeedTransactions: (
+    accountId: number | null,
+    matchStatus: string,
+    page: number
+  ) =>
+    tenantQueryKey([
+      ...baseKeys.bankFeedTransactions,
+      accountId ?? "none",
+      matchStatus,
+      page,
+    ] as const),
+  bankFeedTransaction: (transactionId: number | null) =>
+    tenantQueryKey([
+      ...baseKeys.bankFeedTransaction,
+      transactionId ?? "none",
+    ] as const),
+  bankFeedTxnAudit: (transactionId: number | null) =>
+    tenantQueryKey([
+      ...baseKeys.bankFeedTxnAudit,
+      transactionId ?? "none",
+    ] as const),
+  bankFeedMatchTargets: (matchedType: "payment" | "collection") =>
+    tenantQueryKey([...baseKeys.bankFeedMatchTargets, matchedType] as const),
+  bankFeedImports: (accountId: number | null, page: number, pageSize = 20) =>
+    tenantQueryKey(
+      [...baseKeys.bankFeedImports, accountId ?? "none", page, pageSize] as const
+    ),
+  bankFeedTxnNotes: (transactionId: number | null) =>
+    tenantQueryKey([...baseKeys.bankFeedTxnNotes, transactionId ?? "none"] as const),
   walletSummary: () => tenantQueryKey(baseKeys.walletSummary),
   stripeAccount: () => tenantQueryKey(baseKeys.stripeAccount),
   stripeBalance: () => tenantQueryKey(baseKeys.stripeBalance),

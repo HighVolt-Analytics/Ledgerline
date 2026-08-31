@@ -14,6 +14,7 @@ import {
   Users,
   Vault,
   Wallet,
+  Landmark,
 } from "lucide-react";
 
 export type NavItem = {
@@ -37,6 +38,17 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: "Upload",
     items: [{ to: "/upload", label: "Upload", icon: Upload, badge: "upload" }],
+  },
+  {
+    label: "Bank feeds",
+    items: [
+      {
+        to: "/upload?channel=bank-feeds",
+        label: "Bank feeds",
+        icon: Landmark,
+        moduleKey: "bank_feeds",
+      },
+    ],
   },
   {
     label: "Contacts",
