@@ -21,6 +21,7 @@ from app.models.xero_tax_rate import XeroTaxRate
 from app.models.xero_tracking_category import XeroTrackingCategory
 from app.integrations.xero.client import XeroApiClient, XeroApiError
 from app.integrations.xero.store import require_xero_ready
+from app.integrations.xero.tax_rates import upsert_tax_rate_from_xero_payload
 from app.integrations.xero.sync_counts import (
     ContactsSyncResult,
     SettingsSyncResult,
@@ -277,67 +278,20 @@ async def _run_settings_sync(db: AsyncSession, tenant_id: uuid.UUID) -> Settings
         result.tax_rates.fetched += 1
         try:
             seen_tax_types.add(tax_type)
-            hash_value = payload_hash(tax)
-            existing = (
-                await db.execute(
-                    select(XeroTaxRate).where(
-                        XeroTaxRate.tenant_id == tenant_id,
-                        XeroTaxRate.xero_tenant_id == xero_tenant_id,
-                        XeroTaxRate.tax_type == tax_type,
-                    )
-                )
-            ).scalar_one_or_none()
-            fields = {
-                "name": str(tax.get("Name") or tax_type)[:255] or None,
-                "status": str(tax.get("Status") or "")[:32] or None,
-                "effective_rate": _decimal(tax.get("EffectiveRate")),
-                "display_tax_rate": _decimal(tax.get("DisplayTaxRate")),
-                "can_apply_to_assets": bool(tax["CanApplyToAssets"])
-                if "CanApplyToAssets" in tax
-                else None,
-                "can_apply_to_equity": bool(tax["CanApplyToEquity"])
-                if "CanApplyToEquity" in tax
-                else None,
-                "can_apply_to_expenses": bool(tax["CanApplyToExpenses"])
-                if "CanApplyToExpenses" in tax
-                else None,
-                "can_apply_to_liabilities": bool(tax["CanApplyToLiabilities"])
-                if "CanApplyToLiabilities" in tax
-                else None,
-                "can_apply_to_revenue": bool(tax["CanApplyToRevenue"])
-                if "CanApplyToRevenue" in tax
-                else None,
-            }
-            if existing is None:
-                db.add(
-                    XeroTaxRate(
-                        tenant_id=tenant_id,
-                        accounting_integration_id=integration.id,
-                        xero_tenant_id=xero_tenant_id,
-                        tax_type=tax_type,
-                        source_system=SOURCE_SYSTEM_XERO,
-                        sync_status=_SYNC_ACTIVE,
-                        payload_hash=hash_value,
-                        raw_payload_json=json.dumps(tax, default=str),
-                        last_seen_at=now,
-                        last_synced_at=now,
-                        **fields,
-                    )
-                )
+            outcome = await upsert_tax_rate_from_xero_payload(
+                db,
+                tenant_id=tenant_id,
+                integration_id=integration.id,
+                xero_tenant_id=xero_tenant_id,
+                tax=tax,
+                now=now,
+            )
+            if outcome == "created":
                 result.tax_rates.created += 1
-            elif existing.payload_hash == hash_value and existing.sync_status == _SYNC_ACTIVE:
-                existing.last_seen_at = now
-                existing.last_synced_at = now
-                result.tax_rates.unchanged += 1
-            else:
-                for key, value in fields.items():
-                    setattr(existing, key, value)
-                existing.sync_status = _SYNC_ACTIVE
-                existing.payload_hash = hash_value
-                existing.raw_payload_json = json.dumps(tax, default=str)
-                existing.last_seen_at = now
-                existing.last_synced_at = now
+            elif outcome == "updated":
                 result.tax_rates.updated += 1
+            elif outcome == "unchanged":
+                result.tax_rates.unchanged += 1
         except Exception as exc:
             result.tax_rates.failed += 1
             logger.warning(

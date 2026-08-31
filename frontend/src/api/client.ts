@@ -119,6 +119,8 @@ import type {
   InstitutionSettings,
   OrgAiBrief,
   ChartOfAccountsPayload,
+  OrgTaxRateWrite,
+  TaxRatesPayload,
   OnboardingStatus,
   UserPermissions,
   Vendor,
@@ -708,6 +710,39 @@ export const api = {
     request<ChartOfAccountsPayload>("/api/tenants/current/chart-of-accounts"),
   updateChartOfAccounts: (body: ChartOfAccountsPayload) =>
     request<ChartOfAccountsPayload>("/api/tenants/current/chart-of-accounts", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  getTaxRates: () => request<TaxRatesPayload>("/api/tenants/current/tax-rates"),
+  syncTaxRates: () =>
+    request<TaxRatesPayload>("/api/tenants/current/tax-rates/sync", { method: "POST" }),
+  createTaxRate: (body: OrgTaxRateWrite) =>
+    request<TaxRatesPayload>("/api/tenants/current/tax-rates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        display_name: body.display_name,
+        tax_type: body.tax_type,
+        components: body.components,
+      }),
+    }),
+  deleteTaxRate: (rateId: string) =>
+    request<TaxRatesPayload>(`/api/tenants/current/tax-rates/${encodeURIComponent(rateId)}`, {
+      method: "DELETE",
+    }),
+  updateTaxRate: (rateId: string, body: OrgTaxRateWrite) =>
+    request<TaxRatesPayload>(`/api/tenants/current/tax-rates/${encodeURIComponent(rateId)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        display_name: body.display_name,
+        tax_type: body.tax_type,
+        components: body.components,
+      }),
+    }),
+  updateTaxRates: (body: { tax_rates: OrgTaxRateWrite[] }) =>
+    request<TaxRatesPayload>("/api/tenants/current/tax-rates", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

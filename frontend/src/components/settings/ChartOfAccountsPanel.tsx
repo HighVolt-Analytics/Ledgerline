@@ -230,6 +230,7 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
 
   return (
     <div className="w-full space-y-4" data-testid="chart-of-accounts-panel">
+      <h2 className="text-sm font-semibold">Chart of accounts</h2>
       <p className="text-sm text-muted-foreground">
         GL accounts for this organisation. Optionally define sub-ledgers under each account for
         cost centres or analytical segments. Vendor/customer party sub-ledgers are also created

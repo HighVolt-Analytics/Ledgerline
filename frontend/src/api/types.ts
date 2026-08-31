@@ -195,6 +195,34 @@ export interface ChartOfAccountsPayload {
   accounts: ChartOfAccountRow[];
 }
 
+export interface OrgTaxRateComponent {
+  name: string;
+  rate: number;
+}
+
+export interface OrgTaxRateRow {
+  id: string;
+  display_name: string;
+  tax_type: string;
+  components: OrgTaxRateComponent[];
+  total_rate: number;
+  can_delete?: boolean;
+  can_edit?: boolean;
+  xero_tax_type?: string | null;
+  status?: string | null;
+  source?: "xero" | "local";
+}
+
+export type OrgTaxRateWrite = Omit<OrgTaxRateRow, "id" | "total_rate" | "can_delete" | "source"> & {
+  id?: string;
+  tax_type: string;
+};
+
+export interface TaxRatesPayload {
+  tax_rates: OrgTaxRateRow[];
+  xero_connected?: boolean;
+}
+
 export interface PlatformTenantModule {
   module_key: string;
   is_active: boolean;

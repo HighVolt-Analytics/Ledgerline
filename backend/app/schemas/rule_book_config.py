@@ -8,6 +8,7 @@ from typing import Annotated, Any, Literal, Union
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.document_type import DocumentTypeDefinition
+from app.schemas.tax_rates import TaxRateEntry
 from app.schemas.uom_conversion import PurchaseMatchConfig
 
 
@@ -605,6 +606,7 @@ class RuleBookConfigPayload(BaseModel):
         default_factory=TeamExpensePostingDefaults
     )
     chart_of_accounts: list[ChartOfAccountEntry] = Field(default_factory=list)
+    tax_rates: list[TaxRateEntry] = Field(default_factory=list)
     document_sets: list[DocumentSetRule] = Field(default_factory=list)
     legacy_cascade: LegacyCascadeConfig = Field(default_factory=LegacyCascadeConfig)
     purchase_match: PurchaseMatchConfig = Field(
@@ -642,6 +644,16 @@ class RuleBookConfigPayload(BaseModel):
         names = [item.name.strip().lower() for item in self.chart_of_accounts]
         if len(names) != len(set(names)):
             raise ValueError("chart of account names must be unique")
+        return self
+
+    @model_validator(mode="after")
+    def _unique_tax_rate_names(self) -> RuleBookConfigPayload:
+        names = [item.display_name.strip().lower() for item in self.tax_rates]
+        if len(names) != len(set(names)):
+            raise ValueError("tax rate display names must be unique")
+        ids = [item.id.strip() for item in self.tax_rates]
+        if len(ids) != len(set(ids)):
+            raise ValueError("tax rate ids must be unique")
         return self
 
 

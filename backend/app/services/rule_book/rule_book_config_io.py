@@ -115,6 +115,8 @@ async def merge_persisted_rule_book_slices(
     merged = dict(incoming)
     if not merged.get("chart_of_accounts"):
         merged["chart_of_accounts"] = stored.get("chart_of_accounts") or []
+    # Tax rates are managed via /tenants/current/tax-rates, not Rule Book PUT.
+    merged["tax_rates"] = stored.get("tax_rates") or []
     return merged
 
 

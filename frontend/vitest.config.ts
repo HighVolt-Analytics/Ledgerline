@@ -60,6 +60,7 @@ export default defineConfig({
       "src/lib/allDocumentsSummary.test.ts",
       "src/lib/allDocumentsDetailed.test.ts",
       "src/lib/bankFeedCopy.test.ts",
+      "src/lib/taxRates.test.ts",
       "src/lib/pageTenantIsolation.test.ts",
       "src/lib/publicSignupRoutes.test.ts",
       "src/lib/signupForm.test.ts",

@@ -1,23 +1,9 @@
 # You vs implementer
 
+Handshake (Connect) is **done**. Secrets, Standard Web App, redirect URI, and write-capable scopes are already in `.env`.
+
 | Step | You | Implementer |
 |------|-----|-------------|
-| Before Connect | Xero web app, Client ID/secret, redirect URI, scopes, demo login, `.env`, API/UI running, admin user | New `core` + `xero` OAuth, wire existing routes, comment old handlers |
-| After Connect works | Confirm Integrations shows connected | Stop until you ask for sync/export |
-| Before first export (later) | Test invoice in app; which Xero account/tax to map | Canonical from existing DB; Xero ACCPAY mapper |
+| After Connect | Confirm Integrations shows connected | Sync / export ([03-after-connect.md](03-after-connect.md)) |
+| Master write-back | Create vendor / GL in LedgerLink and confirm they appear in Xero | [Xero-write-backend.md](../../Xero-write-backend.md) |
 | Before webhooks (later) | Signing key, public HTTPS URL | HMAC handler in new layer |
-
----
-
-## Before **implementation of Connect** you must provide
-
-See [00-you-must-provide.md](00-you-must-provide.md). Short list:
-
-1. Standard Web App (not Custom Connection)  
-2. Client ID and Client secret  
-3. Portal redirect URI = `http://localhost:8001/api/integrations/xero/callback`  
-4. Scopes granted (or screenshot)  
-5. Demo company user  
-6. Values in `backend/.env` and API restarted  
-
-Without that, Connect cannot succeed regardless of folder structure.

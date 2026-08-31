@@ -5,6 +5,7 @@ import { api } from "@/api/client";
 import { RuleBookDocumentTypesSection } from "@/components/rule-book/RuleBookDocumentTypesSection";
 import { ApprovalPolicyPrivileges } from "@/components/settings/ApprovalPolicyPrivileges";
 import { ChartOfAccountsPanel } from "@/components/settings/ChartOfAccountsPanel";
+import { TaxRatesPanel } from "@/components/settings/TaxRatesPanel";
 import { OrgAiBriefPanel } from "@/components/settings/OrgAiBriefPanel";
 import { TenantMembersSection } from "@/components/settings/TenantMembersSection";
 import { PageHeader } from "@/components/PageHeader";
@@ -257,7 +258,7 @@ export function SettingsPage() {
 
       <PageHeader
         title="Settings"
-        subtitle="Organisation profile, AI document brief, team, approval policy, chart of accounts, and Rule Book."
+        subtitle="Organisation profile, AI document brief, team, approval policy, chart of accounts, tax rates, and Rule Book."
       />
 
       <div className="app-underline-tabs mb-4" role="tablist" aria-label="Settings sections">
@@ -444,6 +445,7 @@ export function SettingsPage() {
       {tab === "coa" && (
         <ChartOfAccountsPanel canEdit={canEditAdmin} onSaved={() => setCoaSaved(true)} />
       )}
+      {tab === "tax-rates" && <TaxRatesPanel canEdit={canEditAdmin} />}
     </div>
   );
 }

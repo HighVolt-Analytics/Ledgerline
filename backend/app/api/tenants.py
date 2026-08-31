@@ -25,7 +25,22 @@ from app.services.tenant.org_ai_brief_service import (
     sync_org_legal_name_on_tenant_rename,
 )
 from app.schemas.chart_of_accounts import ChartOfAccountsResponse, UpdateChartOfAccountsRequest
+from app.schemas.tax_rates import (
+    CreateTaxRateRequest,
+    TaxRatesResponse,
+    UpdateTaxRateRequest,
+    UpdateTaxRatesRequest,
+)
 from app.services.master_data.chart_of_accounts_service import load_chart_of_accounts, save_chart_of_accounts
+from app.services.master_data.tax_rates_service import (
+    create_tax_rate,
+    delete_tax_rate,
+    load_tax_rates,
+    save_tax_rates,
+    sync_tax_rates,
+    update_tax_rate,
+)
+from app.integrations.xero.tax_rates import XeroTaxRateWriteError
 from app.schemas.fiscal_period import (
     ClosePeriodRequest,
     FiscalPeriodResponse,
@@ -256,6 +271,111 @@ async def update_chart_of_accounts(
         body,
         updated_by_user_id=ctx.user_id,
     )
+    return ApiEnvelope(data=saved)
+
+
+@router.get("/current/tax-rates", response_model=ApiEnvelope[TaxRatesResponse])
+async def get_tax_rates(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[TaxRatesResponse]:
+    """Tenant tax rates: Xero cache when connected, otherwise rule book JSON."""
+    return ApiEnvelope(data=await load_tax_rates(db, ctx.tenant_id))
+
+
+@router.post("/current/tax-rates/sync", response_model=ApiEnvelope[TaxRatesResponse])
+async def sync_tax_rates_route(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[TaxRatesResponse]:
+    if ctx.is_support_session:
+        raise HTTPException(403, "Support sessions cannot sync tax rates")
+    try:
+        saved = await sync_tax_rates(db, ctx.tenant_id)
+    except XeroTaxRateWriteError as exc:
+        raise HTTPException(exc.status_code, exc.message) from exc
+    return ApiEnvelope(data=saved)
+
+
+@router.post("/current/tax-rates", response_model=ApiEnvelope[TaxRatesResponse])
+async def create_tax_rate_route(
+    body: CreateTaxRateRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[TaxRatesResponse]:
+    if ctx.is_support_session:
+        raise HTTPException(403, "Support sessions cannot edit tax rates")
+    try:
+        saved = await create_tax_rate(
+            db,
+            ctx.tenant_id,
+            body,
+            updated_by_user_id=ctx.user_id,
+        )
+    except XeroTaxRateWriteError as exc:
+        raise HTTPException(exc.status_code, exc.message) from exc
+    return ApiEnvelope(data=saved)
+
+
+@router.put("/current/tax-rates/{rate_id}", response_model=ApiEnvelope[TaxRatesResponse])
+async def update_tax_rate_route(
+    rate_id: str,
+    body: UpdateTaxRateRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[TaxRatesResponse]:
+    if ctx.is_support_session:
+        raise HTTPException(403, "Support sessions cannot edit tax rates")
+    try:
+        saved = await update_tax_rate(
+            db,
+            ctx.tenant_id,
+            rate_id,
+            body,
+            updated_by_user_id=ctx.user_id,
+        )
+    except XeroTaxRateWriteError as exc:
+        raise HTTPException(exc.status_code, exc.message) from exc
+    return ApiEnvelope(data=saved)
+
+
+@router.delete("/current/tax-rates/{rate_id}", response_model=ApiEnvelope[TaxRatesResponse])
+async def delete_tax_rate_route(
+    rate_id: str,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[TaxRatesResponse]:
+    if ctx.is_support_session:
+        raise HTTPException(403, "Support sessions cannot edit tax rates")
+    try:
+        saved = await delete_tax_rate(
+            db,
+            ctx.tenant_id,
+            rate_id,
+            updated_by_user_id=ctx.user_id,
+        )
+    except XeroTaxRateWriteError as exc:
+        raise HTTPException(exc.status_code, exc.message) from exc
+    return ApiEnvelope(data=saved)
+
+
+@router.patch("/current/tax-rates", response_model=ApiEnvelope[TaxRatesResponse])
+async def update_tax_rates(
+    body: UpdateTaxRatesRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[TaxRatesResponse]:
+    if ctx.is_support_session:
+        raise HTTPException(403, "Support sessions cannot edit tax rates")
+    try:
+        saved = await save_tax_rates(
+            db,
+            ctx.tenant_id,
+            body,
+            updated_by_user_id=ctx.user_id,
+        )
+    except XeroTaxRateWriteError as exc:
+        raise HTTPException(exc.status_code, exc.message) from exc
     return ApiEnvelope(data=saved)
 
 

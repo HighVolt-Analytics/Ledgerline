@@ -24,6 +24,9 @@ Still **no UI redesign**. Existing Integrations buttons/APIs now run through `ap
 - `integrations/core/dispatch.py` sends v1 to Xero only.
 - Webhooks left on the old handler until you have `XERO_WEBHOOK_KEY` and a public URL.
 
+**Next (not this file):** create contacts/GL **in Xero** when LedgerLink creates them — [Xero-write-backend.md](../../Xero-write-backend.md).
+
+
 ---
 
 ## Exit criteria

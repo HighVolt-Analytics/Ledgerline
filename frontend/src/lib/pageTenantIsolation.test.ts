@@ -71,6 +71,7 @@ const TENANT_SCOPED_HOOKS = [
   "usePermissions",
   "useOrgAiBrief",
   "useChartOfAccounts",
+  "useTaxRates",
 ];
 
 function tenantPageFiles(): string[] {

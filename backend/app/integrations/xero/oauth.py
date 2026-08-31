@@ -1,4 +1,4 @@
-"""Xero authorize/token/connections URLs and scopes. See backend/xero-oauth-scopes.md."""
+"""Xero authorize/token/connections URLs and scopes."""
 
 from __future__ import annotations
 

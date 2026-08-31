@@ -2133,6 +2133,10 @@ input.app-numeric-input {
   animation: app-modal-scale-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+.add-tax-rate-dialog {
+  max-width: 32rem;
+}
+
 .export-csv-dialog {
   max-width: 26rem;
 }

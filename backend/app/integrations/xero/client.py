@@ -83,6 +83,20 @@ class XeroApiClient:
             return {}
         return response.json()
 
+    async def put_json(self, path: str, *, json_body: dict[str, Any]) -> Any:
+        headers = await self._headers()
+        headers["Content-Type"] = "application/json"
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.put(self._url(path), headers=headers, json=json_body)
+        if response.status_code >= 400:
+            raise XeroApiError(
+                response.status_code,
+                response.text[:400] or "Xero PUT failed",
+            )
+        if not response.content:
+            return {}
+        return response.json()
+
     async def get_currencies(self) -> list[dict[str, Any]]:
         payload = await self.get_json("Currencies")
         currencies = payload.get("Currencies") if isinstance(payload, dict) else None

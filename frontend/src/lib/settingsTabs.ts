@@ -4,6 +4,7 @@ export const SETTINGS_TABS = [
   { id: "team", label: "Team", testid: "tab-team" },
   { id: "policy", label: "Policy & privileges", testid: "tab-policy" },
   { id: "coa", label: "Chart of accounts", testid: "tab-coa" },
+  { id: "tax-rates", label: "Tax rates", testid: "tab-tax-rates" },
   { id: "rule-book", label: "Rule Book", testid: "tab-rule-book" },
 ] as const;
 
