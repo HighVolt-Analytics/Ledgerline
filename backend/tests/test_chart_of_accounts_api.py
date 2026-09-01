@@ -31,12 +31,18 @@ async def test_chart_of_accounts_with_sub_ledgers(client: AsyncClient, db_sessio
     assert patch_res.status_code == 200, patch_res.text
     patched = patch_res.json()["data"]["accounts"]
     assert len(patched) == 2
-    assert patched[0]["sub_ledgers"] == payload["accounts"][0]["sub_ledgers"]
+    assert [
+        {"code": row["code"], "name": row["name"]}
+        for row in patched[0]["sub_ledgers"]
+    ] == payload["accounts"][0]["sub_ledgers"]
 
     get_res = await client.get("/api/tenants/current/chart-of-accounts")
     assert get_res.status_code == 200, get_res.text
     loaded = get_res.json()["data"]["accounts"]
-    assert loaded[0]["sub_ledgers"] == payload["accounts"][0]["sub_ledgers"]
+    assert [
+        {"code": row["code"], "name": row["name"]}
+        for row in loaded[0]["sub_ledgers"]
+    ] == payload["accounts"][0]["sub_ledgers"]
 
 
 @pytest.mark.asyncio
@@ -160,3 +166,155 @@ def test_resolve_category_without_tenant_coa_uses_suspense() -> None:
     mapping = resolve_category_for_config("Cloud Hosting Expense", config)
     assert mapping.account_code == "9999"
     assert mapping.account_name == "Cloud Hosting Expense"
+
+
+def test_upsert_linked_replaces_old_code() -> None:
+    from app.services.master_data.chart_of_accounts_service import _clip_entry, _upsert_linked
+
+    entries = [
+        _clip_entry(
+            code="2000",
+            name="Accounts Payable",
+            ledger_type="Liability",
+            sub_type="CURRLIAB",
+            linked_providers=["xero"],
+            sub_ledgers=[],
+        ),
+        _clip_entry(
+            code="6110",
+            name="Hosting",
+            ledger_type="Expense",
+            sub_type="EXPENSE",
+            linked_providers=[],
+            sub_ledgers=[],
+        ),
+    ]
+    renamed = _clip_entry(
+        code="2001",
+        name="Trade Payables",
+        ledger_type="Liability",
+        sub_type="CURRLIAB",
+        linked_providers=["xero"],
+        sub_ledgers=[],
+    )
+    merged = _upsert_linked(entries, renamed, match_key="2000")
+    codes = [item.code for item in merged]
+    assert codes == ["2001", "6110"]
+
+
+@pytest.mark.asyncio
+async def test_connected_local_save_keeps_omitted_xero_codes(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.master_data import chart_of_accounts_service as svc
+
+    seed = await client.patch(
+        "/api/tenants/current/chart-of-accounts",
+        json={
+            "accounts": [
+                {"code": "6110", "name": "Cloud Hosting Expense", "type": "Expense"},
+                {"code": "2000", "name": "Accounts Payable", "type": "Liability", "linked_providers": ["xero"]},
+            ]
+        },
+    )
+    assert seed.status_code == 200, seed.text
+
+    async def fake_conn(*_args, **_kwargs):
+        return (object(), "xero-tenant")
+
+    async def fake_list(*_args, **_kwargs):
+        return [
+            type(
+                "Row",
+                (),
+                {
+                    "xero_account_id": "xa-2000",
+                    "code": "2000",
+                    "name": "Accounts Payable",
+                    "account_type": "CURRLIAB",
+                    "account_class": "LIABILITY",
+                    "status": "ACTIVE",
+                    "raw_payload_json": "{}",
+                },
+            )()
+        ]
+
+    monkeypatch.setattr(svc, "_xero_connection", fake_conn)
+    monkeypatch.setattr(svc, "list_active_xero_accounts", fake_list)
+
+    patched = await client.patch(
+        "/api/tenants/current/chart-of-accounts",
+        json={"accounts": [{"code": "6110", "name": "Cloud Hosting Expense", "type": "Expense"}]},
+    )
+    assert patched.status_code == 200, patched.text
+    codes = {row["code"] for row in patched.json()["data"]["accounts"]}
+    assert codes == {"6110", "2000"}
+
+
+@pytest.mark.asyncio
+async def test_update_xero_account_renames_catalogue_code(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.schemas.chart_of_accounts import UpdateChartOfAccountsRequest, UpsertXeroChartOfAccountRequest
+    from app.services.master_data import chart_of_accounts_service as svc
+    from app.tenant_ids import TESTING_TENANT_UUID
+
+    await svc.save_chart_of_accounts(
+        db_session,
+        TESTING_TENANT_UUID,
+        UpdateChartOfAccountsRequest(
+            accounts=[
+                ChartOfAccountEntry(
+                    code="2000",
+                    name="Accounts Payable",
+                    type="Liability",
+                    linked_providers=["xero"],
+                )
+            ]
+        ),
+    )
+
+    cached = type(
+        "Row",
+        (),
+        {
+            "code": "2000",
+            "name": "Accounts Payable",
+            "account_type": "CURRLIAB",
+            "account_class": "LIABILITY",
+            "raw_payload_json": "{}",
+        },
+    )()
+    updated = type("Row", (), {"code": "2001", "name": "Trade Payables"})()
+
+    async def fake_conn(*_args, **_kwargs):
+        return (object(), "xero-tenant")
+
+    async def fake_get(*_args, **_kwargs):
+        return cached
+
+    async def fake_update(*_args, **_kwargs):
+        return updated
+
+    monkeypatch.setattr(svc, "_xero_connection", fake_conn)
+    monkeypatch.setattr(svc, "get_xero_account", fake_get)
+    monkeypatch.setattr(svc, "is_system_xero_account", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(svc, "update_account_in_xero", fake_update)
+
+    payload = await svc.update_xero_chart_of_account(
+        db_session,
+        TESTING_TENANT_UUID,
+        "acct-1",
+        UpsertXeroChartOfAccountRequest(
+            code="2001",
+            name="Trade Payables",
+            type="Liability",
+            sub_type="CURRLIAB",
+            sub_ledgers=[],
+        ),
+    )
+    codes = [row.code for row in payload.accounts]
+    assert codes == ["2001"]
+    assert payload.accounts[0].name == "Trade Payables"

@@ -714,6 +714,50 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+  syncChartOfAccounts: () =>
+    request<ChartOfAccountsPayload>("/api/tenants/current/chart-of-accounts/sync", {
+      method: "POST",
+    }),
+  createXeroChartOfAccount: (body: {
+    code: string;
+    name: string;
+    type: string;
+    sub_type: string;
+    sub_ledgers?: { code: string; name: string; origin?: string }[];
+  }) =>
+    request<ChartOfAccountsPayload>("/api/tenants/current/chart-of-accounts/xero", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  updateXeroChartOfAccount: (
+    accountId: string,
+    body: {
+      code: string;
+      name: string;
+      type: string;
+      sub_type: string;
+      sub_ledgers?: { code: string; name: string; origin?: string }[];
+    }
+  ) =>
+    request<ChartOfAccountsPayload>(
+      `/api/tenants/current/chart-of-accounts/xero/${encodeURIComponent(accountId)}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }
+    ),
+  deleteXeroChartOfAccount: (accountId: string) =>
+    request<ChartOfAccountsPayload>(
+      `/api/tenants/current/chart-of-accounts/xero/${encodeURIComponent(accountId)}`,
+      { method: "DELETE" }
+    ),
+  pullXeroChartOfAccount: (accountId: string) =>
+    request<ChartOfAccountsPayload>(
+      `/api/tenants/current/chart-of-accounts/xero/${encodeURIComponent(accountId)}/pull`,
+      { method: "POST" }
+    ),
   getTaxRates: () => request<TaxRatesPayload>("/api/tenants/current/tax-rates"),
   syncTaxRates: () =>
     request<TaxRatesPayload>("/api/tenants/current/tax-rates/sync", { method: "POST" }),

@@ -24,14 +24,27 @@ from app.services.tenant.org_ai_brief_service import (
     save_org_ai_brief,
     sync_org_legal_name_on_tenant_rename,
 )
-from app.schemas.chart_of_accounts import ChartOfAccountsResponse, UpdateChartOfAccountsRequest
+from app.schemas.chart_of_accounts import (
+    ChartOfAccountsResponse,
+    UpdateChartOfAccountsRequest,
+    UpsertXeroChartOfAccountRequest,
+)
+from app.integrations.xero.accounts import XeroAccountWriteError
 from app.schemas.tax_rates import (
     CreateTaxRateRequest,
     TaxRatesResponse,
     UpdateTaxRateRequest,
     UpdateTaxRatesRequest,
 )
-from app.services.master_data.chart_of_accounts_service import load_chart_of_accounts, save_chart_of_accounts
+from app.services.master_data.chart_of_accounts_service import (
+    create_xero_chart_of_account,
+    delete_xero_chart_of_account,
+    load_chart_of_accounts,
+    pull_xero_chart_of_account,
+    save_chart_of_accounts,
+    sync_chart_of_accounts,
+    update_xero_chart_of_account,
+)
 from app.services.master_data.tax_rates_service import (
     create_tax_rate,
     delete_tax_rate,
@@ -271,6 +284,111 @@ async def update_chart_of_accounts(
         body,
         updated_by_user_id=ctx.user_id,
     )
+    return ApiEnvelope(data=saved)
+
+
+@router.post("/current/chart-of-accounts/sync", response_model=ApiEnvelope[ChartOfAccountsResponse])
+async def sync_chart_of_accounts_route(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[ChartOfAccountsResponse]:
+    if ctx.is_support_session:
+        raise HTTPException(403, "Support sessions cannot sync chart of accounts")
+    try:
+        saved = await sync_chart_of_accounts(db, ctx.tenant_id)
+    except XeroAccountWriteError as exc:
+        raise HTTPException(exc.status_code, exc.message) from exc
+    return ApiEnvelope(data=saved)
+
+
+@router.post("/current/chart-of-accounts/xero", response_model=ApiEnvelope[ChartOfAccountsResponse])
+async def create_xero_chart_of_account_route(
+    body: UpsertXeroChartOfAccountRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[ChartOfAccountsResponse]:
+    if ctx.is_support_session:
+        raise HTTPException(403, "Support sessions cannot edit chart of accounts")
+    try:
+        saved = await create_xero_chart_of_account(
+            db,
+            ctx.tenant_id,
+            body,
+            updated_by_user_id=ctx.user_id,
+        )
+    except XeroAccountWriteError as exc:
+        raise HTTPException(exc.status_code, exc.message) from exc
+    return ApiEnvelope(data=saved)
+
+
+@router.put(
+    "/current/chart-of-accounts/xero/{account_id}",
+    response_model=ApiEnvelope[ChartOfAccountsResponse],
+)
+async def update_xero_chart_of_account_route(
+    account_id: str,
+    body: UpsertXeroChartOfAccountRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[ChartOfAccountsResponse]:
+    if ctx.is_support_session:
+        raise HTTPException(403, "Support sessions cannot edit chart of accounts")
+    try:
+        saved = await update_xero_chart_of_account(
+            db,
+            ctx.tenant_id,
+            account_id,
+            body,
+            updated_by_user_id=ctx.user_id,
+        )
+    except XeroAccountWriteError as exc:
+        raise HTTPException(exc.status_code, exc.message) from exc
+    return ApiEnvelope(data=saved)
+
+
+@router.delete(
+    "/current/chart-of-accounts/xero/{account_id}",
+    response_model=ApiEnvelope[ChartOfAccountsResponse],
+)
+async def delete_xero_chart_of_account_route(
+    account_id: str,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[ChartOfAccountsResponse]:
+    if ctx.is_support_session:
+        raise HTTPException(403, "Support sessions cannot edit chart of accounts")
+    try:
+        saved = await delete_xero_chart_of_account(
+            db,
+            ctx.tenant_id,
+            account_id,
+            updated_by_user_id=ctx.user_id,
+        )
+    except XeroAccountWriteError as exc:
+        raise HTTPException(exc.status_code, exc.message) from exc
+    return ApiEnvelope(data=saved)
+
+
+@router.post(
+    "/current/chart-of-accounts/xero/{account_id}/pull",
+    response_model=ApiEnvelope[ChartOfAccountsResponse],
+)
+async def pull_xero_chart_of_account_route(
+    account_id: str,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[ChartOfAccountsResponse]:
+    if ctx.is_support_session:
+        raise HTTPException(403, "Support sessions cannot edit chart of accounts")
+    try:
+        saved = await pull_xero_chart_of_account(
+            db,
+            ctx.tenant_id,
+            account_id,
+            updated_by_user_id=ctx.user_id,
+        )
+    except XeroAccountWriteError as exc:
+        raise HTTPException(exc.status_code, exc.message) from exc
     return ApiEnvelope(data=saved)
 
 

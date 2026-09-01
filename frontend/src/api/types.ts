@@ -178,6 +178,13 @@ export interface OrgAiBrief {
 
 export type ChartOfAccountType = "Expense" | "Asset" | "Liability" | "Revenue" | "Equity";
 
+export interface BillProcessingTaxProvider {
+  id: string;
+  name: string;
+  organisation_name?: string | null;
+  connected: boolean;
+}
+
 export interface SubLedgerRow {
   code: string;
   name: string;
@@ -188,11 +195,32 @@ export interface ChartOfAccountRow {
   code: string;
   name: string;
   type: ChartOfAccountType;
+  sub_type?: string | null;
+  linked_providers?: string[];
   subLedgers?: SubLedgerRow[];
+}
+
+export interface PlatformChartOfAccountRow {
+  xero_account_id: string;
+  code: string;
+  name: string;
+  type: ChartOfAccountType;
+  sub_type: string;
+  can_edit?: boolean;
+  can_delete?: boolean;
+  can_pull?: boolean;
+  linked_providers?: string[];
+  subLedgers?: SubLedgerRow[];
+  status?: string | null;
 }
 
 export interface ChartOfAccountsPayload {
   accounts: ChartOfAccountRow[];
+  local_accounts?: ChartOfAccountRow[];
+  platform_accounts?: PlatformChartOfAccountRow[];
+  xero_connected?: boolean;
+  source?: "none" | "xero" | string;
+  provider?: BillProcessingTaxProvider | null;
 }
 
 export interface OrgTaxRateComponent {
@@ -217,13 +245,6 @@ export type OrgTaxRateWrite = Omit<OrgTaxRateRow, "id" | "total_rate" | "can_del
   id?: string;
   tax_type: string;
 };
-
-export interface BillProcessingTaxProvider {
-  id: string;
-  name: string;
-  organisation_name?: string | null;
-  connected: boolean;
-}
 
 export interface TaxRatesPayload {
   tax_rates: OrgTaxRateRow[];

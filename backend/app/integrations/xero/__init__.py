@@ -10,6 +10,7 @@ client                                 Accounting API client (new layer)
 http_legacy                            older retry client still used by verify/reconcile
 sync / sync_jobs / sync_counts         inbound pull
 tax_rates                              tax rate sync/create/update/delete
+accounts / account_types               chart of accounts sync/create/update/delete
 export / accpay / attachments / push   ACCPAY draft bills
 contacts / mapping / errors            supplier resolve and mapping gates
 master_data / organisation_isolation   cached org lists

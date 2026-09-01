@@ -296,6 +296,8 @@ class ChartOfAccountEntry(BaseModel):
     code: str = Field(..., min_length=1, max_length=32)
     name: str = Field(..., min_length=1, max_length=128)
     type: ChartOfAccountType = "Expense"
+    sub_type: str | None = None
+    linked_providers: list[str] = Field(default_factory=list)
     sub_ledgers: list[SubLedgerEntry] = Field(default_factory=list)
 
     @field_validator("code", "name", mode="before")

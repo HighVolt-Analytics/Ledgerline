@@ -6,19 +6,244 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.schemas.chart_of_accounts import ChartOfAccountsResponse, UpdateChartOfAccountsRequest
-from app.schemas.rule_book_config import ChartOfAccountEntry, SubLedgerEntry, validate_rule_book_config_payload
+from app.integrations.xero.account_types import (
+    PROVIDER_XERO,
+    ledger_type_for_xero,
+    normalize_subtype,
+)
+from app.integrations.xero.accounts import (
+    XeroAccountWriteError,
+    create_account_in_xero,
+    delete_account_in_xero,
+    get_xero_account,
+    is_system_xero_account,
+    list_active_xero_accounts,
+    sync_accounts_from_xero,
+    update_account_in_xero,
+)
+from app.integrations.xero.client import XeroApiError
+from app.integrations.xero.store import require_xero_ready
+from app.schemas.chart_of_accounts import (
+    ChartOfAccountsResponse,
+    PlatformChartOfAccount,
+    UpdateChartOfAccountsRequest,
+    UpsertXeroChartOfAccountRequest,
+)
+from app.schemas.rule_book_config import (
+    ChartOfAccountEntry,
+    ChartOfAccountType,
+    SubLedgerEntry,
+    validate_rule_book_config_payload,
+)
+from app.schemas.tax_rates import BillProcessingTaxProvider
 from app.services.rule_book.account_mapper import clear_rule_book_cache
 from app.services.rule_book.rule_book_config_io import load_rule_book_config_dict, save_rule_book_config
+
+
+async def _xero_connection(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+):
+    try:
+        return await require_xero_ready(session, tenant_id)
+    except RuntimeError:
+        return None
+
+
+def _xero_provider(integration: object) -> BillProcessingTaxProvider:
+    organisation = getattr(integration, "display_name", None)
+    organisation_name = str(organisation).strip() if organisation else None
+    return BillProcessingTaxProvider(
+        id="xero",
+        name="Xero",
+        organisation_name=organisation_name or None,
+        connected=True,
+    )
+
+
+def _code_key(code: str | None) -> str:
+    return (code or "").strip().upper()
+
+
+def _without_provider(entry: ChartOfAccountEntry, provider: str) -> ChartOfAccountEntry:
+    linked = [item for item in entry.linked_providers if item != provider]
+    return entry.model_copy(update={"linked_providers": linked})
+
+
+def _with_provider(entry: ChartOfAccountEntry, provider: str) -> ChartOfAccountEntry:
+    linked = list(entry.linked_providers)
+    if provider not in linked:
+        linked.append(provider)
+    return entry.model_copy(update={"linked_providers": linked})
+
+
+def _clip_entry(
+    *,
+    code: str,
+    name: str,
+    ledger_type: ChartOfAccountType,
+    sub_type: str | None,
+    linked_providers: list[str],
+    sub_ledgers: list[SubLedgerEntry],
+) -> ChartOfAccountEntry:
+    return ChartOfAccountEntry(
+        code=code.strip()[:32],
+        name=name.strip()[:128],
+        type=ledger_type,
+        sub_type=sub_type,
+        linked_providers=linked_providers,
+        sub_ledgers=list(sub_ledgers),
+    )
+
+
+def _name_taken(entries: list[ChartOfAccountEntry], name: str, *, except_code: str | None = None) -> bool:
+    needle = name.strip().lower()
+    skip = _code_key(except_code)
+    return any(
+        item.name.strip().lower() == needle and _code_key(item.code) != skip
+        for item in entries
+    )
+
+
+def _unique_name(entries: list[ChartOfAccountEntry], name: str, *, except_code: str | None = None) -> str:
+    cleaned = name.strip()[:128] or "Account"
+    if not _name_taken(entries, cleaned, except_code=except_code):
+        return cleaned
+    suffix = f" ({(except_code or '').strip()})" if (except_code or "").strip() else " (Xero)"
+    base = cleaned[: max(1, 128 - len(suffix))]
+    candidate = f"{base}{suffix}"[:128]
+    if not _name_taken(entries, candidate, except_code=except_code):
+        return candidate
+    raise XeroAccountWriteError(
+        f"A local account named {cleaned!r} already exists. Rename it before continuing."
+    )
+
+
+def _upsert_linked(
+    entries: list[ChartOfAccountEntry],
+    next_entry: ChartOfAccountEntry,
+    *,
+    match_key: str,
+) -> list[ChartOfAccountEntry]:
+    new_key = _code_key(next_entry.code)
+    match = _code_key(match_key) or new_key
+    out: list[ChartOfAccountEntry] = []
+    replaced = False
+    for item in entries:
+        key = _code_key(item.code)
+        if key == match or key == new_key:
+            if not replaced:
+                out.append(next_entry)
+                replaced = True
+            continue
+        out.append(item)
+    if not replaced:
+        out.append(next_entry)
+    return out
+
+
+def _by_code(entries: list[ChartOfAccountEntry]) -> dict[str, ChartOfAccountEntry]:
+    return {_code_key(item.code): item for item in entries if item.code.strip()}
+
+
+async def _entries(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> list[ChartOfAccountEntry]:
+    raw = await load_rule_book_config_dict(session, tenant_id)
+    payload = validate_rule_book_config_payload(raw)
+    return list(payload.chart_of_accounts)
+
+
+async def _persist_entries(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    entries: list[ChartOfAccountEntry],
+    *,
+    updated_by_user_id: int | None,
+) -> list[ChartOfAccountEntry]:
+    raw = await load_rule_book_config_dict(session, tenant_id)
+    payload = validate_rule_book_config_payload(raw)
+    merged = payload.model_dump()
+    merged["chart_of_accounts"] = [entry.model_dump() for entry in entries]
+    updated = validate_rule_book_config_payload(merged)
+    await save_rule_book_config(
+        session,
+        updated,
+        tenant_id,
+        updated_by_user_id=updated_by_user_id,
+    )
+    clear_rule_book_cache()
+    return list(updated.chart_of_accounts)
+
+
+def _platform_row(
+    row: XeroAccount,
+    local: ChartOfAccountEntry | None,
+    *,
+    in_catalogue: bool,
+) -> PlatformChartOfAccount:
+    locked = is_system_xero_account(row)
+    ledger_type = ledger_type_for_xero(account_type=row.account_type, account_class=row.account_class)
+    subtype = normalize_subtype(ledger_type, row.account_type)
+    providers = list(local.linked_providers) if local else []
+    if PROVIDER_XERO not in providers:
+        providers = [*providers, PROVIDER_XERO]
+    return PlatformChartOfAccount(
+        xero_account_id=row.xero_account_id,
+        code=(row.code or (local.code if local else "") or "").strip(),
+        name=(row.name or (local.name if local else "") or "").strip(),
+        type=ledger_type,
+        sub_type=subtype,
+        can_edit=not locked,
+        can_delete=not locked,
+        can_pull=not in_catalogue,
+        linked_providers=providers,
+        sub_ledgers=list(local.sub_ledgers) if local else [],
+        status=row.status,
+    )
+
+
+async def _connected_payload(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    entries: list[ChartOfAccountEntry],
+    integration: object,
+    xero_tenant_id: str,
+) -> ChartOfAccountsResponse:
+    xero_rows = await list_active_xero_accounts(session, tenant_id, xero_tenant_id)
+    catalogue = _by_code(entries)
+    xero_codes = {_code_key(row.code) for row in xero_rows if (row.code or "").strip()}
+    local_accounts = [entry for entry in entries if _code_key(entry.code) not in xero_codes]
+    platform_accounts = [
+        _platform_row(
+            row,
+            catalogue.get(_code_key(row.code)),
+            in_catalogue=_code_key(row.code) in catalogue,
+        )
+        for row in xero_rows
+        if (row.code or "").strip() or row.name
+    ]
+    return ChartOfAccountsResponse(
+        accounts=list(entries),
+        local_accounts=local_accounts,
+        platform_accounts=platform_accounts,
+        xero_connected=True,
+        source="xero",
+        provider=_xero_provider(integration),
+    )
 
 
 async def load_chart_of_accounts(
     session: AsyncSession,
     tenant_id: uuid.UUID,
 ) -> ChartOfAccountsResponse:
-    raw = await load_rule_book_config_dict(session, tenant_id)
-    payload = validate_rule_book_config_payload(raw)
-    return ChartOfAccountsResponse.from_entries(payload.chart_of_accounts)
+    entries = await _entries(session, tenant_id)
+    connected = await _xero_connection(session, tenant_id)
+    if connected is None:
+        return ChartOfAccountsResponse.from_entries(entries)
+    integration, xero_tenant_id = connected
+    return await _connected_payload(session, tenant_id, entries, integration, xero_tenant_id)
 
 
 async def save_chart_of_accounts(
@@ -28,21 +253,263 @@ async def save_chart_of_accounts(
     *,
     updated_by_user_id: int | None = None,
 ) -> ChartOfAccountsResponse:
-    raw = await load_rule_book_config_dict(session, tenant_id)
-    payload = validate_rule_book_config_payload(raw)
-    merged = payload.model_dump()
-    merged["chart_of_accounts"] = [
-        entry.model_dump() for entry in body.to_entries()
-    ]
-    updated = validate_rule_book_config_payload(merged)
-    await save_rule_book_config(
+    incoming = body.to_entries()
+    connected = await _xero_connection(session, tenant_id)
+    if connected is None:
+        await _persist_entries(
+            session,
+            tenant_id,
+            incoming,
+            updated_by_user_id=updated_by_user_id,
+        )
+        return await load_chart_of_accounts(session, tenant_id)
+
+    _integration, xero_tenant_id = connected
+    existing = await _entries(session, tenant_id)
+    xero_rows = await list_active_xero_accounts(session, tenant_id, xero_tenant_id)
+    xero_codes = {_code_key(row.code) for row in xero_rows if (row.code or "").strip()}
+    seen = {_code_key(entry.code) for entry in incoming}
+    merged = list(incoming)
+    for entry in existing:
+        key = _code_key(entry.code)
+        if key in seen:
+            continue
+        if key in xero_codes:
+            merged.append(entry)
+    await _persist_entries(
         session,
-        updated,
         tenant_id,
+        merged,
         updated_by_user_id=updated_by_user_id,
     )
-    clear_rule_book_cache()
-    return ChartOfAccountsResponse.from_entries(updated.chart_of_accounts)
+    return await load_chart_of_accounts(session, tenant_id)
+
+
+async def sync_chart_of_accounts(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> ChartOfAccountsResponse:
+    if await _xero_connection(session, tenant_id) is None:
+        raise XeroAccountWriteError(
+            "Connect Xero in Integrations before syncing accounts.",
+            status_code=400,
+        )
+    try:
+        await sync_accounts_from_xero(session, tenant_id)
+    except XeroApiError as exc:
+        raise XeroAccountWriteError(
+            exc.message or "Could not sync accounts from Xero",
+            status_code=exc.status_code or 502,
+        ) from exc
+    return await load_chart_of_accounts(session, tenant_id)
+
+
+async def create_xero_chart_of_account(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    body: UpsertXeroChartOfAccountRequest,
+    *,
+    updated_by_user_id: int | None = None,
+) -> ChartOfAccountsResponse:
+    entries = await _entries(session, tenant_id)
+    key = _code_key(body.code)
+    if _name_taken(entries, body.name, except_code=key):
+        raise XeroAccountWriteError(
+            f"A local account named {body.name.strip()!r} already exists. Rename it before pushing."
+        )
+    subtype = normalize_subtype(body.type, body.sub_type)
+    created = await create_account_in_xero(
+        session,
+        tenant_id,
+        code=body.code,
+        name=body.name,
+        xero_type=subtype,
+    )
+    entries = await _entries(session, tenant_id)
+    catalogue = _by_code(entries)
+    key = _code_key(created.code or body.code)
+    existing = catalogue.get(key)
+    next_entry = _clip_entry(
+        code=(created.code or body.code),
+        name=(created.name or body.name),
+        ledger_type=body.type,
+        sub_type=subtype,
+        linked_providers=[PROVIDER_XERO],
+        sub_ledgers=list(existing.sub_ledgers if existing is not None else body.sub_ledgers),
+    )
+    entries = _upsert_linked(entries, next_entry, match_key=key)
+    await _persist_entries(session, tenant_id, entries, updated_by_user_id=updated_by_user_id)
+    return await load_chart_of_accounts(session, tenant_id)
+
+
+async def _persist_locked_sub_ledgers(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    *,
+    cached_code: str,
+    cached_name: str,
+    ledger_type: ChartOfAccountType,
+    subtype: str,
+    sub_ledgers: list[SubLedgerEntry],
+    updated_by_user_id: int | None,
+) -> ChartOfAccountsResponse:
+    entries = await _entries(session, tenant_id)
+    key = _code_key(cached_code)
+    if not key:
+        raise XeroAccountWriteError("This Xero account has no code to store locally.")
+    existing = _by_code(entries).get(key)
+    next_entry = _clip_entry(
+        code=cached_code,
+        name=(existing.name if existing is not None else cached_name) or cached_code,
+        ledger_type=existing.type if existing is not None else ledger_type,
+        sub_type=existing.sub_type if existing is not None else subtype,
+        linked_providers=_with_provider(existing, PROVIDER_XERO).linked_providers
+        if existing is not None
+        else [PROVIDER_XERO],
+        sub_ledgers=list(sub_ledgers),
+    )
+    entries = _upsert_linked(entries, next_entry, match_key=key)
+    await _persist_entries(session, tenant_id, entries, updated_by_user_id=updated_by_user_id)
+    return await load_chart_of_accounts(session, tenant_id)
+
+
+async def update_xero_chart_of_account(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    xero_account_id: str,
+    body: UpsertXeroChartOfAccountRequest,
+    *,
+    updated_by_user_id: int | None = None,
+) -> ChartOfAccountsResponse:
+    connected = await _xero_connection(session, tenant_id)
+    if connected is None:
+        raise XeroAccountWriteError("Connect Xero in Integrations first.", status_code=400)
+    _integration, xero_tenant_id = connected
+    cached = await get_xero_account(session, tenant_id, xero_tenant_id, xero_account_id)
+    if cached is None:
+        raise XeroAccountWriteError("Xero account not found", status_code=404)
+    if is_system_xero_account(cached):
+        ledger_type = ledger_type_for_xero(
+            account_type=cached.account_type,
+            account_class=cached.account_class,
+        )
+        return await _persist_locked_sub_ledgers(
+            session,
+            tenant_id,
+            cached_code=cached.code or body.code,
+            cached_name=cached.name or body.name,
+            ledger_type=ledger_type,
+            subtype=normalize_subtype(ledger_type, cached.account_type),
+            sub_ledgers=list(body.sub_ledgers),
+            updated_by_user_id=updated_by_user_id,
+        )
+    subtype = normalize_subtype(body.type, body.sub_type)
+    old_key = _code_key(cached.code or body.code)
+    new_key = _code_key(body.code)
+    entries = await _entries(session, tenant_id)
+    if new_key != old_key and new_key in _by_code(entries):
+        raise XeroAccountWriteError("That account code already exists in the local chart of accounts.")
+    if _name_taken(entries, body.name, except_code=old_key or new_key):
+        raise XeroAccountWriteError(
+            f"A local account named {body.name.strip()!r} already exists."
+        )
+    updated = await update_account_in_xero(
+        session,
+        tenant_id,
+        xero_account_id,
+        code=body.code,
+        name=body.name,
+        xero_type=subtype,
+    )
+    entries = await _entries(session, tenant_id)
+    new_key = _code_key(updated.code or body.code)
+    existing = _by_code(entries).get(old_key) or _by_code(entries).get(new_key)
+    next_entry = _clip_entry(
+        code=(updated.code or body.code),
+        name=(updated.name or body.name),
+        ledger_type=body.type,
+        sub_type=subtype,
+        linked_providers=_with_provider(existing, PROVIDER_XERO).linked_providers
+        if existing is not None
+        else [PROVIDER_XERO],
+        sub_ledgers=list(body.sub_ledgers),
+    )
+    entries = _upsert_linked(entries, next_entry, match_key=old_key or new_key)
+    await _persist_entries(session, tenant_id, entries, updated_by_user_id=updated_by_user_id)
+    return await load_chart_of_accounts(session, tenant_id)
+
+
+async def delete_xero_chart_of_account(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    xero_account_id: str,
+    *,
+    updated_by_user_id: int | None = None,
+) -> ChartOfAccountsResponse:
+    deleted = await delete_account_in_xero(session, tenant_id, xero_account_id)
+    entries = await _entries(session, tenant_id)
+    key = _code_key(deleted.code)
+    if not key:
+        return await load_chart_of_accounts(session, tenant_id)
+    catalogue = _by_code(entries)
+    existing = catalogue.get(key)
+    if existing is None:
+        ledger_type = ledger_type_for_xero(
+            account_type=deleted.account_type,
+            account_class=deleted.account_class,
+        )
+        entries.append(
+            _clip_entry(
+                code=deleted.code or "",
+                name=deleted.name or "Xero account",
+                ledger_type=ledger_type,
+                sub_type=deleted.account_type,
+                linked_providers=[],
+                sub_ledgers=[],
+            )
+        )
+    else:
+        entries = [
+            _without_provider(item, PROVIDER_XERO) if _code_key(item.code) == key else item
+            for item in entries
+        ]
+    await _persist_entries(session, tenant_id, entries, updated_by_user_id=updated_by_user_id)
+    return await load_chart_of_accounts(session, tenant_id)
+
+
+async def pull_xero_chart_of_account(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    xero_account_id: str,
+    *,
+    updated_by_user_id: int | None = None,
+) -> ChartOfAccountsResponse:
+    connected = await _xero_connection(session, tenant_id)
+    if connected is None:
+        raise XeroAccountWriteError("Connect Xero in Integrations first.", status_code=400)
+    _integration, xero_tenant_id = connected
+    row = await get_xero_account(session, tenant_id, xero_tenant_id, xero_account_id)
+    if row is None or (row.status or "ACTIVE").upper() != "ACTIVE":
+        raise XeroAccountWriteError("Xero account not found", status_code=404)
+    key = _code_key(row.code)
+    if not key:
+        raise XeroAccountWriteError("This Xero account has no code to pull.")
+    entries = await _entries(session, tenant_id)
+    if key in _by_code(entries):
+        raise XeroAccountWriteError("This account already exists in the local chart of accounts.")
+    ledger_type = ledger_type_for_xero(account_type=row.account_type, account_class=row.account_class)
+    entries.append(
+        _clip_entry(
+            code=row.code or "",
+            name=_unique_name(entries, (row.name or "").strip() or (row.code or "Account"), except_code=key),
+            ledger_type=ledger_type,
+            sub_type=row.account_type,
+            linked_providers=[PROVIDER_XERO],
+            sub_ledgers=[],
+        )
+    )
+    await _persist_entries(session, tenant_id, entries, updated_by_user_id=updated_by_user_id)
+    return await load_chart_of_accounts(session, tenant_id)
 
 
 def coa_lookup(entries: list[ChartOfAccountEntry]) -> dict[str, ChartOfAccountEntry]:

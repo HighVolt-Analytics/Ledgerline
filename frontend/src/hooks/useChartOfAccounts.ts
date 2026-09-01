@@ -1,25 +1,80 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/api/client";
-import type { ChartOfAccountRow, SubLedgerRow } from "@/api/types";
+import type {
+  ChartOfAccountRow,
+  ChartOfAccountsPayload,
+  PlatformChartOfAccountRow,
+  SubLedgerRow,
+} from "@/api/types";
 import { useTenantQuery } from "@/hooks/useTenantQuery";
 import { newClientRowKey } from "@/lib/clientRowKey";
 import { queryKeys } from "@/lib/queryClient";
+
+function normalizeAccount(row: ChartOfAccountRow): ChartOfAccountRow {
+  const raw = row as ChartOfAccountRow & {
+    sub_ledgers?: SubLedgerRow[];
+    linked_providers?: string[];
+    sub_type?: string | null;
+  };
+  return {
+    ...row,
+    type: normalizeChartOfAccountType(row.type),
+    sub_type: raw.sub_type ?? row.sub_type ?? null,
+    linked_providers: raw.linked_providers ?? row.linked_providers ?? [],
+    subLedgers: normalizeSubLedgers(raw.subLedgers ?? raw.sub_ledgers),
+  };
+}
+
+function normalizePlatform(row: PlatformChartOfAccountRow): PlatformChartOfAccountRow {
+  const raw = row as PlatformChartOfAccountRow & { sub_ledgers?: SubLedgerRow[] };
+  return {
+    ...row,
+    type: normalizeChartOfAccountType(row.type),
+    subLedgers: normalizeSubLedgers(raw.subLedgers ?? raw.sub_ledgers),
+    linked_providers: row.linked_providers ?? [],
+  };
+}
+
+export function normalizeChartOfAccountsPayload(res: ChartOfAccountsPayload): ChartOfAccountsPayload {
+  const accounts = (res.accounts ?? []).map(normalizeAccount);
+  return {
+    ...res,
+    accounts,
+    local_accounts: (res.local_accounts ?? accounts).map(normalizeAccount),
+    platform_accounts: (res.platform_accounts ?? []).map(normalizePlatform),
+    xero_connected: Boolean(res.xero_connected),
+    source: res.source ?? (res.xero_connected ? "xero" : "none"),
+  };
+}
+
+async function applyCoaCaches(
+  queryClient: ReturnType<typeof useQueryClient>,
+  payload: ChartOfAccountsPayload
+) {
+  const normalized = normalizeChartOfAccountsPayload(payload);
+  queryClient.setQueryData(queryKeys.chartOfAccountsWorkspace(), normalized);
+  queryClient.setQueryData(queryKeys.chartOfAccounts(), normalized.accounts);
+  void queryClient.invalidateQueries({ queryKey: queryKeys.ruleBookConfig() });
+}
 
 export function useChartOfAccounts(enabled = true) {
   return useTenantQuery({
     queryKey: queryKeys.chartOfAccounts(),
     queryFn: async () => {
       const res = await api.getChartOfAccounts();
-      return (res.accounts ?? []).map((row) => {
-        const raw = row as ChartOfAccountRow & { sub_ledgers?: SubLedgerRow[] };
-        return {
-          ...row,
-          type: normalizeChartOfAccountType(row.type),
-          subLedgers: normalizeSubLedgers(raw.subLedgers ?? raw.sub_ledgers),
-        };
-      });
+      return normalizeChartOfAccountsPayload(res).accounts;
     },
+    enabled,
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
+}
+
+export function useChartOfAccountsWorkspace(enabled = true) {
+  return useTenantQuery({
+    queryKey: queryKeys.chartOfAccountsWorkspace(),
+    queryFn: async () => normalizeChartOfAccountsPayload(await api.getChartOfAccounts()),
     enabled,
     staleTime: 0,
     refetchOnMount: "always",
@@ -30,19 +85,67 @@ export function useSaveChartOfAccounts() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (accounts: ChartOfAccountRow[]) =>
-      (await api.updateChartOfAccounts({ accounts })).accounts ?? [],
-    onSuccess: async (accounts) => {
-      const normalized = (accounts ?? []).map((row) => {
-        const raw = row as ChartOfAccountRow & { sub_ledgers?: SubLedgerRow[] };
-        return {
-          ...row,
-          type: normalizeChartOfAccountType(row.type),
-          subLedgers: normalizeSubLedgers(raw.subLedgers ?? raw.sub_ledgers),
-        };
-      });
-      queryClient.setQueryData(queryKeys.chartOfAccounts(), normalized);
-      await queryClient.refetchQueries({ queryKey: queryKeys.chartOfAccounts() });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.ruleBookConfig() });
+      normalizeChartOfAccountsPayload(await api.updateChartOfAccounts({ accounts })),
+    onSuccess: async (payload) => {
+      await applyCoaCaches(queryClient, payload);
+    },
+  });
+}
+
+export function useSyncChartOfAccounts() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.syncChartOfAccounts(),
+    onSuccess: async (payload) => {
+      await applyCoaCaches(queryClient, payload);
+    },
+  });
+}
+
+export function useCreateXeroChartOfAccount() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (
+      body: Parameters<typeof api.createXeroChartOfAccount>[0]
+    ) => api.createXeroChartOfAccount(body),
+    onSuccess: async (payload) => {
+      await applyCoaCaches(queryClient, payload);
+    },
+  });
+}
+
+export function useUpdateXeroChartOfAccount() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      accountId,
+      body,
+    }: {
+      accountId: string;
+      body: Parameters<typeof api.updateXeroChartOfAccount>[1];
+    }) => api.updateXeroChartOfAccount(accountId, body),
+    onSuccess: async (payload) => {
+      await applyCoaCaches(queryClient, payload);
+    },
+  });
+}
+
+export function useDeleteXeroChartOfAccount() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (accountId: string) => api.deleteXeroChartOfAccount(accountId),
+    onSuccess: async (payload) => {
+      await applyCoaCaches(queryClient, payload);
+    },
+  });
+}
+
+export function usePullXeroChartOfAccount() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (accountId: string) => api.pullXeroChartOfAccount(accountId),
+    onSuccess: async (payload) => {
+      await applyCoaCaches(queryClient, payload);
     },
   });
 }
@@ -82,11 +185,13 @@ export function chartOfAccountRowToPayload(row: ChartOfAccountRow): ChartOfAccou
       name: sub.name.trim(),
       ...(sub.origin ? { origin: sub.origin } : {}),
     }))
-    .filter((sub) => sub.code || sub.name);
+    .filter((sub) => sub.code && sub.name);
   return {
     code: row.code.trim(),
     name: row.name.trim(),
     type: row.type,
+    sub_type: row.sub_type ?? null,
+    linked_providers: row.linked_providers ?? [],
     subLedgers,
     sub_ledgers: subLedgers,
   };
