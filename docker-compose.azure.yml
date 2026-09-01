@@ -29,7 +29,9 @@ services:
 
   worker:
     build: ./backend
-    command: celery -A app.workers.celery_app worker --loglevel=info
+    command: >
+      sh -c "Q=$$(python -c 'from app.config import get_settings; print(get_settings().celery_worker_queues_resolved)')
+      && celery -A app.workers.celery_app worker --loglevel=info --concurrency=2 -Q \"$$Q\""
     env_file:
       - ./backend/.env
     environment:

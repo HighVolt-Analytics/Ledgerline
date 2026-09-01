@@ -69,6 +69,45 @@ async def test_find_stuck_pending_skips_fresh_and_active(
     assert fresh.id not in found
     assert no_file.id not in found
 
+@pytest.mark.asyncio
+async def test_requeue_stuck_pending_skips_already_queued(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SYNC_PROCESSING", "true")
+    get_settings.cache_clear()
+    tenant_id = TESTING_TENANT_UUID
+
+    class _FakeCtx:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *args):
+            return None
+
+    async def fake_find(_session, _tid, *, stale_after_seconds, limit):
+        return [99, 100]
+
+    with (
+        patch("app.workers.tasks.db_session_with_rls", return_value=_FakeCtx()),
+        patch(
+            "app.services.invoice.stuck_pending_requeue_service.find_stuck_pending_invoice_ids",
+            side_effect=fake_find,
+        ),
+        patch(
+            "app.workers.tasks.filter_not_already_queued",
+            return_value=[100],
+        ),
+        patch(
+            "app.workers.tasks.queue_invoices_for_processing",
+            new_callable=AsyncMock,
+        ) as mock_queue,
+    ):
+        ids = await requeue_stuck_pending_for_tenant(tenant_id)
+        assert ids == [100]
+        mock_queue.assert_awaited_once_with([100], tenant_id=tenant_id)
+
+    get_settings.cache_clear()
+
 
 @pytest.mark.asyncio
 async def test_requeue_stuck_pending_enqueues(
@@ -118,7 +157,9 @@ def test_enqueue_logs_celery_task_id(monkeypatch: pytest.MonkeyPatch) -> None:
     tenant_id = UUID("550e8400-e29b-41d4-a716-446655440000")
     result = MagicMock()
     result.id = "task-abc-123"
-    with patch("app.workers.tasks.process_invoice_task.delay", return_value=result) as mock_delay:
+    with patch("app.workers.tasks.process_invoice_task.delay", return_value=result) as mock_delay, patch(
+        "app.workers.tasks.try_claim_pipeline_enqueue", return_value=True
+    ):
         status = enqueue_invoice_pipelines([9], tenant_id=tenant_id)
         assert status == "queued"
         mock_delay.assert_called_once_with(9, tenant_id=str(tenant_id))

@@ -23,15 +23,15 @@ spec:
         - name: ledgerlink-worker
           image: highvoltacr1778087855.azurecr.io/ledgerlink-api:placeholder
           imagePullPolicy: Always
-          command:
+            command:
             - sh
             - -c
-            # Env-specific queue (ledgerlink.staging / ledgerlink.production) so a
-            # shared Redis broker cannot let prod steal staging invoice jobs.
+            # Invoice queue first so upload/reprocess is not starved by mailbox poll.
+            # Legacy base queue is drained last for pre-split deployments.
             - >
-              Q=$(python -c "from app.config import get_settings; print(get_settings().celery_task_queue_resolved)")
+              Q=$(python -c "from app.config import get_settings; print(get_settings().celery_worker_queues_resolved)")
               && exec celery -A app.workers.celery_app worker
-              --loglevel=info --concurrency=1 --prefetch-multiplier=1 -Q "$Q"
+              --loglevel=info --concurrency=2 --prefetch-multiplier=1 -Q "$Q"
           env:
             - name: CELERY_WORKER
               value: "1"

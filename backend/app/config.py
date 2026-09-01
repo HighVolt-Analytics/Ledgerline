@@ -1337,6 +1337,22 @@ class Settings(BaseSettings):
         return "celery"
 
     @property
+    def celery_invoice_queue_resolved(self) -> str:
+        """Dedicated queue for invoice pipeline tasks (upload / reprocess / recovery)."""
+        return f"{self.celery_task_queue_resolved}.invoices"
+
+    @property
+    def celery_mailbox_queue_resolved(self) -> str:
+        """Dedicated queue for long-running mailbox poll / backfill tasks."""
+        return f"{self.celery_task_queue_resolved}.mailbox"
+
+    @property
+    def celery_worker_queues_resolved(self) -> str:
+        """Comma-separated queues for workers: invoices first, then mailbox, then legacy."""
+        base = self.celery_task_queue_resolved
+        return f"{base}.invoices,{base}.mailbox,{base}"
+
+    @property
     def is_preview(self) -> bool:
         return self.app_env.strip().lower() == "preview"
 
