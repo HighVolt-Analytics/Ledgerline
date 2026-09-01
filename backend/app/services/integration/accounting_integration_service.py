@@ -455,49 +455,14 @@ async def _upsert_xero_connections(
     tenant_id: uuid.UUID,
     connections: list[dict[str, Any]],
 ) -> list[XeroConnection]:
-    now = datetime.now(timezone.utc)
-    existing = (
-        await db.execute(
-            select(XeroConnection).where(
-                XeroConnection.accounting_integration_id == integration.id,
-            )
-        )
-    ).scalars().all()
-    by_connection_id = {row.xero_connection_id: row for row in existing}
-    persisted: list[XeroConnection] = []
-    seen_ids: set[str] = set()
+    from app.integrations.xero.store import upsert_connections as persist_connections
 
-    for conn in connections:
-        connection_id = str(conn.get("id") or "")
-        tenant = str(conn.get("tenantId") or "")
-        if not connection_id or not tenant:
-            continue
-        seen_ids.add(connection_id)
-        row = by_connection_id.get(connection_id)
-        if row is None:
-            row = XeroConnection(
-                accounting_integration_id=integration.id,
-                tenant_id=tenant_id,
-                xero_connection_id=connection_id,
-                xero_tenant_id=tenant,
-            )
-            db.add(row)
-        row.xero_tenant_type = str(conn.get("tenantType") or "") or None
-        row.xero_tenant_name = str(conn.get("tenantName") or tenant) or None
-        row.active = True
-        row.connected_at = now
-        row.last_verified_at = now
-        row.disconnected_at = None
-        persisted.append(row)
-
-    for row in existing:
-        if row.xero_connection_id not in seen_ids:
-            row.active = False
-            row.selected = False
-            row.disconnected_at = now
-
-    await db.flush()
-    return persisted
+    return await persist_connections(
+        db,
+        integration=integration,
+        tenant_id=tenant_id,
+        connections=connections,
+    )
 
 
 async def _apply_xero_org_selection(

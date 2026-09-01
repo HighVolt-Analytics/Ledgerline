@@ -1,4 +1,4 @@
-﻿"""Accounting integration OAuth tests â€” connect/status/disconnect only."""
+"""Accounting integration OAuth tests â€” connect/status/disconnect only."""
 
 from __future__ import annotations
 
@@ -263,4 +263,113 @@ async def test_exchange_xero_code_stores_encrypted_tokens(
     assert row.provider_tenant_id == "org-uuid"
     assert decrypt_secret(row.access_token_encrypted or "") == "xero-access"
     assert decrypt_secret(row.refresh_token_encrypted or "") == "xero-refresh"
+
+
+@pytest.mark.asyncio
+async def test_reconnect_updates_existing_org_connection_id(db_session) -> None:
+    """Disconnect leaves the org row; Xero reconnects with a new connection id."""
+    from sqlalchemy import select
+
+    from app.integrations.xero.store import upsert_connections
+    from app.models.xero_connection import XeroConnection
+
+    integration = AccountingIntegration(
+        tenant_id=TESTING_TENANT_UUID,
+        provider=AccountingProvider.XERO.value,
+        status=AccountingIntegrationStatus.DISCONNECTED.value,
+    )
+    db_session.add(integration)
+    await db_session.flush()
+    leftover = XeroConnection(
+        accounting_integration_id=integration.id,
+        tenant_id=TESTING_TENANT_UUID,
+        xero_connection_id="conn-old",
+        xero_tenant_id="org-uuid",
+        xero_tenant_type="ORGANISATION",
+        xero_tenant_name="Demo Company",
+        active=False,
+    )
+    db_session.add(leftover)
+    await db_session.flush()
+
+    rows = await upsert_connections(
+        db_session,
+        integration=integration,
+        tenant_id=TESTING_TENANT_UUID,
+        connections=[
+            {
+                "id": "conn-new",
+                "tenantId": "org-uuid",
+                "tenantName": "Demo Company",
+                "tenantType": "ORGANISATION",
+            }
+        ],
+    )
+    assert len(rows) == 1
+    assert rows[0].id == leftover.id
+    assert rows[0].xero_connection_id == "conn-new"
+    assert rows[0].active is True
+
+    stored = (
+        await db_session.execute(
+            select(XeroConnection).where(
+                XeroConnection.accounting_integration_id == integration.id,
+            )
+        )
+    ).scalars().all()
+    assert len(stored) == 1
+    assert stored[0].xero_connection_id == "conn-new"
+
+
+@pytest.mark.asyncio
+async def test_xero_callback_redirects_when_error_persist_fails(
+    client,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Staging 500: token exchange fails then SQL persist raises on an aborted txn."""
+    from sqlalchemy import select
+
+    admin = (await db_session.execute(select(User).limit(1))).scalar_one()
+    state = create_oauth_state(
+        provider=AccountingProvider.XERO.value,
+        tenant_id=TESTING_TENANT_UUID,
+        user_id=admin.id,
+    )
+
+    async def _ok(_payload):
+        return None
+
+    monkeypatch.setattr(
+        "app.api.accounting_integrations.validate_xero_oauth_replay",
+        _ok,
+    )
+
+    async def _exchange_fails(*_a, **_k):
+        raise RuntimeError(
+            "Xero token exchange failed: Invalid authorization code, redirect_uri, or client credentials"
+        )
+
+    monkeypatch.setattr(
+        "app.api.accounting_integrations.xero_complete_oauth_callback",
+        _exchange_fails,
+    )
+
+    async def _persist_fails(*_a, **_k):
+        raise RuntimeError("current transaction is aborted")
+
+    monkeypatch.setattr(
+        "app.api.accounting_integrations.record_integration_error",
+        _persist_fails,
+    )
+
+    res = await client.get(
+        "/api/integrations/xero/callback",
+        params={"code": "auth-code", "state": state},
+        follow_redirects=False,
+    )
+    assert res.status_code == 302
+    location = res.headers.get("location", "")
+    assert "xero=error" in location
+    assert "oauth_failed" in location
 

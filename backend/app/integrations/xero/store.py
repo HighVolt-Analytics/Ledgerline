@@ -86,6 +86,7 @@ async def upsert_connections(
         )
     ).scalars().all()
     by_connection_id = {row.xero_connection_id: row for row in existing}
+    by_xero_tenant = {row.xero_tenant_id: row for row in existing}
     persisted: list[XeroConnection] = []
     seen_ids: set[str] = set()
 
@@ -97,6 +98,15 @@ async def upsert_connections(
         seen_ids.add(connection_id)
         row = by_connection_id.get(connection_id)
         if row is None:
+            # Reconnect: Xero issues a new connection id for the same org.
+            # uq_xero_connections_tenant_xero_tenant forbids a second INSERT.
+            row = by_xero_tenant.get(xero_tenant)
+            if row is not None:
+                previous_connection_id = row.xero_connection_id
+                row.xero_connection_id = connection_id
+                by_connection_id.pop(previous_connection_id, None)
+                by_connection_id[connection_id] = row
+        if row is None:
             row = XeroConnection(
                 accounting_integration_id=integration.id,
                 tenant_id=tenant_id,
@@ -104,6 +114,9 @@ async def upsert_connections(
                 xero_tenant_id=xero_tenant,
             )
             db.add(row)
+            by_connection_id[connection_id] = row
+            by_xero_tenant[xero_tenant] = row
+        row.xero_tenant_id = xero_tenant
         row.xero_tenant_type = str(conn.get("tenantType") or "") or None
         row.xero_tenant_name = str(conn.get("tenantName") or xero_tenant) or None
         row.active = True

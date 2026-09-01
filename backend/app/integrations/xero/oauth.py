@@ -51,6 +51,22 @@ def connections_url() -> str:
     return get_settings().xero_connections_url
 
 
+def _token_error_message(response: httpx.Response, fallback: str) -> str:
+    """Identity API uses error / error_description; never include tokens or secrets."""
+    try:
+        data = response.json()
+    except ValueError:
+        text = (response.text or "").strip()
+        return f"{fallback}: {text[:200]}" if text else f"{fallback} (HTTP {response.status_code})"
+    if isinstance(data, dict):
+        desc = str(
+            data.get("error_description") or data.get("error") or data.get("Message") or ""
+        ).strip()
+        if desc:
+            return f"{fallback}: {desc[:300]}"
+    return f"{fallback} (HTTP {response.status_code})"
+
+
 async def exchange_authorization_code(code: str) -> dict[str, Any]:
     """POST identity token + GET /connections. Does not touch the database."""
     settings = get_settings()
@@ -71,7 +87,7 @@ async def exchange_authorization_code(code: str) -> dict[str, Any]:
             },
         )
         if token_resp.status_code >= 400:
-            raise RuntimeError("Xero token exchange failed")
+            raise RuntimeError(_token_error_message(token_resp, "Xero token exchange failed"))
         token_data = token_resp.json()
         access_token = str(token_data.get("access_token") or "")
         if not access_token:
@@ -91,7 +107,9 @@ async def exchange_authorization_code(code: str) -> dict[str, Any]:
             },
         )
         if connections_resp.status_code >= 400:
-            raise RuntimeError("Failed to load Xero organisation connections")
+            raise RuntimeError(
+                _token_error_message(connections_resp, "Failed to load Xero organisation connections")
+            )
         connections = connections_resp.json()
         if not connections:
             raise RuntimeError("No Xero organisations available for this account")

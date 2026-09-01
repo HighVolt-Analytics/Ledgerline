@@ -1,4 +1,4 @@
-﻿"""Accounting integrations — Xero and QuickBooks Online OAuth."""
+"""Accounting integrations — Xero and QuickBooks Online OAuth."""
 
 from __future__ import annotations
 
@@ -88,6 +88,46 @@ def _append_query(url: str, params: dict[str, str]) -> str:
 
 def _frontend_return_url() -> str:
     return get_settings().accounting_oauth_frontend_return_url_resolved
+
+
+def _error_redirect(return_base: str, query_key: str, reason: str) -> RedirectResponse:
+    url = _append_query(return_base, {query_key: "error", "reason": reason[:120]})
+    return RedirectResponse(url=url, status_code=302)
+
+
+async def _record_oauth_failure(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    provider: str,
+    message: str,
+) -> None:
+    """Best-effort persist. Must not raise — a failed SQL txn here was returning HTTP 500."""
+    try:
+        await db.rollback()
+    except Exception:
+        logger.warning("oauth_callback_rollback_failed", exc_info=True)
+    try:
+        await bind_db_to_tenant(db, tenant_id)
+        await record_integration_error(
+            db,
+            tenant_id=tenant_id,
+            provider=provider,
+            message=message,
+        )
+        await log_event(
+            db,
+            "accounting_integration_error",
+            tenant_id=tenant_id,
+            detail={"provider": provider, "reason": message[:200]},
+        )
+        await db.commit()
+    except Exception:
+        logger.warning("oauth_callback_error_persist_failed", exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
 
 
 def _callback_query_key(provider: str) -> str:
@@ -399,24 +439,13 @@ async def xero_oauth_callback(
         return RedirectResponse(url=url, status_code=302)
     except Exception as exc:
         logger.warning("xero_oauth_callback_failed", error=str(exc), tenant_id=str(tenant_id))
-        await record_integration_error(
+        await _record_oauth_failure(
             db,
             tenant_id=tenant_id,
             provider=provider,
             message=str(exc),
         )
-        await log_event(
-            db,
-            "accounting_integration_error",
-            tenant_id=tenant_id,
-            detail={
-                "provider": provider,
-                "reason": str(exc)[:200],
-            },
-        )
-        await db.commit()
-        url = _append_query(return_base, {query_key: "error", "reason": "oauth_failed"})
-        return RedirectResponse(url=url, status_code=302)
+        return _error_redirect(return_base, query_key, "oauth_failed")
 
 
 @oauth_public_router.get("/quickbooks/callback")
