@@ -23,7 +23,7 @@ spec:
         - name: ledgerlink-worker
           image: highvoltacr1778087855.azurecr.io/ledgerlink-api:placeholder
           imagePullPolicy: Always
-            command:
+          command:
             - sh
             - -c
             # Invoice queue first so upload/reprocess is not starved by mailbox poll.
