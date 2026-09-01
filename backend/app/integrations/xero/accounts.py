@@ -223,6 +223,39 @@ async def sync_accounts_from_xero(db: AsyncSession, tenant_id: uuid.UUID) -> Ent
     return counters
 
 
+def _first_account(payload: Any) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    return next(
+        (row for row in (payload.get("Accounts") or []) if isinstance(row, dict)),
+        None,
+    )
+
+
+async def _tax_type_for_create(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    xero_tenant_id: str,
+) -> str | None:
+    from app.models.xero_tax_rate import XeroTaxRate
+
+    rows = (
+        await db.execute(
+            select(XeroTaxRate.tax_type).where(
+                XeroTaxRate.tenant_id == tenant_id,
+                XeroTaxRate.xero_tenant_id == xero_tenant_id,
+                XeroTaxRate.sync_status == _SYNC_ACTIVE,
+            )
+        )
+    ).scalars().all()
+    known = {str(item).strip().upper(): str(item).strip() for item in rows if str(item).strip()}
+    for candidate in (XERO_DEFAULT_TAX_TYPE, "NONE", "EXEMPTOUTPUT", "EXEMPTINPUT"):
+        if candidate in known:
+            return known[candidate]
+    return None
+
+
 async def create_account_in_xero(
     db: AsyncSession,
     tenant_id: uuid.UUID,
@@ -232,34 +265,46 @@ async def create_account_in_xero(
     xero_type: str,
 ) -> XeroAccount:
     integration, xero_tenant_id = await require_xero_ready(db, tenant_id)
+    xero_type = xero_type.strip().upper()
+    if xero_type == "BANK":
+        raise XeroAccountWriteError(
+            "Xero bank accounts need a bank account number. Use Current Asset, or create the bank account in Xero."
+        )
     client = XeroApiClient(db=db, tenant_id=tenant_id, xero_tenant_id=xero_tenant_id)
-    body = {
+    body: dict[str, Any] = {
         "Code": _code_ok(code),
         "Name": _name_ok(name),
-        "Type": xero_type.strip().upper(),
-        "TaxType": XERO_DEFAULT_TAX_TYPE,
+        "Type": xero_type,
     }
+    tax_type = await _tax_type_for_create(
+        db, tenant_id=tenant_id, xero_tenant_id=xero_tenant_id
+    )
+    if tax_type:
+        body["TaxType"] = tax_type
     try:
-        payload = await client.put_json("Accounts", json_body={"Accounts": [body]})
-    except XeroApiError as put_exc:
-        if put_exc.status_code not in {400, 404, 405, 415}:
+        payload = await client.put_json("Accounts", json_body=body)
+    except XeroApiError as exc:
+        lowered = (exc.message or "").lower()
+        if exc.status_code == 400 and (
+            "unique" in lowered or "already" in lowered or "exists" in lowered
+        ):
+            existing_payload = await client.get_json(
+                "Accounts",
+                params={"where": f'Code=="{_code_ok(code)}"'},
+            )
+            created = _first_account(existing_payload)
+            if created is None:
+                raise XeroAccountWriteError(
+                    exc.message or "Xero rejected the account",
+                    status_code=exc.status_code or 400,
+                ) from exc
+            payload = {"Accounts": [created]}
+        else:
             raise XeroAccountWriteError(
-                put_exc.message or "Xero rejected the account",
-                status_code=put_exc.status_code or 502,
-            ) from put_exc
-        try:
-            payload = await client.post_json("Accounts", json_body={"Accounts": [body]})
-        except XeroApiError as exc:
-            raise XeroAccountWriteError(
-                exc.message or put_exc.message or "Xero rejected the account",
+                exc.message or "Xero rejected the account",
                 status_code=exc.status_code or 502,
             ) from exc
-    if not isinstance(payload, dict):
-        payload = {}
-    created = next(
-        (row for row in (payload.get("Accounts") or []) if isinstance(row, dict)),
-        None,
-    )
+    created = _first_account(payload)
     if created is None:
         raise XeroAccountWriteError("Xero did not return the created account", status_code=502)
     row = await upsert_account_from_xero_payload(
@@ -289,44 +334,33 @@ async def update_account_in_xero(
         raise XeroAccountWriteError("Xero account not found", status_code=404)
     if is_system_xero_account(existing):
         raise XeroAccountWriteError("This is a default Xero account and cannot be changed.")
+    xero_type = xero_type.strip().upper()
+    if xero_type == "BANK":
+        raise XeroAccountWriteError(
+            "Xero bank accounts need a bank account number. Use Current Asset, or edit the bank account in Xero."
+        )
     client = XeroApiClient(db=db, tenant_id=tenant_id, xero_tenant_id=xero_tenant_id)
     body = {
         "AccountID": xero_account_id,
         "Code": _code_ok(code),
         "Name": _name_ok(name),
-        "Type": xero_type.strip().upper(),
-        "TaxType": XERO_DEFAULT_TAX_TYPE,
+        "Type": xero_type,
     }
     try:
         payload = await client.post_json("Accounts", json_body={"Accounts": [body]})
-    except XeroApiError as post_exc:
-        try:
-            payload = await client.post_json(
-                f"Accounts/{xero_account_id}",
-                json_body=body,
-            )
-        except XeroApiError:
-            try:
-                payload = await client.put_json(
-                    f"Accounts/{xero_account_id}",
-                    json_body=body,
-                )
-            except XeroApiError as exc:
-                raise XeroAccountWriteError(
-                    exc.message or post_exc.message or "Xero rejected the account update",
-                    status_code=exc.status_code or 502,
-                ) from exc
-    if not isinstance(payload, dict):
-        payload = {}
-    updated = next(
-        (row for row in (payload.get("Accounts") or []) if isinstance(row, dict)),
-        None,
-    )
+    except XeroApiError as exc:
+        raise XeroAccountWriteError(
+            exc.message or "Xero rejected the account update",
+            status_code=exc.status_code or 502,
+        ) from exc
+    updated = _first_account(payload)
     if updated is None:
-        updated = body
-        updated["Class"] = existing.account_class
-        updated["Status"] = existing.status or "ACTIVE"
-        updated["SystemAccount"] = _parse_payload(existing.raw_payload_json).get("SystemAccount")
+        updated = {
+            **body,
+            "Class": existing.account_class,
+            "Status": existing.status or "ACTIVE",
+            "SystemAccount": _parse_payload(existing.raw_payload_json).get("SystemAccount"),
+        }
     row = await upsert_account_from_xero_payload(
         db,
         tenant_id=tenant_id,

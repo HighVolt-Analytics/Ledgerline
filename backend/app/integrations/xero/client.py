@@ -28,6 +28,32 @@ class XeroApiError(Exception):
         super().__init__(message)
 
 
+def message_from_xero_response(response: httpx.Response, fallback: str) -> str:
+    """Prefer Xero ValidationErrors over a generic PUT/POST failed string."""
+    text = (response.text or "").strip()
+    if not text:
+        return fallback
+    try:
+        data = response.json()
+    except ValueError:
+        return text[:400]
+    if not isinstance(data, dict):
+        return text[:400]
+    messages: list[str] = []
+    for element in data.get("Elements") or []:
+        if not isinstance(element, dict):
+            continue
+        for err in element.get("ValidationErrors") or []:
+            if isinstance(err, dict):
+                msg = str(err.get("Message") or "").strip()
+                if msg:
+                    messages.append(msg)
+    if messages:
+        return "; ".join(dict.fromkeys(messages))
+    top = str(data.get("Message") or "").strip()
+    return (top or text)[:400]
+
+
 def accounting_headers(*, access_token: str, xero_tenant_id: str) -> dict[str, str]:
     return {
         "Authorization": f"Bearer {access_token}",
@@ -65,7 +91,7 @@ class XeroApiClient:
         if response.status_code >= 400:
             raise XeroApiError(
                 response.status_code,
-                response.text[:400] or "Xero GET failed",
+                message_from_xero_response(response, "Xero GET failed"),
             )
         return response.json()
 
@@ -77,7 +103,7 @@ class XeroApiClient:
         if response.status_code >= 400:
             raise XeroApiError(
                 response.status_code,
-                response.text[:400] or "Xero POST failed",
+                message_from_xero_response(response, "Xero POST failed"),
             )
         if not response.content:
             return {}
@@ -91,7 +117,7 @@ class XeroApiClient:
         if response.status_code >= 400:
             raise XeroApiError(
                 response.status_code,
-                response.text[:400] or "Xero PUT failed",
+                message_from_xero_response(response, "Xero PUT failed"),
             )
         if not response.content:
             return {}
@@ -128,6 +154,6 @@ class XeroApiClient:
         if response.status_code >= 400:
             raise XeroApiError(
                 response.status_code,
-                response.text[:400] or "Xero PUT failed",
+                message_from_xero_response(response, "Xero PUT failed"),
             )
         return response
