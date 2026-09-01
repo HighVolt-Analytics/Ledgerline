@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Annotated, Any, Literal, Union
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -342,6 +343,84 @@ class PostingDefaults(BaseModel):
         )
 
 
+class RemitterBankAccount(BaseModel):
+    """This tenant's OWN bank account used to originate batch payment files.
+
+    Deliberately country-agnostic field names -- 'routing_code' holds whatever
+    the tenant's country calls it (BSB in AU, sort code in GB, routing number
+    in US, IFSC in IN -- see JurisdictionPack.bank_routing_label for the
+    display label). Format-specific extras (e.g. an APCA User ID Number for
+    AU ABA files) live on BankFileSettings, not here, so this stays reusable
+    across every bulk-payment format a tenant's country might need.
+    """
+
+    bank_name: str = ""
+    account_name: str = ""
+    routing_code: str = ""
+    account_number: str = ""
+    remittance_display_name: str = Field(default="", max_length=32)
+
+
+class BankFileSettings(BaseModel):
+    """Per-tenant configuration for generating batch bank payment files
+    (e.g. an AU ABA file) from a set of Scheduled payments.
+
+    'format' is a registry code (see app/services/payments/bank_file_formats)
+    such as 'AU_ABA'. Left empty until the tenant explicitly configures one --
+    a tenant never gets a batch file format enabled just because their
+    country jurisdiction pack lists one as available.
+    """
+
+    format: str = ""
+    remitter: RemitterBankAccount = Field(default_factory=RemitterBankAccount)
+    # AU ABA-specific: "User ID Number" your bank issues you for bulk lodgement.
+    aba_user_id_number: str = Field(default="", max_length=6)
+    # AU ABA-specific: your bank's registered 3-letter APCA abbreviation
+    # (e.g. "CBA", "WBC", "ANZ", "NAB") -- deliberately separate from the
+    # free-text remitter.bank_name, which is not safe to truncate into this.
+    aba_financial_institution_code: str = Field(default="", max_length=3)
+    # Shows in the ABA header's "Description of entries" field (max 12 chars).
+    aba_description: str = Field(default="SUPPLIER PAY", max_length=12)
+
+
+class FxRateSettings(BaseModel):
+    """Tenant-owned foreign-exchange rates used to convert invoice/payment
+    amounts into this tenant's own books currency (``tenants.currency``) for
+    dashboards, reports, and cross-currency aggregates.
+
+    Deliberately NOT a platform-wide hardcoded rate table -- a multi-country
+    tenant base sees wildly different currency pairs, and any static snapshot
+    goes stale immediately. Each tenant maintains only the pairs they
+    actually deal with; unset pairs are treated as "not convertible yet"
+    (excluded + flagged) rather than silently guessed as zero-value.
+
+    ``rates`` maps an ISO 4217 code -> how many units of the tenant's own
+    books currency one unit of that code is worth right now, e.g. for a
+    tenant whose books currency is AUD: {"USD": "1.55", "JPY": "0.0103"}.
+    The tenant's own books currency never needs an entry (it is always 1:1).
+    """
+
+    rates: dict[str, Decimal] = Field(default_factory=dict)
+
+    model_config = {"populate_by_name": True, "extra": "ignore"}
+
+    @field_validator("rates")
+    @classmethod
+    def _validate_rates(cls, value: dict[str, Decimal]) -> dict[str, Decimal]:
+        from app.services.shared.iso4217_catalog import is_iso4217_currency
+
+        cleaned: dict[str, Decimal] = {}
+        for raw_code, raw_rate in (value or {}).items():
+            code = str(raw_code).strip().upper()
+            if not is_iso4217_currency(code):
+                raise ValueError(f"Unsupported currency code in fx_rate_settings: {raw_code!r}")
+            rate = raw_rate if isinstance(raw_rate, Decimal) else Decimal(str(raw_rate))
+            if rate <= 0:
+                raise ValueError(f"FX rate for {code} must be a positive number")
+            cleaned[code] = rate
+        return cleaned
+
+
 TEAM_EXPENSE_KIND_ADVANCE = "advance_requisition"
 TEAM_EXPENSE_KIND_CLAIM = "expense_claim"
 TEAM_EXPENSE_KIND_DIRECT = "direct_payment"
@@ -611,6 +690,8 @@ class RuleBookConfigPayload(BaseModel):
         default_factory=PurchaseMatchConfig,
         alias="purchaseMatch",
     )
+    bank_file_settings: BankFileSettings = Field(default_factory=BankFileSettings)
+    fx_rate_settings: FxRateSettings = Field(default_factory=FxRateSettings)
 
     model_config = {"populate_by_name": True, "extra": "ignore"}
 

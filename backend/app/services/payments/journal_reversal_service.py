@@ -9,12 +9,13 @@ marks the original batch REVERSED. History is preserved end to end.
 
 from __future__ import annotations
 
+import uuid
 from datetime import date
 
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.journal import EntryType, JournalEntry
+from app.models.journal import EntryType, JournalEntry, JournalEntryKind
 from app.models.journal_batch import JournalBatch, JournalBatchStatus
 from app.services.payments.fiscal_period_service import ensure_period_open
 
@@ -128,7 +129,8 @@ async def reverse_batches_for_entries(
     """Reverse every distinct batch referenced by `entries`.
 
     Convenience for callers that already loaded a set of JournalEntry rows
-    (by invoice, by entry_kind, ...) and previously deleted them outright.
+    (by invoice, by entry_kind, ...). Already-reversed originals and posted
+    reversal batches are skipped by ``reverse_batch``.
     """
     batch_ids = {entry.batch_id for entry in entries if entry.batch_id is not None}
     reversed_batches: list[JournalBatch] = []
@@ -140,3 +142,27 @@ async def reverse_batches_for_entries(
         if result is not None:
             reversed_batches.append(result)
     return reversed_batches
+
+
+async def reverse_invoice_accrual_batches(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    invoice_id: int,
+    reason: str,
+) -> list[JournalBatch]:
+    """Reverse live invoice-accrual batches before replacement posting.
+
+    journal_entries is append-only — callers must never DELETE accrual rows.
+    """
+    from app.tenant_child_tables import journal_entries_for_invoice
+
+    existing_entries = (
+        await session.execute(
+            select(JournalEntry).where(
+                *journal_entries_for_invoice(tenant_id, invoice_id),
+                JournalEntry.entry_kind == JournalEntryKind.INVOICE_ACCRUAL,
+            )
+        )
+    ).scalars().all()
+    return await reverse_batches_for_entries(session, existing_entries, reason=reason)

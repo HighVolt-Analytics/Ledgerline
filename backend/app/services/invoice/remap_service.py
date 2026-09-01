@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 
 from app.database import db_session_with_rls
 from app.models.invoice import Invoice, InvoiceStatus
-from app.models.journal import JournalEntry, JournalEntryKind
+from app.models.journal import JournalEntry
 from app.schemas.rule_book_config import RuleBookConfigPayload
 from app.services.audit.audit_service import log_event
 from app.services.invoice.invoice_evaluation_service import apply_invoice_evaluation, load_config_for_tenant
@@ -23,7 +23,6 @@ from app.services.payments.journal_generator import (
 )
 from app.services.payments.journal_persist_service import persist_journal_lines
 from app.services.payments.fiscal_period_service import PeriodClosedError
-from app.services.payments.journal_reversal_service import reverse_batches_for_entries
 from app.services.master_data.journal_counterparty_resolver import (
     resolve_counterparty_registry_ids_for_journal,
 )
@@ -151,16 +150,13 @@ async def _regenerate_journal_entries(
         return False
 
     # Only replace accrual lines — preserve payment/collection settlements.
-    existing_entries = (
-        await session.execute(
-            select(JournalEntry).where(
-                *journal_entries_for_invoice(invoice.tenant_id, invoice.id),
-                JournalEntry.entry_kind == JournalEntryKind.INVOICE_ACCRUAL,
-            )
-        )
-    ).scalars().all()
-    await reverse_batches_for_entries(
-        session, existing_entries, reason="remap_regenerate"
+    from app.services.payments.journal_reversal_service import reverse_invoice_accrual_batches
+
+    await reverse_invoice_accrual_batches(
+        session,
+        tenant_id=invoice.tenant_id,
+        invoice_id=invoice.id,
+        reason="remap_regenerate",
     )
 
     try:

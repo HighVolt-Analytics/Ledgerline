@@ -13,9 +13,15 @@ from app.models.collection import Collection, CollectionStatus
 from app.models.invoice import Invoice
 from app.models.payment import Payment, PaymentStatus
 from app.schemas.bank_feed import BankMatchTargetResponse, BankTransactionMatchResponse
+from app.services.bank_feeds.match_service import (
+    _allocated_sum,
+    _collection_gross_compare,
+    _payment_gross_compare,
+)
 
 _PAYMENT_STATUSES = (PaymentStatus.PAID, PaymentStatus.SCHEDULED)
 _COLLECTION_STATUSES = (CollectionStatus.RECEIVED, CollectionStatus.AWAITING)
+_ZERO = Decimal("0")
 
 
 def format_match_target_label(
@@ -42,6 +48,7 @@ async def search_match_targets(
     matched_type: str,
     q: str | None = None,
     limit: int = 50,
+    bank_currency: str | None = None,
 ) -> list[BankMatchTargetResponse]:
     needle = (q or "").strip()
     limit = max(1, min(limit, 100))
@@ -74,6 +81,20 @@ async def search_match_targets(
                     if x
                 ).lower()
                 if needle.lower() not in blob:
+                    continue
+            if bank_currency:
+                gross = await _payment_gross_compare(
+                    payment, bank_currency=bank_currency
+                )
+                if gross is None:
+                    continue
+                allocated = await _allocated_sum(
+                    session,
+                    tenant_id=tenant_id,
+                    matched_type=BankMatchEntityType.PAYMENT.value,
+                    matched_id=payment.id,
+                )
+                if gross[0] - allocated <= _ZERO:
                     continue
             out.append(
                 BankMatchTargetResponse(
@@ -121,6 +142,20 @@ async def search_match_targets(
                     if x
                 ).lower()
                 if needle.lower() not in blob:
+                    continue
+            if bank_currency:
+                gross = await _collection_gross_compare(
+                    collection, bank_currency=bank_currency
+                )
+                if gross is None:
+                    continue
+                allocated = await _allocated_sum(
+                    session,
+                    tenant_id=tenant_id,
+                    matched_type=BankMatchEntityType.COLLECTION.value,
+                    matched_id=collection.id,
+                )
+                if gross[0] - allocated <= _ZERO:
                     continue
             out.append(
                 BankMatchTargetResponse(

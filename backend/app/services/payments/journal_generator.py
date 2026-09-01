@@ -514,8 +514,17 @@ def get_unresolved_control_accounts(
     invoice: Invoice,
     config: RuleBookConfigPayload,
 ) -> list[ControlAccountRole]:
-    """Return control/tax roles whose COA labels are missing from the tenant chart."""
+    """Return control/tax roles whose COA labels are missing from the tenant chart.
+
+    Includes the fallback/suspense account itself: header and line GL mapping
+    silently degrade to it whenever a category can't be classified, so if
+    *that* label isn't in the tenant's own chart either, resolve_category_for_config
+    has nowhere safe to park the entry (see account_mapper.py) and this must
+    halt posting rather than let an empty/unresolved account code through.
+    """
     unresolved: list[ControlAccountRole] = []
+    if not category_resolved_in_coa(config.posting_defaults.fallback_account, config):
+        unresolved.append("fallback_account")
 
     if (invoice.route_target or "").strip() == ROUTE_SALES:
         recv_label, tax_label = resolve_sales_post_accounts(invoice, config)

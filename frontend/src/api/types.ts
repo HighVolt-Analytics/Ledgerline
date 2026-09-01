@@ -484,6 +484,7 @@ export interface Invoice {
   current_stage_state?: "done" | "pending" | "fail" | "skipped";
   /** Actionable next step when the document is blocked (Upload / inbox). */
   resolution_hint?: string | null;
+  issue_summary?: string | null;
   approval_board_column?: "review" | "processing" | "approved" | "rejected";
   processing_overrides?: ProcessingOverrides | null;
   gl_posting_applicable?: boolean;
@@ -516,6 +517,8 @@ export interface JournalEntry {
   debit: string;
   credit: string;
   entry_type: string;
+  entry_kind?: string | null;
+  payment_id?: number | null;
 }
 
 export interface InvoiceDetails extends Invoice {
@@ -567,6 +570,7 @@ export interface NavBadges {
   sales_count: number;
   payments_queue_count: number;
   collections_queue_count: number;
+  bank_feeds_unsettled_count: number;
   integrations_connected: number;
 }
 
@@ -1052,6 +1056,195 @@ export interface KpiSparklines {
   active_users: number[];
   avg_processing_seconds: number[];
   reconciliation_delta: number[];
+}
+
+export interface PositionLiquidityMeta {
+  currency: string;
+  period_label: string;
+  as_of: string;
+  period_start: string;
+  period_end: string;
+  environment_label?: string | null;
+  coverage_gaps?: string[];
+  notes: string[];
+}
+
+export interface PositionLiquidityKpis {
+  ap_outstanding: string;
+  approved_not_paid: string;
+  due_next_7_days: string;
+  due_next_14_days: string;
+  due_next_30_days: string;
+  overdue: string;
+  overdue_pct: string | null;
+  overdue_threshold_pct: string;
+  dpo_days: string | null;
+  dpo_prior_year_days: string | null;
+  on_time_payment_rate_pct: string | null;
+  discount_capture_rate_pct: string | null;
+  budget_utilisation_pct: string | null;
+  budget_actual: string;
+  budget_allocated: string;
+  advances_outstanding: string;
+  advances_overdue: string;
+  advances_overdue_employees: number;
+  open_exceptions_count: number;
+  open_exceptions_at_risk: string;
+  claims_pending_count: number;
+  claims_pending_value: string;
+  vendor_top10_concentration_pct: string | null;
+  vendor_non_po_spend_pct: string | null;
+}
+
+export interface PositionLiquidityDashboard {
+  meta: PositionLiquidityMeta;
+  kpis: PositionLiquidityKpis;
+}
+
+export interface EfficiencyAutomationMeta {
+  currency: string;
+  period_label: string;
+  as_of: string;
+  period_start: string;
+  period_end: string;
+  month_start: string;
+  environment_label?: string | null;
+  coverage_gaps?: string[];
+  notes: string[];
+}
+
+export interface EfficiencyAutomationKpis {
+  touchless_processing_pct: string | null;
+  touchless_target_pct: string;
+  first_pass_validation_pct: string | null;
+  straight_through_pct: string | null;
+  cost_per_invoice: string | null;
+  manual_cost_per_invoice_baseline: string;
+  cost_improvement_pct: string | null;
+  avg_processing_minutes: string | null;
+  manual_processing_minutes_baseline: string;
+  hours_saved_ytd: string;
+  fte_equivalent: string | null;
+  fte_hours_per_year: string;
+  documents_processed_ytd: number;
+  documents_processed_mtd: number;
+  vault_documents_total: number;
+  duplicates_prevented_amount: string;
+  duplicates_prevented_events: number;
+  fraud_blocked_amount: string;
+  fraud_blocked_events: number;
+  discount_captured: string | null;
+  discount_available: string | null;
+  total_value_delivered: string | null;
+  automation_savings_amount: string;
+  sync_success_pct: string | null;
+  sync_dead_letter_count: number;
+  sync_providers_label: string;
+  documents_past_retention: number;
+  document_retention_days: number;
+  missing_supporting_docs: number;
+}
+
+export interface EfficiencyAutomationDashboard {
+  meta: EfficiencyAutomationMeta;
+  kpis: EfficiencyAutomationKpis;
+}
+
+export interface CashLiabilityOutlookMeta {
+  currency: string;
+  as_of: string;
+  horizon_weeks: number;
+  environment_label?: string | null;
+  coverage_gaps?: string[];
+  notes: string[];
+}
+
+export interface CashOutlookWeek {
+  week_start: string;
+  label: string;
+  confirmed_ap: string;
+  probable_ap: string;
+  recurring: string;
+  reimbursements: string;
+  advances: string;
+  tax: string;
+  total_outflow: string;
+  available_balance: string | null;
+}
+
+export interface CashOutlookSummary {
+  next_week_outflow: string;
+  total_horizon_outflow: string;
+  peak_week_outflow: string;
+  peak_week_label: string;
+  coverage_ratio: string | null;
+  opening_cash_balance: string | null;
+}
+
+export interface ApAgeingBucket {
+  bucket: string;
+  amount: string;
+}
+
+export interface CashLiabilityOutlookDashboard {
+  meta: CashLiabilityOutlookMeta;
+  weeks: CashOutlookWeek[];
+  summary: CashOutlookSummary;
+  ap_ageing: ApAgeingBucket[];
+  ap_ageing_total: string;
+}
+
+export interface BudgetConcentrationRiskMeta {
+  currency: string;
+  period_label: string;
+  as_of: string;
+  period_start: string;
+  period_end: string;
+  budget_group_label: string;
+  environment_label?: string | null;
+  coverage_gaps?: string[];
+  notes: string[];
+}
+
+export interface BudgetDepartmentRow {
+  name: string;
+  budget: string;
+  actual: string;
+  committed: string;
+  owner: string;
+}
+
+export interface BudgetEncumbranceSummary {
+  budget: string;
+  actual: string;
+  committed: string;
+  remaining: string;
+  utilisation_pct: string | null;
+}
+
+export interface VendorConcentrationRow {
+  name: string;
+  spend: string;
+  invoice_count: number;
+  cycle_days: string | null;
+  po_backed_pct: string | null;
+  risk_level: string;
+  bank_change_flag: boolean;
+}
+
+export interface VendorConcentrationSummary {
+  top10_concentration_pct: string | null;
+  non_po_spend_pct: string | null;
+  contracted_in_top10: number;
+  high_risk_count: number;
+}
+
+export interface BudgetConcentrationRiskDashboard {
+  meta: BudgetConcentrationRiskMeta;
+  departments: BudgetDepartmentRow[];
+  budget_summary: BudgetEncumbranceSummary;
+  vendors: VendorConcentrationRow[];
+  vendor_summary: VendorConcentrationSummary;
 }
 
 export interface DashboardOverview {
@@ -2120,6 +2313,24 @@ export interface RuleBook {
   fallback_account: string;
 }
 
+/** Tenant's own bank account used to originate batch payment files (e.g. AU ABA). */
+export interface RemitterBankAccount {
+  bank_name: string;
+  account_name: string;
+  routing_code: string;
+  account_number: string;
+  remittance_display_name: string;
+}
+
+/** Per-tenant config for generating batch bank payment files from Scheduled payments. */
+export interface BankFileSettings {
+  format: string;
+  remitter: RemitterBankAccount;
+  aba_user_id_number: string;
+  aba_financial_institution_code: string;
+  aba_description: string;
+}
+
 /** API payload for GET/PUT /api/rule-book/config (snake_case). */
 export interface RuleBookConfig {
   schema_version: number;
@@ -2219,6 +2430,7 @@ export interface RuleBookConfig {
     default_advance_parent_ledger: string;
     settlement_account: string;
   };
+  bank_file_settings?: BankFileSettings;
   document_sets: Array<{
     id: string;
     pattern: string;
@@ -3018,6 +3230,7 @@ export interface BankFeedImport {
   duplicate_count: number;
   error_count: number;
   categorized_count?: number;
+  extracted_count?: number;
   error_report: Record<string, unknown> | unknown[] | null;
   actor_user_id: number | null;
   imported_at: string;
@@ -3118,4 +3331,31 @@ export interface BankMatchRunResult {
   items: BankMatchRunItem[];
 }
 
-export type BankFeedQueueTab = "reconcile" | "matched" | "posted" | "excluded";
+export type BankFeedQueueTab = "reconcile" | "matched" | "posted" | "excluded" | "unsettled";
+
+export interface UnsettledSettlement {
+  entity_type: "payment" | "collection";
+  entity_id: number;
+  invoice_id: number;
+  invoice_no: string | null;
+  party_name: string | null;
+  amount: number;
+  currency: string;
+  settled_date: string;
+  days_since_settled: number;
+  has_suggested_bank_match: boolean;
+  allocated_bank_amount: number;
+  gross_amount: number | null;
+  grace_days: number;
+}
+
+export interface UnsettledSettlementList {
+  items: UnsettledSettlement[];
+  grace_days: number;
+  lookback_months: number;
+}
+
+export interface UnsettledSettlementCount {
+  count: number;
+  grace_days: number;
+}

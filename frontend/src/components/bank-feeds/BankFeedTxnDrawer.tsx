@@ -125,6 +125,7 @@ export function BankFeedTxnDrawer({
     txn?.money_flow === "in" ? "collection" : "payment";
   const targetsQ = useBankMatchTargets(
     matchedType,
+    txn?.bank_account_id ?? null,
     open && txn != null && txn.match_status !== "excluded" && !posted
   );
 

@@ -170,6 +170,8 @@ export function formatBankImportFlash(result: {
   row_count: number;
   duplicate_count: number;
   categorized_count?: number;
+  extracted_count?: number;
+  source?: string;
   reused_existing?: boolean;
   status?: string;
 }): string {
@@ -183,5 +185,10 @@ export function formatBankImportFlash(result: {
   const dupes = result.duplicate_count
     ? ` · ${result.duplicate_count} duplicate(s) skipped`
     : "";
-  return `Imported ${result.accepted_count} of ${result.row_count} rows${dupes}${categorized}`;
+  const isPdf = (result.source || "").toLowerCase() === "pdf";
+  const extracted =
+    isPdf && typeof result.extracted_count === "number"
+      ? `Extracted ${result.extracted_count} transaction(s) from statement · `
+      : "";
+  return `${extracted}Imported ${result.accepted_count} of ${result.row_count} rows${dupes}${categorized}`;
 }

@@ -1429,7 +1429,79 @@ _RESOLUTION_HINT_AUDIT_EVENTS: tuple[tuple[str, str], ...] = (
     ("mapping_review_required", "Lines tab — review GL mapping"),
     ("routing_review_required", "Fields tab — confirm document type / route"),
     ("approval_requested", "Approvals board — waiting for approver sign-off"),
+    ("pipeline_error", "Reprocess this document — open Audit tab if it still fails"),
 )
+
+
+def _pipeline_error_messages(detail: dict) -> tuple[str, str]:
+    """Human-readable (issue, fix) pair from a pipeline_error audit detail."""
+    error = str(detail.get("error") or "").strip()
+    lowered = error.lower()
+    if "append-only" in lowered or "reverse batch" in lowered:
+        return (
+            "Journal posting failed — prior entries could not be replaced",
+            "Reprocess this document to post fresh journal entries",
+        )
+    if "period" in lowered and "closed" in lowered:
+        return (
+            "Accrual date falls in a closed fiscal period",
+            "Fields tab — pick an open invoice date, or open Accounting → fiscal periods",
+        )
+    if "control account" in lowered or "journal_control" in lowered:
+        return (
+            "Control account not configured for posting",
+            "Rule Book → Posting — select the missing control ledger, then reprocess",
+        )
+    short = error.split("\n")[0].strip()
+    if len(short) > 140:
+        short = short[:137] + "…"
+    return (
+        short or "Processing failed unexpectedly",
+        "Reprocess this document — open Audit tab if it still fails",
+    )
+
+
+def derive_issue_summary(
+    inv: Invoice,
+    logs: list[AuditLog] | None = None,
+    *,
+    configured_keys: list[str] | None = None,
+) -> str | None:
+    """Short issue label for list/matrix hover — paired with ``resolution_hint``."""
+    status = inv.status
+    if status == InvoiceStatus.PROCESSED:
+        return None
+    if status == InvoiceStatus.DUPLICATE_SKIPPED:
+        return "Possible duplicate document"
+    if status == InvoiceStatus.REJECTED:
+        return "Document rejected"
+
+    logs = logs or []
+    pipeline_err = _latest_log(logs, "pipeline_error")
+    if pipeline_err is not None and isinstance(pipeline_err.detail, dict):
+        title, _ = _pipeline_error_messages(pipeline_err.detail)
+        return title
+
+    if status == InvoiceStatus.EXCEPTION:
+        return exception_hold_reason(inv)
+
+    from app.services.invoice.invoice_blockers import (
+        blocker_hold_reason,
+        detect_invoice_blockers,
+    )
+
+    blocker = blocker_hold_reason(
+        detect_invoice_blockers(inv, configured_keys=configured_keys)
+    )
+    if blocker:
+        return blocker
+
+    eval_status = (inv.evaluation_status or "").strip().lower()
+    if eval_status and eval_status not in {"auto_coded", "vision_vaulted"}:
+        hold = exception_hold_reason(inv)
+        if hold and hold != "Needs manual review before approval / posting":
+            return hold
+    return None
 
 
 def derive_resolution_hint(
@@ -1544,6 +1616,9 @@ def derive_resolution_hint(
                     "Rule Book → Posting → Team expense posting — select the "
                     "settlement ledger from the chart of accounts, then reprocess"
                 )
+        if best.event == "pipeline_error" and isinstance(detail, dict):
+            _, fix = _pipeline_error_messages(detail)
+            return fix
         return best_template
 
     # Field blockers beat Suspense / generic needs_review messaging.
@@ -1557,6 +1632,10 @@ def derive_resolution_hint(
         return "Fields tab — confirm document type or route"
 
     if status == InvoiceStatus.EXCEPTION:
+        pipeline_err = _latest_log(logs, "pipeline_error")
+        if pipeline_err is not None and isinstance(pipeline_err.detail, dict):
+            _, fix = _pipeline_error_messages(pipeline_err.detail)
+            return fix
         return exception_hold_reason(inv)
     return None
 

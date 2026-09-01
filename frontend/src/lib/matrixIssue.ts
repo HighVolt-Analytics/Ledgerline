@@ -86,6 +86,9 @@ function firstFailedValidationMessage(inv: Invoice): string | null {
  * Says what is wrong so the user can act without guessing.
  */
 export function clarifyMatrixIssueTitle(inv: Invoice): string {
+  const apiIssue = (inv.issue_summary ?? "").trim();
+  if (apiIssue) return apiIssue;
+
   const fromValidation = firstFailedValidationMessage(inv);
   if (fromValidation) return fromValidation;
 
@@ -187,6 +190,57 @@ export function matrixIssueSummary(
     }
     return { stage: null, message };
   }
+  return null;
+}
+
+/** Issue summary for invoice list rows (no matrix cells required). */
+export function invoiceListIssueSummary(
+  inv: Invoice,
+  opts?: {
+    flagReason?: string | null;
+    cells?: Record<MatrixStage, MatrixCell> | null;
+  }
+): MatrixIssueSummary | null {
+  if (opts?.cells) {
+    const fromMatrix = matrixIssueSummary(opts.cells, opts.flagReason, inv);
+    if (fromMatrix) return fromMatrix;
+  }
+
+  const apiIssue = (inv.issue_summary ?? "").trim();
+  if (apiIssue) {
+    return { stage: null, message: apiIssue };
+  }
+
+  const flagReason = opts?.flagReason?.trim();
+  if (flagReason) {
+    let message = flagReason;
+    if (isVagueMatrixIssueMessage(message)) {
+      message = clarifyMatrixIssueTitle(inv);
+    }
+    return { stage: null, message };
+  }
+
+  if (
+    inv.status === "exception" ||
+    inv.status === "rejected" ||
+    inv.status === "duplicate_skipped"
+  ) {
+    return { stage: null, message: clarifyMatrixIssueTitle(inv) };
+  }
+
+  if (inv.current_stage_state === "fail") {
+    return { stage: null, message: clarifyMatrixIssueTitle(inv) };
+  }
+
+  const evalStatus = (inv.evaluation_status ?? "").trim().toLowerCase();
+  if (evalStatus && evalStatus !== "auto_coded" && evalStatus !== "vision_vaulted") {
+    return { stage: null, message: clarifyMatrixIssueTitle(inv) };
+  }
+
+  if (inv.duplicate_review_suggested) {
+    return { stage: null, message: "Possible duplicate — needs review" };
+  }
+
   return null;
 }
 

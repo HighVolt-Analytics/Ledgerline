@@ -46,6 +46,9 @@ def _trimmed_purchase_coa_config() -> RuleBookConfigPayload:
         ),
         chart_of_accounts=[
             ChartOfAccountEntry(code="6130", name="Marketing Expense", type="Expense"),
+            # Fallback/suspense account itself must resolve too — only AP/tax are
+            # deliberately missing in this fixture (see get_unresolved_control_accounts).
+            ChartOfAccountEntry(code="9999", name="Suspense Account", type="Liability"),
         ],
     )
 
@@ -60,6 +63,7 @@ def _control_accounts_only_config() -> RuleBookConfigPayload:
         chart_of_accounts=[
             ChartOfAccountEntry(code="1400", name="GST Paid", type="Asset"),
             ChartOfAccountEntry(code="2000", name="Accounts Payable", type="Liability"),
+            ChartOfAccountEntry(code="9999", name="Suspense Account", type="Liability"),
         ],
     )
 
@@ -70,6 +74,9 @@ def _trimmed_sales_coa_config() -> RuleBookConfigPayload:
         chart_of_accounts=[
             ChartOfAccountEntry(code="6130", name="Marketing Expense", type="Expense"),
             ChartOfAccountEntry(code="6140", name="R&D Expense", type="Revenue"),
+            # PostingDefaults() default fallback_account is "Suspense Account" —
+            # keep it resolvable so these tests isolate AR/tax, not the fallback gate.
+            ChartOfAccountEntry(code="9999", name="Suspense Account", type="Liability"),
         ],
     )
 

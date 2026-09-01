@@ -55,6 +55,8 @@ import {
 } from "@/lib/bulkUpload";
 import { UploadDropZone } from "@/components/upload/UploadDropZone";
 import { BankFeedsWorkspace } from "@/components/bank-feeds/BankFeedsWorkspace";
+import type { BankFeedQueueTab } from "@/api/types";
+import { useNavBadges } from "@/hooks/useNavBadges";
 import { canAccessModulePath } from "@/lib/tenantModules";
 import { useTenantModules } from "@/hooks/useTenantModules";
 import { isUploadRouteFilter } from "@/lib/uploadRouteFilter";
@@ -89,7 +91,7 @@ function channelEmptyHint(channel: ChannelTab, routeLabel: string | null): strin
     return "Drop files above to upload, or capture documents from the Email, WhatsApp, or Viber tabs. Team expense claims use Email / WhatsApp / Viber when the sender is in Employees.";
   }
   if (channel === "bank-feeds") {
-    return "Import bank CSV statements and reconcile lines on this tab.";
+    return "Import bank statements (PDF or CSV) and reconcile lines on this tab.";
   }
   if (channel === "email") {
     return "Connect a mailbox and fetch mail. Messages from employees in the registry route to Team Expenses.";
@@ -137,6 +139,19 @@ function isMailboxPollable(mb: ConnectedMailbox): boolean {
   return mb.is_active && mb.connection_status === "connected";
 }
 
+function parseBankFeedTab(value: string | null): BankFeedQueueTab | null {
+  if (
+    value === "reconcile" ||
+    value === "unsettled" ||
+    value === "matched" ||
+    value === "posted" ||
+    value === "excluded"
+  ) {
+    return value;
+  }
+  return null;
+}
+
 export function UploadPage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -146,9 +161,12 @@ export function UploadPage() {
     canAccessModulePath(item.path, enabledModules, item.moduleKey)
   ).map((item) => item.key);
   const bankFeedsEnabled = canAccessModulePath("/bank-feeds", enabledModules, "bank_feeds");
+  const { data: navBadges } = useNavBadges();
+  const bankFeedsUnsettledCount = navBadges?.bank_feeds_unsettled_count ?? 0;
   const [searchParams, setSearchParams] = useSearchParams();
   const channelTab = parseChannelTab(searchParams.get("channel"));
   const viewTab = parseViewTab(searchParams, channelTab);
+  const bankFeedTab = parseBankFeedTab(searchParams.get("bf_tab"));
   const bankAccountId = useMemo(() => {
     const raw = searchParams.get("account");
     if (!raw) return null;
@@ -623,6 +641,11 @@ export function UploadPage() {
                         <span className="inline-flex items-center gap-2">
                           <Landmark className="h-4 w-4 text-primary" />
                           Bank feeds
+                          {bankFeedsUnsettledCount > 0 ? (
+                            <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold leading-none text-primary-foreground">
+                              {bankFeedsUnsettledCount}
+                            </span>
+                          ) : null}
                         </span>
                       ),
                     },
@@ -768,7 +791,7 @@ export function UploadPage() {
 
   return workspaceShell(
     channelTab === "bank-feeds" ? (
-      <BankFeedsWorkspace initialAccountId={bankAccountId} />
+      <BankFeedsWorkspace initialAccountId={bankAccountId} initialTab={bankFeedTab} />
     ) : viewTab === "setup" ? (
       setupPanel
     ) : (

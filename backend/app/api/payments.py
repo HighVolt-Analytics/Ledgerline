@@ -3,7 +3,7 @@
 from urllib.parse import urlencode
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +11,7 @@ from app.api.deps import AuthContext, actor_from_context, bind_db_to_tenant, get
 from app.config import get_settings
 from app.schemas.common import ApiEnvelope
 from app.schemas.payment import (
+    BankFileBatchExportRequest,
     PaymentExecutionInstructionExportResponse,
     PaymentExecutionInstructionResponse,
     PaymentExecutionReadinessResponse,
@@ -32,11 +33,16 @@ from app.schemas.payment import (
 )
 from app.services.audit.audit_service import log_event
 from app.services.payments.payment_service import (
+    PaymentSegregationOfDutiesError,
     approve_payment,
     list_payments,
     payment_workspace_kpis,
     update_payment_status,
     wallet_summary,
+)
+from app.services.payments.bank_file_export_service import (
+    BankFileExportError,
+    generate_batch_payment_file,
 )
 from app.services.payments.payment_execution_readiness_service import validate_payment_execution_readiness
 from app.services.payments.payment_execution_instruction_service import (
@@ -511,6 +517,8 @@ async def post_payment_approve(
         )
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
+    except PaymentSegregationOfDutiesError as exc:
+        raise HTTPException(403, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -799,3 +807,37 @@ async def post_payment_mark_paid_manual(
             actor_email=actor_email,
         )
     return ApiEnvelope(data=row)
+
+
+@router.post("/batch/bank-file")
+async def post_batch_bank_file_export(
+    body: BankFileBatchExportRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> Response:
+    """Bundle Scheduled payments into one batch payment file (e.g. AU ABA)
+    and return it as a downloadable attachment. Does not move money -- the
+    file still has to be uploaded into the tenant's own bank portal, same
+    disclaimer as the manual execution-instruction flow above.
+    """
+    try:
+        require_payment_execution_role(ctx)
+    except PaymentExecutionUnauthorizedError as exc:
+        raise HTTPException(403, str(exc)) from exc
+
+    actor_name, _actor_email = await actor_from_context(db, ctx)
+    try:
+        result, _payments = await generate_batch_payment_file(
+            db,
+            ctx.tenant_id,
+            body.payment_ids,
+            actor_name=actor_name,
+        )
+    except BankFileExportError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    return Response(
+        content=result.content,
+        media_type=result.content_type,
+        headers={"Content-Disposition": f'attachment; filename="{result.filename}"'},
+    )

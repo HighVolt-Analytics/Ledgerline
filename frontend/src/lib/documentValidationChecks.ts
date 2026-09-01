@@ -38,6 +38,7 @@ export const CONFIGURABLE_VALIDATION_CHECKS = [
   { code: "VR09", label: "Line arithmetic", group: "Arithmetic" },
   { code: "VR11", label: "Date sanity", group: "Dates" },
   { code: "VR12", label: "Vendor master", group: "Vendor" },
+  { code: "VR13", label: "Bank details match", group: "Vendor" },
   { code: "VR-PB02", label: "Required supporting documents", group: "Playbook" },
 ] as const;
 
@@ -49,6 +50,7 @@ export const VALIDATION_CHECK_DESCRIPTIONS: Record<string, string> = {
   VR09: "Line amounts must reconcile to subtotal; qty × price per line.",
   VR11: "Invoice date cannot be future; over 12 months needs approval.",
   VR12: "Vendor must exist in master; tax ID must match when present.",
+  VR13: "Invoice pay-to bank details must match the vendor master on file. Cannot be bypassed by human approval.",
   "VR-PB02":
     "Required supporting documents must be on file on the same PO or SO reference before posting. Configured under Supporting document requirements.",
 };
@@ -83,6 +85,7 @@ const STANDARD_VALIDATION_RULES: ValidationRuleConfig[] = [
   { code: "VR09", enabled: true, severity: "block" },
   { code: "VR11", enabled: true, severity: "block" },
   { code: "VR12", enabled: true, severity: "block" },
+  { code: "VR13", enabled: true, severity: "block" },
   { code: "VR-PB02", enabled: false, severity: "block" },
 ];
 
@@ -93,6 +96,7 @@ const PO_GOODS_VALIDATION_RULES: ValidationRuleConfig[] = [
   { code: "VR09", enabled: true, severity: "block" },
   { code: "VR11", enabled: true, severity: "block" },
   { code: "VR12", enabled: true, severity: "block" },
+  { code: "VR13", enabled: true, severity: "block" },
   { code: "VR-PB02", enabled: true, severity: "block" },
 ];
 

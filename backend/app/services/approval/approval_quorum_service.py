@@ -131,6 +131,28 @@ def recorded_count(chain: dict[str, Any] | None) -> int:
     return len(ids)
 
 
+def approver_user_ids(chain: dict[str, Any] | None) -> set[int]:
+    """Every distinct user id that recorded an approval in this chain.
+
+    Used for payment segregation-of-duties: an invoice approver must not
+    also be the one who releases its payment.
+    """
+    return {
+        int(a["user_id"])
+        for a in _approvals_list(chain)
+        if a.get("user_id") is not None
+    }
+
+
+def last_approval_user_id(chain: dict[str, Any] | None) -> int | None:
+    """Most recent approver's user id, or None when the chain is empty."""
+    approvals = _approvals_list(chain)
+    if not approvals:
+        return None
+    uid = approvals[-1].get("user_id")
+    return int(uid) if uid is not None else None
+
+
 def quorum_met(chain: dict[str, Any] | None) -> bool:
     if not isinstance(chain, dict):
         return False

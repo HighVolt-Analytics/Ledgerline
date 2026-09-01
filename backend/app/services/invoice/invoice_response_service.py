@@ -45,6 +45,7 @@ from app.services.invoice.pipeline_stages import (
     derive_current_stage,
     derive_list_stage,
     derive_resolution_hint,
+    derive_issue_summary,
 )
 from app.services.classification.document_type_validation_service import (
     display_validation_pass_percent,
@@ -294,6 +295,9 @@ def invoice_to_response(
     resolution_hint = derive_resolution_hint(
         inv, logs, configured_keys=document_type_extraction_fields
     )
+    issue_summary = derive_issue_summary(
+        inv, logs, configured_keys=document_type_extraction_fields
+    )
     if (
         inv.status == InvoiceStatus.EXCEPTION
         and evaluation_status == EvaluationStatus.NEEDS_REVIEW
@@ -392,6 +396,7 @@ def invoice_to_response(
         current_stage=current_stage,
         current_stage_state=current_stage_state,
         resolution_hint=resolution_hint,
+        issue_summary=issue_summary,
         processing_overrides=(
             None
             if for_list

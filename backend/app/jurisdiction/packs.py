@@ -33,6 +33,12 @@ class JurisdictionPack:
     tax_id_kind: str
     tax_id_label: str
     bank_routing_label: str
+    # Batch bank-payment file format codes this country's banks accept
+    # (registry keys in app/services/payments/bank_file_formats), e.g.
+    # ("AU_ABA",). Empty until a format for that country is implemented --
+    # this only says what COULD be offered, a tenant still opts in via
+    # their own BankFileSettings.format.
+    bank_file_formats: tuple[str, ...]
     field_labels: dict[str, str]
     llm_tax_id_examples: str
     tax_invoice: TaxInvoicePolicy | None

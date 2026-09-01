@@ -191,3 +191,50 @@ async def test_manual_match_audit_and_unmatch_rematch_remaining(
     )
     assert man3.status_code == 400
     assert "remaining" in man3.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_match_targets_filtered_by_bank_account_currency(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await _enable_bank_feeds(db_session)
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="FX Vendor",
+        invoice_no="INV-FX",
+        status=InvoiceStatus.PROCESSED,
+        currency="USD",
+        total=Decimal("100.00"),
+        file_hash="bf-fx-1",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+    payment = Payment(
+        tenant_id=TESTING_TENANT_UUID,
+        invoice_id=inv.id,
+        vendor="FX Vendor",
+        amount=Decimal("100.00"),
+        currency="USD",
+        status=PaymentStatus.PAID,
+        paid_date=datetime(2026, 10, 1, tzinfo=timezone.utc),
+    )
+    db_session.add(payment)
+    await db_session.commit()
+
+    acc = await client.post(
+        "/api/bank-feeds/accounts",
+        json={"name": "AUD Ops", "currency": "AUD"},
+    )
+    assert acc.status_code == 201, acc.text
+    account_id = acc.json()["data"]["id"]
+
+    unscoped = await client.get("/api/bank-feeds/match-targets?matched_type=payment")
+    assert unscoped.status_code == 200
+    assert any(row["id"] == payment.id for row in unscoped.json()["data"])
+
+    scoped = await client.get(
+        f"/api/bank-feeds/match-targets?matched_type=payment&bank_account_id={account_id}"
+    )
+    assert scoped.status_code == 200
+    assert not any(row["id"] == payment.id for row in scoped.json()["data"])

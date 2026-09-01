@@ -55,6 +55,7 @@ from app.services.reports.dashboard_savings import (
     minutes_saved_per_doc,
 )
 from app.services.shared.currency import sum_amounts_by_currency
+from app.services.tenant.tenant_module_service import is_module_enabled
 
 CaptureId = Literal["email", "whatsapp", "viber", "upload"]
 
@@ -574,7 +575,7 @@ async def build_risk_compliance(
             if month_start <= first_day <= month_end:
                 new_cp += 1
 
-    return [
+    rows = [
         RiskComplianceRow(
             id="duplicates",
             label="Duplicate documents",
@@ -604,6 +605,20 @@ async def build_risk_compliance(
             badge="New",
         ),
     ]
+    if await is_module_enabled(db, tenant_id, "bank_feeds"):
+        from app.services.bank_feeds.unsettled_service import count_unsettled_settlements
+
+        unsettled = await count_unsettled_settlements(db, tenant_id=tenant_id)
+        rows.append(
+            RiskComplianceRow(
+                id="unsettled_cash",
+                label="Unsettled cash",
+                count=unsettled,
+                href="/upload?channel=bank-feeds&bf_tab=unsettled",
+                badge="Verify",
+            )
+        )
+    return rows
 
 
 def build_attention_panel(

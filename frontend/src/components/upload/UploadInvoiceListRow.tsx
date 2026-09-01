@@ -8,6 +8,7 @@ import {
   DuplicateReviewBadge,
   EvaluationStatusBadge,
 } from "@/components/inbox/EvaluationStatusBadge";
+import { InvoiceIssueHintIcon } from "@/components/inbox/InvoiceIssueHintIcon";
 import { InboxGlAccountBadge } from "@/components/inbox/InboxGlAccountBadge";
 import { invoiceStageBadgeProps, StageBadge } from "@/components/StageBadge";
 import { UploadColumnCell } from "@/components/upload/UploadColumnCell";
@@ -205,6 +206,7 @@ export function UploadInvoiceMobileRow({
             </UploadColumnCell>
           </span>
         ) : null}
+        <InvoiceIssueHintIcon inv={inv} testId={`upload-issue-mobile-${inv.id}`} />
       </div>
     </button>
   );
@@ -283,6 +285,9 @@ export function UploadInvoiceTableRow({
       </td>
       <td className="px-4 py-2.5 text-right text-xs text-muted-foreground tnum whitespace-nowrap">
         {receivedLabel}
+      </td>
+      <td className="px-2 py-2.5 text-center" onClick={(e) => e.stopPropagation()}>
+        <InvoiceIssueHintIcon inv={inv} testId={`upload-issue-${inv.id}`} />
       </td>
     </tr>
   );

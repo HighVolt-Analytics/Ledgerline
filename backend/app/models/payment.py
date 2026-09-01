@@ -66,3 +66,9 @@ class Payment(Base):
         DateTime(timezone=True),
         server_default=func.now(),
     )
+    # Set once this payment has been included in a generated batch bank
+    # payment file (e.g. an AU ABA export) -- lets the UI show "already
+    # exported" and stops the same Scheduled payment from silently being
+    # bundled into two different batch files.
+    bank_file_batch_reference: Mapped[str | None] = mapped_column(String(64), index=True)
+    bank_file_exported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

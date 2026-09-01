@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, get_auth_context, get_db
+from app.services.shared.currency import get_tenant_fx_rates, tenant_fx_rates_scope
 from app.api.http_errors import http_bad_request, http_not_found
 from app.schemas.common import ApiEnvelope
 from app.schemas.report_catalog import (
@@ -366,9 +367,11 @@ async def reports_analytics(
 ) -> ApiEnvelope[ReportsAnalytics]:
     """Spend analytics, GL distribution, and vendor summary for the Reports page."""
     params = ReportsAnalyticsRequest(month=month)
-    return ApiEnvelope(
-        data=await build_analytics(db, tenant_id=ctx.tenant_id, month=params.month)
-    )
+    fx_rates = await get_tenant_fx_rates(db, ctx.tenant_id)
+    with tenant_fx_rates_scope(fx_rates):
+        return ApiEnvelope(
+            data=await build_analytics(db, tenant_id=ctx.tenant_id, month=params.month)
+        )
 
 
 @router.get("/documents", response_model=ApiEnvelope[list[ReportDocumentRow]])
@@ -384,13 +387,15 @@ async def reports_documents(
 ) -> ApiEnvelope[list[ReportDocumentRow]]:
     """Processed invoice rows for CSV export."""
     params = ReportsDocumentsRequest(date_from=date_from, date_to=date_to)
+    fx_rates = await get_tenant_fx_rates(db, ctx.tenant_id)
     try:
-        rows = await list_documents(
-            db,
-            tenant_id=ctx.tenant_id,
-            date_from=params.date_from,
-            date_to=params.date_to,
-        )
+        with tenant_fx_rates_scope(fx_rates):
+            rows = await list_documents(
+                db,
+                tenant_id=ctx.tenant_id,
+                date_from=params.date_from,
+                date_to=params.date_to,
+            )
     except ValueError as exc:
         raise http_bad_request(exc) from exc
     return ApiEnvelope(data=rows)

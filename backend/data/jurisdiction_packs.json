@@ -25,7 +25,10 @@
         "amount_threshold": 1000,
         "enforce_when_tax_present": true
       },
-      "default_currency": "AUD"
+      "default_currency": "AUD",
+      "bank_file_formats": [
+        "AU_ABA"
+      ]
     },
     "NZ": {
       "timezone": "Pacific/Auckland",

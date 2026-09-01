@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from app.services.bank_feeds.currency_validation import validate_bank_account_currency
 
 
 class BankAccountCreate(BaseModel):
@@ -17,6 +20,11 @@ class BankAccountCreate(BaseModel):
         max_length=255,
         description="Optional COA name; defaults to Rule Book bank account posting default.",
     )
+
+    @field_validator("currency")
+    @classmethod
+    def currency_must_be_supported(cls, value: str) -> str:
+        return validate_bank_account_currency(value)
 
 
 class BankAccountResponse(BaseModel):
@@ -48,6 +56,7 @@ class BankFeedImportResponse(BaseModel):
     duplicate_count: int
     error_count: int
     categorized_count: int = 0
+    extracted_count: int = 0
     error_report: dict[str, Any] | list | None = None
     actor_user_id: int | None = None
     imported_at: datetime
@@ -211,3 +220,30 @@ class BankTransactionNoteResponse(BaseModel):
 
 class CreateBankTransactionNoteRequest(BaseModel):
     body: str = Field(..., min_length=1, max_length=4000)
+
+
+class UnsettledSettlementResponse(BaseModel):
+    entity_type: Literal["payment", "collection"]
+    entity_id: int
+    invoice_id: int
+    invoice_no: str | None = None
+    party_name: str | None = None
+    amount: Decimal
+    currency: str
+    settled_date: date
+    days_since_settled: int
+    has_suggested_bank_match: bool
+    allocated_bank_amount: Decimal
+    gross_amount: Decimal | None = None
+    grace_days: int
+
+
+class UnsettledSettlementListResponse(BaseModel):
+    items: list[UnsettledSettlementResponse]
+    grace_days: int
+    lookback_months: int = 12
+
+
+class UnsettledSettlementCountResponse(BaseModel):
+    count: int
+    grace_days: int

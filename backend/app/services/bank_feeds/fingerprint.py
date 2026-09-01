@@ -7,11 +7,6 @@ import re
 from datetime import date
 from decimal import Decimal
 
-# Collapse whitespace; strip common bank reference prefixes for stable fingerprints.
-_REF_PREFIX_RE = re.compile(
-    r"\b(?:ref(?:erence)?|txn(?:id)?|tr(?:ans(?:action)?)?|ft|neft|imps|upi)[:#\s-]*",
-    re.IGNORECASE,
-)
 # Strip punctuation entirely (do not replace with spaces) so bank narrations like
 # "INV1042" match invoice refs like "INV-1042" / "INV_1042" / "INV.1042" / "INV/1042".
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9\s]+")
@@ -25,15 +20,15 @@ _LEGAL_SUFFIX_RE = re.compile(
 
 
 def normalize_description(raw: str) -> str:
-    """Trim, lowercase, strip reference prefixes, strip punctuation, collapse whitespace.
+    """Trim, lowercase, strip punctuation, collapse whitespace.
 
     Punctuation is removed (not replaced with spaces) so hyphenated invoice
-    numbers align with bank narrations that drop separators. Does **not** strip
-    legal suffixes (Ltd/Inc/…) — fingerprints must stay stable for a given
-    normalize version.
+    numbers align with bank narrations that drop separators. Payment-rail
+    prefixes (UPI/NEFT/IMPS/…) are preserved — they distinguish otherwise
+    identical lines for fingerprint de-dupe. Does **not** strip legal suffixes
+    (Ltd/Inc/…) — those are for party-name matching only.
     """
     text = (raw or "").strip().lower()
-    text = _REF_PREFIX_RE.sub(" ", text)
     text = _NON_ALNUM_RE.sub("", text)
     text = _WS_RE.sub(" ", text).strip()
     return text

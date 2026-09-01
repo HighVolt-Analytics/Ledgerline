@@ -4,6 +4,7 @@ import type { Invoice, PurchaseOrderApi } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
 import { InboxConfidenceBadge } from "@/components/inbox/InboxConfidenceBadge";
 import { EvaluationStatusBadge } from "@/components/inbox/EvaluationStatusBadge";
+import { InvoiceIssueHintIcon } from "@/components/inbox/InvoiceIssueHintIcon";
 import { ListSearchInput } from "@/components/ListSearchInput";
 import { PageTabs } from "@/components/PageTabs";
 import { invoiceStageBadgeProps, StageBadge } from "@/components/StageBadge";
@@ -570,12 +571,18 @@ export function PurchaseRegisterPanel({
                       <th className="px-3 py-2 font-medium text-right">Total</th>
                       <th className="px-4 py-2 font-medium text-right">Received</th>
                       <th className="px-4 py-2 font-medium text-right">Action</th>
+                      <th
+                        className="px-2 py-2 font-medium text-center w-10"
+                        title="Issue details — hover for how to resolve"
+                      >
+                        i
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
                     {pagedAction.length === 0 && (
                       <tr>
-                        <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">
+                        <td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">
                           No documents match your search.
                         </td>
                       </tr>
@@ -628,6 +635,13 @@ export function PurchaseRegisterPanel({
                           >
                             Open
                           </Button>
+                        </td>
+                        <td className="px-2 py-2.5 text-center">
+                          <InvoiceIssueHintIcon
+                            inv={inv}
+                            flagReason={purchaseActionIssue(inv, coverage)}
+                            testId={`purchase-action-issue-${inv.id}`}
+                          />
                         </td>
                       </tr>
                     ))}

@@ -13,6 +13,7 @@ from app.models.audit import AuditLog
 from app.models.bank_feed import BankTransaction
 from app.models.tenant_module import TenantModule
 from app.services.bank_feeds.csv_parser import parse_canonical_bank_csv
+from app.services.bank_feeds.parse_common import parse_statement_text_block
 from app.services.bank_feeds.fingerprint import compute_fingerprint, normalize_description
 from app.tenant_ids import TESTING_TENANT_UUID
 
@@ -71,6 +72,52 @@ async def test_normalize_strips_punctuation_for_invoice_refs() -> None:
     assert normalize_description("INV/1042") == "inv1042"
     hay = normalize_description("NEFT DR TO SHARMA ENTERPRISES INV1042")
     assert normalize_description("INV-1042") in hay
+
+
+@pytest.mark.asyncio
+async def test_fingerprint_distinct_for_payment_rail_prefix_only() -> None:
+    """Same date/amount/direction but different rail prefix must not collide."""
+    from datetime import date
+
+    txn_date = date(2026, 5, 1)
+    amount = Decimal("500.00")
+    direction = "debit"
+    pairs = [
+        ("UPI TO ACME SUPPLIES INV100", "NEFT TO ACME SUPPLIES INV100"),
+        ("UPI PAYMENT 5000", "NEFT PAYMENT 5000"),
+        ("IMPS REF 12345 VENDOR A", "NEFT REF 12345 VENDOR A"),
+    ]
+    for desc_a, desc_b in pairs:
+        norm_a = normalize_description(desc_a)
+        norm_b = normalize_description(desc_b)
+        assert norm_a != norm_b, (desc_a, desc_b, norm_a, norm_b)
+        fp_a = compute_fingerprint(
+            txn_date=txn_date,
+            amount=amount,
+            direction=direction,
+            description_normalized=norm_a,
+        )
+        fp_b = compute_fingerprint(
+            txn_date=txn_date,
+            amount=amount,
+            direction=direction,
+            description_normalized=norm_b,
+        )
+        assert fp_a != fp_b, (desc_a, desc_b)
+
+
+@pytest.mark.asyncio
+async def test_create_account_rejects_unsupported_currency(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await _enable_bank_feeds(db_session)
+    res = await client.post(
+        "/api/bank-feeds/accounts",
+        json={"name": "Bad Currency", "currency": "IND"},
+    )
+    assert res.status_code == 422, res.text
+    detail = res.json()["detail"]
+    assert any("IND" in str(item.get("msg", "")) for item in detail)
 
 
 @pytest.mark.asyncio
@@ -225,3 +272,132 @@ async def test_import_allows_shared_reference_different_amount_date(
         )
     ).scalars().all()
     assert all(t.external_id is None for t in txns)
+
+
+def test_parse_pdf_text_lines_debit_credit() -> None:
+    line_text = """
+    2026-05-01 AWS Invoice INV-100 110.00 out 5000.00
+    2026-05-02 Customer payment ACME 250.50 in 5250.50
+    """
+    result = parse_statement_text_block(line_text)
+    assert result.errors == []
+    assert len(result.rows) == 2
+    assert result.rows[0].direction == "debit"
+    assert result.rows[1].direction == "credit"
+    assert result.rows[0].amount == Decimal("110.00")
+
+
+def test_parse_pdf_text_lines_month_name_date_and_balance() -> None:
+    """Matches sample_bank_statement.pdf layout (DD Mon YYYY + amount + balance)."""
+    line_text = """
+    19 Aug 2026 Fuel Station REF26081910 225.00 4,450.48
+    21 Aug 2026 Transfer In - J. Rivera REF26082111 1,734.79 6,185.27
+    22 Aug 2026 Transfer Out - Savings Sweep REF26082212 157.45 6,027.82
+    23 Aug 2026 Interest Payment REF26082313 1,079.49 7,107.31
+    """
+    result = parse_statement_text_block(line_text)
+    assert result.errors == []
+    assert len(result.rows) == 4
+    assert str(result.rows[0].txn_date) == "2026-08-19"
+    assert result.rows[0].direction == "debit"
+    assert result.rows[1].direction == "credit"
+    assert result.rows[2].direction == "debit"
+    assert result.rows[3].direction == "credit"
+    assert result.rows[0].balance == Decimal("4450.48")
+
+
+def _make_statement_pdf(lines: list[str]) -> bytes:
+    import fitz
+
+    doc = fitz.open()
+    page = doc.new_page()
+    y = 72
+    for line in lines:
+        page.insert_text((72, y), line, fontsize=11)
+        y += 16
+    return doc.tobytes()
+
+
+@pytest.mark.asyncio
+async def test_import_pdf_statement_via_api(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await _enable_bank_feeds(db_session)
+    create = await client.post(
+        "/api/bank-feeds/accounts",
+        json={"name": "PDF Ops", "currency": "AUD"},
+    )
+    account_id = create.json()["data"]["id"]
+
+    pdf_bytes = _make_statement_pdf(
+        [
+            "Date Description Amount Direction Balance Reference",
+            "2026-05-01 AWS Invoice INV-100 110.00 out 5000.00 REF-1",
+            "2026-05-02 Customer payment ACME 250.50 in 5250.50 REF-2",
+        ]
+    )
+    from app.services.bank_feeds.pdf_parser import parse_bank_statement_pdf
+
+    parsed = parse_bank_statement_pdf(pdf_bytes)
+    assert parsed.errors == [], parsed.errors
+    assert len(parsed.rows) == 2
+
+    upload = await client.post(
+        f"/api/bank-feeds/accounts/{account_id}/imports",
+        files={"file": ("stmt.pdf", pdf_bytes, "application/pdf")},
+    )
+    assert upload.status_code == 200, upload.text
+    imp = upload.json()["data"]
+    assert imp["accepted_count"] == 2
+    assert imp["extracted_count"] == 2
+    assert imp["source"] == "pdf"
+
+
+@pytest.mark.asyncio
+async def test_failed_pdf_import_can_be_retried_same_file(
+    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same file hash must re-parse after a failed import (not idempotent reuse)."""
+    from app.services.bank_feeds import import_service
+
+    await _enable_bank_feeds(db_session)
+    create = await client.post(
+        "/api/bank-feeds/accounts",
+        json={"name": "Retry PDF", "currency": "AUD"},
+    )
+    account_id = create.json()["data"]["id"]
+    pdf_bytes = _make_statement_pdf(
+        [
+            "01 Aug 2026 Fuel Station REF001 25.04 4,224.96",
+            "02 Aug 2026 Refund REF002 601.90 4,826.86",
+        ]
+    )
+
+    def _fail_parse(_content: bytes):
+        from app.services.bank_feeds.parse_common import CsvParseError, CsvParseResult
+
+        return CsvParseResult(
+            rows=[],
+            errors=[CsvParseError(0, "forced failure for retry test")],
+        )
+
+    monkeypatch.setattr(import_service, "parse_bank_statement_pdf", _fail_parse)
+    first = await client.post(
+        f"/api/bank-feeds/accounts/{account_id}/imports",
+        files={"file": ("sample_bank_statement.pdf", pdf_bytes, "application/pdf")},
+    )
+    assert first.status_code == 200
+    assert first.json()["data"]["status"] == "failed"
+
+    monkeypatch.undo()
+    second = await client.post(
+        f"/api/bank-feeds/accounts/{account_id}/imports",
+        files={"file": ("sample_bank_statement.pdf", pdf_bytes, "application/pdf")},
+    )
+    assert second.status_code == 200, second.text
+    body = second.json()["data"]
+    assert body["reused_existing"] is False
+    assert body["accepted_count"] == 2
+    assert body["extracted_count"] == 2
+    assert body["status"] == "completed"
+

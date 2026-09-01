@@ -24,6 +24,8 @@ import type {
   BankTransactionList,
   BankTransactionMatch,
   BankMatchTarget,
+  UnsettledSettlementCount,
+  UnsettledSettlementList,
   AccountingIntegrationsStatus,
   XeroConnectionsResponse,
   XeroInvoiceStatus,
@@ -72,6 +74,10 @@ import type {
   Customer,
   DashboardOverview,
   DashboardStats,
+  PositionLiquidityDashboard,
+  EfficiencyAutomationDashboard,
+  CashLiabilityOutlookDashboard,
+  BudgetConcentrationRiskDashboard,
   ReportsAnalytics,
   ReportCatalogResponse,
   ReportColumnLayoutCreate,
@@ -103,6 +109,7 @@ import type {
   InvoiceClassificationAudit,
   ProcessingStatus,
   RuleBookConfig,
+  BankFileSettings,
   RegistryFieldsResponse,
   RuleBookChangelogEntry,
   RuleBookRulesPayload,
@@ -1227,6 +1234,14 @@ export const api = {
     if (month) params.set("month", month);
     return request<DashboardOverview>(`/api/dashboard/overview?${params}`);
   },
+  getPositionLiquidity: () =>
+    request<PositionLiquidityDashboard>("/api/dashboard/position-liquidity"),
+  getEfficiencyAutomation: () =>
+    request<EfficiencyAutomationDashboard>("/api/dashboard/efficiency-automation"),
+  getCashLiabilityOutlook: () =>
+    request<CashLiabilityOutlookDashboard>("/api/dashboard/cash-liability-outlook"),
+  getBudgetConcentrationRisk: () =>
+    request<BudgetConcentrationRiskDashboard>("/api/dashboard/budget-concentration-risk"),
   getActivity: (limit = 20) =>
     request<ActivityItem[]>(`/api/dashboard/activity?limit=${limit}`),
   listInvoices: (params?: Record<string, string>, options?: FreshRequestOptions) => {
@@ -1815,6 +1830,15 @@ export const api = {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ vendor_detection_config: config }),
+      }
+    ),
+  putRuleBookBankFileSettings: (settings: BankFileSettings) =>
+    request<Pick<RuleBookConfig, "bank_file_settings">>(
+      "/api/rule-book/config/bank-file-settings",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bank_file_settings: settings }),
       }
     ),
   deleteRuleBookDocumentType: (code: string) =>
@@ -2431,6 +2455,20 @@ export const api = {
       body: JSON.stringify(body),
     });
   },
+  downloadBatchPaymentBankFile: async (paymentIds: number[]) => {
+    const { blob, filename } = await requestBlob(
+      "/api/payments/batch/bank-file",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ payment_ids: paymentIds }),
+      },
+      "batch_payment_file.txt"
+    );
+    bustGetCacheByPrefix("/api/payments");
+    saveBlobAsFile(blob, filename);
+    return { filename };
+  },
 
   listBankAccounts: (includeArchived = false, options?: FreshRequestOptions) => {
     const path = `/api/bank-feeds/accounts?include_archived=${includeArchived ? "true" : "false"}`;
@@ -2450,7 +2488,7 @@ export const api = {
       body: JSON.stringify(body),
     });
   },
-  importBankFeedCsv: async (accountId: number, file: File): Promise<BankFeedImport> => {
+  importBankFeedStatement: async (accountId: number, file: File): Promise<BankFeedImport> => {
     const fd = new FormData();
     fd.append("file", file);
     bustGetCacheByPrefix("/api/bank-feeds");
@@ -2473,6 +2511,8 @@ export const api = {
     if (json.error) throw new Error(json.error.message);
     return json.data;
   },
+  importBankFeedCsv: async (accountId: number, file: File): Promise<BankFeedImport> =>
+    api.importBankFeedStatement(accountId, file),
   listBankTransactions: (
     accountId: number,
     params?: {
@@ -2522,12 +2562,15 @@ export const api = {
   },
   listBankMatchTargets: (
     matchedType: "payment" | "collection",
-    options?: FreshRequestOptions & { q?: string; limit?: number }
+    options?: FreshRequestOptions & { q?: string; limit?: number; bank_account_id?: number }
   ) => {
     const params = new URLSearchParams();
     params.set("matched_type", matchedType);
     if (options?.q?.trim()) params.set("q", options.q.trim());
     if (options?.limit != null) params.set("limit", String(options.limit));
+    if (options?.bank_account_id != null) {
+      params.set("bank_account_id", String(options.bank_account_id));
+    }
     const path = `/api/bank-feeds/match-targets?${params.toString()}`;
     if (options?.fresh) bustGetCache(path);
     return request<BankMatchTarget[]>(path);
@@ -2657,6 +2700,23 @@ export const api = {
         body: JSON.stringify(body),
       }
     );
+  },
+  listUnsettledSettlements: (
+    params?: { page?: number; page_size?: number },
+    options?: FreshRequestOptions
+  ) => {
+    const qs = new URLSearchParams();
+    if (params?.page != null) qs.set("page", String(params.page));
+    if (params?.page_size != null) qs.set("page_size", String(params.page_size));
+    const q = qs.toString();
+    const path = `/api/bank-feeds/unsettled-settlements${q ? `?${q}` : ""}`;
+    if (options?.fresh) bustGetCache(path);
+    return requestWithMeta<UnsettledSettlementList>(path);
+  },
+  getUnsettledSettlementsCount: (options?: FreshRequestOptions) => {
+    const path = "/api/bank-feeds/unsettled-settlements/count";
+    if (options?.fresh) bustGetCache(path);
+    return request<UnsettledSettlementCount>(path);
   },
 };
 

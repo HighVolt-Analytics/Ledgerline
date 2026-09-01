@@ -33,6 +33,7 @@ import {
 } from "@/components/upload/UploadCellText";
 import { UploadColumnCell, UploadColumnProcessingIndicator } from "@/components/upload/UploadColumnCell";
 import { UploadDocumentRowActions } from "@/components/upload/UploadDocumentRowActions";
+import { InvoiceIssueHintIcon } from "@/components/inbox/InvoiceIssueHintIcon";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
 import { useLatestRef } from "@/hooks/useLatestRef";
@@ -549,6 +550,12 @@ export function AllDocumentsDetailedTable({
                 <th className="px-3 py-2 font-medium" title="Acc sync">Acc sync</th>
                 <th className="px-3 py-2 font-medium" title="When this document was uploaded">Uploaded</th>
                 <th className="px-3 py-2 font-medium" title="Actions">Actions</th>
+                <th
+                  className="px-2 py-2 font-medium text-center w-10"
+                  title="Issue details — hover for how to resolve"
+                >
+                  i
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -732,6 +739,17 @@ export function AllDocumentsDetailedTable({
                         onOpenDrawer={(tab) => openInvoiceDrawer(inv.id, tab ?? "fields")}
                         onApprove={() => void handleRowApprove(inv)}
                         onReject={() => void handleRowReject(inv)}
+                      />
+                    </td>
+                    <td
+                      className="px-2 py-2.5 text-center"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <InvoiceIssueHintIcon
+                        inv={inv}
+                        cells={cells}
+                        flagReason={matrixRow.flag_reason}
+                        testId={`all-docs-issue-${docRef}`}
                       />
                     </td>
                   </tr>

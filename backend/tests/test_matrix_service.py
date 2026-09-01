@@ -663,3 +663,42 @@ def test_parse_route_target_filter_splits_and_dedupes() -> None:
     assert parse_route_target_filter(
         "Expenses Management,Purchase Management,Expenses Management"
     ) == ["Expenses Management", "Purchase Management"]
+
+
+def test_pipeline_error_issue_and_resolution_hints() -> None:
+    from datetime import datetime, timezone
+
+    from app.models.audit import AuditLog
+    from app.models.invoice import Invoice, InvoiceStatus
+    from app.services.invoice.pipeline_stages import (
+        derive_issue_summary,
+        derive_resolution_hint,
+    )
+    from app.tenant_ids import TESTING_TENANT_UUID
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.EXCEPTION,
+        currency="AUD",
+        file_hash="pipeline-error-hint",
+    )
+    logs = [
+        AuditLog(
+            tenant_id=TESTING_TENANT_UUID,
+            invoice_id=1,
+            event="pipeline_error",
+            detail={
+                "error": (
+                    "journal_entries is append-only — reverse batch 22 instead of "
+                    "updating/deleting entry 433"
+                )
+            },
+            created_at=datetime.now(timezone.utc),
+        )
+    ]
+    issue = derive_issue_summary(inv, logs)
+    fix = derive_resolution_hint(inv, logs)
+    assert issue is not None
+    assert "journal posting failed" in issue.lower()
+    assert fix is not None
+    assert "reprocess" in fix.lower()

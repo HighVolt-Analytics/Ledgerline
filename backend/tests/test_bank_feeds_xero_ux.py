@@ -15,6 +15,11 @@ from app.services.bank_feeds.transfer_service import transfer_between_accounts
 from app.tenant_ids import TESTING_TENANT_UUID
 
 
+@pytest.fixture
+def enable_bank_transfer(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.api.bank_feeds.bank_feeds_transfer_enabled", lambda: True)
+
+
 async def _enable_bank_feeds(db_session: AsyncSession) -> None:
     db_session.add(
         TenantModule(
@@ -80,8 +85,22 @@ async def test_reconcile_filter_merges_unmatched_and_suggested(
 
 
 @pytest.mark.asyncio
-async def test_transfer_posts_bank_transfer_journal(
+async def test_transfer_gated_off_by_default(
     client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await _enable_bank_feeds(db_session)
+    _, _, txn_id = await _two_accounts_and_out_txn(client)
+    resp = await client.post(
+        f"/api/bank-feeds/transactions/{txn_id}/transfer",
+        json={"to_bank_account_id": 1, "description": "Should be blocked"},
+    )
+    assert resp.status_code == 403, resp.text
+    assert "not enabled" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_transfer_posts_bank_transfer_journal(
+    client: AsyncClient, db_session: AsyncSession, enable_bank_transfer: None
 ) -> None:
     await _enable_bank_feeds(db_session)
     account_a, account_b, txn_id = await _two_accounts_and_out_txn(client)
@@ -110,7 +129,9 @@ async def test_transfer_posts_bank_transfer_journal(
 
 
 @pytest.mark.asyncio
-async def test_transfer_atomic_claim(client: AsyncClient, db_session: AsyncSession) -> None:
+async def test_transfer_atomic_claim(
+    client: AsyncClient, db_session: AsyncSession, enable_bank_transfer: None
+) -> None:
     await _enable_bank_feeds(db_session)
     from app.models.bank_feed import BankAccount, BankTransaction
     from app.services.bank_feeds.account_service import get_bank_account

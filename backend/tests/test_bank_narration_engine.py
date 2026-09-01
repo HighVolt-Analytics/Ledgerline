@@ -134,6 +134,20 @@ def test_catastrophic_pattern_completes_in_linear_time() -> None:
     assert elapsed < 0.5
 
 
+def test_catastrophic_pattern_does_not_leak_threads() -> None:
+    """Import-time categorize loops must not spawn stuck regex worker threads."""
+    import threading
+
+    assert not hasattr(rule_engine, "_bank_regex_pool")
+    before = threading.active_count()
+    rules = [_rule(id="slow", name="Nested", priority=1, pattern=r"(a+)+$")]
+    haystack = "a" * 40 + "b"
+    for _ in range(24):
+        assert match_bank_narration_rule(haystack, rules) is None
+    after = threading.active_count()
+    assert after == before
+
+
 def test_document_eval_never_calls_bank_narration_rules() -> None:
     config = RuleBookConfigPayload(
         bank_narration_rules=[

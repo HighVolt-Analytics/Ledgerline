@@ -8,10 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import EntryType, JournalEntry
+from app.models.journal_batch import JournalBatch, JournalBatchStatus
 from app.models.reconciliation import DailyReconciliation
 from app.schemas.rule_book_config import RuleBookConfigPayload
 from app.services.invoice.invoice_accrual_date import effective_invoice_recon_date
 from app.services.invoice.invoice_amounts import invoice_payable_total
+from app.services.master_data.party_coa_subledger_service import (
+    control_account_codes_for_parent,
+)
 from app.services.rule_book.rule_book_mapper import (
     ROUTE_SALES,
     get_payable_account_mapping,
@@ -160,6 +164,27 @@ def _countable_journal_filter(
     return condition
 
 
+def _posted_batch_join():
+    """Only journal rows whose batch is still posted (not marked reversed)."""
+    return JournalEntry.batch_id == JournalBatch.id
+
+
+def _live_accrual_batch_filter():
+    """Primary accrual postings for RC1 AP/AR — exclude reversal batches."""
+    return (
+        JournalBatch.status == JournalBatchStatus.POSTED.value,
+        or_(
+            JournalBatch.reversal_reason.is_(None),
+            JournalBatch.reversal_reason == "",
+        ),
+    )
+
+
+def _posted_batch_filter():
+    """All posted batches including reversals — for RC2 day totals."""
+    return (JournalBatch.status == JournalBatchStatus.POSTED.value,)
+
+
 def _include_current_invoice(
     current_invoice: Invoice | None,
     recon_date: date,
@@ -241,15 +266,25 @@ async def reconcile_daily(
         current_invoice=current_invoice,
     )
 
+    # RC1 must count AP/AR credits posted to the control (parent) account *or*
+    # any vendor/customer sub-ledger code nested under it — journals routinely
+    # post to the party-specific child code (see party_coa_subledger_service),
+    # and filtering on the parent code alone silently undercounts real credits,
+    # producing false RC1 halts (or masking a genuine imbalance).
+    payable_codes = control_account_codes_for_parent(config, payable)
+    receivable_codes = control_account_codes_for_parent(config, receivable)
+
     ap_q = (
         select(func.coalesce(func.sum(JournalEntry.credit), 0))
         .select_from(JournalEntry)
+        .join(JournalBatch, _posted_batch_join())
         .where(
             JournalEntry.tenant_id == tenant_id,
-            JournalEntry.account_code == payable.account_code,
+            JournalEntry.account_code.in_(payable_codes),
             JournalEntry.date == recon_date,
             JournalEntry.entry_type == EntryType.CREDIT,
             countable_journal,
+            *_live_accrual_batch_filter(),
         )
     )
     ap_sum = Decimal(str((await session.execute(ap_q)).scalar() or 0))
@@ -257,12 +292,14 @@ async def reconcile_daily(
     ar_q = (
         select(func.coalesce(func.sum(JournalEntry.debit), 0))
         .select_from(JournalEntry)
+        .join(JournalBatch, _posted_batch_join())
         .where(
             JournalEntry.tenant_id == tenant_id,
-            JournalEntry.account_code == receivable.account_code,
+            JournalEntry.account_code.in_(receivable_codes),
             JournalEntry.date == recon_date,
             JournalEntry.entry_type == EntryType.DEBIT,
             countable_journal,
+            *_live_accrual_batch_filter(),
         )
     )
     ar_sum = Decimal(str((await session.execute(ar_q)).scalar() or 0))
@@ -270,19 +307,23 @@ async def reconcile_daily(
     dr_q = (
         select(func.coalesce(func.sum(JournalEntry.debit), 0))
         .select_from(JournalEntry)
+        .join(JournalBatch, _posted_batch_join())
         .where(
             JournalEntry.tenant_id == tenant_id,
             JournalEntry.date == recon_date,
             countable_journal,
+            *_posted_batch_filter(),
         )
     )
     cr_q = (
         select(func.coalesce(func.sum(JournalEntry.credit), 0))
         .select_from(JournalEntry)
+        .join(JournalBatch, _posted_batch_join())
         .where(
             JournalEntry.tenant_id == tenant_id,
             JournalEntry.date == recon_date,
             countable_journal,
+            *_posted_batch_filter(),
         )
     )
     debits = Decimal(str((await session.execute(dr_q)).scalar() or 0))
