@@ -29,6 +29,10 @@ const baseKeys = {
   notifications: ["notifications"] as const,
   dashboardOverview: (month: string, activityLimit: number) =>
     ["dashboard", "overview", month, activityLimit] as const,
+  positionLiquidity: ["dashboard", "position-liquidity"] as const,
+  efficiencyAutomation: ["dashboard", "efficiency-automation"] as const,
+  cashLiabilityOutlook: ["dashboard", "cash-liability-outlook"] as const,
+  budgetConcentrationRisk: ["dashboard", "budget-concentration-risk"] as const,
   reportsAnalytics: (month: string) => ["reports", "analytics", month] as const,
   subledgerApBalances: (asOf?: string) => ["reports", "subledger", "ap", asOf ?? ""] as const,
   subledgerArBalances: (asOf?: string) => ["reports", "subledger", "ar", asOf ?? ""] as const,
@@ -102,6 +106,7 @@ const baseKeys = {
   bankFeedMatchTargets: ["bank-feeds", "match-targets"] as const,
   bankFeedImports: ["bank-feeds", "imports"] as const,
   bankFeedTxnNotes: ["bank-feeds", "txn-notes"] as const,
+  bankFeedUnsettled: ["bank-feeds", "unsettled"] as const,
   walletSummary: ["payments", "wallet-summary"] as const,
   stripeAccount: ["stripeAccount"] as const,
   stripeBalance: ["stripeBalance"] as const,
@@ -130,6 +135,10 @@ export const queryKeys = {
   notifications: () => tenantQueryKey(baseKeys.notifications),
   dashboardOverview: (month: string, activityLimit: number) =>
     tenantQueryKey(baseKeys.dashboardOverview(month, activityLimit)),
+  positionLiquidity: () => tenantQueryKey(baseKeys.positionLiquidity),
+  efficiencyAutomation: () => tenantQueryKey(baseKeys.efficiencyAutomation),
+  cashLiabilityOutlook: () => tenantQueryKey(baseKeys.cashLiabilityOutlook),
+  budgetConcentrationRisk: () => tenantQueryKey(baseKeys.budgetConcentrationRisk),
   reportsAnalytics: (month: string) => tenantQueryKey(baseKeys.reportsAnalytics(month)),
   subledgerApBalances: (asOf?: string) => tenantQueryKey(baseKeys.subledgerApBalances(asOf)),
   subledgerArBalances: (asOf?: string) => tenantQueryKey(baseKeys.subledgerArBalances(asOf)),
@@ -235,14 +244,18 @@ export const queryKeys = {
       ...baseKeys.bankFeedTxnAudit,
       transactionId ?? "none",
     ] as const),
-  bankFeedMatchTargets: (matchedType: "payment" | "collection") =>
-    tenantQueryKey([...baseKeys.bankFeedMatchTargets, matchedType] as const),
+  bankFeedMatchTargets: (matchedType: "payment" | "collection", bankAccountId?: number | null) =>
+    tenantQueryKey(
+      [...baseKeys.bankFeedMatchTargets, matchedType, bankAccountId ?? "none"] as const
+    ),
   bankFeedImports: (accountId: number | null, page: number, pageSize = 20) =>
     tenantQueryKey(
       [...baseKeys.bankFeedImports, accountId ?? "none", page, pageSize] as const
     ),
   bankFeedTxnNotes: (transactionId: number | null) =>
     tenantQueryKey([...baseKeys.bankFeedTxnNotes, transactionId ?? "none"] as const),
+  bankFeedUnsettled: (page: number, pageSize = 50) =>
+    tenantQueryKey([...baseKeys.bankFeedUnsettled, page, pageSize] as const),
   walletSummary: () => tenantQueryKey(baseKeys.walletSummary),
   stripeAccount: () => tenantQueryKey(baseKeys.stripeAccount),
   stripeBalance: () => tenantQueryKey(baseKeys.stripeBalance),

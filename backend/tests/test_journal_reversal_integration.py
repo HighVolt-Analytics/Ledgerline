@@ -17,6 +17,10 @@ from app.services.invoice.invoice_reset import clear_invoice_posting_artifacts
 from app.services.invoice.remap_service import remap_invoices_for_tenant
 from app.services.payments.journal_generator import generate_entries
 from app.services.payments.journal_persist_service import persist_journal_lines
+from app.services.payments.journal_reversal_service import (
+    reverse_batches_for_entries,
+    reverse_invoice_accrual_batches,
+)
 from app.services.rule_book.account_mapper import AccountMapping
 from app.tenant_child_tables import journal_entries_for_invoice
 from app.tenant_ids import TESTING_TENANT_UUID
@@ -217,3 +221,119 @@ async def test_accrual_remap_reject_reversal_chain(
 
     # Sanity: expected_live_net from first post still describes the *pre-remap* world
     assert expected_live_net.get("6100") == Decimal("100")
+
+
+@pytest.mark.asyncio
+async def test_reverse_invoice_accrual_batches_idempotent_after_reject(
+    db_session: AsyncSession,
+) -> None:
+    """Pipeline accrual repost must not DELETE rows — safe after prior reject reversal."""
+    config = _config()
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        invoice_no="REPOST-1",
+        invoice_date=date(2026, 6, 1),
+        subtotal=Decimal("100"),
+        gst=Decimal("10"),
+        total=Decimal("110"),
+        status=InvoiceStatus.PROCESSED,
+        currency="AUD",
+        file_hash="repost-after-reject",
+        account_code="6100",
+        account_name="Software",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    lines = generate_entries(inv, AccountMapping("6100", "Software"), config=config)
+    await persist_journal_lines(db_session, inv, lines)
+    await db_session.flush()
+
+    await clear_invoice_posting_artifacts(db_session, inv)
+    await db_session.flush()
+
+    rows_before = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(JournalEntry)
+            .where(*journal_entries_for_invoice(inv.tenant_id, inv.id))
+        )
+    ).scalar_one()
+    assert rows_before == 6
+
+    # Would have raised RestrictViolationError when pipeline deleted rows.
+    reversed_again = await reverse_invoice_accrual_batches(
+        db_session,
+        tenant_id=inv.tenant_id,
+        invoice_id=inv.id,
+        reason="accrual_repost",
+    )
+    assert reversed_again == []
+
+    await persist_journal_lines(db_session, inv, lines)
+    await db_session.flush()
+
+    live_after_repost = (
+        await db_session.execute(
+            select(JournalEntry)
+            .join(JournalBatch, JournalBatch.id == JournalEntry.batch_id)
+            .where(
+                *journal_entries_for_invoice(inv.tenant_id, inv.id),
+                JournalBatch.status == JournalBatchStatus.POSTED.value,
+                JournalBatch.reversal_reason.is_(None),
+            )
+        )
+    ).scalars().all()
+    assert len(live_after_repost) == 3
+    assert _net_by_account(live_after_repost).get("6100") == Decimal("100")
+
+
+@pytest.mark.asyncio
+async def test_rc1_ignores_reversed_accrual_batches(
+    db_session: AsyncSession,
+) -> None:
+    """Stale credits on REVERSED batches must not double-count RC1 payable credits."""
+    from app.services.reconciliation.reconciliation_service import reconcile_daily
+
+    config = _config()
+    d = date(2026, 6, 4)
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Ridgeline",
+        invoice_no="RC1-STALE",
+        invoice_date=d,
+        subtotal=Decimal("520"),
+        gst=Decimal("52"),
+        total=Decimal("572"),
+        status=InvoiceStatus.RECONCILING,
+        currency="AUD",
+        file_hash="rc1-stale-reversed",
+        account_code="6130",
+        account_name="Marketing Expense",
+        route_target="Purchase Management",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    lines = generate_entries(inv, AccountMapping("6130", "Marketing Expense"), config=config)
+    await persist_journal_lines(db_session, inv, lines)
+    await db_session.flush()
+
+    entries = (
+        await db_session.execute(
+            select(JournalEntry).where(*journal_entries_for_invoice(inv.tenant_id, inv.id))
+        )
+    ).scalars().all()
+    await reverse_batches_for_entries(db_session, entries, reason="simulated_halt")
+
+    await persist_journal_lines(db_session, inv, lines)
+    await db_session.flush()
+
+    result = await reconcile_daily(
+        db_session, d, tenant_id=TESTING_TENANT_UUID, current_invoice=inv, config=config
+    )
+    assert result.purchase_invoice_total == Decimal("572")
+    assert result.total_ap_credits == Decimal("572")
+    assert result.rc1_passed
+    assert not result.halted

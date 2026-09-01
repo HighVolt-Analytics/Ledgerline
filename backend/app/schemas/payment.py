@@ -9,6 +9,15 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class BankFileBatchExportRequest(BaseModel):
+    """Select which Scheduled payments to bundle into one batch payment file
+    (e.g. an AU ABA export). All must be Scheduled, not already exported, and
+    in the currency the tenant's configured format expects.
+    """
+
+    payment_ids: list[int] = Field(min_length=1)
+
+
 class PaymentExecutionInstructionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

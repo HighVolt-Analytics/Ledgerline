@@ -29,6 +29,7 @@ export default defineConfig({
       "src/lib/invoiceActions.test.ts",
       "src/lib/documentRowActions.test.ts",
       "src/lib/invoiceDrawerSync.test.ts",
+      "src/lib/invoiceAccounting.test.ts",
       "src/lib/lineGlAccount.test.ts",
       "src/lib/classificationAuditDisplay.test.ts",
       "src/lib/invoicePreview.test.ts",

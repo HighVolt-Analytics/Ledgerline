@@ -22,6 +22,7 @@ VALIDATION_CHECK_DESCRIPTIONS: dict[str, str] = {
     "VR09": "Line amounts must reconcile to subtotal; qty × price per line.",
     "VR11": "Invoice date cannot be future; over 12 months needs approval.",
     "VR12": "Vendor must exist in master; tax ID must match when present.",
+    "VR13": "Invoice pay-to bank details must match the vendor master on file.",
     "VR-PB02": "Required supporting documents must exist on the same PO or SO reference.",
 }
 
@@ -33,6 +34,7 @@ VALIDATION_CHECK_LABELS: dict[str, str] = {
     "VR09": "Line arithmetic",
     "VR11": "Date sanity",
     "VR12": "Vendor master",
+    "VR13": "Bank details match",
     "VR-PB02": "Required supporting documents",
 }
 
@@ -44,6 +46,7 @@ VALIDATION_CHECK_GROUPS: dict[str, str] = {
     "VR09": "Arithmetic",
     "VR11": "Dates",
     "VR12": "Vendor",
+    "VR13": "Vendor",
     "VR-PB02": "Playbook",
 }
 
@@ -54,6 +57,7 @@ CONFIGURABLE_RULE_ORDER: tuple[str, ...] = (
     "VR09",
     "VR11",
     "VR12",
+    "VR13",
     "VR-PB02",
 )
 
@@ -72,6 +76,7 @@ _PROFILE_CORE_RULES: list[ValidationRuleConfig] = [
     _rule("VR09"),
     _rule("VR11"),
     _rule("VR12", severity="block"),
+    _rule("VR13", severity="block"),
 ]
 
 _PROFILE_PLAYBOOK_OFF: list[ValidationRuleConfig] = [

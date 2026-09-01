@@ -21,8 +21,18 @@ from app.schemas.payment import (
     WalletSummaryResponse,
     WalletTransactionResponse,
 )
-from app.services.shared.currency import convert_to_base, prefer_currency
+from app.services.approval.approval_quorum_service import (
+    approver_user_ids,
+    last_approval_user_id,
+)
+from app.services.shared.currency import convert_to_base, get_tenant_fx_rates, prefer_currency
 from app.tenant_settings import tenant_currency, tenant_today
+
+
+class PaymentSegregationOfDutiesError(PermissionError):
+    """Raised when the invoice's own approver tries to also approve its payment."""
+
+
 _OPEN_STATUSES = (
     PaymentStatus.QUEUE,
     PaymentStatus.AWAITING,
@@ -149,6 +159,15 @@ async def approve_payment(
     actor_email = str(actor.get("email") or "").strip()
     actor_id = str(actor_user_id) if actor_user_id is not None else actor_email or actor_name
 
+    if actor_user_id is not None:
+        invoice = await db.get(Invoice, row.invoice_id)
+        invoice_approvers = approver_user_ids(invoice.approval_chain) if invoice else set()
+        if int(actor_user_id) in invoice_approvers:
+            raise PaymentSegregationOfDutiesError(
+                "Segregation of duties: you approved this invoice, so you cannot "
+                "also approve its payment. Ask another approver to release it."
+            )
+
     row.status = PaymentStatus.SCHEDULED
     row.scheduled_date = date.today()
     row.approvers = [
@@ -219,6 +238,8 @@ async def ensure_payment_for_invoice(db: AsyncSession, invoice: Invoice) -> Paym
         storage_vendor_slug=invoice.storage_vendor_slug,
     )
 
+    approved_by = last_approval_user_id(invoice.approval_chain)
+
     existing = (
         await db.execute(
             select(Payment).where(
@@ -239,6 +260,8 @@ async def ensure_payment_for_invoice(db: AsyncSession, invoice: Invoice) -> Paym
             existing.due_date = invoice.due_date
         if vendor_registry_id is not None:
             existing.vendor_registry_id = vendor_registry_id
+        if existing.invoice_approved_by is None and approved_by is not None:
+            existing.invoice_approved_by = approved_by
         return existing
 
     payment = Payment(
@@ -251,6 +274,7 @@ async def ensure_payment_for_invoice(db: AsyncSession, invoice: Invoice) -> Paym
         due_date=invoice.due_date,
         status=PaymentStatus.QUEUE,
         approvers=_payment_tier_approvers(invoice.total),
+        invoice_approved_by=approved_by,
     )
     db.add(payment)
     await db.flush()
@@ -451,6 +475,7 @@ async def update_payment_status(
 async def wallet_summary(db: AsyncSession, tenant_id: uuid.UUID) -> WalletSummaryResponse:
     tenant = await db.get(Tenant, tenant_id)
     reporting = tenant_currency(tenant)
+    fx_rates = await get_tenant_fx_rates(db, tenant_id)
 
     grouped = (
         await db.execute(
@@ -471,7 +496,7 @@ async def wallet_summary(db: AsyncSession, tenant_id: uuid.UUID) -> WalletSummar
     for status, currency, amount, max_paid in grouped:
         status_value = status.value if isinstance(status, PaymentStatus) else str(status)
         code = prefer_currency(currency, reporting)
-        base_amount = convert_to_base(Decimal(str(amount or 0)), code, base=reporting)
+        base_amount = convert_to_base(Decimal(str(amount or 0)), code, base=reporting, rates=fx_rates)
         if status_value == PaymentStatus.PAID.value:
             paid_total += base_amount
             if max_paid and (last_paid is None or max_paid > last_paid):
@@ -494,7 +519,7 @@ async def wallet_summary(db: AsyncSession, tenant_id: uuid.UUID) -> WalletSummar
     for row in recent:
         amount = Decimal(str(row.amount or 0))
         code = prefer_currency(row.currency, reporting)
-        base_amount = convert_to_base(amount, code, base=reporting)
+        base_amount = convert_to_base(amount, code, base=reporting, rates=fx_rates)
         if row.status == PaymentStatus.PAID:
             transactions.append(
                 WalletTransactionResponse(

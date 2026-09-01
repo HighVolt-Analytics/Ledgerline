@@ -852,6 +852,10 @@ async def _process_efficiency_slice(
     )
 
 
+# Public alias for CFO dashboard and reconciliation tests.
+process_efficiency_slice = _process_efficiency_slice
+
+
 def _count_trend(current: int, previous: int) -> str:
     if current > previous:
         return "Up"

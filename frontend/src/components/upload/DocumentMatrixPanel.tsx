@@ -5,6 +5,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { KpiCard } from "@/components/KpiCard";
 import { ListSearchInput } from "@/components/ListSearchInput";
 import { MatrixIssueCell } from "@/components/matrix/MatrixIssueCell";
+import { InvoiceIssueHintIcon } from "@/components/inbox/InvoiceIssueHintIcon";
 import { MatrixPaymentBadge } from "@/components/matrix/MatrixPaymentBadge";
 import { MatrixStageCell } from "@/components/matrix/MatrixStageCell";
 import { Button } from "@/components/ui/button";
@@ -474,11 +475,16 @@ export function DocumentMatrixPanel({
                         {stage}
                       </th>
                     ))}
-                    <th className="px-3 py-2.5 text-left font-medium border-l border-border w-20 whitespace-nowrap">
-                      Issue
-                    </th>
                     <th className="px-3 py-2.5 text-left font-medium">Payment Status</th>
                     <th className="px-4 py-2.5 text-right font-medium">Total</th>
+                    <th
+                      className="px-2 py-2.5 text-center font-medium w-10"
+                      title="Issue details — hover for how to resolve"
+                      aria-label="Issue details"
+                    >
+                      <span className="sr-only">Info</span>
+                      i
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -529,20 +535,22 @@ export function DocumentMatrixPanel({
                             </td>
                           );
                         })}
-                        <td className="px-3 py-2 border-l border-border w-20">
-                          <MatrixIssueCell
-                            inv={inv}
-                            cells={cells}
-                            flagged={flag !== "Clean"}
-                            flagReason={reason}
-                            testId={`matrix-flag-${docRef}`}
-                          />
-                        </td>
                         <td className="px-3 py-2">
                           <MatrixPaymentBadge status={payment} />
                         </td>
                         <td className="px-4 py-2 text-right tnum font-medium">
                           {money(inv.total, inv.currency)}
+                        </td>
+                        <td
+                          className="px-2 py-2 text-center border-l border-border"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <InvoiceIssueHintIcon
+                            inv={inv}
+                            cells={cells}
+                            flagReason={flag !== "Clean" ? reason : null}
+                            testId={`matrix-flag-${docRef}`}
+                          />
                         </td>
                       </tr>
                     );
@@ -612,7 +620,7 @@ export function DocumentMatrixPanel({
               </StatusPill>
               <StatusPill className={pillTones.amber}>
                 <AlertTriangle className="h-3 w-3 ds-warning-icon" />
-                Issue — hover for details
+                Info (i) — hover for issue &amp; fix
               </StatusPill>
             </div>
           ) : null}

@@ -12,10 +12,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_db
 from app.services.auth.privilege_service import require_privilege
+from app.services.payments.payment_execution_auth import (
+    PaymentExecutionUnauthorizedError,
+    require_payment_execution_role,
+)
 from app.models.audit import AuditLog
 from app.schemas.common import ApiEnvelope
 from app.schemas.rule_book_changelog import RuleBookChangelogEntry
 from app.schemas.rule_book_config import (
+    BankFileSettings,
+    FxRateSettings,
     RuleBookConfigPayload,
     RuleBookDocumentTypeInvariantError,
     RuleBookPostToValidationError,
@@ -171,6 +177,30 @@ async def _load_rule_book_vendor_detection_only(
         config = VendorDetectionConfig()
     return {"vendor_detection_config": config.model_dump()}
 
+async def _load_rule_book_bank_file_settings_only(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> dict[str, Any]:
+    data = await _load_rule_book_raw_dict(db, tenant_id)
+    raw = data.get("bank_file_settings") or {}
+    try:
+        settings = BankFileSettings.model_validate(raw)
+    except ValidationError:
+        settings = BankFileSettings()
+    return {"bank_file_settings": settings.model_dump()}
+
+async def _load_rule_book_fx_rate_settings_only(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> dict[str, Any]:
+    data = await _load_rule_book_raw_dict(db, tenant_id)
+    raw = data.get("fx_rate_settings") or {}
+    try:
+        settings = FxRateSettings.model_validate(raw)
+    except ValidationError:
+        settings = FxRateSettings()
+    return {"fx_rate_settings": settings.model_dump(mode="json")}
+
 
 async def _load_rule_book_team_expense_posting_only(
     db: AsyncSession,
@@ -221,7 +251,7 @@ async def _load_rule_book_team_expenses_only(
 async def get_rule_book_config(
     fields: str | None = Query(
         None,
-        description="Optional slice: document_types, document_sets, vendor_detection, team_expense_posting, team_expenses, expense_rules, purchase_rules, sales_rules, editor, ingest_stats",
+        description="Optional slice: document_types, document_sets, vendor_detection, team_expense_posting, team_expenses, expense_rules, purchase_rules, sales_rules, editor, ingest_stats, bank_file_settings, fx_rate_settings",
     ),
     ctx: AuthContext = Depends(get_auth_context),
     db: AsyncSession = Depends(get_db),
@@ -234,6 +264,10 @@ async def get_rule_book_config(
         return ApiEnvelope(data=await _load_rule_book_document_sets_only(db, ctx.tenant_id))
     if token == "vendor_detection":
         return ApiEnvelope(data=await _load_rule_book_vendor_detection_only(db, ctx.tenant_id))
+    if token == "bank_file_settings":
+        return ApiEnvelope(data=await _load_rule_book_bank_file_settings_only(db, ctx.tenant_id))
+    if token == "fx_rate_settings":
+        return ApiEnvelope(data=await _load_rule_book_fx_rate_settings_only(db, ctx.tenant_id))
     if token == "team_expense_posting":
         return ApiEnvelope(data=await _load_rule_book_team_expense_posting_only(db, ctx.tenant_id))
     if token == "team_expenses":
@@ -358,6 +392,102 @@ async def put_rule_book_vendor_detection(
         remap_invoices=False,
     )
     return ApiEnvelope(data={"vendor_detection_config": updated.model_dump()})
+
+class BankFileSettingsUpdate(BaseModel):
+    bank_file_settings: BankFileSettings
+
+
+@router.put("/config/bank-file-settings", response_model=ApiEnvelope[dict[str, Any]])
+async def put_rule_book_bank_file_settings(
+    body: BankFileSettingsUpdate,
+    request: Request,
+    ctx: AuthContext = Depends(get_auth_context),
+    db: AsyncSession = Depends(get_db),
+) -> ApiEnvelope[dict[str, Any]]:
+    """Update the tenant's own remitting bank account + batch payment file
+    format without rewriting the full rule book. Gated on the same role as
+    payment execution -- this config controls where money gets sent, so it
+    deserves at least that bar, not just general "Edit Policy" access.
+    """
+    try:
+        require_payment_execution_role(ctx)
+    except PaymentExecutionUnauthorizedError as exc:
+        raise HTTPException(403, str(exc)) from exc
+
+    stored = await load_rule_book_config_dict(db, ctx.tenant_id)
+    stored["bank_file_settings"] = body.bank_file_settings.model_dump()
+    try:
+        payload = validate_rule_book_config_payload(stored)
+    except (ValidationError, ValueError) as exc:
+        raise _validation_http_error(exc) from exc
+
+    after_raw = payload.model_dump()
+    actor_name, actor_email = await actor_from_context(db, ctx)
+    client_ip = request.client.host if request.client else None
+    await schedule_rule_book_save(
+        tenant_id=ctx.tenant_id,
+        payload=payload,
+        after_raw=after_raw,
+        actor_name=actor_name,
+        actor_email=actor_email,
+        client_ip=client_ip,
+        db=db,
+        remap_invoices=False,
+    )
+    await flush_rule_book_save_buffer(
+        tenant_id=ctx.tenant_id,
+        db=db,
+        remap_invoices=False,
+    )
+    return ApiEnvelope(data={"bank_file_settings": payload.bank_file_settings.model_dump()})
+
+class FxRateSettingsUpdate(BaseModel):
+    fx_rate_settings: FxRateSettings
+
+
+@router.put("/config/fx-rate-settings", response_model=ApiEnvelope[dict[str, Any]])
+async def put_rule_book_fx_rate_settings(
+    body: FxRateSettingsUpdate,
+    request: Request,
+    ctx: AuthContext = Depends(get_auth_context),
+    db: AsyncSession = Depends(get_db),
+) -> ApiEnvelope[dict[str, Any]]:
+    """Update this tenant's own FX rates used to convert other-currency invoices
+    and payments into their books currency for dashboards and reports.
+
+    Tenant-owned, not a platform-wide table -- a currency with no rate here is
+    simply excluded (and flagged) from converted totals rather than guessed at.
+    """
+    require_privilege(ctx, "Edit Policy")
+
+    stored = await load_rule_book_config_dict(db, ctx.tenant_id)
+    stored["fx_rate_settings"] = body.fx_rate_settings.model_dump(mode="json")
+    try:
+        payload = validate_rule_book_config_payload(stored)
+    except (ValidationError, ValueError) as exc:
+        raise _validation_http_error(exc) from exc
+
+    after_raw = payload.model_dump()
+    actor_name, actor_email = await actor_from_context(db, ctx)
+    client_ip = request.client.host if request.client else None
+    await schedule_rule_book_save(
+        tenant_id=ctx.tenant_id,
+        payload=payload,
+        after_raw=after_raw,
+        actor_name=actor_name,
+        actor_email=actor_email,
+        client_ip=client_ip,
+        db=db,
+        remap_invoices=False,
+    )
+    await flush_rule_book_save_buffer(
+        tenant_id=ctx.tenant_id,
+        db=db,
+        remap_invoices=False,
+    )
+    return ApiEnvelope(
+        data={"fx_rate_settings": payload.fx_rate_settings.model_dump(mode="json")}
+    )
 
 
 @router.delete("/document-types/{code}", response_model=ApiEnvelope[dict[str, Any]])

@@ -16,6 +16,11 @@ from app.services.invoice.pipeline import EmailIngestResult, process_invoice, re
 from app.tenant_scoped import get_for_tenant
 from app.utils.logger import configure_logging, get_logger
 from app.workers.celery_app import celery_app
+from app.workers.pipeline_enqueue import (
+    filter_not_already_queued,
+    release_pipeline_enqueue_claim,
+    try_claim_pipeline_enqueue,
+)
 
 logger = get_logger(__name__)
 
@@ -281,11 +286,21 @@ def _try_enqueue_celery_invoices(
         tid = str(tenant_id)
         task_ids: list[str] = []
         for invoice_id in invoice_ids:
-            async_result = process_invoice_task.delay(invoice_id, tenant_id=tid)
+            if not try_claim_pipeline_enqueue(tenant_id, invoice_id):
+                continue
+            try:
+                async_result = process_invoice_task.delay(invoice_id, tenant_id=tid)
+            except Exception:
+                release_pipeline_enqueue_claim(tenant_id, invoice_id)
+                raise
             task_id = str(async_result.id)
             if not task_id or task_id == "None":
+                release_pipeline_enqueue_claim(tenant_id, invoice_id)
                 raise RuntimeError("celery delay returned empty task id")
             task_ids.append(task_id)
+        if not task_ids and invoice_ids:
+            # All ids were duplicate claims — treat as successfully queued.
+            return []
         return task_ids
     except Exception as exc:
         logger.warning(
@@ -569,8 +584,12 @@ def process_invoice_task(
         finally:
             await dispose_engine()
 
-    ok = asyncio.run(run_with_cleanup())
-    return {"invoice_id": invoice_id, "ok": ok}
+    try:
+        ok = asyncio.run(run_with_cleanup())
+        return {"invoice_id": invoice_id, "ok": ok}
+    finally:
+        if tid is not None:
+            release_pipeline_enqueue_claim(tid, invoice_id)
 
 
 @celery_app.task(
@@ -786,6 +805,8 @@ def run_pipeline_sync(
     autoretry_for=(Exception,),
     retry_backoff=True,
     max_retries=3,
+    soft_time_limit=900,
+    time_limit=1200,
 )
 def poll_all_tenants_task(self) -> dict[str, int]:
     """Fan out inbox polling per active tenant."""
@@ -859,6 +880,9 @@ async def requeue_stuck_pending_for_tenant(
             stale_after_seconds=stale,
             limit=batch,
         )
+    if not stuck_ids:
+        return []
+    stuck_ids = filter_not_already_queued(tenant_id, stuck_ids)
     if not stuck_ids:
         return []
     await queue_invoices_for_processing(stuck_ids, tenant_id=tenant_id)

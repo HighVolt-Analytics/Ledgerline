@@ -95,6 +95,7 @@ VR_CHECK_NAMES: dict[str, str] = {
     "VR09": "Line arithmetic",
     "VR11": "Date sanity",
     "VR12": "Vendor master",
+    "VR13": "Bank details match",
     "VR-PB02": "Required supporting documents",
 }
 

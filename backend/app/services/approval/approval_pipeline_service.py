@@ -57,13 +57,17 @@ def apply_human_approval_processing_defaults(invoice: Invoice) -> None:
         invoice.purchase_document_type = PurchaseDocumentType.INVOICE.value
 
 
+_NON_BYPASSABLE_RULES = frozenset({"VR12", "VR13"})
+
+
 def human_approval_may_bypass_validation(results: list) -> bool:
-    """Human approve may skip non-vendor validation failures; VR12 always blocks."""
+    """Human approve may skip most validation failures; vendor-identity and
+    bank-details fraud checks (VR12, VR13) always block."""
     from app.services.rule_book.validator import ValidationResult
 
     for row in results:
         if not isinstance(row, ValidationResult):
             continue
-        if row.rule == "VR12" and not row.passed and not row.skipped:
+        if row.rule in _NON_BYPASSABLE_RULES and not row.passed and not row.skipped:
             return False
     return True

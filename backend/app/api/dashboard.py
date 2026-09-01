@@ -4,14 +4,29 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_auth_context, get_db, AuthContext
+from app.services.shared.currency import get_tenant_fx_rates, tenant_fx_rates_scope
 from app.schemas.common import ApiEnvelope
 from app.schemas.dashboard import ActivityItem, DashboardOverview, DashboardStats, NavBadges
 from app.schemas.dashboard_api import DashboardActivityRequest, DashboardOverviewRequest
+from app.schemas.position_liquidity import PositionLiquidityDashboard
+from app.schemas.efficiency_automation import EfficiencyAutomationDashboard
+from app.schemas.cash_liability_outlook import CashLiabilityOutlookDashboard
+from app.schemas.budget_concentration_risk import BudgetConcentrationRiskDashboard
 from app.services.reports.dashboard_service import (
     build_nav_badges,
     build_overview,
     build_stats,
     fetch_activity,
+)
+from app.services.reports.position_liquidity_service import build_position_liquidity_dashboard
+from app.services.reports.efficiency_automation_service import (
+    build_efficiency_automation_dashboard,
+)
+from app.services.reports.cash_liability_outlook_service import (
+    build_cash_liability_outlook_dashboard,
+)
+from app.services.reports.budget_concentration_risk_service import (
+    build_budget_concentration_risk_dashboard,
 )
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
@@ -32,7 +47,9 @@ async def stats(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[DashboardStats]:
     """Aggregate KPI counters for dashboard cards and layout badges."""
-    return ApiEnvelope(data=await build_stats(db, tenant_id=ctx.tenant_id))
+    fx_rates = await get_tenant_fx_rates(db, ctx.tenant_id)
+    with tenant_fx_rates_scope(fx_rates):
+        return ApiEnvelope(data=await build_stats(db, tenant_id=ctx.tenant_id))
 
 
 @router.get("/overview", response_model=ApiEnvelope[DashboardOverview])
@@ -55,14 +72,16 @@ async def overview(
     when recent events are needed.
     """
     params = DashboardOverviewRequest(activity_limit=activity_limit, month=month)
-    return ApiEnvelope(
-        data=await build_overview(
-            db,
-            tenant_id=ctx.tenant_id,
-            activity_limit=params.activity_limit,
-            month=params.month,
+    fx_rates = await get_tenant_fx_rates(db, ctx.tenant_id)
+    with tenant_fx_rates_scope(fx_rates):
+        return ApiEnvelope(
+            data=await build_overview(
+                db,
+                tenant_id=ctx.tenant_id,
+                activity_limit=params.activity_limit,
+                month=params.month,
+            )
         )
-    )
 
 
 @router.get("/activity", response_model=ApiEnvelope[list[ActivityItem]])
@@ -74,4 +93,99 @@ async def activity(
     params = DashboardActivityRequest(limit=limit)
     return ApiEnvelope(
         data=await fetch_activity(db, params.limit, tenant_id=ctx.tenant_id)
+    )
+
+
+@router.get("/position-liquidity", response_model=ApiEnvelope[PositionLiquidityDashboard])
+async def position_liquidity(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[PositionLiquidityDashboard]:
+    """CFO Position & Liquidity KPI row — each figure reuses its detail report definition."""
+    label = (
+        ctx.tenant.name
+        if ctx.tenant is not None and (ctx.tenant.name or "").strip()
+        else ctx.tenant_slug
+    )
+    fx_rates = await get_tenant_fx_rates(db, ctx.tenant_id)
+    with tenant_fx_rates_scope(fx_rates):
+        return ApiEnvelope(
+            data=await build_position_liquidity_dashboard(
+                db,
+                tenant_id=ctx.tenant_id,
+                environment_label=label,
+            )
+        )
+
+
+@router.get(
+    "/efficiency-automation",
+    response_model=ApiEnvelope[EfficiencyAutomationDashboard],
+)
+async def efficiency_automation(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[EfficiencyAutomationDashboard]:
+    """CFO Efficiency & Automation KPI row — reuses Process Efficiency / Missing Documents."""
+    label = (
+        ctx.tenant.name
+        if ctx.tenant is not None and (ctx.tenant.name or "").strip()
+        else ctx.tenant_slug
+    )
+    fx_rates = await get_tenant_fx_rates(db, ctx.tenant_id)
+    with tenant_fx_rates_scope(fx_rates):
+        return ApiEnvelope(
+            data=await build_efficiency_automation_dashboard(
+                db,
+                tenant_id=ctx.tenant_id,
+                environment_label=label,
+            )
+        )
+
+
+@router.get(
+    "/cash-liability-outlook",
+    response_model=ApiEnvelope[CashLiabilityOutlookDashboard],
+)
+async def cash_liability_outlook(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[CashLiabilityOutlookDashboard]:
+    """CFO cash forecast + AP ageing — reuses Cash Forecast / Aged Payables definitions."""
+    label = (
+        ctx.tenant.name
+        if ctx.tenant is not None and (ctx.tenant.name or "").strip()
+        else ctx.tenant_slug
+    )
+    fx_rates = await get_tenant_fx_rates(db, ctx.tenant_id)
+    with tenant_fx_rates_scope(fx_rates):
+        return ApiEnvelope(
+            data=await build_cash_liability_outlook_dashboard(
+                db,
+                tenant_id=ctx.tenant_id,
+                environment_label=label,
+            )
+        )
+
+
+@router.get(
+    "/budget-concentration-risk",
+    response_model=ApiEnvelope[BudgetConcentrationRiskDashboard],
+)
+async def budget_concentration_risk(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[BudgetConcentrationRiskDashboard]:
+    """CFO budget encumbrance + vendor concentration — reuses Budget Variance / Vendor Spend."""
+    label = (
+        ctx.tenant.name
+        if ctx.tenant is not None and (ctx.tenant.name or "").strip()
+        else ctx.tenant_slug
+    )
+    return ApiEnvelope(
+        data=await build_budget_concentration_risk_dashboard(
+            db,
+            tenant_id=ctx.tenant_id,
+            environment_label=label,
+        )
     )

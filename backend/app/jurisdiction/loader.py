@@ -96,6 +96,11 @@ def _pack_from_dict(country: str, data: dict[str, Any]) -> JurisdictionPack:
         tax_id_kind=str(data.get("tax_id_kind") or "generic").strip().lower() or "generic",
         tax_id_label=tax_id_label,
         bank_routing_label=bank_routing_label,
+        bank_file_formats=tuple(
+            str(code).strip().upper()
+            for code in (data.get("bank_file_formats") or [])
+            if str(code).strip()
+        ),
         field_labels=field_labels_for(
             tax_id=tax_id_label,
             tax=tax_label,
@@ -119,6 +124,7 @@ def _minimal_generic() -> JurisdictionPack:
         tax_id_kind="generic",
         tax_id_label="Tax ID",
         bank_routing_label="Bank code",
+        bank_file_formats=(),
         field_labels=field_labels_for(tax_id="Tax ID", tax="Tax", bank_routing="Bank code"),
         llm_tax_id_examples="placeholder tax IDs",
         tax_invoice=None,

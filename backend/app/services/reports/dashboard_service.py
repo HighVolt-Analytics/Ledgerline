@@ -19,6 +19,7 @@ from app.services.dossier.document_ref_service import dossier_public_id
 from app.services.ingest.graph_client import is_graph_enabled
 from app.models.journal import JournalEntry
 from app.services.shared.currency import convert_to_base, sum_amounts_by_currency
+from app.services.tenant.tenant_module_service import is_module_enabled
 from app.tenant_settings import tenant_labor_rate_per_hour, tenant_timezone
 from app.services.invoice.invoice_evaluation_service import (
     EVAL_AWAITING_CLASSIFICATION,
@@ -502,6 +503,14 @@ async def _pending_classification_count(db: AsyncSession, tenant_id: int) -> int
     return int(row.scalar() or 0)
 
 
+async def _bank_feeds_unsettled_count(db: AsyncSession, tenant_id) -> int:
+    if not await is_module_enabled(db, tenant_id, "bank_feeds"):
+        return 0
+    from app.services.bank_feeds.unsettled_service import count_unsettled_settlements
+
+    return await count_unsettled_settlements(db, tenant_id=tenant_id)
+
+
 async def build_nav_badges(db: AsyncSession, *, tenant_id: int) -> NavBadges:
     """Sidebar badge counts — status aggregate plus parallel queue counters."""
     status_counts = await _invoice_status_counts(db, tenant_id)
@@ -515,12 +524,14 @@ async def build_nav_badges(db: AsyncSession, *, tenant_id: int) -> NavBadges:
         collections_queue_count,
         mailboxes_mapped,
         pending_classification,
+        bank_feeds_unsettled_count,
     ) = await asyncio.gather(
         _route_queue_counts(db, tenant_id),
         _payments_queue_count(db, tenant_id),
         _collections_queue_count(db, tenant_id),
         _mailboxes_mapped(db, tenant_id=tenant_id),
         _pending_classification_count(db, tenant_id),
+        _bank_feeds_unsettled_count(db, tenant_id),
     )
     return NavBadges(
         inbox_count=inbox_count,
@@ -531,6 +542,7 @@ async def build_nav_badges(db: AsyncSession, *, tenant_id: int) -> NavBadges:
         sales_count=route_counts.get(ROUTE_SALES, 0),
         payments_queue_count=payments_queue_count,
         collections_queue_count=collections_queue_count,
+        bank_feeds_unsettled_count=bank_feeds_unsettled_count,
         integrations_connected=_integrations_count(mailboxes_mapped),
     )
 

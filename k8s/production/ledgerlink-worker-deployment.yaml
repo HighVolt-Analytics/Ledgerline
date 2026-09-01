@@ -26,11 +26,11 @@ spec:
           command:
             - sh
             - -c
-            # Env-specific queue so staging/prod do not share the default "celery" queue.
+            # Invoice queue first; legacy base queue drained last.
             - >
-              Q=$(python -c "from app.config import get_settings; print(get_settings().celery_task_queue_resolved)")
+              Q=$(python -c "from app.config import get_settings; print(get_settings().celery_worker_queues_resolved)")
               && exec celery -A app.workers.celery_app worker
-              --loglevel=info --concurrency=1 --prefetch-multiplier=1 -Q "$Q"
+              --loglevel=info --concurrency=2 --prefetch-multiplier=1 -Q "$Q"
           env:
             - name: CELERY_WORKER
               value: "1"

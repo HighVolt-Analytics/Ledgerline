@@ -78,6 +78,17 @@ export function useMarkPaymentPaidManual() {
   });
 }
 
+export function useDownloadBatchPaymentBankFile() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (paymentIds: number[]) => api.downloadBatchPaymentBankFile(paymentIds),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.payments() });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.paymentsWorkspaceKpis() });
+    },
+  });
+}
+
 export function usePaymentMutations() {
   const queryClient = useQueryClient();
 

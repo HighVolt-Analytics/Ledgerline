@@ -19,6 +19,7 @@ import type {
   InvoiceClassificationAudit,
   InvoiceUpdatePayload,
   LineItem,
+  PaymentApi,
   PipelineActivePath,
   PipelineAuditStep,
   PurchaseDossier,
@@ -31,7 +32,6 @@ import {
 } from "@/components/InvoiceFilePreview";
 import {
   DocumentSummaryPreview,
-  formatMoney,
   invoiceTaxMeta,
 } from "@/components/invoice-preview/DocumentSummaryPreview";
 import { InvoiceClassificationPanel } from "@/components/invoices/InvoiceClassificationPanel";
@@ -39,12 +39,13 @@ import { DuplicateReviewBadge, EvaluationStatusBadge } from "@/components/inbox/
 import { MappedDocumentTypeBadge, VisionHeadingBadge } from "@/components/inbox/DocumentTypeDisplay";
 import { StageBadge, invoiceStageBadgeProps } from "@/components/StageBadge";
 import { DossierLinkedDocumentsPanel } from "@/components/dossiers/DossierLinkedDocumentsPanel";
+import { InvoiceDrawerAccountingSection } from "@/components/invoices/InvoiceDrawerAccountingSection";
 import { InvoiceDrawerProcessingSection } from "@/components/invoices/InvoiceDrawerProcessingSection";
 import { PageTabs } from "@/components/PageTabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { documentDisplayRef, normalizeCurrencyCode } from "@/lib/format";
+import { documentDisplayRef, invoiceMoney, normalizeCurrencyCode } from "@/lib/format";
 import {
   addDossierManualLink,
   fetchDossierById,
@@ -142,12 +143,13 @@ import {
 } from "@/lib/documentTypeResolve";
 import { requiresClassificationConfirm } from "@/lib/classificationAuditDisplay";
 import { shouldApplyDrawerInvoiceUpdate } from "@/lib/invoiceDrawerSync";
+import { drawerTabsForInvoice } from "@/lib/invoiceAccounting";
 import {
   defaultAuditPathTab,
   filterPipelineStepsForPath,
 } from "@/lib/pipelineAuditPaths";
 
-const TABS = ["fields", "lines", "po", "tax", "audit", "vault"] as const;
+const TABS = ["fields", "lines", "po", "tax", "accounting", "audit", "vault"] as const;
 export type InvoiceDrawerTab = (typeof TABS)[number];
 type Tab = InvoiceDrawerTab;
 
@@ -156,14 +158,10 @@ const TAB_LABELS: Record<Tab, string> = {
   lines: "Line items",
   po: "Match",
   tax: "Tax",
+  accounting: "Accounting",
   audit: "Processing",
   vault: "Vault",
 };
-
-function drawerTabsForRoute(route: string | null | undefined): Tab[] {
-  if (isMatchRoute(route)) return [...TABS];
-  return TABS.filter((t) => t !== "po");
-}
 
 function canEdit(status: string): boolean {
   return ["exception", "duplicate_skipped", "rejected"].includes(status);
@@ -188,6 +186,67 @@ function isEditableExtractionField(key: string, extractionFieldKeys: string[]): 
   if (["line_items", "bank_details", "attachment_name", "document_text"].includes(key)) return false;
   if (isPresetExtractionFieldKey(key)) return true;
   return extractionFieldKeys.includes(key);
+}
+
+/** Pipeline / bundling metadata — not user-facing drawer fields. */
+const DRAWER_INTERNAL_EXTRACTED_KEYS = new Set([
+  "perspective",
+  "llm_perspective",
+  "vision_bundle_kind",
+  "vision_bundle_key",
+  "vision_bundle_custom_field",
+  "document_summary",
+  "document_role_hints",
+  "vision_type_suggest_confidence",
+  "vision_header_confidence",
+  "canonical_document_type",
+  "translation_applied",
+  "translation_skip_reason",
+  "translation_source_language",
+  "currency_review_required",
+  "currency_review_reason",
+]);
+
+function fallbackExtractionFieldKeys(inv: InvoiceDetails): string[] {
+  const keys: string[] = [];
+  for (const key of [
+    "vendor",
+    "employee_name",
+    "abn",
+    "invoice_no",
+    "proforma_invoice_no",
+    "po_reference",
+    "so_reference",
+    "cost_centre",
+    "invoice_date",
+    "due_date",
+    "subtotal",
+    "gst",
+    "gst_rate",
+    "total",
+    "currency",
+    "document_heading",
+    "billing_address",
+    "email_sender",
+    "email_subject",
+    "seller_name",
+    "seller_tax_id",
+    "seller_address",
+    "buyer_name",
+    "buyer_tax_id",
+    "buyer_address",
+  ]) {
+    if (invoiceScalarValue(inv, key)) keys.push(key);
+  }
+  for (const key of Object.keys(inv.extracted_fields ?? {})) {
+    if (DRAWER_INTERNAL_EXTRACTED_KEYS.has(key)) continue;
+    if (invoiceScalarValue(inv, key)) keys.push(key);
+  }
+  if (invoiceScalarValue(inv, "bank_bsb") || invoiceScalarValue(inv, "bank_account")) {
+    keys.push("bank_details");
+  }
+  if ((inv.line_items ?? []).length > 0) keys.push("line_items");
+  return normalizeExtractionFieldKeys(keys);
 }
 
 function customExtractionKeysForDraft(
@@ -591,7 +650,7 @@ function draftFromInvoice(inv: InvoiceDetails, extractionFieldKeys: string[] = [
     total: strField(inv.total),
     currency: strField(inv.currency).toUpperCase(),
     email_sender: strField(inv.email_sender),
-    line_items: inv.line_items.map((line) => ({
+    line_items: (inv.line_items ?? []).map((line) => ({
       id: line.id,
       description: strField(line.description),
       qty: strField(line.qty),
@@ -1051,10 +1110,6 @@ export function InvoiceDetailDrawer({
   const isTeamExpenseRoute = (inv?.route_target || "").trim() === ROUTE_TEAM;
   const isClaimRoute = isClaimExpenseRoute(inv?.route_target);
   const isPurchaseSalesRoute = isMatchRoute(inv?.route_target);
-  const visibleTabs = useMemo(
-    () => drawerTabsForRoute(inv?.route_target),
-    [inv?.route_target]
-  );
   const { data: employees = [] } = useEmployeeMasters(open && isTeamExpenseRoute);
   const { data: teamExpenseWorkspace } = useRuleBookTeamExpensesWorkspace(
     open && isTeamExpenseRoute
@@ -1073,6 +1128,8 @@ export function InvoiceDetailDrawer({
   const [auditLoading, setAuditLoading] = useState(false);
   const [classificationAudit, setClassificationAudit] = useState<InvoiceClassificationAudit | null>(null);
   const [classificationLoading, setClassificationLoading] = useState(false);
+  const [payment, setPayment] = useState<PaymentApi | null>(null);
+  const [paymentLoading, setPaymentLoading] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<InvoiceEditDraft | null>(null);
@@ -1431,6 +1488,9 @@ export function InvoiceDetailDrawer({
       );
       keys = ["email_sender", "employee_name", ...rest];
     }
+    if (keys.length === 0) {
+      keys = fallbackExtractionFieldKeys(inv);
+    }
     return keys;
   }, [inv, documentTypes, resolvedDocumentTypeCode]);
 
@@ -1462,12 +1522,6 @@ export function InvoiceDetailDrawer({
     );
   }, [matchedTeamEmployee, teamExpenseWorkspace]);
 
-  useEffect(() => {
-    if (!visibleTabs.includes(tab)) {
-      setTab(visibleTabs[0] ?? "fields");
-    }
-  }, [visibleTabs, tab]);
-
   const documentTypeInCatalogue = useMemo(() => {
     const code = resolvedDocumentTypeCode;
     if (!code || !documentTypes) return false;
@@ -1498,9 +1552,45 @@ export function InvoiceDetailDrawer({
   const absentFields = resolvedDocType?.absentFields ?? [];
 
   const postingApplies = useMemo(
-    () => (inv ? glPostingApplicable(inv, documentTypes) : true),
+    () => (inv ? glPostingApplicable(inv, documentTypes) : false),
     [inv, documentTypes]
   );
+
+  const visibleTabs = useMemo(
+    () => drawerTabsForInvoice(inv?.route_target, postingApplies) as Tab[],
+    [inv?.route_target, postingApplies]
+  );
+
+  useEffect(() => {
+    if (!visibleTabs.includes(tab)) {
+      setTab(visibleTabs[0] ?? "fields");
+    }
+  }, [visibleTabs, tab]);
+
+  useEffect(() => {
+    if (!open || tab !== "accounting" || activeInvoiceId == null || !postingApplies) {
+      setPayment(null);
+      setPaymentLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setPaymentLoading(true);
+    void api
+      .listPayments(undefined, { fresh: true, limit: 500 })
+      .then((rows) => {
+        if (cancelled) return;
+        setPayment(rows.find((row) => row.invoice_id === activeInvoiceId) ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setPayment(null);
+      })
+      .finally(() => {
+        if (!cancelled) setPaymentLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, tab, activeInvoiceId, postingApplies]);
 
   const parentLedger = useMemo(() => {
     const fromDocType = resolvedDocType?.postTo?.ledger?.trim();
@@ -1613,10 +1703,13 @@ export function InvoiceDetailDrawer({
   })();
   const currencySymbolHint = inv ? invoiceCurrencySymbol(inv) : null;
   const displayCurrency = editing && draft ? draft.currency : inv?.currency;
-  const fmt = (v: string | null | undefined) =>
-    displayCurrency
-      ? formatMoney(v, displayCurrency, undefined, currencySymbolHint)
-      : "—";
+  const fmt = (v: string | null | undefined) => {
+    if (!inv) return "—";
+    return invoiceMoney(v, {
+      currency: displayCurrency || inv.currency,
+      extracted_fields: inv.extracted_fields as Record<string, string | null | undefined> | null | undefined,
+    });
+  };
   const sourceKind = inv?.email_sender ? "email" : "upload";
 
   async function reloadInvoice(expectedId?: number) {
@@ -2531,6 +2624,16 @@ export function InvoiceDetailDrawer({
                       .
                     </p>
                   </div>
+                )}
+
+                {tab === "accounting" && inv && postingApplies && (
+                  <InvoiceDrawerAccountingSection
+                    inv={inv}
+                    parentLedger={parentLedger}
+                    currencySymbolHint={currencySymbolHint}
+                    payment={payment}
+                    paymentLoading={paymentLoading}
+                  />
                 )}
 
                 {tab === "audit" && inv && (

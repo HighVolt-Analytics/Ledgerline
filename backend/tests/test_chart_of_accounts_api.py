@@ -156,16 +156,47 @@ def test_resolve_category_uses_tenant_chart_of_accounts() -> None:
     assert mapping.account_code == "7777"
     assert mapping.account_name == "Custom Expense"
 
+    # Unmapped names fall back to THIS TENANT's own configured fallback
+    # account looked up by name in their own chart -- never a hardcoded
+    # global code. This tenant never configured "Suspense Account" in
+    # their chart either, so it degrades to an empty code (caught by
+    # get_unresolved_control_accounts() before anything posts).
     missing = resolve_category_for_config("Unknown Ledger", config)
-    assert missing.account_code == "9999"
+    assert missing.account_code == ""
+    assert missing.account_name == "Suspense Account"
 
 
 def test_resolve_category_without_tenant_coa_uses_suspense() -> None:
     config = validate_rule_book_config_payload({})
     assert config.chart_of_accounts == []
+    # No chart of accounts configured at all -- there is nowhere safe to
+    # post, so this degrades to an empty account_code paired with the
+    # tenant's configured fallback label ("Suspense Account" by default),
+    # never a hardcoded numeric code that could collide with a real
+    # account once the tenant does configure a chart.
     mapping = resolve_category_for_config("Cloud Hosting Expense", config)
-    assert mapping.account_code == "9999"
-    assert mapping.account_name == "Cloud Hosting Expense"
+    assert mapping.account_code == ""
+    assert mapping.account_name == "Suspense Account"
+
+
+def test_resolve_category_uses_tenant_own_fallback_when_configured() -> None:
+    """When a tenant HAS a real Suspense/fallback account in their own chart,
+    an unmapped category must resolve to that tenant's actual code -- proving
+    the fallback path is tenant-scoped rather than a global constant.
+    """
+    config = validate_rule_book_config_payload(
+        {
+            "posting_defaults": {"fallback_account": "Unclassified Suspense"},
+            "chart_of_accounts": [
+                {"code": "7777", "name": "Custom Expense", "type": "Expense"},
+                {"code": "4321", "name": "Unclassified Suspense", "type": "Liability"},
+            ],
+        }
+    )
+    mapping = resolve_category_for_config("Totally Unknown Category", config)
+    assert mapping.account_code == "4321"
+    assert mapping.account_name == "Unclassified Suspense"
+    assert mapping.expense_category == "Totally Unknown Category"
 
 
 def test_upsert_linked_replaces_old_code() -> None:

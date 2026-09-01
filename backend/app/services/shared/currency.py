@@ -6,29 +6,51 @@ ISO validation uses ``pycountry`` via ``iso4217_catalog`` (no hardcoded code lis
 
 from __future__ import annotations
 
+import contextvars
 from collections import Counter, defaultdict
+from collections.abc import Mapping
+from contextlib import contextmanager
 from decimal import Decimal
 import re
 
 from app.services.shared.iso4217_catalog import is_iso4217_currency
 from app.tenant_settings import COUNTRY_CURRENCY, DEFAULT_COUNTRY
 
-# Static rates relative to AUD — used as an FX graph; convert via cross rates.
-_FX_TO_AUD: dict[str, Decimal] = {
-    "AUD": Decimal("1"),
-    "USD": Decimal("1.55"),
-    "INR": Decimal("0.018"),
-    "GBP": Decimal("1.95"),
-    "EUR": Decimal("1.65"),
-    "NZD": Decimal("0.92"),
-    "SGD": Decimal("1.15"),
-    "AED": Decimal("0.42"),
-}
-
 # Platform reporting fallback when no tenant context is available.
 BASE_CURRENCY = COUNTRY_CURRENCY[DEFAULT_COUNTRY]
 
 UNKNOWN_CURRENCY = "UNKNOWN"
+
+FxRates = Mapping[str, Decimal]
+
+# Ambient tenant FX rates for the current report/dashboard build. Report code is
+# many small helper functions several calls deep; threading an extra "rates"
+# parameter through every one of them for this single cross-cutting concern would
+# make each of them harder to read for no benefit — a context var scoped to the
+# request/task does the job safely (each async task gets its own value, so
+# concurrent requests for different tenants never cross-contaminate).
+_tenant_fx_rates_var: contextvars.ContextVar[dict[str, Decimal] | None] = contextvars.ContextVar(
+    "tenant_fx_rates", default=None
+)
+
+
+def current_tenant_fx_rates() -> dict[str, Decimal]:
+    """The ambient tenant FX rates set by ``tenant_fx_rates_scope``, or ``{}``."""
+    return dict(_tenant_fx_rates_var.get() or {})
+
+
+@contextmanager
+def tenant_fx_rates_scope(rates: FxRates | None):
+    """Make ``rates`` the ambient tenant FX rates for every ``convert_to_base`` /
+    ``fx_rate_to_base`` call inside this block that does not pass its own
+    ``rates=`` explicitly. Wrap a report's top-level entrypoint with this once,
+    right after loading the tenant's configured rates.
+    """
+    token = _tenant_fx_rates_var.set(dict(rates or {}))
+    try:
+        yield
+    finally:
+        _tenant_fx_rates_var.reset(token)
 
 
 def prefer_currency(*values: str | None) -> str:
@@ -439,23 +461,65 @@ def apply_currency_ocr_fallback(parsed: object, ocr_text: str | None) -> object:
         return parsed
 
 
-def fx_rate_to_base(currency: str | None, *, base: str | None = None) -> Decimal:
-    """Rate to convert ``currency`` into ``base`` (default platform base).
+async def get_tenant_fx_rates(db: object, tenant_id: object) -> dict[str, Decimal]:
+    """This tenant's own configured FX rates (ISO code -> rate to their books currency).
 
-    Missing/blank currency is non-convertible — returns ``0`` so aggregates do
-    not silently treat unknown amounts as tenant-base 1:1.
+    Sourced from ``RuleBookConfigPayload.fx_rate_settings`` (tenant-owned, editable
+    in Settings) — never a platform-wide table. Returns ``{}`` when the tenant has
+    not configured anything yet; callers must treat that as "not convertible yet",
+    not as a zero-value amount.
+    """
+    from app.services.rule_book.rule_book_config_io import load_rule_book_config_dict
+
+    try:
+        data = await load_rule_book_config_dict(db, tenant_id)
+    except Exception:  # noqa: BLE001 — reporting must degrade, never fail, on config load issues
+        return {}
+    raw = (data or {}).get("fx_rate_settings") if isinstance(data, dict) else None
+    raw_rates = raw.get("rates") if isinstance(raw, dict) else None
+    if not isinstance(raw_rates, dict):
+        return {}
+    cleaned: dict[str, Decimal] = {}
+    for code, rate in raw_rates.items():
+        token = str(code or "").strip().upper()
+        if not is_iso4217_currency(token):
+            continue
+        try:
+            value = rate if isinstance(rate, Decimal) else Decimal(str(rate))
+        except Exception:  # noqa: BLE001 — malformed stored rate, skip it
+            continue
+        if value > 0:
+            cleaned[token] = value
+    return cleaned
+
+
+def fx_rate_to_base(
+    currency: str | None,
+    *,
+    base: str | None = None,
+    rates: FxRates | None = None,
+) -> Decimal | None:
+    """Rate to convert one unit of ``currency`` into ``base``, or ``None`` if unknown.
+
+    ``rates`` must be the calling tenant's own configured FX rates (see
+    ``get_tenant_fx_rates`` / ``FxRateSettings``), expressed as "1 unit of code =
+    how many units of ``base``". There is no platform-wide hardcoded rate table —
+    an unconfigured pair returns ``None`` so callers can exclude and flag it
+    instead of silently folding it into a total as if it were worth zero.
     """
     target = (base or BASE_CURRENCY).upper()
     code = _normalize_currency_code(currency)
     if code is None:
-        return Decimal("0")
+        return None
     if code == target:
         return Decimal("1")
-    to_aud = _FX_TO_AUD.get(code)
-    base_to_aud = _FX_TO_AUD.get(target)
-    if to_aud is None or base_to_aud is None or base_to_aud == 0:
-        return Decimal("0")
-    return to_aud / base_to_aud
+    effective_rates = rates if rates is not None else current_tenant_fx_rates()
+    if not effective_rates:
+        return None
+    rate = effective_rates.get(code)
+    if rate is None or rate <= 0:
+        return None
+    return rate
 
 
 def convert_to_base(
@@ -463,23 +527,51 @@ def convert_to_base(
     currency: str | None,
     *,
     base: str | None = None,
+    rates: FxRates | None = None,
 ) -> Decimal:
+    """Best-effort conversion using the tenant's own ``rates``; ``0`` when unconvertible
+    (no configured rate for this currency). Use ``convert_to_base_checked`` when the
+    caller needs to tell "really zero" apart from "not converted yet".
+    """
+    amount_value, _converted = convert_to_base_checked(amount, currency, base=base, rates=rates)
+    return amount_value
+
+
+def convert_to_base_checked(
+    amount: Decimal | None,
+    currency: str | None,
+    *,
+    base: str | None = None,
+    rates: FxRates | None = None,
+) -> tuple[Decimal, bool]:
+    """Like ``convert_to_base`` but also reports whether a real tenant rate was used.
+
+    Returns ``(converted_amount, was_converted)``. ``was_converted`` is ``False``
+    when the amount could not be converted (missing/unconfigured currency) — the
+    caller should surface that instead of silently summing it as zero.
+    """
     if amount is None:
-        return Decimal("0")
-    if _normalize_currency_code(currency) is None:
-        return Decimal("0")
-    return amount * fx_rate_to_base(currency, base=base)
+        return Decimal("0"), True
+    rate = fx_rate_to_base(currency, base=base, rates=rates)
+    if rate is None:
+        return Decimal("0"), False
+    return amount * rate, True
 
 
 def sum_amounts_by_currency(
     rows: list[tuple[str | None, Decimal | None]],
     *,
     base: str | None = None,
+    rates: FxRates | None = None,
 ) -> tuple[Decimal, dict[str, Decimal]]:
     """Return (total in base currency, raw totals grouped by currency code).
 
     Rows with missing currency are bucketed under ``UNKNOWN`` and excluded from
-    ``total_base`` (not converted at 1:1 into the tenant base).
+    ``total_base``. Rows in a currency the tenant has not configured an FX rate
+    for are still grouped correctly under their own code in ``by_currency`` (so
+    nothing is lost), but likewise excluded from ``total_base`` rather than
+    guessed at — pass this tenant's ``rates`` (``get_tenant_fx_rates``) to convert
+    everything they have actually configured.
     """
     target = (base or BASE_CURRENCY).upper()
     by_currency: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
@@ -492,5 +584,5 @@ def sum_amounts_by_currency(
             by_currency[UNKNOWN_CURRENCY] += amount
             continue
         by_currency[code] += amount
-        total_base += convert_to_base(amount, code, base=target)
+        total_base += convert_to_base(amount, code, base=target, rates=rates)
     return total_base, dict(by_currency)

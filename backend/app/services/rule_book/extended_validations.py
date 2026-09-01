@@ -1,4 +1,4 @@
-"""Extended invoice validation rules (VR09, VR11, VR12)."""
+"""Extended invoice validation rules (VR09, VR11, VR12, VR13)."""
 
 from __future__ import annotations
 
@@ -170,6 +170,79 @@ def vr12_counterparty_master(
     return vr12_vendor_master(data, vendor_masters=vendor_masters)
 
 
+def _normalize_bank_token(value: str | None) -> str:
+    """Strip spaces/dashes so '062-000 12345678' == '06200012345678'."""
+    if not value:
+        return ""
+    return "".join(ch for ch in str(value) if ch.isalnum()).upper()
+
+
+def vr13_bank_details_match(
+    data: InvoiceData,
+    *,
+    vendor_masters: list[VendorMaster],
+) -> ValidationResult:
+    """Invoice pay-to bank details must match the vendor master on file.
+
+    Fraud control: a vendor's registered bank account is the source of
+    truth for where payment goes. An invoice whose extracted bank
+    details diverge from the master — a classic invoice-redirection /
+    business-email-compromise pattern — must not post untouched.
+    """
+    invoice_bsb = _normalize_bank_token(data.bank_bsb)
+    invoice_acct = _normalize_bank_token(data.bank_account)
+
+    if not invoice_bsb and not invoice_acct:
+        return ValidationResult(
+            "VR13", True, "No bank details on invoice to verify", skipped=True
+        )
+
+    vendor_name = (data.vendor or "").strip()
+    if not vendor_name:
+        return ValidationResult("VR13", True, "Vendor required for bank check", skipped=True)
+
+    master = find_matching_vendor_master(vendor_name, data.abn, vendor_masters)
+    if master is None:
+        # VR12 already hard-fails an unrecognized vendor; avoid double-counting.
+        return ValidationResult(
+            "VR13",
+            True,
+            "Vendor master not found — bank check deferred to VR12",
+            skipped=True,
+        )
+
+    master_bank = master.bank
+    master_bsb = _normalize_bank_token(getattr(master_bank, "bsb", None) if master_bank else None)
+    master_acct = _normalize_bank_token(
+        getattr(master_bank, "account_number", None) if master_bank else None
+    )
+
+    if not master_bsb and not master_acct:
+        # Data gap, not a detected conflict — the vendor master simply has no
+        # bank details captured yet. Don't hard-block on incomplete master
+        # data; only an actual mismatch between the two records is fraud
+        # signal strong enough to stop posting.
+        return ValidationResult(
+            "VR13",
+            True,
+            f"Vendor master has no bank details on file for {master.name} — "
+            "bank check skipped",
+            skipped=True,
+        )
+
+    bsb_mismatch = bool(invoice_bsb and master_bsb and invoice_bsb != master_bsb)
+    acct_mismatch = bool(invoice_acct and master_acct and invoice_acct != master_acct)
+    if bsb_mismatch or acct_mismatch:
+        return ValidationResult(
+            "VR13",
+            False,
+            "Invoice bank details do not match vendor master on file — "
+            "possible payment redirection fraud",
+        )
+
+    return ValidationResult("VR13", True, f"Bank details match vendor master ({master.name})")
+
+
 async def run_extended_validations(
     code: str,
     data: InvoiceData,
@@ -206,4 +279,6 @@ async def run_extended_validations(
             vendor_masters=rule_config.vendor_masters,
             customer_masters=customer_masters,
         )
+    if code == "VR13":
+        return vr13_bank_details_match(data, vendor_masters=rule_config.vendor_masters)
     return None

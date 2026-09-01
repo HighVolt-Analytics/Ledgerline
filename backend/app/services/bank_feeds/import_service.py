@@ -1,4 +1,4 @@
-"""CSV import into bank_transactions with fingerprint de-dupe."""
+"""Bank statement import (CSV/PDF) into bank_transactions with fingerprint de-dupe."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from app.models.bank_feed import (
 )
 from app.services.audit.audit_service import log_event
 from app.services.bank_feeds.csv_parser import CsvParseResult, parse_canonical_bank_csv
+from app.services.bank_feeds.pdf_parser import parse_bank_statement_pdf
 from app.services.bank_feeds.fingerprint import (
     compute_fingerprint,
     file_sha256,
@@ -54,6 +55,32 @@ def _near_duplicate_candidates(
     return hits
 
 
+def _parse_statement_content(
+    content: bytes, *, source: BankFeedSource
+) -> CsvParseResult:
+    if source == BankFeedSource.PDF:
+        return parse_bank_statement_pdf(content)
+    result = parse_canonical_bank_csv(content)
+    return CsvParseResult(
+        rows=result.rows,
+        errors=result.errors,
+        extracted_count=len(result.rows),
+        candidate_line_count=len(result.rows) + len(result.errors),
+    )
+
+
+def _initial_error_report(parsed: CsvParseResult) -> dict[str, Any]:
+    report: dict[str, Any] = {
+        "parse_errors": [_error_dict(e) for e in parsed.errors],
+        "extracted_count": parsed.extracted_count,
+        "candidate_line_count": parsed.candidate_line_count,
+        "skipped_line_count": parsed.skipped_line_count,
+    }
+    if parsed.parse_meta:
+        report["parse_meta"] = parsed.parse_meta
+    return report
+
+
 async def import_canonical_csv(
     session: AsyncSession,
     *,
@@ -61,6 +88,60 @@ async def import_canonical_csv(
     account: BankAccount,
     content: bytes,
     filename: str | None,
+    actor_user_id: int | None,
+    actor_name: str | None,
+    actor_email: str | None,
+    client_ip: str | None = None,
+) -> ImportResult:
+    return await import_statement(
+        session,
+        tenant_id=tenant_id,
+        account=account,
+        content=content,
+        filename=filename,
+        source=BankFeedSource.CSV,
+        actor_user_id=actor_user_id,
+        actor_name=actor_name,
+        actor_email=actor_email,
+        client_ip=client_ip,
+    )
+
+
+def _should_reuse_import(row: BankFeedImport) -> bool:
+    """Only reuse successful prior uploads; failed parses can be retried after parser fixes."""
+    if row.status == BankFeedImportStatus.FAILED.value:
+        return False
+    if row.accepted_count > 0 or row.duplicate_count > 0:
+        return True
+    return row.status == BankFeedImportStatus.COMPLETED.value
+
+
+def _reset_import_row(
+    import_row: BankFeedImport,
+    *,
+    filename: str | None,
+    source: BankFeedSource,
+    actor_user_id: int | None,
+) -> None:
+    import_row.filename = filename
+    import_row.source = source.value
+    import_row.status = BankFeedImportStatus.FAILED.value
+    import_row.row_count = 0
+    import_row.accepted_count = 0
+    import_row.duplicate_count = 0
+    import_row.error_count = 0
+    import_row.error_report = None
+    import_row.actor_user_id = actor_user_id
+
+
+async def import_statement(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    account: BankAccount,
+    content: bytes,
+    filename: str | None,
+    source: BankFeedSource,
     actor_user_id: int | None,
     actor_name: str | None,
     actor_email: str | None,
@@ -77,7 +158,7 @@ async def import_canonical_csv(
             )
         )
     ).scalar_one_or_none()
-    if existing_import is not None:
+    if existing_import is not None and _should_reuse_import(existing_import):
         await log_event(
             session,
             "bank_feed_import_idempotent_reuse",
@@ -103,38 +184,75 @@ async def import_canonical_csv(
             accepted_transaction_ids=[],
         )
 
-    await log_event(
-        session,
-        "bank_feed_import_started",
-        tenant_id=tenant_id,
-        detail={
-            "bank_account_id": account.id,
-            "source": BankFeedSource.CSV.value,
-            "filename": filename,
-            "file_sha256": digest,
-            "byte_length": len(content),
-        },
-        actor_name=actor_name,
-        actor_email=actor_email,
-        client_ip=client_ip,
+    retry_import = (
+        existing_import
+        if existing_import is not None
+        and existing_import.status == BankFeedImportStatus.FAILED.value
+        else None
     )
 
-    parsed: CsvParseResult = parse_canonical_bank_csv(content)
-    import_row = BankFeedImport(
-        tenant_id=tenant_id,
-        bank_account_id=account.id,
-        source=BankFeedSource.CSV.value,
-        filename=filename,
-        file_sha256=digest,
-        status=BankFeedImportStatus.FAILED.value,
-        row_count=0,
-        accepted_count=0,
-        duplicate_count=0,
-        error_count=len(parsed.errors),
-        error_report={"parse_errors": [_error_dict(e) for e in parsed.errors]},
-        actor_user_id=actor_user_id,
-    )
-    session.add(import_row)
+    if retry_import is None:
+        await log_event(
+            session,
+            "bank_feed_import_started",
+            tenant_id=tenant_id,
+            detail={
+                "bank_account_id": account.id,
+                "source": source.value,
+                "filename": filename,
+                "file_sha256": digest,
+                "byte_length": len(content),
+            },
+            actor_name=actor_name,
+            actor_email=actor_email,
+            client_ip=client_ip,
+        )
+    else:
+        await log_event(
+            session,
+            "bank_feed_import_retry",
+            tenant_id=tenant_id,
+            detail={
+                "import_id": retry_import.id,
+                "bank_account_id": account.id,
+                "source": source.value,
+                "filename": filename,
+                "file_sha256": digest,
+                "prior_status": retry_import.status,
+                "prior_error_count": retry_import.error_count,
+            },
+            actor_name=actor_name,
+            actor_email=actor_email,
+            client_ip=client_ip,
+        )
+
+    parsed: CsvParseResult = _parse_statement_content(content, source=source)
+    if retry_import is not None:
+        import_row = retry_import
+        _reset_import_row(
+            import_row,
+            filename=filename,
+            source=source,
+            actor_user_id=actor_user_id,
+        )
+        import_row.error_count = len(parsed.errors)
+        import_row.error_report = _initial_error_report(parsed)
+    else:
+        import_row = BankFeedImport(
+            tenant_id=tenant_id,
+            bank_account_id=account.id,
+            source=source.value,
+            filename=filename,
+            file_sha256=digest,
+            status=BankFeedImportStatus.FAILED.value,
+            row_count=0,
+            accepted_count=0,
+            duplicate_count=0,
+            error_count=len(parsed.errors),
+            error_report=_initial_error_report(parsed),
+            actor_user_id=actor_user_id,
+        )
+        session.add(import_row)
     await session.flush()
 
     if not parsed.rows and parsed.errors:
@@ -299,7 +417,7 @@ async def import_canonical_csv(
             )
 
     error_count = len(parsed.errors)
-    import_row.row_count = len(parsed.rows) + error_count
+    import_row.row_count = max(parsed.extracted_count, len(parsed.rows)) + error_count
     import_row.accepted_count = len(accepted_ids)
     import_row.duplicate_count = duplicate_count
     import_row.error_count = error_count
@@ -307,6 +425,10 @@ async def import_canonical_csv(
         "parse_errors": [_error_dict(e) for e in parsed.errors],
         "near_duplicate_count": near_dupe_count,
         "dedupe_decisions_sample": decision_audits[:50],
+        "extracted_count": parsed.extracted_count,
+        "candidate_line_count": parsed.candidate_line_count,
+        "skipped_line_count": parsed.skipped_line_count,
+        **({"parse_meta": parsed.parse_meta} if parsed.parse_meta else {}),
     }
     if error_count and accepted_ids:
         import_row.status = BankFeedImportStatus.PARTIAL.value

@@ -120,6 +120,7 @@ class InvoiceResponse(BaseModel):
     current_stage: str = "Received"
     current_stage_state: PipelineStageState = "pending"
     resolution_hint: str | None = None
+    issue_summary: str | None = None
     approval_board_column: ApprovalBoardColumn | None = None
     processing_overrides: ProcessingOverridesPayload | None = None
     approval_chain: dict[str, Any] | None = None

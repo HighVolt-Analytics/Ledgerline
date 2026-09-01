@@ -18,6 +18,7 @@ class NavBadges(BaseModel):
     sales_count: int = 0
     payments_queue_count: int = 0
     collections_queue_count: int = 0
+    bank_feeds_unsettled_count: int = 0
     integrations_connected: int
 
 

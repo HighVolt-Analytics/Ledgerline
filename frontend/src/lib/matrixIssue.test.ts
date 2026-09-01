@@ -3,6 +3,7 @@ import type { Invoice } from "@/api/types";
 import { MATRIX_STAGES, matrixStageSettled, type MatrixCell, type MatrixStage } from "@/lib/matrix";
 import {
   clarifyMatrixIssueTitle,
+  invoiceListIssueSummary,
   matrixIssueFixHint,
   matrixIssueSummary,
   parseStageFailureDetail,
@@ -24,6 +25,15 @@ function inv(extra: Partial<Invoice> = {}): Invoice {
     ...extra,
   } as Invoice;
 }
+
+describe("invoiceListIssueSummary", () => {
+  it("prefers API issue_summary", () => {
+    const summary = invoiceListIssueSummary(
+      inv({ issue_summary: "Journal posting failed — prior entries could not be replaced" })
+    );
+    expect(summary?.message).toContain("Journal posting failed");
+  });
+});
 
 describe("parseStageFailureDetail", () => {
   it("extracts the message after the stage prefix", () => {

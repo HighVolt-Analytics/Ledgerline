@@ -19,6 +19,7 @@ CONFIGURABLE_VALIDATION_RULE_CODES = frozenset(
         "VR09",
         "VR11",
         "VR12",
+        "VR13",
         "VR-PB02",
     }
 )

@@ -17,6 +17,7 @@ ControlAccountRole = Literal[
     "tax_account",
     "settlement_account",
     "staff_advance_account",
+    "fallback_account",
 ]
 
 
@@ -78,26 +79,65 @@ def coa_functional_for_journaling(config: RuleBookConfigPayload) -> bool:
 def resolve_fallback_account_mapping(
     config: RuleBookConfigPayload,
 ) -> AccountMapping:
-    return resolve_category_for_config(config.posting_defaults.fallback_account, config)
+    return resolve_category_for_config(
+        config.posting_defaults.fallback_account, config, _resolving_fallback=True
+    )
+
+
+def _find_in_chart(
+    cleaned: str,
+    config: RuleBookConfigPayload | None,
+) -> AccountMapping | None:
+    if not cleaned or config is None or not config.chart_of_accounts:
+        return None
+    for entry in config.chart_of_accounts:
+        if entry.name == cleaned:
+            return AccountMapping(entry.code, entry.name, expense_category=entry.name)
+    lowered = cleaned.lower()
+    for entry in config.chart_of_accounts:
+        if entry.name.lower() == lowered:
+            return AccountMapping(entry.code, entry.name, expense_category=entry.name)
+    return None
 
 
 def resolve_category_for_config(
     category: str,
     config: RuleBookConfigPayload | None = None,
+    *,
+    _resolving_fallback: bool = False,
 ) -> AccountMapping:
-    """Resolve ledger/category name using the tenant chart of accounts."""
+    """Resolve ledger/category name using THIS TENANT's own chart of accounts.
+
+    Multi-tenant note: this must never invent a tenant-agnostic numeric code
+    (the old behaviour returned a hardcoded "9999" whenever a name didn't
+    match). Charts of accounts are independent per tenant, so a global magic
+    code can point at nothing in one tenant's chart and at a completely
+    unrelated real account in another tenant's — silently mis-posting to it.
+
+    Instead: an unresolved name falls back to *this tenant's own configured*
+    fallback/suspense account (looked up the same way, by name, in their own
+    chart). Only when even that isn't configured in the chart do we give up —
+    returning an empty account_code, which is not a valid GL account and is
+    caught by get_unresolved_control_accounts() before anything posts.
+    """
     cleaned = (category or "").strip()
-    if not cleaned:
-        return AccountMapping("9999", "Suspense Account", expense_category="Suspense Account")
-    if config is not None and config.chart_of_accounts:
-        for entry in config.chart_of_accounts:
-            if entry.name == cleaned:
-                return AccountMapping(entry.code, entry.name, expense_category=entry.name)
-        lowered = cleaned.lower()
-        for entry in config.chart_of_accounts:
-            if entry.name.lower() == lowered:
-                return AccountMapping(entry.code, entry.name, expense_category=entry.name)
-    return AccountMapping("9999", cleaned, expense_category=cleaned)
+    hit = _find_in_chart(cleaned, config)
+    if hit is not None:
+        return hit
+
+    if _resolving_fallback or config is None:
+        # Already resolving this tenant's own fallback account (or no config
+        # to resolve one from) — there is nowhere safe left to park this.
+        label = cleaned or "Suspense Account"
+        return AccountMapping("", label, expense_category=label)
+
+    fallback_label = (config.posting_defaults.fallback_account or "").strip() or "Suspense Account"
+    fallback = resolve_category_for_config(fallback_label, config, _resolving_fallback=True)
+    return AccountMapping(
+        fallback.account_code,
+        fallback.account_name,
+        expense_category=cleaned or fallback.account_name,
+    )
 
 
 async def _resolve_config(

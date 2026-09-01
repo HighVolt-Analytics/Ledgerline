@@ -73,11 +73,26 @@ export function useBankTransactionNotes(transactionId: number | null, enabled = 
 
 export function useBankMatchTargets(
   matchedType: "payment" | "collection",
+  bankAccountId: number | null,
   enabled = true
 ) {
   return useTenantQuery({
-    queryKey: queryKeys.bankFeedMatchTargets(matchedType),
-    queryFn: () => api.listBankMatchTargets(matchedType, { limit: 100, fresh: true }),
+    queryKey: queryKeys.bankFeedMatchTargets(matchedType, bankAccountId),
+    queryFn: () =>
+      api.listBankMatchTargets(matchedType, {
+        limit: 100,
+        fresh: true,
+        bank_account_id: bankAccountId ?? undefined,
+      }),
+    enabled: enabled && bankAccountId != null,
+  });
+}
+
+export function useUnsettledSettlements(page = 1, pageSize = BANK_FEEDS_PAGE_SIZE, enabled = true) {
+  return useTenantQuery({
+    queryKey: queryKeys.bankFeedUnsettled(page, pageSize),
+    queryFn: () =>
+      api.listUnsettledSettlements({ page, page_size: pageSize }, { fresh: true }),
     enabled,
   });
 }
@@ -104,11 +119,13 @@ export function useBankFeedMutations() {
     onSuccess: () => invalidate(),
   });
 
-  const importCsv = useMutation({
+  const importStatement = useMutation({
     mutationFn: ({ accountId, file }: { accountId: number; file: File }) =>
-      api.importBankFeedCsv(accountId, file),
+      api.importBankFeedStatement(accountId, file),
     onSuccess: () => invalidate(),
   });
+
+  const importCsv = importStatement;
 
   const runMatch = useMutation({
     mutationFn: (accountId: number) => api.runBankFeedMatch(accountId),
@@ -231,6 +248,7 @@ export function useBankFeedMutations() {
 
   return {
     createAccount,
+    importStatement,
     importCsv,
     runMatch,
     runCategorize,

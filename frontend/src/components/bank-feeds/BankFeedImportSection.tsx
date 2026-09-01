@@ -9,9 +9,22 @@ import {
   parseBankImportErrorReport,
   type BankImportRowError,
 } from "@/lib/bankFeedCopy";
+import {
+  BANK_FEED_IMPORT_ACCEPT,
+  BANK_FEED_IMPORT_BROWSE_LABEL,
+  BANK_FEED_IMPORT_DROP_LABEL,
+  BANK_FEED_IMPORT_FORMAT_HINT,
+} from "@/lib/bankFeedFeatures";
 import { cn } from "@/lib/cn";
 
 const RECENT_IMPORTS_LIMIT = 5;
+
+function isBankStatementFile(file: File): boolean {
+  const name = file.name.toLowerCase();
+  if (name.endsWith(".pdf") || name.endsWith(".csv")) return true;
+  const type = (file.type || "").toLowerCase();
+  return type === "application/pdf" || type === "text/csv";
+}
 
 function formatImportWhen(iso: string): string {
   const d = new Date(iso);
@@ -36,7 +49,7 @@ export function BankFeedImportSection({
   canPost: boolean;
   onImportSuccess?: (message: string) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   const [recentExpanded, setRecentExpanded] = useState(false);
   const [importBanner, setImportBanner] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
@@ -47,15 +60,22 @@ export function BankFeedImportSection({
   const importsQ = useBankFeedImports(accountId, 1, RECENT_IMPORTS_LIMIT, accountId != null);
   const imports = importsQ.data?.data.items ?? [];
   const totalImports = importsQ.data?.meta?.total ?? imports.length;
-  const busy = mutations.importCsv.isPending;
+  const busy = mutations.importStatement.isPending;
   const latestImport = imports[0];
 
   const onImport = async (file: File) => {
     if (accountId == null) return;
+    if (!isBankStatementFile(file)) {
+      setImportBanner(null);
+      setImportErrors([]);
+      setImportError("Please choose a PDF or CSV bank statement.");
+      setExpanded(true);
+      return;
+    }
     setImportBanner(null);
     setImportError(null);
     try {
-      const result = await mutations.importCsv.mutateAsync({ accountId, file });
+      const result = await mutations.importStatement.mutateAsync({ accountId, file });
       const rowErrors = parseBankImportErrorReport(result.error_report);
       setImportErrors(rowErrors);
 
@@ -69,8 +89,12 @@ export function BankFeedImportSection({
             typeof result.categorized_count === "number"
               ? ` · ${result.categorized_count} auto-categorized`
               : "";
+          const extracted =
+            result.source === "pdf" && typeof result.extracted_count === "number"
+              ? `Extracted ${result.extracted_count} transaction(s) · `
+              : "";
           message =
-            `Partial import: ${result.accepted_count} of ${result.row_count} rows accepted` +
+            `${extracted}Partial import: ${result.accepted_count} of ${result.row_count} rows accepted` +
             (rowErrors.length ? ` · ${rowErrors.length} row error(s)` : "") +
             categorized;
         } else if (status === "failed" || (rowErrors.length > 0 && result.accepted_count === 0)) {
@@ -115,7 +139,7 @@ export function BankFeedImportSection({
       : importsQ.isLoading
         ? "Loading…"
         : latestImport
-          ? `Latest: ${latestImport.filename ?? "CSV"} · ${latestImport.accepted_count} rows · ${formatImportWhen(latestImport.imported_at)}`
+          ? `Latest: ${latestImport.filename ?? "statement"} · ${latestImport.accepted_count} rows · ${formatImportWhen(latestImport.imported_at)}`
           : "No imports yet";
 
   return (
@@ -128,6 +152,9 @@ export function BankFeedImportSection({
       >
         <div className="min-w-0">
           <span className="text-sm font-semibold">Import statements</span>
+          <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            PDF + CSV
+          </span>
           {!expanded && recentSummary ? (
             <p className="mt-0.5 truncate text-xs text-muted-foreground">{recentSummary}</p>
           ) : null}
@@ -174,9 +201,14 @@ export function BankFeedImportSection({
             <p className="text-sm font-medium">
               {accountId == null
                 ? "Select or create a bank account first"
-                : "Drop bank CSV here or browse"}
+                : BANK_FEED_IMPORT_DROP_LABEL}
             </p>
-            <p className="mt-0.5 text-xs text-muted-foreground">CSV only · 10 MB max</p>
+            <p
+              className="mt-0.5 text-xs text-muted-foreground"
+              data-testid="bf-import-formats"
+            >
+              {BANK_FEED_IMPORT_FORMAT_HINT}
+            </p>
             <Button
               className="mt-2"
               size="sm"
@@ -185,12 +217,12 @@ export function BankFeedImportSection({
               onClick={() => fileRef.current?.click()}
               data-testid="bf-import-browse"
             >
-              Browse CSV
+              {BANK_FEED_IMPORT_BROWSE_LABEL}
             </Button>
             <input
               ref={fileRef}
               type="file"
-              accept=".csv,text/csv"
+              accept={BANK_FEED_IMPORT_ACCEPT}
               className="hidden"
               onChange={(e) => {
                 const file = e.target.files?.[0];

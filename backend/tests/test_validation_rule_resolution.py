@@ -47,7 +47,7 @@ def test_resolve_validation_rules_honours_all_disabled() -> None:
         "DT-16",
         document_types=[definition],
     )
-    assert len(rules) == 7
+    assert len(rules) == 8
     assert all(not row.enabled for row in rules)
 
 
@@ -70,7 +70,7 @@ def test_resolve_validation_rules_explicit_beats_forced_standard_profile() -> No
         document_types=[definition],
         validation_profile="standard",
     )
-    assert len(rules) == 7
+    assert len(rules) == 8
     vr03 = next(row for row in rules if row.code == "VR03")
     assert vr03.enabled is False
     assert any(row.code == "VR08" and row.enabled for row in rules)

@@ -17,6 +17,7 @@ import {
 import { mergeCoaOptionsWithSavedValue } from "@/lib/coaAccountOptions";
 import { money } from "@/lib/format";
 import { queryKeys } from "@/lib/queryClient";
+import { BANK_FEEDS_TRANSFER_ENABLED } from "@/lib/bankFeedFeatures";
 import { cn } from "@/lib/cn";
 
 export type ReconcileTab = "match" | "create" | "transfer" | "discuss";
@@ -24,7 +25,9 @@ export type ReconcileTab = "match" | "create" | "transfer" | "discuss";
 const TAB_LABELS: { id: ReconcileTab; label: string }[] = [
   { id: "match", label: "Match" },
   { id: "create", label: "Create" },
-  { id: "transfer", label: "Transfer" },
+  ...(BANK_FEEDS_TRANSFER_ENABLED
+    ? ([{ id: "transfer", label: "Transfer" }] as const)
+    : []),
   { id: "discuss", label: "Discuss" },
 ];
 
@@ -160,7 +163,7 @@ export function BankFeedReconcilePanel({
   });
 
   const matchedType: "payment" | "collection" = moneyIn ? "collection" : "payment";
-  const targetsQ = useBankMatchTargets(matchedType, true);
+  const targetsQ = useBankMatchTargets(matchedType, txn.bank_account_id, true);
   const notesQ = useBankTransactionNotes(txn.id, activeTab === "discuss");
   const [noteDraft, setNoteDraft] = useState("");
   const [noteError, setNoteError] = useState<string | null>(null);

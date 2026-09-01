@@ -12,7 +12,6 @@ from app.config import flag_enabled_for_dt, get_settings
 from app.services.shared.amount_sanity import plausible_money, sanitize_parsed_line_item
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.tenant import Tenant
-from app.models.journal import JournalEntry, JournalEntryKind
 from app.models.line_item import LineItem
 from app.models.vendor import VendorRegistry
 from app.models.customer import CustomerRegistry
@@ -134,7 +133,7 @@ from app.services.master_data.bundle_vendor_service import reconcile_dossier_ven
 from app.services.master_data.vendor_name_utils import is_plausible_vendor_name
 from app.services.invoice.invoice_amounts import backfill_invoice_amounts_from_sources
 from app.services.invoice.invoice_data import InvoiceData, ParsedLineItem, invoice_data_from_invoice
-from app.tenant_child_tables import journal_entries_for_invoice, line_items_for_invoice
+from app.tenant_child_tables import line_items_for_invoice
 from app.services.ingest.attachment_filter import filter_invoice_attachments
 from app.services.audit.audit_detail_helpers import validation_audit_detail
 from app.services.audit.audit_service import log_event
@@ -154,6 +153,7 @@ from app.services.payments.journal_generator import (
 )
 from app.services.payments.journal_persist_service import persist_journal_lines
 from app.services.payments.fiscal_period_service import PeriodClosedError
+from app.services.payments.journal_reversal_service import reverse_invoice_accrual_batches
 from app.services.master_data.journal_counterparty_resolver import (
     resolve_counterparty_registry_ids_for_journal,
 )
@@ -1935,16 +1935,12 @@ async def resume_invoice_posting_pipeline(
     await session.flush()
     if await halt_if_missing_accrual_date(session, invoice):
         return
-    existing_entries = (
-        await session.execute(
-            select(JournalEntry).where(
-                *journal_entries_for_invoice(invoice.tenant_id, invoice.id),
-                JournalEntry.entry_kind == JournalEntryKind.INVOICE_ACCRUAL,
-            )
-        )
-    ).scalars().all()
-    for entry in existing_entries:
-        await session.delete(entry)
+    await reverse_invoice_accrual_batches(
+        session,
+        tenant_id=invoice.tenant_id,
+        invoice_id=invoice.id,
+        reason="accrual_repost",
+    )
     await session.flush()
     backfill_invoice_amounts_from_sources(loaded)
     invoice.subtotal = loaded.subtotal
@@ -4376,16 +4372,12 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     await session.flush()
     if await halt_if_missing_accrual_date(session, invoice):
         return
-    existing_entries = (
-        await session.execute(
-            select(JournalEntry).where(
-                *journal_entries_for_invoice(invoice.tenant_id, invoice.id),
-                JournalEntry.entry_kind == JournalEntryKind.INVOICE_ACCRUAL,
-            )
-        )
-    ).scalars().all()
-    for entry in existing_entries:
-        await session.delete(entry)
+    await reverse_invoice_accrual_batches(
+        session,
+        tenant_id=invoice.tenant_id,
+        invoice_id=invoice.id,
+        reason="accrual_repost",
+    )
     await session.flush()
     backfill_invoice_amounts_from_sources(loaded)
     invoice.subtotal = loaded.subtotal

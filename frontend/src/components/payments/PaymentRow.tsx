@@ -183,6 +183,9 @@ export function PaymentRow({
   paymentsExecutionEnabled = false,
   manualExecutionEnabled = false,
   approveBusy = false,
+  selectable = false,
+  selected = false,
+  onToggleSelect,
   onSubmit,
   onApprove,
   onPayNow,
@@ -193,6 +196,10 @@ export function PaymentRow({
   paymentsExecutionEnabled?: boolean;
   manualExecutionEnabled?: boolean;
   approveBusy?: boolean;
+  /** Show a selection checkbox (used on the Scheduled tab for batch bank-file export). */
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelect?: () => void;
   onSubmit: () => void;
   onApprove: () => void;
   onPayNow: () => void;
@@ -339,7 +346,18 @@ export function PaymentRow({
       data-testid={`payment-row-${p.id}`}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
+        <div className="flex items-start gap-2.5 min-w-0">
+          {selectable ? (
+            <input
+              type="checkbox"
+              className="mt-1 h-4 w-4 shrink-0 accent-primary"
+              checked={selected}
+              onChange={() => onToggleSelect?.()}
+              aria-label={`Select payment ${p.id} for batch export`}
+              data-testid={`payment-select-${p.id}`}
+            />
+          ) : null}
+          <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium text-sm">{p.id}</span>
             <span className="text-muted-foreground text-sm truncate">{p.vendor}</span>
@@ -366,6 +384,7 @@ export function PaymentRow({
             {p.executionBlockingReason ? (
               <> · {p.executionBlockingReason}</>
             ) : null}
+          </div>
           </div>
         </div>
         <div className="text-right">

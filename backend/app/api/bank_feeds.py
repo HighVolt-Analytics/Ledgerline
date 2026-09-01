@@ -1,4 +1,4 @@
-"""Bank feed / cash reconciliation HTTP API (Phase 2: accounts + CSV import + list)."""
+"""Bank feed / cash reconciliation HTTP API (Phase 2: accounts + statement import + list)."""
 
 from __future__ import annotations
 
@@ -13,7 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_db
 from app.models.audit import AuditLog
-from app.models.bank_feed import BankTransaction, BankTxnDirection
+from app.models.bank_feed import BankFeedSource, BankTransaction, BankTxnDirection
+from app.models.tenant import Tenant
 from app.schemas.audit import AuditLogResponse
 from app.schemas.bank_feed import (
     BankAccountCreate,
@@ -36,6 +37,9 @@ from app.schemas.bank_feed import (
     MatchRunResponse,
     SetCategoryRequest,
     UnmatchRequest,
+    UnsettledSettlementCountResponse,
+    UnsettledSettlementListResponse,
+    UnsettledSettlementResponse,
 )
 from app.schemas.common import ApiEnvelope, ResponseMeta
 from app.services.audit.audit_service import log_event
@@ -50,13 +54,31 @@ from app.services.bank_feeds import (
     transaction_service,
     transfer_service,
 )
+from app.services.bank_feeds.currency_validation import (
+    UnsupportedBankCurrencyError,
+    validate_bank_account_currency,
+)
 from app.services.bank_feeds.create_service import BankCreateConflict, BankCreateError
+from app.services.bank_feeds.feature_flags import bank_feeds_transfer_enabled
+from app.services.bank_feeds.unsettled_service import (
+    LOOKBACK_MONTHS,
+    bank_cash_verification_grace_days,
+    count_unsettled_settlements,
+    list_unsettled_settlements,
+)
 from app.services.payments.fiscal_period_service import PeriodClosedError
 from app.services.bank_feeds.reference import resolve_txn_reference
 
 router = APIRouter(prefix="/bank-feeds", tags=["bank-feeds"])
 
-_MAX_CSV_BYTES = 10 * 1024 * 1024
+_MAX_IMPORT_BYTES = 10 * 1024 * 1024
+
+
+def _detect_import_source(filename: str | None, content: bytes) -> BankFeedSource:
+    name = (filename or "").lower()
+    if name.endswith(".pdf") or content.startswith(b"%PDF"):
+        return BankFeedSource.PDF
+    return BankFeedSource.CSV
 
 
 def _money_flow(direction: str) -> str:
@@ -151,6 +173,11 @@ def _import_response(
         raw = report.get("categorized_count")
         if isinstance(raw, int):
             count = raw
+    extracted = 0
+    if isinstance(report, dict):
+        raw_extracted = report.get("extracted_count")
+        if isinstance(raw_extracted, int):
+            extracted = raw_extracted
     return BankFeedImportResponse(
         id=row.id,
         bank_account_id=row.bank_account_id,
@@ -163,6 +190,7 @@ def _import_response(
         duplicate_count=row.duplicate_count,
         error_count=row.error_count,
         categorized_count=count,
+        extracted_count=extracted,
         error_report=row.error_report,
         actor_user_id=row.actor_user_id,
         imported_at=row.imported_at,
@@ -190,9 +218,10 @@ async def create_account(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[BankAccountResponse]:
     require_privilege(ctx, "Post")
-    currency = body.currency.strip().upper()
-    if len(currency) != 3:
-        raise HTTPException(400, "currency must be a 3-letter ISO code")
+    try:
+        currency = validate_bank_account_currency(body.currency)
+    except UnsupportedBankCurrencyError as exc:
+        raise HTTPException(400, str(exc)) from exc
     row = await account_service.create_bank_account(
         db,
         tenant_id=ctx.tenant_id,
@@ -225,7 +254,7 @@ async def create_account(
     "/accounts/{account_id}/imports",
     response_model=ApiEnvelope[BankFeedImportResponse],
 )
-async def upload_csv_import(
+async def upload_statement_import(
     account_id: int,
     request: Request,
     file: UploadFile = File(...),
@@ -242,16 +271,18 @@ async def upload_csv_import(
     raw = await file.read()
     if not raw:
         raise HTTPException(400, "Uploaded file is empty")
-    if len(raw) > _MAX_CSV_BYTES:
-        raise HTTPException(400, "CSV exceeds 10 MB limit")
+    if len(raw) > _MAX_IMPORT_BYTES:
+        raise HTTPException(400, "Statement file exceeds 10 MB limit")
 
+    source = _detect_import_source(file.filename, raw)
     actor_name, actor_email = await actor_from_context(db, ctx)
-    result = await import_service.import_canonical_csv(
+    result = await import_service.import_statement(
         db,
         tenant_id=ctx.tenant_id,
         account=account,
         content=raw,
         filename=file.filename,
+        source=source,
         actor_user_id=ctx.user_id,
         actor_name=actor_name,
         actor_email=actor_email,
@@ -384,10 +415,19 @@ async def list_match_targets(
     matched_type: str = Query(..., pattern="^(payment|collection)$"),
     q: str | None = Query(None, max_length=200),
     limit: int = Query(50, ge=1, le=100),
+    bank_account_id: int | None = Query(None, ge=1),
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[list[BankMatchTargetResponse]]:
     """Searchable payment/collection picker rows for manual match (no raw-ID UX)."""
+    bank_currency: str | None = None
+    if bank_account_id is not None:
+        account = await account_service.get_bank_account(
+            db, tenant_id=ctx.tenant_id, account_id=bank_account_id
+        )
+        if account is None:
+            raise HTTPException(404, "Bank account not found")
+        bank_currency = account.currency
     try:
         rows = await match_targets.search_match_targets(
             db,
@@ -395,6 +435,7 @@ async def list_match_targets(
             matched_type=matched_type,
             q=q,
             limit=limit,
+            bank_currency=bank_currency,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -811,6 +852,11 @@ async def transfer_bank_line(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[BankTransactionResponse]:
+    if not bank_feeds_transfer_enabled():
+        raise HTTPException(
+            403,
+            "Bank transfer is not enabled — pending cross-account verification design",
+        )
     require_privilege(ctx, "Post")
     txn = await transaction_service.get_transaction(
         db, tenant_id=ctx.tenant_id, transaction_id=transaction_id
@@ -966,3 +1012,68 @@ async def reverse_bank_create(
     )
     await db.commit()
     return ApiEnvelope(data=payload)
+
+
+def _unsettled_response(row) -> UnsettledSettlementResponse:
+    return UnsettledSettlementResponse(
+        entity_type=row.entity_type,
+        entity_id=row.entity_id,
+        invoice_id=row.invoice_id,
+        invoice_no=row.invoice_no,
+        party_name=row.party_name,
+        amount=row.amount,
+        currency=row.currency,
+        settled_date=row.settled_date,
+        days_since_settled=row.days_since_settled,
+        has_suggested_bank_match=row.has_suggested_bank_match,
+        allocated_bank_amount=row.allocated_bank_amount,
+        gross_amount=row.gross_amount,
+        grace_days=row.grace_days,
+    )
+
+
+@router.get(
+    "/unsettled-settlements",
+    response_model=ApiEnvelope[UnsettledSettlementListResponse],
+)
+async def list_unsettled_settlements_endpoint(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[UnsettledSettlementListResponse]:
+    require_privilege(ctx, "View")
+    rows, total = await list_unsettled_settlements(
+        db,
+        tenant_id=ctx.tenant_id,
+        page=page,
+        page_size=page_size,
+    )
+    tenant = await db.get(Tenant, ctx.tenant_id)
+    grace = rows[0].grace_days if rows else bank_cash_verification_grace_days(tenant)
+    pages = max(1, math.ceil(total / page_size)) if total else 1
+    return ApiEnvelope(
+        data=UnsettledSettlementListResponse(
+            items=[_unsettled_response(r) for r in rows],
+            grace_days=grace,
+            lookback_months=LOOKBACK_MONTHS,
+        ),
+        meta=ResponseMeta(page=page, page_size=page_size, total=total, pages=pages),
+    )
+
+
+@router.get(
+    "/unsettled-settlements/count",
+    response_model=ApiEnvelope[UnsettledSettlementCountResponse],
+)
+async def count_unsettled_settlements_endpoint(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[UnsettledSettlementCountResponse]:
+    require_privilege(ctx, "View")
+    tenant = await db.get(Tenant, ctx.tenant_id)
+    grace = bank_cash_verification_grace_days(tenant)
+    count = await count_unsettled_settlements(db, tenant_id=ctx.tenant_id)
+    return ApiEnvelope(
+        data=UnsettledSettlementCountResponse(count=count, grace_days=grace),
+    )

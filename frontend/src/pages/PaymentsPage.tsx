@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Link2, Shield } from "lucide-react";
+import { Link2, Settings2, Shield } from "lucide-react";
 import { EmptyState } from "@/components/EmptyState";
 import { KpiCard } from "@/components/KpiCard";
 import { PageHeader } from "@/components/PageHeader";
 import { PageTabPanel, PageTabs } from "@/components/PageTabs";
+import { BankFileSettingsDialog } from "@/components/payments/BankFileSettingsDialog";
 import { PaymentReceiptSheet } from "@/components/payments/PaymentReceiptSheet";
 import { PaymentRow } from "@/components/payments/PaymentRow";
 import { PayPalProviderCard } from "@/components/payments/PayPalProviderCard";
@@ -12,7 +13,15 @@ import { WalletCard } from "@/components/payments/WalletCard";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { TableSkeleton } from "@/components/skeleton/PageSkeletons";
-import { PAYMENTS_PAGE_SIZE, usePaymentMutations, usePaymentWorkspaceKpis, usePayments, useAppSettings } from "@/hooks/usePayments";
+import {
+  PAYMENTS_PAGE_SIZE,
+  useDownloadBatchPaymentBankFile,
+  usePaymentMutations,
+  usePaymentWorkspaceKpis,
+  usePayments,
+  useAppSettings,
+} from "@/hooks/usePayments";
+import { useToast } from "@/context/ToastContext";
 import {
   useConnectStripe,
   useDisconnectStripe,
@@ -162,6 +171,34 @@ export function PaymentsPage() {
   const [tab, setTab] = useState<PaymentTab>("queue");
   const { data: paymentRows = [], isLoading: paymentsLoading, isError, blocked: paymentsBlocked } =
     usePayments(tab);
+  const { toast } = useToast();
+  const [selectedPaymentIds, setSelectedPaymentIds] = useState<Set<number>>(new Set());
+  const downloadBankFile = useDownloadBatchPaymentBankFile();
+  const handleTabChange = (nextTab: PaymentTab) => {
+    setTab(nextTab);
+    setSelectedPaymentIds(new Set());
+  };
+  const toggleSelectPayment = (paymentId: number) => {
+    setSelectedPaymentIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(paymentId)) next.delete(paymentId);
+      else next.add(paymentId);
+      return next;
+    });
+  };
+  const handleDownloadBankFile = async () => {
+    try {
+      await downloadBankFile.mutateAsync(Array.from(selectedPaymentIds));
+      setSelectedPaymentIds(new Set());
+      toast({ title: "Bank payment file downloaded" });
+    } catch (err) {
+      toast({
+        title: "Could not export bank payment file",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
+    }
+  };
   const {
     data: kpis,
     isLoading: kpisLoading,
@@ -193,6 +230,7 @@ export function PaymentsPage() {
   const [justPaidId, setJustPaidId] = useState<string | null>(null);
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<PaymentRecord | null>(null);
+  const [bankFileSettingsOpen, setBankFileSettingsOpen] = useState(false);
   const [stripeActionError, setStripeActionError] = useState<string | null>(null);
   const [paypalActionError, setPaypalActionError] = useState<string | null>(null);
 
@@ -361,6 +399,17 @@ export function PaymentsPage() {
       <PageHeader
         title="Payments"
         subtitle="Disbursement workflow for processed payables — tiered approval by amount with Stripe-ready scheduling."
+        actions={
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setBankFileSettingsOpen(true)}
+            data-testid="open-bank-file-settings"
+          >
+            <Settings2 className="h-3.5 w-3.5 mr-1.5" />
+            Bank file settings
+          </Button>
+        }
       />
 
       {environmentBanner ? (
@@ -768,7 +817,7 @@ export function PaymentsPage() {
 
       <PageTabs
         value={tab}
-        onChange={(v) => setTab(v as PaymentTab)}
+        onChange={(v) => handleTabChange(v as PaymentTab)}
         tabs={TABS.map((t) => ({
           ...t,
           label:
@@ -787,6 +836,35 @@ export function PaymentsPage() {
                 })`,
         }))}
       />
+
+      {tab === "scheduled" && payments.length > 0 ? (
+        <div className="mt-3 flex items-center justify-between gap-3 rounded-md border border-border bg-muted/30 px-3 py-2">
+          <span className="text-xs text-muted-foreground">
+            {selectedPaymentIds.size > 0
+              ? `${selectedPaymentIds.size} payment${selectedPaymentIds.size === 1 ? "" : "s"} selected`
+              : "Select Scheduled payments to bundle into one batch bank payment file (e.g. an AU ABA export)."}
+          </span>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setBankFileSettingsOpen(true)}
+              data-testid="open-bank-file-settings-scheduled"
+            >
+              Bank file settings
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={selectedPaymentIds.size === 0 || downloadBankFile.isPending}
+              onClick={() => void handleDownloadBankFile()}
+              data-testid="download-batch-bank-file"
+            >
+              {downloadBankFile.isPending ? "Preparing file…" : "Download bank file"}
+            </Button>
+          </div>
+        </div>
+      ) : null}
 
       <PageTabPanel value={tab} active={tab} className="mt-4">
         {isLoading ? (
@@ -809,6 +887,9 @@ export function PaymentsPage() {
                 paymentsExecutionEnabled={paymentsExecutionEnabled}
                 manualExecutionEnabled={manualExecutionEnabled}
                 approveBusy={approvingId === payment.id}
+                selectable={tab === "scheduled"}
+                selected={selectedPaymentIds.has(Number(payment.id))}
+                onToggleSelect={() => toggleSelectPayment(Number(payment.id))}
                 onSubmit={() => void advance(payment, "awaiting")}
                 onApprove={() => void handleApprovePayment(payment)}
                 onPayNow={() => void advance(payment, "paid")}
@@ -829,6 +910,11 @@ export function PaymentsPage() {
         open={!!receipt}
         onClose={() => setReceipt(null)}
         payment={receipt}
+      />
+
+      <BankFileSettingsDialog
+        open={bankFileSettingsOpen}
+        onClose={() => setBankFileSettingsOpen(false)}
       />
     </div>
   );

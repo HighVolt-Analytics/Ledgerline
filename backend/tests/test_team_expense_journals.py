@@ -54,6 +54,7 @@ def _config() -> RuleBookConfigPayload:
             ChartOfAccountEntry(code="1400", name="Tax Paid", type="Asset"),
             ChartOfAccountEntry(code="2000", name="Accounts Payable", type="Liability"),
             ChartOfAccountEntry(code="6100", name="Travel Expense", type="Expense"),
+            ChartOfAccountEntry(code="9999", name="Suspense Account", type="Liability"),
         ],
     )
 

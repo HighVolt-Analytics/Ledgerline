@@ -103,7 +103,10 @@ def resolve_effective_ledger_mapping(
 ) -> "AccountMapping":
     """Map parent or nested sub-ledger name to a journal AccountMapping."""
     from app.services.master_data.chart_of_accounts_service import parent_ledger_for_account
-    from app.services.rule_book.account_mapper import resolve_category_for_config
+    from app.services.rule_book.account_mapper import (
+        category_resolved_in_coa,
+        resolve_category_for_config,
+    )
 
     parent = resolve_category_for_config(parent_ledger, config)
     eff = (effective_ledger or "").strip()
@@ -121,9 +124,14 @@ def resolve_effective_ledger_mapping(
     inferred_parent = parent_ledger_for_account(eff, accounts)
     if inferred_parent:
         if inferred_parent.lower() == eff.lower():
-            flat_main = resolve_category_for_config(eff, config)
-            if (flat_main.account_code or "").strip() not in {"", "9999"}:
-                return flat_main
+            # Check the NAME against the tenant's own chart directly, rather
+            # than inspecting the resolved mapping's code. The fallback path
+            # in resolve_category_for_config() now returns the tenant's own
+            # real fallback account code (never a hardcoded "9999"), so a
+            # code-based "did this resolve" check would wrongly treat a
+            # silent fallback-account hit as a genuine chart match here.
+            if category_resolved_in_coa(eff, config):
+                return resolve_category_for_config(eff, config)
         elif inferred_parent.lower() != parent_name.lower():
             nested_other = _mapping_for_nested_sub(
                 parent_ledger=inferred_parent, sub_name=eff, config=config
@@ -131,9 +139,8 @@ def resolve_effective_ledger_mapping(
             if nested_other is not None:
                 return nested_other
 
-    flat = resolve_category_for_config(eff, config)
-    if (flat.account_code or "").strip() not in {"", "9999"}:
-        return flat
+    if category_resolved_in_coa(eff, config):
+        return resolve_category_for_config(eff, config)
     return parent
 
 
