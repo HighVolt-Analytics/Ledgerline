@@ -556,6 +556,35 @@ class EmailIngestResult:
 logger = get_logger(__name__)
 
 
+async def _ensure_xero_supplier_contact(session: AsyncSession, invoice: Invoice) -> None:
+    """Keep pulled Xero contacts in sync with the extracted AP vendor name."""
+    try:
+        from app.integrations.xero.contacts import ensure_invoice_xero_supplier_contact
+
+        await ensure_invoice_xero_supplier_contact(session, invoice)
+    except Exception:
+        logger.warning(
+            "xero_invoice_contact_ensure_failed",
+            invoice_id=invoice.id,
+            exc_info=True,
+        )
+
+
+async def _finalize_xero_after_process(session: AsyncSession, invoice: Invoice) -> None:
+    """Match/create Xero contact in this txn; queue DRAFT export for after commit."""
+    await _ensure_xero_supplier_contact(session, invoice)
+    try:
+        from app.integrations.xero.auto_push import schedule_xero_auto_push
+
+        schedule_xero_auto_push(session, invoice)
+    except Exception:
+        logger.warning(
+            "xero_auto_push_schedule_failed",
+            invoice_id=invoice.id,
+            exc_info=True,
+        )
+
+
 def _filename_from_stored(stored: str, invoice_id: int, file_hash: str) -> str:
     _ = (invoice_id, file_hash)
     return filename_from_stored(stored)
@@ -2118,6 +2147,7 @@ async def resume_invoice_posting_pipeline(
     await _safe_auto_learn(session, invoice)
     if await _stop_if_not_processed_for_publish(session, invoice):
         return
+    await _finalize_xero_after_process(session, invoice)
     await log_event(
         session,
         "invoice_processed",
@@ -4560,6 +4590,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     await _safe_auto_learn(session, invoice)
     if await _stop_if_not_processed_for_publish(session, invoice):
         return
+    await _finalize_xero_after_process(session, invoice)
     await log_event(
         session,
         "invoice_processed",

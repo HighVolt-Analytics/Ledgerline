@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.accounting_entity_mapping import (
     MAPPING_GL_ACCOUNT,
-    MAPPING_TAX,
     MAPPING_TRACKING,
 )
 from app.models.accounting_export_ledger import (
@@ -56,6 +55,7 @@ from app.integrations.xero.contacts import (
     resolve_supplier_contact,
     save_supplier_contact_mapping,
 )
+from app.integrations.xero.tax_rates import resolve_invoice_xero_tax_type
 from app.integrations.xero.errors import (
     ERROR_TERMINAL,
     ERROR_TRANSIENT,
@@ -250,21 +250,12 @@ async def validate_invoice_for_xero_export(
     )
     mapped_account = (gl_map.external_code if gl_map else None) or gl_key or None
 
-    tax_key = None
-    if invoice.gst is not None and Decimal(str(invoice.gst)) != 0:
-        tax_key = f"GST:{invoice.gst_rate}" if invoice.gst_rate is not None else "GST"
-    tax_map = (
-        await get_mapping(
-            db,
-            tenant_id=tenant_id,
-            mapping_type=MAPPING_TAX,
-            source_key=tax_key,
-            xero_tenant_id=xero_tenant_id,
-        )
-        if tax_key
-        else None
+    mapped_tax = await resolve_invoice_xero_tax_type(
+        db,
+        tenant_id=tenant_id,
+        xero_tenant_id=xero_tenant_id,
+        invoice=invoice,
     )
-    mapped_tax = tax_map.external_code if tax_map else None
 
     tracking_list: list[CanonicalTracking] = []
     cost_centre = (invoice.cost_centre or "").strip()
@@ -328,14 +319,6 @@ async def validate_invoice_for_xero_export(
                 "field": "account_code",
                 "code": "account_not_mapped",
                 "message": "GL account not mapped",
-            }
-        )
-    if tax_key and not mapped_tax:
-        blocking.append(
-            {
-                "field": "tax_type",
-                "code": "tax_type_not_mapped",
-                "message": "tax type not mapped",
             }
         )
 
@@ -410,7 +393,7 @@ async def export_supplier_invoice_to_xero(
     *,
     tenant_id: uuid.UUID,
     invoice_id: int,
-    user_id: int,
+    user_id: int | None = None,
 ) -> dict[str, Any]:
     """Idempotent ACCPAY Draft export with sync-ledger lock and PDF attachment."""
     now = datetime.now(timezone.utc)
@@ -814,7 +797,7 @@ async def _ensure_review_ledger(
     tenant_id: uuid.UUID,
     invoice_id: int,
     validation: dict[str, Any],
-    user_id: int,
+    user_id: int | None,
     correlation_id: str,
 ) -> AccountingExportLedger:
     canonical = validation.get("canonical") or {}

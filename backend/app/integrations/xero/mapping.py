@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 import uuid
 from dataclasses import dataclass, field
-from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import func, inspect as sa_inspect, select
@@ -16,7 +15,6 @@ from app.models.invoice import Invoice
 from app.models.xero_account import XeroAccount
 from app.models.xero_contact import XeroContact
 from app.models.xero_currency import XeroCurrency
-from app.models.xero_tax_rate import XeroTaxRate
 
 
 @dataclass
@@ -56,17 +54,6 @@ async def _ensure_line_items_loaded(db: AsyncSession, invoice: Invoice) -> None:
     ).scalar_one_or_none()
     if loaded is not None:
         invoice.line_items = list(loaded.line_items)
-
-
-def _line_has_tax(invoice: Invoice) -> bool:
-    items = invoice.__dict__.get("line_items")
-    if items is None:
-        return False
-    for item in items:
-        amount = item.tax_amount
-        if amount is not None and Decimal(amount) > 0:
-            return True
-    return False
 
 
 async def find_xero_contact_id(
@@ -211,25 +198,6 @@ async def validate_invoice_xero_mappings(
                     "field": "currency",
                     "code": "currency_not_mapped",
                     "message": f"Currency '{currency}' was not found in synced Xero organisation settings",
-                }
-            )
-
-    if _line_has_tax(invoice) and xero_tenant_id:
-        tax_count = (
-            await db.execute(
-                select(func.count()).select_from(XeroTaxRate).where(
-                    XeroTaxRate.tenant_id == tenant_id,
-                    XeroTaxRate.xero_tenant_id == xero_tenant_id,
-                    XeroTaxRate.sync_status == "active",
-                )
-            )
-        ).scalar_one()
-        if int(tax_count or 0) == 0:
-            errors.append(
-                {
-                    "field": "tax_type",
-                    "code": "tax_type_not_mapped",
-                    "message": "Line items include tax but no Xero tax rates are synced",
                 }
             )
 

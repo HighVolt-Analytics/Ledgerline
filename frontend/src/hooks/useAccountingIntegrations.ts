@@ -83,7 +83,7 @@ export function useAccountingIntegrations(enabled = true) {
       setStatus(null);
       setError(err instanceof Error ? err.message : "Failed to load accounting integrations");
     } finally {
-      if (seq === loadSeq.current && isTenantFetchScopeCurrent(scope)) {
+      if (seq === loadSeq.current) {
         setLoading(false);
       }
     }
@@ -118,7 +118,7 @@ export function useAccountingIntegrations(enabled = true) {
       setXeroConnections([]);
       setXeroError(err instanceof Error ? err.message : "Failed to load Xero integration");
     } finally {
-      if (seq === xeroLoadSeq.current && isTenantFetchScopeCurrent(scope)) {
+      if (seq === xeroLoadSeq.current) {
         setXeroLoading(false);
       }
     }

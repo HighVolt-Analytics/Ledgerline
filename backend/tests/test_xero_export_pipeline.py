@@ -100,6 +100,7 @@ async def _seed_xero_ready(db_session):
             xero_tenant_id="xero-org-1",
             tax_type="INPUT",
             name="GST on Expenses",
+            effective_rate=Decimal("10"),
             sync_status="active",
         )
     )
@@ -240,7 +241,7 @@ async def test_tenant_isolation_mappings(db_session):
 async def test_mapping_completeness_and_inactive(db_session):
     await _seed_xero_ready(db_session)
     inv = await _seed_invoice(db_session)
-    # Without mappings / tax mapping ΓÇö validation fails for tax
+    # Tax is resolved from synced rates by GST % — mapping is not required.
     with patch(
         "app.integrations.xero.export.require_xero_ready",
         AsyncMock(return_value=(MagicMock(provider_tenant_id="xero-org-1"), "xero-org-1")),
@@ -249,7 +250,9 @@ async def test_mapping_completeness_and_inactive(db_session):
             db_session, tenant_id=TESTING_TENANT_UUID, invoice_id=inv.id
         )
     codes = {e["code"] for e in result["blocking_errors"]}
-    assert "tax_type_not_mapped" in codes
+    assert "tax_type_not_mapped" not in codes
+    lines = (result.get("canonical") or {}).get("lines") or []
+    assert lines and lines[0].get("mapped_xero_tax_type") == "INPUT"
 
     await upsert_mapping(
         db_session,

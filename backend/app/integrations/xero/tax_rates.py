@@ -90,6 +90,74 @@ def map_report_tax_type(report_tax_type: str | None, *, fallback: str = "SALES")
     return XERO_REPORT_TO_OURS.get(key, key)
 
 
+# AP bills: Xero purchase system codes only (no tax-table lookup).
+INVOICE_XERO_TAX_TYPE_CHARGED = "INPUT"
+INVOICE_XERO_TAX_TYPE_ZERO = "EXEMPTINPUT"
+UNMATCHED_INVOICE_TAX_TYPE = INVOICE_XERO_TAX_TYPE_CHARGED
+_RATE_QUANT = Decimal("0.01")
+
+
+def _quantize_tax_percent(value: Decimal) -> Decimal:
+    return value.quantize(_RATE_QUANT)
+
+
+def tax_rate_row_percent(row: XeroTaxRate) -> Decimal | None:
+    raw = row.effective_rate if row.effective_rate is not None else row.display_tax_rate
+    return _decimal(raw)
+
+
+def match_xero_tax_type_for_percent(
+    rows: list[XeroTaxRate],
+    gst_percent: Decimal | None,
+) -> str | None:
+    """First synced row whose rate equals the invoice GST %. Duplicates keep list order."""
+    if gst_percent is None:
+        return None
+    target = _quantize_tax_percent(Decimal(str(gst_percent)))
+    for row in rows:
+        rate = tax_rate_row_percent(row)
+        if rate is None:
+            continue
+        if _quantize_tax_percent(rate) != target:
+            continue
+        code = (row.tax_type or "").strip()
+        if code:
+            return code
+    return None
+
+
+def invoice_gst_amount(invoice: Any) -> Decimal | None:
+    gst = getattr(invoice, "gst", None)
+    if gst is None:
+        return None
+    return Decimal(str(gst))
+
+
+async def resolve_invoice_xero_tax_type(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    xero_tenant_id: str,
+    invoice: Any,
+) -> str | None:
+    """AP TaxType for Xero: INPUT if tax is charged, EXEMPTINPUT if tax is zero.
+
+    Does not search synced tax rates. Line GST amounts stay on the invoice payload.
+    """
+    _ = (db, tenant_id, xero_tenant_id)
+    gst = invoice_gst_amount(invoice)
+    gst_rate = _decimal(getattr(invoice, "gst_rate", None))
+    if gst is None and gst_rate is None:
+        return None
+    if gst is not None:
+        if gst == 0:
+            return INVOICE_XERO_TAX_TYPE_ZERO
+        return INVOICE_XERO_TAX_TYPE_CHARGED
+    if gst_rate == 0:
+        return INVOICE_XERO_TAX_TYPE_ZERO
+    return INVOICE_XERO_TAX_TYPE_CHARGED
+
+
 def components_from_payload(payload: dict[str, Any], *, fallback_name: str, fallback_rate: float) -> list[TaxRateComponent]:
     rows: list[TaxRateComponent] = []
     for item in payload.get("TaxComponents") or []:

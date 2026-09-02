@@ -1103,6 +1103,20 @@ export const api = {
       `/api/integrations/xero/contacts${q ? `?${q}` : ""}`
     );
   },
+  createXeroContact: (body: { legal_name: string; supplier_key?: string }) => {
+    bustGetCacheByPrefix("/api/integrations/xero");
+    return request<{
+      created: boolean;
+      reused: boolean;
+      contact_id: string;
+      name?: string | null;
+      reason?: string | null;
+    }>("/api/integrations/xero/contacts/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  },
   getXeroReferenceAccounts: (params?: {
     search?: string;
     status?: string;

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Navigate, useSearchParams } from "react-router-dom";
-import { Building2, CircleUser, Loader2 } from "lucide-react";
+import { Building2, CircleUser, CloudDownload, Loader2 } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { PageTabPanel, PageTabs } from "@/components/PageTabs";
 import { Card } from "@/components/ui/card";
+import { PulledContactsPanel } from "@/components/contacts/PulledContactsPanel";
 import { CustomersTab } from "@/components/rule-book/CustomersTab";
 import { EmployeesTab } from "@/components/rule-book/EmployeesTab";
 import { VendorsTab } from "@/components/rule-book/VendorsTab";
@@ -21,6 +22,7 @@ import {
 const CREATIONS_TABS = [
   { value: "vendors", label: "Vendors", testid: "tab-vendors", icon: Building2 },
   { value: "customers", label: "Customers", testid: "tab-customers", icon: Building2 },
+  { value: "pulled", label: "Pulled", testid: "tab-pulled", icon: CloudDownload },
   { value: "employees", label: "Employees", testid: "tab-employees", icon: CircleUser },
 ] as const;
 
@@ -226,6 +228,9 @@ export function CreationsPage() {
         </PageTabPanel>
         <PageTabPanel value="customers" active={tab} className="mt-0">
           <CustomersTab defaultSection={customersSection} />
+        </PageTabPanel>
+        <PageTabPanel value="pulled" active={tab} className="mt-0">
+          <PulledContactsPanel canEdit={canEdit} />
         </PageTabPanel>
         <PageTabPanel value="employees" active={tab} className="mt-0">
           <EmployeesTab />

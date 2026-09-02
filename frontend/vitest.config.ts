@@ -65,6 +65,7 @@ export default defineConfig({
       "src/lib/xeroAccountTypes.test.ts",
       "src/lib/billProcessingTax.test.ts",
       "src/components/settings/TaxRatesPanel.test.tsx",
+      "src/components/contacts/PulledContactsPanel.test.tsx",
       "src/lib/pageTenantIsolation.test.ts",
       "src/lib/publicSignupRoutes.test.ts",
       "src/lib/signupForm.test.ts",

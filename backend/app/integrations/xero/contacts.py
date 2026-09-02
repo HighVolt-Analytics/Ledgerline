@@ -328,3 +328,48 @@ async def create_xero_supplier_contact(
         "contact_id": contact_id,
         "name": created.get("Name"),
     }
+
+
+async def ensure_invoice_xero_supplier_contact(
+    db: AsyncSession,
+    invoice: Any,
+) -> dict[str, Any] | None:
+    """Match extracted AP vendor to Xero contacts, or create the name in Xero.
+
+    No-op when Xero is not connected, the invoice is sales/vault, or there is no vendor name.
+    Never raises — processing must continue.
+    """
+    from app.services.invoice.invoice_evaluation_service import ROUTE_SALES, ROUTE_VAULT
+    from app.utils.logger import get_logger
+
+    log = get_logger(__name__)
+    route = (getattr(invoice, "route_target", None) or "").strip()
+    if route in {ROUTE_SALES, ROUTE_VAULT}:
+        return None
+    legal_name = (getattr(invoice, "vendor", None) or "").strip()
+    if not legal_name:
+        return None
+    tenant_id = invoice.tenant_id
+    supplier_key = str(getattr(invoice, "storage_vendor_slug", None) or legal_name)
+    try:
+        await require_xero_ready(db, tenant_id)
+    except Exception:
+        return None
+    try:
+        return await create_xero_supplier_contact(
+            db,
+            tenant_id=tenant_id,
+            supplier_key=supplier_key,
+            legal_name=legal_name,
+            tax_id=getattr(invoice, "abn", None),
+            email=getattr(invoice, "email_sender", None),
+            user_id=None,
+        )
+    except Exception as exc:
+        log.warning(
+            "xero_invoice_contact_ensure_failed",
+            invoice_id=getattr(invoice, "id", None),
+            tenant_id=str(tenant_id),
+            error=str(exc),
+        )
+        return None

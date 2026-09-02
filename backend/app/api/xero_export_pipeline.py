@@ -21,6 +21,7 @@ from app.services.integration.accounting_mapping_service import (
     mapping_to_dict,
     upsert_mapping,
 )
+from app.integrations.xero.client import XeroApiError
 from app.integrations.xero.contacts import (
     create_xero_supplier_contact,
     resolve_supplier_contact,
@@ -73,8 +74,8 @@ class ContactResolveBody(BaseModel):
 
 
 class ContactCreateBody(BaseModel):
-    supplier_key: str
     legal_name: str
+    supplier_key: str | None = None
     tax_id: str | None = None
     email: str | None = None
 
@@ -317,12 +318,16 @@ async def contacts_create(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_admin),
 ) -> ApiEnvelope[dict]:
+    legal_name = body.legal_name.strip()
+    if not legal_name:
+        raise HTTPException(400, detail={"message": "Contact name is required", "code": "name_required"})
+    supplier_key = (body.supplier_key or legal_name).strip()
     try:
         result = await create_xero_supplier_contact(
             db,
             tenant_id=ctx.tenant_id,
-            supplier_key=body.supplier_key,
-            legal_name=body.legal_name,
+            supplier_key=supplier_key,
+            legal_name=legal_name,
             tax_id=body.tax_id,
             email=body.email,
             user_id=ctx.user_id,
@@ -330,6 +335,8 @@ async def contacts_create(
     except ValueError as exc:
         code = str(exc)
         raise HTTPException(400, detail={"message": code, "code": code}) from exc
+    except XeroApiError as exc:
+        raise HTTPException(exc.status_code or 502, exc.message) from exc
     await log_event(
         db,
         "xero_contact_created",

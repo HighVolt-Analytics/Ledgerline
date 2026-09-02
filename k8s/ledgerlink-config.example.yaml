@@ -1,4 +1,4 @@
-﻿# Example ConfigMap for namespace quantum-ledgerlink.
+# Example ConfigMap for namespace quantum-ledgerlink.
 # Apply after filling non-secret values: kubectl apply -f k8s/ledgerlink-config.example.yaml
 # Do not commit real secrets â€” use app-secrets for sensitive keys.
 apiVersion: v1
@@ -73,7 +73,9 @@ data:
   # WHATSAPP_OAUTH_REDIRECT_URI=https://staging.highvolt.tech/ledgerlink/auth/whatsapp/callback
   # WHATSAPP_OAUTH_FRONTEND_RETURN_URL=https://staging.highvolt.tech/ledgerlink/integrations
   # XERO_ENABLED=true
+  # XERO_REDIRECT_URI must match the Xero app callback exactly (token exchange uses this value).
   # XERO_REDIRECT_URI=https://staging.highvolt.tech/ledgerlink/api/integrations/xero/callback
+  # app-secrets XERO_CLIENT_SECRET must be a quoted string if it starts with '-'
   # QUICKBOOKS_REDIRECT_URI=https://staging.highvolt.tech/ledgerlink/api/integrations/quickbooks/callback
   # ACCOUNTING_OAUTH_FRONTEND_RETURN_URL=https://staging.highvolt.tech/ledgerlink/integrations
   # app-secrets: XERO_CLIENT_ID, XERO_CLIENT_SECRET, XERO_WEBHOOK_KEY, QUICKBOOKS_CLIENT_ID, QUICKBOOKS_CLIENT_SECRET
