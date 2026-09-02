@@ -80,7 +80,7 @@ export const EVAL_DOCUMENTS: EvalDocument[] = [
   },
 ];
 
-const EMAIL_CAPTURE_RULES: EmailCaptureRule[] = [
+export const EMAIL_CAPTURE_RULES: EmailCaptureRule[] = [
   {
     id: "ec-1",
     name: "AWS billing",
@@ -702,7 +702,6 @@ export function createDefaultRuleBookConfig(): RuleBookConfigState {
       autoRouteMinConfidence: 0.85,
     },
     orgContext: emptyOrgContextConfig(),
-    emailCaptureRules: EMAIL_CAPTURE_RULES,
     purchaseRules: PURCHASE_RULES,
     salesRules: [],
     expenseRules: EXPENSE_RULES,

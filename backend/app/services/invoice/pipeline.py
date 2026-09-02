@@ -1111,51 +1111,35 @@ async def _ingest_single_email(
         )
         return
 
-    # Gate: ingest capture rule first, then employee master for catch-all / Team Expenses.
-    # Specific Purchase/Sales ``from`` rules do not require an employee match.
-    from app.services.ingest.ingest_capture_service import employee_bypass_capture_rule
+    # Gate: ingest capture rules (deny-by-default), then employee sender for Team/catch-all rules.
+    from app.services.ingest.ingest_capture_service import _enabled_capture_rules
     from app.services.master_data.master_data_service import list_employee_masters
     from app.services.purchase.team_expense_validator import find_employee_by_sender
 
     employees = await list_employee_masters(session, tenant_id)
     matched_employee = find_employee_by_sender(employees, email.sender)
+    zero_rules_enabled = len(_enabled_capture_rules(capture_config)) == 0
 
     capture_rule_blocked = False
     for att in attachments:
         capture_rule = evaluate_ingest_capture(email, att, capture_config)
         if not capture_rule:
-            # No human-authored rule: employees may still ingest via registry bypass.
-            if matched_employee is not None:
-                capture_rule = employee_bypass_capture_rule(email.mailbox_email or "")
-                await log_event(
-                    session,
-                    "email_employee_bypass",
-                    detail={
-                        "reason": "employee_registry_match",
-                        "message_id": email.message_id,
-                        "sender": email.sender,
-                        "employee_name": matched_employee.name,
-                        "subject": email.subject,
-                        "attachment": att.filename,
-                        "mailbox": email.mailbox_email,
-                    },
-                )
-            else:
-                capture_rule_blocked = True
-                log_ingest_capture_decision(email, att, capture_config, matched_rule=None)
-                await log_event(
-                    session,
-                    "email_skipped",
-                    detail={
-                        "reason": "no_capture_rule_match",
-                        "message_id": email.message_id,
-                        "sender": email.sender,
-                        "subject": email.subject,
-                        "attachment": att.filename,
-                        "mailbox": email.mailbox_email,
-                    },
-                )
-                continue
+            capture_rule_blocked = True
+            log_ingest_capture_decision(email, att, capture_config, matched_rule=None)
+            skip_reason = "zero_rules_enabled" if zero_rules_enabled else "no_capture_rule_match"
+            await log_event(
+                session,
+                "email_skipped",
+                detail={
+                    "reason": skip_reason,
+                    "message_id": email.message_id,
+                    "sender": email.sender,
+                    "subject": email.subject,
+                    "attachment": att.filename,
+                    "mailbox": email.mailbox_email,
+                },
+            )
+            continue
 
         # Catch-all / Team Expenses: rule matched, but sender must be an employee.
         if capture_rule_requires_employee_sender(capture_rule) and matched_employee is None:
@@ -1179,6 +1163,25 @@ async def _ingest_single_email(
             continue
 
         log_ingest_capture_decision(email, att, capture_config, matched_rule=capture_rule)
+
+        if not capture_rule.action.save_attachment:
+            capture_rule_blocked = True
+            await log_event(
+                session,
+                "email_skipped",
+                detail={
+                    "reason": "save_attachment_disabled",
+                    "message_id": email.message_id,
+                    "sender": email.sender,
+                    "subject": email.subject,
+                    "attachment": att.filename,
+                    "mailbox": email.mailbox_email,
+                    "capture_rule_id": capture_rule.id,
+                    "capture_rule_name": capture_rule.name,
+                },
+            )
+            result.preskip_exceptions[email.message_id] = "save_attachment_disabled"
+            continue
 
         file_hash = compute_sha256_bytes(att.data)
         content_fingerprint: str | None = None
@@ -1278,10 +1281,42 @@ async def _ingest_single_email(
                 if outcome.action == "reingest_rejected" and outcome.invoice_id is not None:
                     inv = await session.get(Invoice, outcome.invoice_id)
                     if inv is not None:
+                        reingest_rule = evaluate_ingest_capture(email, att, capture_config)
+                        if reingest_rule is None:
+                            skip_reason = (
+                                "zero_rules_enabled"
+                                if len(_enabled_capture_rules(capture_config)) == 0
+                                else "no_capture_rule_match"
+                            )
+                        elif not reingest_rule.action.save_attachment:
+                            skip_reason = "save_attachment_disabled"
+                        elif (
+                            capture_rule_requires_employee_sender(reingest_rule)
+                            and matched_employee is None
+                        ):
+                            skip_reason = "sender_not_employee"
+                        else:
+                            skip_reason = None
+                        if skip_reason:
+                            await log_event(
+                                session,
+                                "email_skipped",
+                                detail={
+                                    "reason": skip_reason,
+                                    "message_id": email.message_id,
+                                    "sender": email.sender,
+                                    "subject": email.subject,
+                                    "attachment": att.filename,
+                                    "mailbox": email.mailbox_email,
+                                    "reingest_rejected": True,
+                                    "capture_rule_id": reingest_rule.id if reingest_rule else None,
+                                },
+                            )
+                            continue
                         from app.services.sales.so_reference import ensure_invoice_so_reference
 
                         ensure_invoice_so_reference(inv)
-                        await apply_ingest_capture(session, inv, email, att)
+                        await apply_ingest_capture(session, inv, email, att, config=capture_config)
                         result.ingested_count += 1
                 continue
 

@@ -2,10 +2,10 @@
   "schema_version": 1,
   "email_capture_rules": [
     {
-      "id": "ec-default",
-      "name": "All mailbox attachments",
+      "id": "ec-employee-bypass",
+      "name": "Employee registry attachments",
       "enabled": true,
-      "priority": 9999,
+      "priority": 100,
       "mailbox": "*",
       "root": {
         "type": "group",
@@ -16,12 +16,6 @@
             "field": "attachment_name",
             "operator": "ends_with",
             "value": ".pdf"
-          },
-          {
-            "type": "condition",
-            "field": "attachment_name",
-            "operator": "ends_with",
-            "value": ".PDF"
           },
           {
             "type": "condition",
@@ -51,9 +45,10 @@
       },
       "action": {
         "save_attachment": true,
-        "route_to": "Purchase Management",
+        "route_to": "Team Expenses",
         "tags": []
       },
+      "requires_employee_sender": true,
       "matched_count": 0,
       "last_matched": ""
     }

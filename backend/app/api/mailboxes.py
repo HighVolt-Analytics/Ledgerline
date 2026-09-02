@@ -5,12 +5,17 @@ from datetime import datetime, timezone
 from urllib.parse import urlencode
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from typing import Any
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, actor_from_context, bind_db_to_tenant, get_auth_context, get_db, require_admin
+from app.schemas.rule_book_config import EmailCaptureRule, RuleConditionGroup
+from app.services.auth.privilege_service import require_privilege
 from app.tenant_scoped import get_for_tenant
 from app.config import get_settings
 from app.models.connected_mailbox import AUTH_DELEGATED, ConnectedMailbox
@@ -565,6 +570,127 @@ async def add_mailbox(
     db.add(row)
     await db.flush()
     return ApiEnvelope(data=_to_response(row))
+
+
+class EmailIngestionRulesUpdate(BaseModel):
+    email_capture_rules: list[EmailCaptureRule]
+
+
+class EmailIngestionRuleTestRequest(BaseModel):
+    mailbox: str = Field(..., min_length=1)
+    root: RuleConditionGroup
+    lookback_days: int = Field(default=30, ge=1, le=90)
+    rule_name: str = Field(default="Preview rule", min_length=1)
+
+
+@router.get("/ingestion-rules", response_model=ApiEnvelope[dict[str, Any]])
+async def get_email_ingestion_rules(
+    ctx: AuthContext = Depends(get_auth_context),
+    db: AsyncSession = Depends(get_db),
+) -> ApiEnvelope[dict[str, Any]]:
+    """Return email ingestion rules for Upload → Email setup."""
+    from app.services.ingest.email_ingestion_rules_service import load_email_ingestion_rules_dict
+
+    return ApiEnvelope(data=await load_email_ingestion_rules_dict(db, ctx.tenant_id))
+
+
+@router.get("/ingestion-rules/stats", response_model=ApiEnvelope[dict[str, Any]])
+async def get_email_ingestion_rule_stats(
+    ctx: AuthContext = Depends(get_auth_context),
+    db: AsyncSession = Depends(get_db),
+) -> ApiEnvelope[dict[str, Any]]:
+    """Match counts for ingestion rules (derived from audit logs)."""
+    from app.services.ingest.email_ingestion_rules_service import load_email_ingestion_stats_dict
+
+    return ApiEnvelope(data=await load_email_ingestion_stats_dict(db, ctx.tenant_id))
+
+
+@router.put("/ingestion-rules", response_model=ApiEnvelope[dict[str, Any]])
+async def put_email_ingestion_rules(
+    body: EmailIngestionRulesUpdate,
+    request: Request,
+    ctx: AuthContext = Depends(get_auth_context),
+    db: AsyncSession = Depends(get_db),
+) -> ApiEnvelope[dict[str, Any]]:
+    """Persist email ingestion rules from Upload → Email setup."""
+    from app.services.ingest.email_capture_rule_validation import (
+        validate_email_capture_rules_warnings_by_id,
+    )
+    from app.services.ingest.email_ingestion_rules_service import (
+        save_email_ingestion_rules,
+        validation_http_detail,
+    )
+
+    require_privilege(ctx, "Edit Policy")
+    actor_name, actor_email = await actor_from_context(db, ctx)
+    client_ip = request.client.host if request.client else None
+    try:
+        payload, warnings = await save_email_ingestion_rules(
+            db,
+            ctx.tenant_id,
+            body.email_capture_rules,
+            actor_name=actor_name,
+            actor_email=actor_email,
+            client_ip=client_ip,
+        )
+    except (ValidationError, ValueError) as exc:
+        raise HTTPException(422, validation_http_detail(exc)) from exc
+
+    return ApiEnvelope(
+        data={
+            "email_capture_rules": [
+                rule.model_dump() for rule in payload.email_capture_rules
+            ],
+            "warnings": warnings,
+            "rule_warnings": validate_email_capture_rules_warnings_by_id(
+                payload.email_capture_rules
+            ),
+        }
+    )
+
+
+@router.get("/ingestion-rules/recent-skips", response_model=ApiEnvelope[dict[str, Any]])
+async def get_email_ingestion_recent_skips(
+    mailbox: str = Query(..., min_length=1, description="Connected mailbox email address"),
+    ctx: AuthContext = Depends(get_auth_context),
+    db: AsyncSession = Depends(get_db),
+) -> ApiEnvelope[dict[str, Any]]:
+    """Recent email_skipped audit events for one mailbox (ingest troubleshooting)."""
+    from app.services.ingest.email_ingestion_rules_service import load_recent_skips_dict
+
+    return ApiEnvelope(data=await load_recent_skips_dict(db, ctx.tenant_id, mailbox))
+
+
+@router.post("/ingestion-rules/test", response_model=ApiEnvelope[dict[str, Any]])
+async def test_email_ingestion_rule(
+    body: EmailIngestionRuleTestRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+    db: AsyncSession = Depends(get_db),
+) -> ApiEnvelope[dict[str, Any]]:
+    """Dry-run a draft ingestion rule against recent mailbox messages (no ingest)."""
+    from app.services.ingest.email_capture_preview_service import preview_email_capture_rule
+    from app.services.ingest.email_capture_rule_validation import validate_rule_specificity
+    from app.services.ingest.email_ingestion_rules_service import build_preview_capture_rule
+
+    require_privilege(ctx, "Edit Policy")
+    draft = build_preview_capture_rule(
+        mailbox=body.mailbox,
+        root=body.root,
+        rule_name=body.rule_name,
+    )
+    result = await preview_email_capture_rule(
+        db,
+        tenant_id=ctx.tenant_id,
+        mailbox=body.mailbox,
+        root=body.root,
+        lookback_days=body.lookback_days,
+        rule_name=body.rule_name,
+    )
+    result["warnings"] = [
+        *list(result.get("warnings") or []),
+        *validate_rule_specificity(draft),
+    ]
+    return ApiEnvelope(data=result)
 
 
 @router.delete("/{mailbox_id}", status_code=204)

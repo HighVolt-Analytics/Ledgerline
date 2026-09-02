@@ -7,6 +7,7 @@ Routing is decided after OCR from document content (category rules / document ty
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -84,14 +85,8 @@ _CATCH_ALL_RULE_NAMES = frozenset(
 )
 
 
-def capture_rule_requires_employee_sender(rule: EmailCaptureRule | None) -> bool:
-    """True when ingest must also match an employee master email.
-
-    Catch-all / Team Expenses rules must not pull arbitrary senders — only registered
-    employees. Specific Purchase/Sales capture rules (e.g. vendor ``from`` filters) do not.
-    """
-    if rule is None:
-        return False
+def infer_requires_employee_sender(rule: EmailCaptureRule) -> bool:
+    """Derive employee-sender requirement from legacy route/id/name heuristics."""
     route = (rule.action.route_to or "").strip()
     if route == "Team Expenses":
         return True
@@ -104,19 +99,42 @@ def capture_rule_requires_employee_sender(rule: EmailCaptureRule | None) -> bool
     return False
 
 
-def employee_bypass_capture_rule(mailbox_email: str) -> EmailCaptureRule:
-    """Synthetic rule used when sender matches an employee in the registry.
+def capture_rule_requires_employee_sender(rule: EmailCaptureRule | None) -> bool:
+    """True when ingest must also match an employee master email.
 
-    Employee senders on email/WhatsApp/Viber are ingested when no human-authored
-    capture rule matches — the employee registry is the allow-list for Team Expenses.
+    Reads persisted ``requires_employee_sender`` when set; otherwise falls back to
+    legacy route/id/name inference for rules saved before the field existed.
     """
-    mailbox = mailbox_email.strip() or "inbox"
+    if rule is None:
+        return False
+    if rule.requires_employee_sender is not None:
+        return rule.requires_employee_sender
+    return infer_requires_employee_sender(rule)
+
+
+def backfill_requires_employee_sender_on_rule_dict(rule: dict[str, Any]) -> dict[str, Any]:
+    """Ensure JSON rule rows include requires_employee_sender when missing."""
+    if not isinstance(rule, dict):
+        return rule
+    if rule.get("requires_employee_sender") is not None:
+        return rule
+    try:
+        model = EmailCaptureRule.model_validate(rule)
+    except Exception:
+        return rule
+    merged = dict(rule)
+    merged["requires_employee_sender"] = infer_requires_employee_sender(model)
+    return merged
+
+
+def employee_bypass_capture_rule(mailbox_email: str = "*") -> EmailCaptureRule:
+    """Default persisted employee-ingest rule template (Team Expenses, employee-gated at pipeline)."""
+    mailbox = (mailbox_email or "*").strip() or "*"
     return EmailCaptureRule(
         id=EMPLOYEE_BYPASS_CAPTURE_RULE_ID,
-        name="Employee registry bypass",
+        name="Employee registry attachments",
         enabled=True,
-        # EmailCaptureRule.priority is ge=1; 0 crashes employee bypass at ingest.
-        priority=1,
+        priority=100,
         mailbox=mailbox,
         root=RuleConditionGroup(
             type="group",
@@ -125,8 +143,32 @@ def employee_bypass_capture_rule(mailbox_email: str) -> EmailCaptureRule:
                 RuleCondition(
                     type="condition",
                     field="attachment_name",
-                    operator="contains",
-                    value=".",
+                    operator="ends_with",
+                    value=".pdf",
+                ),
+                RuleCondition(
+                    type="condition",
+                    field="attachment_name",
+                    operator="ends_with",
+                    value=".jpg",
+                ),
+                RuleCondition(
+                    type="condition",
+                    field="attachment_name",
+                    operator="ends_with",
+                    value=".jpeg",
+                ),
+                RuleCondition(
+                    type="condition",
+                    field="attachment_name",
+                    operator="ends_with",
+                    value=".png",
+                ),
+                RuleCondition(
+                    type="condition",
+                    field="attachment_name",
+                    operator="ends_with",
+                    value=".docx",
                 ),
             ],
         ),
@@ -135,6 +177,7 @@ def employee_bypass_capture_rule(mailbox_email: str) -> EmailCaptureRule:
             route_to="Team Expenses",
             tags=[],
         ),
+        requires_employee_sender=True,
     )
 
 
@@ -169,6 +212,23 @@ def default_catch_all_capture_rule(mailbox_email: str) -> EmailCaptureRule:
 
 def _enabled_capture_rules(config: RuleBookConfigPayload) -> list[EmailCaptureRule]:
     return [rule for rule in config.email_capture_rules if rule.enabled]
+
+
+def ensure_email_capture_rules_in_dict(data: dict[str, Any]) -> dict[str, Any]:
+    """Ensure the persisted employee-ingest rule exists for every tenant."""
+    rules = data.get("email_capture_rules")
+    if not isinstance(rules, list):
+        rules = []
+    merged = dict(data)
+    if not any(
+        isinstance(row, dict) and row.get("id") == EMPLOYEE_BYPASS_CAPTURE_RULE_ID for row in rules
+    ):
+        rules = [employee_bypass_capture_rule("*").model_dump(), *rules]
+    merged["email_capture_rules"] = [
+        backfill_requires_employee_sender_on_rule_dict(row) if isinstance(row, dict) else row
+        for row in rules
+    ]
+    return merged
 
 
 def _mailbox_mapping_summary(
@@ -210,9 +270,8 @@ def log_ingest_capture_decision(
     if not enabled:
         logger.info(
             "ingest_capture_decision",
-            outcome="catch_all_default",
+            outcome="zero_rules_enabled",
             enabled_rule_count=0,
-            matched_rule_id=DEFAULT_CATCH_ALL_CAPTURE_RULE_ID,
             **base,
         )
         return
@@ -254,7 +313,7 @@ def evaluate_ingest_capture(
 ) -> EmailCaptureRule | None:
     """Return the first matching ingestion rule, or None to skip the attachment."""
     if not _enabled_capture_rules(config):
-        return default_catch_all_capture_rule(email.mailbox_email)
+        return None
     sample = raw_email_to_sample_email(email, attachment)
     effective_rules = _effective_capture_rules(config, email.mailbox_email)
     return match_email_capture_rule(

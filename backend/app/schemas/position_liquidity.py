@@ -43,6 +43,7 @@ class PositionLiquidityKpis(BaseModel):
     budget_utilisation_pct: Decimal | None = None
     budget_actual: Decimal = Decimal("0")
     budget_allocated: Decimal = Decimal("0")
+    budget_committed: Decimal = Decimal("0")
     advances_outstanding: Decimal = Decimal("0")
     advances_overdue: Decimal = Decimal("0")
     advances_overdue_employees: int = 0
@@ -50,6 +51,12 @@ class PositionLiquidityKpis(BaseModel):
     open_exceptions_at_risk: Decimal = Decimal("0")
     claims_pending_count: int = 0
     claims_pending_value: Decimal = Decimal("0")
+    documents_to_review_count: int = 0
+    documents_to_review_value: Decimal = Decimal("0")
+    documents_processing_count: int = 0
+    documents_processing_value: Decimal = Decimal("0")
+    payments_queue_count: int = 0
+    payments_queue_value: Decimal = Decimal("0")
     vendor_top10_concentration_pct: Decimal | None = None
     vendor_non_po_spend_pct: Decimal | None = None
 

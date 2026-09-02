@@ -30,7 +30,7 @@ export function SalesCaptureStrip({ activeRuleCount = 0 }: { activeRuleCount?: n
         Collections queue
       </Link>
       <Link
-        to="/rules"
+        to="/settings?tab=rule-book"
         className="inline-flex items-center gap-1.5 text-primary hover:underline text-sm ml-auto"
         data-testid="link-sales-rule-book"
       >

@@ -86,6 +86,8 @@ async def load_rule_book_config_dict(
     tenant_id: uuid.UUID,
 ) -> dict[str, Any]:
     """Load config from DB; fall back to legacy file and upsert into DB."""
+    from app.services.ingest.ingest_capture_service import ensure_email_capture_rules_in_dict
+
     tid = parse_tenant_id(tenant_id)
     if tid is None:
         raise ValueError("Invalid tenant_id")
@@ -93,16 +95,19 @@ async def load_rule_book_config_dict(
     stored = await fetch_config_dict(session, tid)
     if stored is not None:
         fixed = validate_rule_book_config_payload(stored).model_dump()
-        if fixed.get("document_types") != stored.get("document_types"):
-            await upsert_config(session, tid, fixed)
-        return fixed
+        ensured = ensure_email_capture_rules_in_dict(fixed)
+        if ensured != stored:
+            await upsert_config(session, tid, ensured)
+        return ensured
 
     legacy = _load_legacy_file_dict(tid)
     if legacy is not None:
+        legacy = ensure_email_capture_rules_in_dict(legacy)
         await upsert_config(session, tid, legacy)
         return legacy
 
-    return await ensure_default_config(session, tid)
+    default = await ensure_default_config(session, tid)
+    return ensure_email_capture_rules_in_dict(default)
 
 
 async def merge_persisted_rule_book_slices(
@@ -117,6 +122,8 @@ async def merge_persisted_rule_book_slices(
         merged["chart_of_accounts"] = stored.get("chart_of_accounts") or []
     # Tax rates are managed via /tenants/current/tax-rates, not Rule Book PUT.
     merged["tax_rates"] = stored.get("tax_rates") or []
+    # Email capture rules are edited via Upload → Email setup, not Rule Book PUT.
+    merged["email_capture_rules"] = stored.get("email_capture_rules") or []
     return merged
 
 

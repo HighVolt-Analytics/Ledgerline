@@ -78,6 +78,8 @@ import type {
   EfficiencyAutomationDashboard,
   CashLiabilityOutlookDashboard,
   BudgetConcentrationRiskDashboard,
+  CfoAlertsDashboard,
+  ProcessEfficiencyTrendsDashboard,
   ReportsAnalytics,
   ReportCatalogResponse,
   ReportColumnLayoutCreate,
@@ -163,6 +165,12 @@ import type {
 import { resolveApiBase } from "@/lib/apiBase";
 import { tenantIdFromToken } from "@/lib/authToken";
 import { getAccessToken, getRefreshToken } from "@/lib/authSession";
+import type { DashboardPeriod } from "@/lib/dashboardPeriod";
+
+function dashboardApiPath(path: string, period?: DashboardPeriod): string {
+  if (!period) return path;
+  return `${path}?period=${encodeURIComponent(period)}`;
+}
 
 /** Public URL prefix; endpoint paths include /api (e.g. BASE + /api/auth/login). */
 const BASE = resolveApiBase();
@@ -1313,14 +1321,26 @@ export const api = {
     if (month) params.set("month", month);
     return request<DashboardOverview>(`/api/dashboard/overview?${params}`);
   },
-  getPositionLiquidity: () =>
-    request<PositionLiquidityDashboard>("/api/dashboard/position-liquidity"),
-  getEfficiencyAutomation: () =>
-    request<EfficiencyAutomationDashboard>("/api/dashboard/efficiency-automation"),
-  getCashLiabilityOutlook: () =>
-    request<CashLiabilityOutlookDashboard>("/api/dashboard/cash-liability-outlook"),
-  getBudgetConcentrationRisk: () =>
-    request<BudgetConcentrationRiskDashboard>("/api/dashboard/budget-concentration-risk"),
+  getPositionLiquidity: (period?: DashboardPeriod) =>
+    request<PositionLiquidityDashboard>(dashboardApiPath("/api/dashboard/position-liquidity", period)),
+  getEfficiencyAutomation: (period?: DashboardPeriod) =>
+    request<EfficiencyAutomationDashboard>(
+      dashboardApiPath("/api/dashboard/efficiency-automation", period)
+    ),
+  getCashLiabilityOutlook: (period?: DashboardPeriod) =>
+    request<CashLiabilityOutlookDashboard>(
+      dashboardApiPath("/api/dashboard/cash-liability-outlook", period)
+    ),
+  getBudgetConcentrationRisk: (period?: DashboardPeriod) =>
+    request<BudgetConcentrationRiskDashboard>(
+      dashboardApiPath("/api/dashboard/budget-concentration-risk", period)
+    ),
+  getCfoAlerts: (period?: DashboardPeriod) =>
+    request<CfoAlertsDashboard>(dashboardApiPath("/api/dashboard/cfo-alerts", period)),
+  getProcessEfficiencyTrends: (period?: DashboardPeriod) =>
+    request<ProcessEfficiencyTrendsDashboard>(
+      dashboardApiPath("/api/dashboard/process-efficiency-trends", period)
+    ),
   getActivity: (limit = 20) =>
     request<ActivityItem[]>(`/api/dashboard/activity?limit=${limit}`),
   listInvoices: (params?: Record<string, string>, options?: FreshRequestOptions) => {
@@ -1392,6 +1412,12 @@ export const api = {
     const path = `/api/matrix${q ? `?${q}` : ""}`;
     if (options?.fresh) bustGetCache(path);
     return requestWithMeta<MatrixRow[]>(path);
+  },
+  getMatrixAnalysis: (params?: Record<string, string>, options?: FreshRequestOptions) => {
+    const q = new URLSearchParams(params).toString();
+    const path = `/api/matrix/analysis${q ? `?${q}` : ""}`;
+    if (options?.fresh) bustGetCache(path);
+    return requestWithMeta<import("@/lib/uploadAnalysisApi").MatrixAnalysisApiResponse>(path);
   },
   listDossiersWithMeta: (params?: Record<string, string>, options?: FreshRequestOptions) => {
     const q = new URLSearchParams(params).toString();
@@ -1911,6 +1937,69 @@ export const api = {
         body: JSON.stringify({ vendor_detection_config: config }),
       }
     ),
+  getEmailIngestionRules: () =>
+    request<
+      Pick<RuleBookConfig, "email_capture_rules"> & {
+        rule_warnings?: Record<string, string[]>;
+      }
+    >("/api/mailboxes/ingestion-rules"),
+  putEmailIngestionRules: (rules: RuleBookConfig["email_capture_rules"]) =>
+    request<
+      Pick<RuleBookConfig, "email_capture_rules"> & {
+        warnings?: string[];
+        rule_warnings?: Record<string, string[]>;
+      }
+    >(
+      "/api/mailboxes/ingestion-rules",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email_capture_rules: rules }),
+      }
+    ),
+  getEmailIngestionRecentSkips: (mailbox: string) =>
+    request<{
+      mailbox: string;
+      skips: Array<{
+        sender: string;
+        subject: string;
+        attachment: string;
+        reason: string;
+        reason_label: string;
+        timestamp: string | null;
+        relative_time: string;
+        capture_rule_id?: string | null;
+        capture_rule_name?: string | null;
+        message_id?: string | null;
+      }>;
+    }>(`/api/mailboxes/ingestion-rules/recent-skips?mailbox=${encodeURIComponent(mailbox)}`),
+  getEmailIngestionStats: () =>
+    request<{
+      ingest_stats: Record<string, { matched_count: number; last_matched: string }>;
+    }>("/api/mailboxes/ingestion-rules/stats"),
+  testEmailIngestionRule: (body: {
+    mailbox: string;
+    root: Record<string, unknown>;
+    lookback_days?: number;
+    rule_name?: string;
+  }) =>
+    request<{
+      mailbox: string;
+      lookback_days: number;
+      message_count: number;
+      matches: Array<{
+        message_id: string;
+        subject: string;
+        sender: string;
+        attachment: string;
+        received_at: string | null;
+      }>;
+      warnings: string[];
+    }>("/api/mailboxes/ingestion-rules/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
   putRuleBookBankFileSettings: (settings: BankFileSettings) =>
     request<Pick<RuleBookConfig, "bank_file_settings">>(
       "/api/rule-book/config/bank-file-settings",

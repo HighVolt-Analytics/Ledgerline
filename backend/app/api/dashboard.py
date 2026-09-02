@@ -12,6 +12,8 @@ from app.schemas.position_liquidity import PositionLiquidityDashboard
 from app.schemas.efficiency_automation import EfficiencyAutomationDashboard
 from app.schemas.cash_liability_outlook import CashLiabilityOutlookDashboard
 from app.schemas.budget_concentration_risk import BudgetConcentrationRiskDashboard
+from app.schemas.cfo_alerts import CfoAlertsDashboard
+from app.schemas.process_efficiency_trends import ProcessEfficiencyTrendsDashboard
 from app.services.reports.dashboard_service import (
     build_nav_badges,
     build_overview,
@@ -28,8 +30,20 @@ from app.services.reports.cash_liability_outlook_service import (
 from app.services.reports.budget_concentration_risk_service import (
     build_budget_concentration_risk_dashboard,
 )
+from app.services.reports.cfo_alerts_service import build_cfo_alerts_dashboard
+from app.services.reports.process_efficiency_trends_service import (
+    build_process_efficiency_trends_dashboard,
+)
+from app.services.reports.dashboard_period import DEFAULT_DASHBOARD_PERIOD
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+DashboardPeriodQuery = Annotated[
+    str | None,
+    Query(
+        description="Reporting window: fy_ytd (financial year YTD), mtd, fq_ytd (fiscal quarter YTD), r12",
+    ),
+]
 
 
 @router.get("/badges", response_model=ApiEnvelope[NavBadges])
@@ -98,10 +112,11 @@ async def activity(
 
 @router.get("/position-liquidity", response_model=ApiEnvelope[PositionLiquidityDashboard])
 async def position_liquidity(
+    period: DashboardPeriodQuery = DEFAULT_DASHBOARD_PERIOD,
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[PositionLiquidityDashboard]:
-    """CFO Position & Liquidity KPI row — each figure reuses its detail report definition."""
+    """Dashboard Position & Liquidity KPI row — each figure reuses its detail report definition."""
     label = (
         ctx.tenant.name
         if ctx.tenant is not None and (ctx.tenant.name or "").strip()
@@ -114,6 +129,7 @@ async def position_liquidity(
                 db,
                 tenant_id=ctx.tenant_id,
                 environment_label=label,
+                period=period,
             )
         )
 
@@ -123,10 +139,11 @@ async def position_liquidity(
     response_model=ApiEnvelope[EfficiencyAutomationDashboard],
 )
 async def efficiency_automation(
+    period: DashboardPeriodQuery = DEFAULT_DASHBOARD_PERIOD,
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[EfficiencyAutomationDashboard]:
-    """CFO Efficiency & Automation KPI row — reuses Process Efficiency / Missing Documents."""
+    """Dashboard Efficiency & Automation KPI row — reuses Process Efficiency / Missing Documents."""
     label = (
         ctx.tenant.name
         if ctx.tenant is not None and (ctx.tenant.name or "").strip()
@@ -139,6 +156,7 @@ async def efficiency_automation(
                 db,
                 tenant_id=ctx.tenant_id,
                 environment_label=label,
+                period=period,
             )
         )
 
@@ -148,10 +166,11 @@ async def efficiency_automation(
     response_model=ApiEnvelope[CashLiabilityOutlookDashboard],
 )
 async def cash_liability_outlook(
+    period: DashboardPeriodQuery = DEFAULT_DASHBOARD_PERIOD,
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[CashLiabilityOutlookDashboard]:
-    """CFO cash forecast + AP ageing — reuses Cash Forecast / Aged Payables definitions."""
+    """Dashboard cash forecast + AP ageing — reuses Cash Forecast / Aged Payables definitions."""
     label = (
         ctx.tenant.name
         if ctx.tenant is not None and (ctx.tenant.name or "").strip()
@@ -164,6 +183,7 @@ async def cash_liability_outlook(
                 db,
                 tenant_id=ctx.tenant_id,
                 environment_label=label,
+                period=period,
             )
         )
 
@@ -173,10 +193,11 @@ async def cash_liability_outlook(
     response_model=ApiEnvelope[BudgetConcentrationRiskDashboard],
 )
 async def budget_concentration_risk(
+    period: DashboardPeriodQuery = DEFAULT_DASHBOARD_PERIOD,
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[BudgetConcentrationRiskDashboard]:
-    """CFO budget encumbrance + vendor concentration — reuses Budget Variance / Vendor Spend."""
+    """Dashboard budget encumbrance + vendor concentration — reuses Budget Variance / Vendor Spend."""
     label = (
         ctx.tenant.name
         if ctx.tenant is not None and (ctx.tenant.name or "").strip()
@@ -187,5 +208,58 @@ async def budget_concentration_risk(
             db,
             tenant_id=ctx.tenant_id,
             environment_label=label,
+            period=period,
         )
     )
+
+
+@router.get(
+    "/cfo-alerts",
+    response_model=ApiEnvelope[CfoAlertsDashboard],
+)
+async def cfo_alerts(
+    period: DashboardPeriodQuery = DEFAULT_DASHBOARD_PERIOD,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[CfoAlertsDashboard]:
+    """Dashboard alerts — Control Centre rows plus KPI threshold breaches."""
+    label = (
+        ctx.tenant.name
+        if ctx.tenant is not None and (ctx.tenant.name or "").strip()
+        else ctx.tenant_slug
+    )
+    return ApiEnvelope(
+        data=await build_cfo_alerts_dashboard(
+            db,
+            tenant_id=ctx.tenant_id,
+            environment_label=label,
+            period=period,
+        )
+    )
+
+
+@router.get(
+    "/process-efficiency-trends",
+    response_model=ApiEnvelope[ProcessEfficiencyTrendsDashboard],
+)
+async def process_efficiency_trends(
+    period: DashboardPeriodQuery = DEFAULT_DASHBOARD_PERIOD,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[ProcessEfficiencyTrendsDashboard]:
+    """Rolling 12-month DPO + straight-through % — reuses Position & Liquidity / Process Efficiency."""
+    label = (
+        ctx.tenant.name
+        if ctx.tenant is not None and (ctx.tenant.name or "").strip()
+        else ctx.tenant_slug
+    )
+    fx_rates = await get_tenant_fx_rates(db, ctx.tenant_id)
+    with tenant_fx_rates_scope(fx_rates):
+        return ApiEnvelope(
+            data=await build_process_efficiency_trends_dashboard(
+                db,
+                tenant_id=ctx.tenant_id,
+                environment_label=label,
+                period=period,
+            )
+        )

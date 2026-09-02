@@ -33,20 +33,6 @@ export function useRuleBookEditorConfig(enabled = true) {
   });
 }
 
-export function useRuleBookIngestStats(enabled = true) {
-  return useTenantQuery({
-    queryKey: [...queryKeys.ruleBookConfig(), "ingest-stats"],
-    queryFn: async () => {
-      const raw = await api.getRuleBookConfig({ fields: "ingest_stats" });
-      return (raw.email_capture_ingest_stats ?? {}) as Record<
-        string,
-        { matched_count: number; last_matched: string }
-      >;
-    },
-    enabled,
-  });
-}
-
 /** Lean fetch for upload/matrix badges — document type labels only. */
 export function useRuleBookDocumentTypes(enabled = true) {
   return useTenantQuery({

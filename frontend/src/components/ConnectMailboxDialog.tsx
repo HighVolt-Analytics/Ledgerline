@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { Copy, X } from "lucide-react";
 import type { MailboxConnectionRequestAction } from "@/api/types";
 import { Button } from "@/components/ui/button";
@@ -12,16 +12,13 @@ type ConnectMailboxDialogProps = {
     display_name?: string;
     message?: string;
   }) => Promise<MailboxConnectionRequestAction>;
-  ingestion?: ReactNode;
 };
 
 export function ConnectMailboxDialog({
   open,
   onClose,
   onSendInvite,
-  ingestion,
-}: ConnectMailboxDialogProps) {
-  const [email, setEmail] = useState("");
+}: ConnectMailboxDialogProps) {  const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -203,15 +200,6 @@ export function ConnectMailboxDialog({
               </div>
             </form>
           )}
-
-          {ingestion ? (
-            <section
-              className="connect-mailbox-ingest"
-              data-testid="mailbox-ingestion-section"
-            >
-              {ingestion}
-            </section>
-          ) : null}
         </div>
       </div>
     </div>

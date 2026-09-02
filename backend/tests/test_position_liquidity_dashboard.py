@@ -723,3 +723,23 @@ async def test_position_liquidity_rejects_x_tenant_id_header_mismatch(
         headers=tenant_auth_headers(token_a, TENANT_HEADER_B_ID),
     )
     assert res.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_position_liquidity_period_mtd(client: AsyncClient) -> None:
+    res = await client.get("/api/dashboard/position-liquidity", params={"period": "mtd"})
+    assert res.status_code == 200
+    meta = res.json()["data"]["meta"]
+    today = date.today()
+    assert meta["period_start"] == date(today.year, today.month, 1).isoformat()
+    assert meta["period_end"] == today.isoformat()
+    assert meta["period_label"] == f"{today.strftime('%b')} {today.year} MTD"
+
+
+@pytest.mark.asyncio
+async def test_position_liquidity_period_invalid_defaults_to_fy_ytd(client: AsyncClient) -> None:
+    fy = await client.get("/api/dashboard/position-liquidity", params={"period": "fy_ytd"})
+    bad = await client.get("/api/dashboard/position-liquidity", params={"period": "not-a-period"})
+    assert fy.status_code == 200
+    assert bad.status_code == 200
+    assert bad.json()["data"]["meta"]["period_label"] == fy.json()["data"]["meta"]["period_label"]

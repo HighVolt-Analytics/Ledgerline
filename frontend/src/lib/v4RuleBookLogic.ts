@@ -20,6 +20,15 @@ function matchValue(
   // Trim so accidental UI trailing spaces don't break contains/equals (matches backend).
   const trimmedHaystack = (haystack ?? "").trim();
   const trimmedNeedle = (needle ?? "").trim();
+  if (
+    (operator === "contains" ||
+      operator === "not_contains" ||
+      operator === "starts_with" ||
+      operator === "ends_with") &&
+    !trimmedNeedle
+  ) {
+    return false;
+  }
   const a = caseSensitive ? trimmedHaystack : trimmedHaystack.toLowerCase();
   const b = caseSensitive ? trimmedNeedle : trimmedNeedle.toLowerCase();
   switch (operator) {

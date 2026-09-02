@@ -1143,6 +1143,7 @@ export interface PositionLiquidityKpis {
   budget_utilisation_pct: string | null;
   budget_actual: string;
   budget_allocated: string;
+  budget_committed: string;
   advances_outstanding: string;
   advances_overdue: string;
   advances_overdue_employees: number;
@@ -1150,6 +1151,12 @@ export interface PositionLiquidityKpis {
   open_exceptions_at_risk: string;
   claims_pending_count: number;
   claims_pending_value: string;
+  documents_to_review_count: number;
+  documents_to_review_value: string;
+  documents_processing_count: number;
+  documents_processing_value: string;
+  payments_queue_count: number;
+  payments_queue_value: string;
   vendor_top10_concentration_pct: string | null;
   vendor_non_po_spend_pct: string | null;
 }
@@ -1186,6 +1193,10 @@ export interface EfficiencyAutomationKpis {
   fte_hours_per_year: string;
   documents_processed_ytd: number;
   documents_processed_mtd: number;
+  documents_capture_email: number;
+  documents_capture_upload: number;
+  documents_capture_whatsapp: number;
+  documents_capture_viber: number;
   vault_documents_total: number;
   duplicates_prevented_amount: string;
   duplicates_prevented_events: number;
@@ -1211,6 +1222,9 @@ export interface EfficiencyAutomationDashboard {
 export interface CashLiabilityOutlookMeta {
   currency: string;
   as_of: string;
+  period_label: string;
+  period_start: string;
+  period_end: string;
   horizon_weeks: number;
   environment_label?: string | null;
   coverage_gaps?: string[];
@@ -1303,6 +1317,72 @@ export interface BudgetConcentrationRiskDashboard {
   budget_summary: BudgetEncumbranceSummary;
   vendors: VendorConcentrationRow[];
   vendor_summary: VendorConcentrationSummary;
+}
+
+export interface CfoAlertRow {
+  severity: "high" | "med" | "low";
+  title: string;
+  detail: string;
+  meta: string;
+  module: string;
+  source: string;
+}
+
+export interface CfoAlertsSummary {
+  active_count: number;
+  high_count: number;
+  med_count: number;
+  low_count: number;
+}
+
+export interface CfoAlertsMeta {
+  currency: string;
+  period_label: string;
+  as_of: string;
+  period_start: string;
+  period_end: string;
+  environment_label?: string | null;
+  coverage_gaps?: string[];
+  notes: string[];
+}
+
+export interface CfoAlertsDashboard {
+  meta: CfoAlertsMeta;
+  summary: CfoAlertsSummary;
+  alerts: CfoAlertRow[];
+}
+
+export interface ProcessEfficiencyTrendPoint {
+  label: string;
+  period_start: string;
+  period_end: string;
+  dpo_days: string | null;
+  stp_pct: string | null;
+}
+
+export interface ProcessEfficiencyTrendsSummary {
+  stp_target_pct: string;
+  latest_dpo_days: string | null;
+  latest_stp_pct: string | null;
+  months_with_dpo: number;
+  months_with_stp: number;
+}
+
+export interface ProcessEfficiencyTrendsMeta {
+  currency: string;
+  period_label: string;
+  as_of: string;
+  window_start: string;
+  window_end: string;
+  environment_label?: string | null;
+  coverage_gaps?: string[];
+  notes: string[];
+}
+
+export interface ProcessEfficiencyTrendsDashboard {
+  meta: ProcessEfficiencyTrendsMeta;
+  points: ProcessEfficiencyTrendPoint[];
+  summary: ProcessEfficiencyTrendsSummary;
 }
 
 export interface DashboardOverview {
@@ -2404,6 +2484,7 @@ export interface RuleBookConfig {
       route_to: string;
       tags: string[];
     };
+    requires_employee_sender?: boolean | null;
     matched_count?: number;
     last_matched?: string;
   }>;
@@ -2588,7 +2669,7 @@ export interface RuleBookConfig {
 
 export type RuleBookRulesPayload = Omit<
   RuleBookConfig,
-  "vendor_masters" | "employee_masters"
+  "vendor_masters" | "employee_masters" | "email_capture_rules"
 >;
 
 export interface DocumentTypeRecognitionTestRequest {

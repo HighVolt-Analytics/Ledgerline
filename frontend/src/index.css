@@ -4,6 +4,7 @@
 @import "./styles/tokens.css";
 @import "./styles/typography.css";
 @import "./styles/shell.css";
+@import "./styles/upload-analysis.css";
 @import "./styles/dossiers.css"; /* dossier page layout + cards */
 @import "./styles/integrations.css";
 @import "./styles/auth.css";
@@ -414,12 +415,71 @@ body::-webkit-scrollbar-button,
   font-weight: 500;
 }
 
-.cfo-budget-bullet-chart .recharts-bar-rectangle {
+/* Dashboard split panels (precompiled Tailwind lacks arbitrary grid-cols). */
+.cfo-split-panel-grid {
+  display: grid;
+  gap: 1rem;
+  align-items: stretch;
+  grid-template-columns: minmax(0, var(--cfo-split-left, 1fr)) minmax(0, var(--cfo-split-right, 1fr));
+}
+
+.cfo-split-panel-grid > * {
+  min-height: 0;
+}
+
+.cfo-split-panel-grid--cash {
+  --cfo-split-left: 2fr;
+  --cfo-split-right: 1fr;
+}
+
+.cfo-split-panel-grid--budget {
+  --cfo-split-left: 1.4fr;
+  --cfo-split-right: 1fr;
+}
+
+.cfo-split-panel-grid--trends {
+  --cfo-split-left: 1fr;
+  --cfo-split-right: 1.4fr;
+}
+
+.cfo-split-panel {
+  height: 100%;
+}
+
+.cfo-split-panel__chart-fill {
+  flex: 1;
+  min-height: 260px;
+  width: 100%;
+}
+
+.cfo-split-panel__body-fill {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+@media (max-width: 767px) {
+  .cfo-split-panel-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.cfo-budget-stack-chart .recharts-bar-rectangle {
   transition: opacity 160ms ease, filter 160ms ease;
 }
 
-.cfo-budget-bullet-chart .recharts-active-bar .recharts-bar-rectangle {
+.cfo-budget-stack-chart .recharts-active-bar .recharts-bar-rectangle {
   filter: drop-shadow(0 0 6px hsl(var(--nav-accent) / 0.35));
+}
+
+.dark .cfo-budget-stack-chart .recharts-bar-rectangle:hover {
+  filter: brightness(1.14);
+}
+
+.cfo-pareto-chart .recharts-tooltip-cursor,
+.cfo-pareto-chart .recharts-cursor {
+  display: none !important;
 }
 
 .cfo-budget-chart-tooltip {
@@ -428,6 +488,27 @@ body::-webkit-scrollbar-button,
   box-shadow:
     0 4px 16px hsl(var(--foreground) / 0.1),
     0 0 0 1px hsl(var(--nav-accent) / 0.08);
+}
+
+.cfo-budget-chart-tooltip-grid {
+  display: grid;
+  grid-template-columns: auto minmax(5.5rem, 1fr);
+  column-gap: 1rem;
+  row-gap: 0.25rem;
+  align-items: baseline;
+  margin: 0.375rem 0 0;
+  padding: 0;
+  font-size: 0.6875rem;
+  line-height: 1.35;
+}
+
+.cfo-budget-chart-tooltip-grid dt,
+.cfo-budget-chart-tooltip-grid dd {
+  margin: 0;
+}
+
+.cfo-budget-chart-tooltip-grid dd {
+  text-align: right;
 }
 
 /* Pill switch — cyan active track, elevated thumb */
@@ -1519,10 +1600,16 @@ input.app-numeric-input {
   color: hsl(var(--muted-foreground));
 }
 
-.connect-mailbox-ingest {
+.connect-mailbox-ingest,
+.mailbox-ingestion-panel {
   margin-top: 0.5rem;
   padding-top: 1.25rem;
   border-top: 1px solid hsl(var(--border));
+}
+
+.mailbox-ingestion-panel {
+  margin-top: 0;
+  padding-top: 0.75rem;
 }
 
 .condition-builder {

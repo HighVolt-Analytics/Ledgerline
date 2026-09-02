@@ -43,6 +43,7 @@ export type EmailCaptureRule = {
     routeTo: string;
     tags: string[];
   };
+  requiresEmployeeSender?: boolean | null;
   matchedCount: number;
   lastMatched: string;
 };
@@ -347,7 +348,6 @@ export type RuleBookConfigState = {
   documentClassification: DocumentClassificationConfig;
   aiClassification: AiClassificationConfig;
   orgContext: OrgContextConfig;
-  emailCaptureRules: EmailCaptureRule[];
   purchaseRules: PurchaseRule[];
   salesRules: SalesRule[];
   expenseRules: ExpenseRule[];

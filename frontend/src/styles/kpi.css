@@ -15,6 +15,96 @@
   height: 1.125rem;
 }
 
+/* Dashboard executive KPI tiles — label, value, footnote, threshold meter */
+.kpi-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 7.75rem;
+  height: 100%;
+}
+
+.kpi-card__label {
+  font-size: 0.6875rem;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+  margin-bottom: 0.375rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kpi-card__value {
+  font-size: 1.375rem;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  color: hsl(var(--foreground));
+}
+
+.kpi-card__foot {
+  margin-top: 0.5rem;
+  min-height: 1.125rem;
+  font-size: 0.75rem;
+  line-height: 1.25rem;
+  color: hsl(var(--muted-foreground));
+}
+
+.kpi-card__meter-wrap {
+  margin-top: auto;
+  padding-top: 0.625rem;
+  flex-shrink: 0;
+}
+
+.kpi-card__meter {
+  height: 0.25rem;
+  border-radius: 9999px;
+  background: hsl(var(--muted));
+  overflow: hidden;
+}
+
+.kpi-card__meter-fill {
+  height: 100%;
+  min-width: 0;
+  border-radius: 9999px;
+  transition: width 0.2s ease;
+}
+
+.kpi-card__meter-fill[data-has-value="true"] {
+  min-width: 2px;
+}
+
+.kpi-card__meter-fill--pos {
+  background: hsl(var(--success));
+}
+
+.kpi-card__meter-fill--warn {
+  background: hsl(var(--warning));
+}
+
+.kpi-card__meter-fill--neg {
+  background: hsl(var(--destructive));
+}
+
+.kpi-card-grid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (min-width: 1024px) {
+  .kpi-card-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+
+.kpi-card-grid > * {
+  height: 100%;
+  min-width: 0;
+}
+
 /* Elevated executive KPI cards — soft depth like reference tiles */
 .kpi-card--elevated,
 .dash-card--elevated {

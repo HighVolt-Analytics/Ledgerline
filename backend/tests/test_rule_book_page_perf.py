@@ -49,7 +49,7 @@ async def test_rule_book_editor_slice_skips_masters(
     body = res.json()["data"]
     assert body.get("vendor_masters") == []
     assert body.get("employee_masters") == []
-    assert body.get("email_capture_rules")
+    assert "email_capture_rules" not in body
     assert body.get("document_types")
     sql = " ".join(statements).lower()
     assert "vendor_masters" not in sql
@@ -58,18 +58,18 @@ async def test_rule_book_editor_slice_skips_masters(
 
 
 @pytest.mark.asyncio
-async def test_rule_book_ingest_stats_slice_uses_audit_group_by(
+async def test_mailboxes_ingestion_stats_uses_audit_group_by(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
     statements, stop = _capture_sql(db_session)
     try:
-        res = await client.get("/api/rule-book/config?fields=ingest_stats")
+        res = await client.get("/api/mailboxes/ingestion-rules/stats")
     finally:
         stop()
 
     assert res.status_code == 200
     body = res.json()["data"]
-    assert "email_capture_ingest_stats" in body
+    assert "ingest_stats" in body
     sql = " ".join(statements).lower()
     assert "audit_logs" in sql
     assert "group by" in sql

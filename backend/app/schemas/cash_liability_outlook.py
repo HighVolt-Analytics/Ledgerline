@@ -37,6 +37,9 @@ class ApAgeingBucket(BaseModel):
 class CashLiabilityOutlookMeta(BaseModel):
     currency: str
     as_of: str
+    period_label: str = ""
+    period_start: str = ""
+    period_end: str = ""
     horizon_weeks: int = 13
     environment_label: str | None = None
     coverage_gaps: list[str] = Field(default_factory=list)
