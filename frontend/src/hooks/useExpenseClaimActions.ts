@@ -24,7 +24,7 @@ export function useExpenseClaimActions(routeTarget: string) {
       queryClient.invalidateQueries({ queryKey: queryKeys.teWorkspaceKpis() }),
       queryClient.invalidateQueries({ queryKey: queryKeys.expensesWorkspaceKpis() }),
       queryClient.invalidateQueries({ queryKey: queryKeys.navBadges() }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.positionLiquidity() }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.positionLiquidityAll() }),
     ]);
   }, [queryClient, routeTarget]);
 

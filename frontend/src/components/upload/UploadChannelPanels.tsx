@@ -1,16 +1,29 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Calendar, EllipsisVertical, Mail, Pause, Play, RefreshCw, Trash2 } from "lucide-react";
+import {
+  Calendar,
+  ChevronDown,
+  ChevronRight,
+  EllipsisVertical,
+  Mail,
+  Pause,
+  Play,
+  RefreshCw,
+  Trash2,
+} from "lucide-react";
 import { api } from "@/api/client";
 import type { ConnectedMailbox, ViberConnection, WhatsappConnection } from "@/api/types";
 import { ActionChip } from "@/components/ActionChip";
 import { IntegrationBrandIcon } from "@/components/integrations/IntegrationBrandIcon";
+import { MailboxIngestionRulesPanel } from "@/components/upload/MailboxIngestionRulesPanel";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { orphanedMailboxRules } from "@/lib/emailIngestionRules";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
 import { cn } from "@/lib/cn";
 import { mailboxDisplayName } from "@/lib/invoice";
+import type { EmailCaptureRule } from "@/lib/v4RuleBookTypes";
 
 function relativeTime(iso: string | null | undefined): string {
   if (!iso) return "—";
@@ -193,6 +206,11 @@ type EmailPanelProps = {
   onRemove: (mailbox: ConnectedMailbox) => void;
   onReconnect: (mailbox: ConnectedMailbox) => void;
   isPollable: (mailbox: ConnectedMailbox) => boolean;
+  ingestionRules?: EmailCaptureRule[];
+  ingestionRuleWarnings?: Record<string, string[]>;
+  onIngestionRulesChange?: (rules: EmailCaptureRule[]) => void;
+  canEditIngestionRules?: boolean;
+  ingestionRulesLoading?: boolean;
 };
 
 export function UploadEmailChannelPanel({
@@ -209,7 +227,26 @@ export function UploadEmailChannelPanel({
   onRemove,
   onReconnect,
   isPollable,
+  ingestionRules = [],
+  ingestionRuleWarnings = {},
+  onIngestionRulesChange,
+  canEditIngestionRules = false,
+  ingestionRulesLoading = false,
 }: EmailPanelProps) {
+  const [expandedMailboxId, setExpandedMailboxId] = useState<number | null>(null);
+  const showIngestionRules = Boolean(onIngestionRulesChange);
+  const connectedMailboxEmails = mailboxes.map((mb) => mb.email);
+  const orphanedRules =
+    showIngestionRules && onIngestionRulesChange
+      ? orphanedMailboxRules(ingestionRules, connectedMailboxEmails)
+      : [];
+
+  useEffect(() => {
+    if (expandedMailboxId == null) return;
+    if (!mailboxes.some((mailbox) => mailbox.id === expandedMailboxId)) {
+      setExpandedMailboxId(null);
+    }
+  }, [expandedMailboxId, mailboxes]);
   if (mailboxes.length === 0) {
     if (loading) return null;
     return (
@@ -241,21 +278,93 @@ export function UploadEmailChannelPanel({
 
   return (
     <div className="flex flex-col gap-2 mb-3">
+      {orphanedRules.length > 0 ? (
+        <Card
+          className="border-amber-500/30 bg-amber-500/5 px-3 py-2.5"
+          data-testid="orphaned-ingestion-rules-banner"
+        >
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div className="min-w-0 space-y-1">
+              <p className="text-sm font-medium text-amber-950 dark:text-amber-50">
+                {orphanedRules.length} stale ingestion rule(s) for disconnected mailboxes
+              </p>
+              <ul className="text-xs text-muted-foreground space-y-0.5">
+                {orphanedRules.map((rule) => (
+                  <li key={rule.id}>
+                    <span className="font-medium text-foreground">{rule.name}</span>
+                    {" · "}
+                    <span className="font-mono">{rule.mailbox}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="text-[11px] text-muted-foreground">
+                These rules are stored in your tenant but ignored at ingest because the mailbox is not connected.
+              </p>
+            </div>
+            {canEditIngestionRules ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="shrink-0 h-8 text-xs"
+                data-testid="button-remove-orphaned-ingestion-rules"
+                onClick={() => {
+                  const staleIds = new Set(orphanedRules.map((rule) => rule.id));
+                  onIngestionRulesChange?.(
+                    ingestionRules.filter((rule) => !staleIds.has(rule.id))
+                  );
+                }}
+              >
+                Remove stale rules
+              </Button>
+            ) : null}
+          </div>
+        </Card>
+      ) : null}
       {mailboxes.map((mb) => {
         const docCount = docsPerMailbox.get(mb.id) ?? 0;
+        const expanded = expandedMailboxId === mb.id;
         return (
-          <Card key={mb.id} className="px-3 py-2.5 min-w-0" data-testid={`card-mailbox-${mb.email}`}>
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="flex items-center gap-3 min-w-0 flex-1">
-                <Mail className="h-4 w-4 text-primary shrink-0" />
-                <div className="min-w-0">
-                  <p className="font-medium text-[14px] leading-snug truncate">{mailboxNickname(mb)}</p>
-                  <p className="text-[13px] leading-snug text-muted-foreground truncate tnum">{mb.email}</p>
-                  <p className="text-[12px] leading-snug text-muted-foreground truncate">
-                    {mailboxProvider(mb)} · {relativeTime(mb.last_poll_at)}
-                  </p>
-                </div>
-              </div>
+          <Card key={mb.id} className="min-w-0 overflow-hidden" data-testid={`card-mailbox-${mb.email}`}>
+            <div className="px-3 py-2.5">
+              <div className="flex items-center gap-3 min-w-0">
+                {showIngestionRules ? (
+                  <button
+                    type="button"
+                    className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                    aria-expanded={expanded}
+                    data-testid={`button-mailbox-rules-${mb.email}`}
+                    onClick={() =>
+                      setExpandedMailboxId((current) => (current === mb.id ? null : mb.id))
+                    }
+                  >
+                    {expanded ? (
+                      <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    )}
+                    <Mail className="h-4 w-4 text-primary shrink-0" />
+                    <div className="min-w-0">
+                      <p className="font-medium text-[14px] leading-snug truncate">{mailboxNickname(mb)}</p>
+                      <p className="text-[13px] leading-snug text-muted-foreground truncate tnum">{mb.email}</p>
+                      <p className="text-[12px] leading-snug text-muted-foreground truncate">
+                        {mailboxProvider(mb)} · {relativeTime(mb.last_poll_at)}
+                        {showIngestionRules ? " · Ingestion rules" : null}
+                      </p>
+                    </div>
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <Mail className="h-4 w-4 text-primary shrink-0" />
+                    <div className="min-w-0">
+                      <p className="font-medium text-[14px] leading-snug truncate">{mailboxNickname(mb)}</p>
+                      <p className="text-[13px] leading-snug text-muted-foreground truncate tnum">{mb.email}</p>
+                      <p className="text-[12px] leading-snug text-muted-foreground truncate">
+                        {mailboxProvider(mb)} · {relativeTime(mb.last_poll_at)}
+                      </p>
+                    </div>
+                  </div>
+                )}
               {mb.connection_status === "error" && mb.last_error ? (
                 <p
                   className="hidden sm:block max-w-[12rem] text-xs text-destructive truncate"
@@ -297,7 +406,24 @@ export function UploadEmailChannelPanel({
                 onRemove={() => onRemove(mb)}
                 onReconnect={() => onReconnect(mb)}
               />
+              </div>
             </div>
+            {expanded && showIngestionRules && onIngestionRulesChange ? (
+              <div
+                className="mailbox-ingestion-panel border-t border-border bg-muted/10 px-3 py-3"
+                data-testid={`mailbox-ingestion-section-${mb.email}`}
+              >
+                <MailboxIngestionRulesPanel
+                  mailboxEmail={mb.email}
+                  connectedMailboxEmails={connectedMailboxEmails}
+                  rules={ingestionRules}
+                  ruleWarnings={ingestionRuleWarnings}
+                  onChange={onIngestionRulesChange}
+                  canEdit={canEditIngestionRules}
+                  loading={ingestionRulesLoading}
+                />
+              </div>
+            ) : null}
           </Card>
         );
       })}

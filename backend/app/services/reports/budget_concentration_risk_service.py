@@ -35,10 +35,8 @@ from app.services.reports.payables_catalog_builders import (
     ap_route_clause,
     build_vendor_spend_summary,
 )
-from app.services.reports.position_liquidity_service import (
-    _fy_window,
-    _vendor_concentration,
-)
+from app.services.reports.dashboard_period import resolve_dashboard_period
+from app.services.reports.position_liquidity_service import _vendor_concentration
 from app.services.reports.report_catalog import CATALOG_BY_ID
 from app.services.reports.statement_builders import _build_budget_variance
 from app.tenant_settings import tenant_currency
@@ -304,11 +302,12 @@ async def build_budget_concentration_risk_dashboard(
     *,
     tenant_id: uuid.UUID,
     environment_label: str | None = None,
+    period: str | None = None,
 ) -> BudgetConcentrationRiskDashboard:
     tenant = await db.get(Tenant, tenant_id)
     base = tenant_currency(tenant)
     as_of = await _institution_today(db, tenant_id)
-    period_start, period_end, period_label = _fy_window(as_of)
+    period_start, period_end, period_label = resolve_dashboard_period(period, as_of)
 
     departments, budget_summary, group_label = await _department_rows(
         db, tenant_id, period_start, period_end
@@ -335,14 +334,14 @@ async def build_budget_concentration_risk_dashboard(
 
     notes = [
         f"All amounts {base}, consolidated.",
-        "Budget vs actual vs committed reuses Budget Variance report row definitions.",
-        "Departments aggregate Budget Variance rows by department label when present; "
-        "otherwise by GL category.",
-        "Vendor concentration uses Vendor Spend Summary (invoiced amounts, FY window).",
-        "PO-backed % = invoices with a PO reference ÷ invoice count per vendor.",
-        "Cycle time = average days from invoice date to first paid payment.",
-        "Risk: High = bank-detail-change document detected; Medium = PO-backed < 50%.",
-        "Contracted = vendor master confirmed or approved status among top-10 vendors.",
+        "Budget vs Actual chart reuses the Budget vs Actual report (department / GL rows).",
+        "Committed = approved-but-not-yet-spent in-flight Team Expense claims only.",
+        "Rows group by department label when present; otherwise by GL category.",
+        "Vendor Spend Summary chart uses invoiced amounts for the selected period.",
+        "PO reference % = invoices with a PO reference ÷ invoice count per vendor.",
+        "Pay cycle = average days from invoice date to first paid payment.",
+        "Bank detail change = DT-23 style documents flagged on the vendor bar.",
+        "Vendor master registered = confirmed or approved vendor master among top 10.",
     ]
     coverage_gaps = [
         "department_owner: optional budget notes only — no dedicated owner register.",

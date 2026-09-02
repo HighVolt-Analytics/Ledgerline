@@ -1,4 +1,4 @@
-/** Demo tenant dataset for CFO Command Centre (frontend prototype). */
+/** Demo tenant dataset for Dashboard prototype sections. */
 
 export type CfoDepartment = {
   name: string;

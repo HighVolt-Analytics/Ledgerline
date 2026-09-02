@@ -545,3 +545,4 @@ function ExpenseSummaryTable({
     </div>
   );
 }
+

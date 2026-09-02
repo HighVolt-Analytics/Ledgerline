@@ -87,6 +87,7 @@ def test_capture_rule_requires_employee_sender_for_catch_all_and_team() -> None:
         capture_rule_requires_employee_sender,
         default_catch_all_capture_rule,
         employee_bypass_capture_rule,
+        infer_requires_employee_sender,
     )
     from app.schemas.rule_book_config import EmailCaptureAction, EmailCaptureRule, RuleCondition, RuleConditionGroup
 
@@ -134,6 +135,10 @@ def test_capture_rule_requires_employee_sender_for_catch_all_and_team() -> None:
         action=EmailCaptureAction(save_attachment=True, route_to="Purchase Management", tags=[]),
     )
     assert not capture_rule_requires_employee_sender(purchase)
+
+    explicit_off = te_rule.model_copy(update={"requires_employee_sender": False})
+    assert not capture_rule_requires_employee_sender(explicit_off)
+    assert infer_requires_employee_sender(te_rule) is True
 
 
 def test_raw_email_to_sample_email_maps_fields() -> None:

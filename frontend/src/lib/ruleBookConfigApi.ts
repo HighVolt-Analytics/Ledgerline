@@ -15,7 +15,6 @@ import type {
 import {
   emptyOrgContextConfig,
   DEFAULT_VENDOR_DETECTION_CONFIG,
-  INGEST_ACTION_ROUTE_PLACEHOLDER,
   ROUTE_TARGETS,
   TEAM_EXPENSE_KINDS,
 } from "@/lib/v4RuleBookTypes";
@@ -41,7 +40,6 @@ import {
 import type { PurchaseBundleRole, SalesBundleRole } from "@/lib/documentBundleConfig";
 import { normalizeDtCodeList } from "@/lib/documentBundleConfig";
 import { hydrateRecognitionFromClassifier } from "@/lib/documentTypeRecognition";
-import { withSerialPriorities } from "@/lib/rulePriority";
 import {
   mergeConfigurableRules,
   normalizeValidationRules,
@@ -916,21 +914,6 @@ export function ruleBookConfigFromApi(api: RuleBookConfig): RuleBookConfigState 
       autoRouteMinConfidence: api.ai_classification?.auto_route_min_confidence ?? 0.85,
     },
     orgContext: mapOrgContextFromApi(api.org_context),
-    emailCaptureRules: (api.email_capture_rules ?? []).map((rule) => ({
-      id: rule.id,
-      name: rule.name,
-      enabled: rule.enabled,
-      priority: rule.priority,
-      mailbox: rule.mailbox,
-      root: mapConditionGroup(rule.root),
-      action: {
-        saveAttachment: rule.action.save_attachment,
-        routeTo: rule.action.route_to,
-        tags: rule.action.tags,
-      },
-      matchedCount: rule.matched_count ?? 0,
-      lastMatched: rule.last_matched ?? "—",
-    })),
     purchaseRules: purchaseRulesFromRuleBookApi(api),
     salesRules: salesRulesFromRuleBookApi(api),
     expenseRules: expenseRulesFromRuleBookApi(api),
@@ -972,19 +955,6 @@ export function ruleBookConfigToApi(state: RuleBookConfigState): RuleBookRulesPa
     },
     org_context: orgContextToApi(state.orgContext),
     document_types: state.documentTypes.map(documentTypeToApi),
-    email_capture_rules: withSerialPriorities(state.emailCaptureRules).map((rule) => ({
-      id: rule.id,
-      name: rule.name,
-      enabled: rule.enabled,
-      priority: rule.priority,
-      mailbox: rule.mailbox,
-      root: conditionGroupToApi(rule.root),
-      action: {
-        save_attachment: rule.action.saveAttachment,
-        route_to: rule.action.routeTo || INGEST_ACTION_ROUTE_PLACEHOLDER,
-        tags: rule.action.tags,
-      },
-    })),
     purchase_rules: state.purchaseRules.map((rule) => ({
       id: rule.id,
       name: rule.name,

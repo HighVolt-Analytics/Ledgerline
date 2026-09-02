@@ -11,11 +11,12 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.payment import Payment, PaymentStatus
+from app.services.approval.approval_board_service import approval_board_column_expr
 from app.models.tenant import Tenant
 from app.schemas.position_liquidity import (
     PositionLiquidityDashboard,
@@ -27,6 +28,7 @@ from app.services.invoice.invoice_evaluation_service import (
     EVAL_PENDING_APPROVAL,
     ROUTE_TEAM,
 )
+from app.services.reports.dashboard_period import fy_window, resolve_dashboard_period
 from app.services.reports.dashboard_service import _institution_today
 from app.services.reports.exception_status_catalog_builders import (
     _parse_money,
@@ -94,18 +96,8 @@ def _to_base(amount: Decimal, currency: str | None, *, base: str) -> Decimal:
 
 
 def _fy_window(as_of: date) -> tuple[date, date, str]:
-    """Australian financial year: Jul 1 → Jun 30; label uses end year (FY26 = to Jun 2026)."""
-    if as_of.month >= 7:
-        fy_end_year = as_of.year + 1
-        start = date(as_of.year, 7, 1)
-    else:
-        fy_end_year = as_of.year
-        start = date(as_of.year - 1, 7, 1)
-    label = (
-        f"FY{str(fy_end_year)[-2:]} YTD to "
-        f"{as_of.day} {_MONTH_NAMES[as_of.month]} {as_of.year}"
-    )
-    return start, as_of, label
+    """Back-compat alias — prefer resolve_dashboard_period / fy_window."""
+    return fy_window(as_of)
 
 
 def _due_bucket_days(due: date | None, as_of: date) -> int | None:
@@ -326,7 +318,7 @@ async def _budget_totals(
     end: date,
     *,
     base: str,
-) -> tuple[Decimal, Decimal, Decimal | None]:
+) -> tuple[Decimal, Decimal, Decimal, Decimal | None]:
     preview = await _build_budget_variance(
         db,
         tenant_id,
@@ -338,15 +330,18 @@ async def _budget_totals(
     )
     budget_idx = preview.columns.index("Budget")
     actual_idx = preview.columns.index("Actual")
+    committed_idx = preview.columns.index("Committed")
     allocated = _ZERO
     actual = _ZERO
+    committed = _ZERO
     for row in preview.rows:
         if row.emphasize:
             continue
         allocated += _parse_money(row.cells[budget_idx])
         actual += _parse_money(row.cells[actual_idx])
+        committed += _parse_money(row.cells[committed_idx])
     utilisation = _pct(actual, allocated)
-    return allocated, actual, utilisation
+    return allocated, actual, committed, utilisation
 
 
 async def _advance_totals(
@@ -403,6 +398,88 @@ async def _open_exceptions(
         count += 1
         at_risk += _parse_money(item.get("Amount", ""))
     return count, _quantize(at_risk)
+
+
+async def _document_board_totals(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    *,
+    base: str,
+) -> tuple[int, Decimal, int, Decimal]:
+    """Upload matrix approval-board columns (To Review / Processing)."""
+    col = approval_board_column_expr()
+    review_count = 0
+    review_value = _ZERO
+    processing_count = 0
+    processing_value = _ZERO
+    rows = (
+        await db.execute(
+            select(
+                col.label("board"),
+                func.count(Invoice.id),
+                Invoice.currency,
+                func.coalesce(func.sum(Invoice.total), 0),
+            )
+            .where(Invoice.tenant_id == tenant_id)
+            .group_by(col, Invoice.currency)
+        )
+    ).all()
+    for board, count, currency, total in rows:
+        key = str(board or "")
+        amount = _to_base(Decimal(str(total or 0)), currency, base=base)
+        item_count = int(count or 0)
+        if key == "review":
+            review_count += item_count
+            review_value += amount
+        elif key == "processing":
+            processing_count += item_count
+            processing_value += amount
+    return (
+        review_count,
+        _quantize(review_value),
+        processing_count,
+        _quantize(processing_value),
+    )
+
+
+async def _payments_queue_totals(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    *,
+    base: str,
+) -> tuple[int, Decimal]:
+    """Payments module open queue — same statuses as Payments workspace."""
+    open_statuses = (
+        PaymentStatus.QUEUE,
+        PaymentStatus.AWAITING,
+        PaymentStatus.SCHEDULED,
+    )
+    count = (
+        await db.execute(
+            select(func.count(Payment.id)).where(
+                Payment.tenant_id == tenant_id,
+                Payment.status.in_(open_statuses),
+            )
+        )
+    ).scalar() or 0
+    rows = (
+        await db.execute(
+            select(
+                Payment.currency,
+                func.coalesce(func.sum(Payment.amount), 0),
+            )
+            .where(
+                Payment.tenant_id == tenant_id,
+                Payment.status.in_(open_statuses),
+            )
+            .group_by(Payment.currency)
+        )
+    ).all()
+    value = sum(
+        (_to_base(Decimal(str(amount or 0)), currency, base=base) for currency, amount in rows),
+        _ZERO,
+    )
+    return int(count), _quantize(value)
 
 
 async def _claims_pending(
@@ -500,11 +577,12 @@ async def build_position_liquidity_dashboard(
     *,
     tenant_id: uuid.UUID,
     environment_label: str | None = None,
+    period: str | None = None,
 ) -> PositionLiquidityDashboard:
     tenant = await db.get(Tenant, tenant_id)
     base = tenant_currency(tenant)
     as_of = await _institution_today(db, tenant_id)
-    period_start, period_end, period_label = _fy_window(as_of)
+    period_start, period_end, period_label = resolve_dashboard_period(period, as_of)
 
     ap_lines = await _ap_lines(db, tenant_id, as_of, base=base)
     ap_buckets = _sum_ap_buckets(ap_lines, as_of)
@@ -517,7 +595,7 @@ async def build_position_liquidity_dashboard(
     on_time = await _on_time_payment_rate(
         db, tenant_id, period_start, period_end, base=base
     )
-    budget_allocated, budget_actual, utilisation = await _budget_totals(
+    budget_allocated, budget_actual, budget_committed, utilisation = await _budget_totals(
         db, tenant_id, period_start, period_end, base=base
     )
     advances_out, advances_overdue, advances_employees = await _advance_totals(
@@ -527,6 +605,15 @@ async def build_position_liquidity_dashboard(
         db, tenant_id, period_start, period_end, base=base
     )
     claims_count, claims_value = await _claims_pending(db, tenant_id, base=base)
+    (
+        review_count,
+        review_value,
+        processing_count,
+        processing_value,
+    ) = await _document_board_totals(db, tenant_id, base=base)
+    payments_count, payments_value = await _payments_queue_totals(
+        db, tenant_id, base=base
+    )
     top10_pct, non_po_pct = await _vendor_concentration(
         db, tenant_id, period_start, period_end, base=base
     )
@@ -541,9 +628,11 @@ async def build_position_liquidity_dashboard(
         "Budget utilisation compares Actual to Allocated only; Committed (in-flight TE "
         "claims) is excluded from the headline % — see Budget Variance for encumbrance.",
         "Open exceptions = Control Centre row count (live rule evaluation, de-duplicated).",
-        "DPO = (avg period-start/end AP balance ÷ FY purchases) × days in period; "
-        "prior year uses the same shifted window.",
-        "On-time payment rate is value-weighted (paid amount where paid_date ≤ due_date).",
+        "To Review / Processing use the Upload matrix approval-board columns "
+        "(same mapping as All Documents status filter).",
+        "Payments queue = open disbursements (queued, awaiting approval, scheduled).",
+        "Approved not paid = AP approved in ledger but not yet paid (Payments release).",
+        "DPO and on-time payment rate remain in the API for reports but are not headline cards.",
         "Discount capture requires structured payment-term discount data — not tracked yet.",
     ]
     coverage_gaps = [
@@ -580,6 +669,7 @@ async def build_position_liquidity_dashboard(
             budget_utilisation_pct=utilisation,
             budget_actual=budget_actual,
             budget_allocated=budget_allocated,
+            budget_committed=budget_committed,
             advances_outstanding=advances_out,
             advances_overdue=advances_overdue,
             advances_overdue_employees=advances_employees,
@@ -587,6 +677,12 @@ async def build_position_liquidity_dashboard(
             open_exceptions_at_risk=exceptions_risk,
             claims_pending_count=claims_count,
             claims_pending_value=claims_value,
+            documents_to_review_count=review_count,
+            documents_to_review_value=review_value,
+            documents_processing_count=processing_count,
+            documents_processing_value=processing_value,
+            payments_queue_count=payments_count,
+            payments_queue_value=payments_value,
             vendor_top10_concentration_pct=top10_pct,
             vendor_non_po_spend_pct=non_po_pct,
         ),

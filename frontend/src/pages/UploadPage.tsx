@@ -1,15 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
-import { CloudUpload, Landmark } from "lucide-react";
+import { BarChart3, CloudUpload, Landmark } from "lucide-react";
 import { api } from "@/api/client";
 import type { ConnectedMailbox, MailboxBackfillJob } from "@/api/types";
 import { ConnectMailboxDialog } from "@/components/ConnectMailboxDialog";
-import { IngestionTab } from "@/components/rule-book/IngestionTab";
 import { useAuth } from "@/context/AuthContext";
+import { useEmailIngestionRulesDraft } from "@/hooks/useEmailIngestionRulesDraft";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import { useMailboxes } from "@/hooks/useMailboxes";
-import { useRuleBookIngestStats } from "@/hooks/useRuleBookConfig";
-import { useRuleBookDraft } from "@/hooks/useRuleBookDraft";
 import { canRenderTenantOwnedUi } from "@/lib/tenantSession";
 import { MailboxImportDialog } from "@/components/mailboxes/MailboxImportDialog";
 import { NotificationBell } from "@/components/NotificationBell";
@@ -54,7 +52,9 @@ import {
   watchInvoiceIdsForVendorHold,
 } from "@/lib/bulkUpload";
 import { UploadDropZone } from "@/components/upload/UploadDropZone";
+import { UploadAnalysisOverlay } from "@/components/upload/UploadAnalysisOverlay";
 import { BankFeedsWorkspace } from "@/components/bank-feeds/BankFeedsWorkspace";
+import type { UploadAnalysisScope } from "@/lib/uploadAnalysisScope";
 import type { BankFeedQueueTab } from "@/api/types";
 import { useNavBadges } from "@/hooks/useNavBadges";
 import { canAccessModulePath } from "@/lib/tenantModules";
@@ -218,6 +218,7 @@ export function UploadPage() {
   const [boardCounts, setBoardCounts] = useState<UploadApprovalBoardCounts>(
     EMPTY_UPLOAD_APPROVAL_COUNTS
   );
+  const [analysisOpen, setAnalysisOpen] = useState(false);
   const setBoardCountsIfChanged = (next: UploadApprovalBoardCounts) => {
     setBoardCounts((prev) => (approvalBoardCountsEqual(prev, next) ? prev : next));
   };
@@ -230,6 +231,16 @@ export function UploadPage() {
     refetch: refetchMailboxes,
   } = useMailboxes(Boolean(user) && channelTab === "email");
   const [searchQuery, setSearchQuery] = useState(() => searchParams.get("q") ?? "");
+  const analysisScope = useMemo<UploadAnalysisScope>(
+    () => ({
+      channel: channelTab,
+      view: viewTab,
+      documentAreas,
+      approvalFilter,
+      searchQuery: searchQuery.trim(),
+    }),
+    [channelTab, viewTab, documentAreas, approvalFilter, searchQuery]
+  );
 
   useEffect(() => {
     // Only sync when the URL explicitly carries q — do not wipe local typing when
@@ -239,27 +250,15 @@ export function UploadPage() {
     setSearchQuery((current) => (current === q ? current : q));
   }, [searchParams]);
   const [addOpen, setAddOpen] = useState(false);
-  const ingestDraftEnabled = Boolean(user) && (addOpen || channelTab === "email");
+  const ingestDraftEnabled =
+    Boolean(user) && channelTab === "email" && viewTab === "setup";
   const {
-    ruleBook,
+    rules: ingestionRules,
+    ruleWarnings: ingestionRuleWarnings,
     isLoading: ingestLoading,
     canEdit: canEditIngest,
-    patch: patchIngest,
-  } = useRuleBookDraft(ingestDraftEnabled);
-  const { data: ingestStats } = useRuleBookIngestStats(ingestDraftEnabled);
-  const ingestionRules = useMemo(() => {
-    const rules = ruleBook?.emailCaptureRules ?? [];
-    if (!ingestStats) return rules;
-    return rules.map((rule) => {
-      const row = ingestStats[rule.id];
-      if (!row) return rule;
-      return {
-        ...rule,
-        matchedCount: row.matched_count,
-        lastMatched: row.last_matched,
-      };
-    });
-  }, [ingestStats, ruleBook?.emailCaptureRules]);
+    onChange: onIngestionRulesChange,
+  } = useEmailIngestionRulesDraft(ingestDraftEnabled);
   const [fetching, setFetching] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadFiles, setUploadFiles] = useState<File[]>([]);
@@ -567,6 +566,11 @@ export function UploadPage() {
         onRemove={removeMailbox}
         onReconnect={(mb) => void reconnectMailbox(mb)}
         isPollable={isMailboxPollable}
+        ingestionRules={ingestionRules}
+        ingestionRuleWarnings={ingestionRuleWarnings}
+        onIngestionRulesChange={onIngestionRulesChange}
+        canEditIngestionRules={canEditIngest}
+        ingestionRulesLoading={ingestLoading && ingestionRules.length === 0}
       />
     ) : channelTab === "whatsapp" ? (
       <UploadWhatsappChannelPanel docCount={boardCounts.all} />
@@ -654,7 +658,21 @@ export function UploadPage() {
             ]}
           />
         }
-        actions={<NotificationBell variant="header" />}
+        actions={
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setAnalysisOpen(true)}
+              data-testid="button-upload-analysis"
+            >
+              <BarChart3 className="h-4 w-4" aria-hidden />
+              Analysis
+            </Button>
+            <NotificationBell variant="header" />
+          </div>
+        }
       />
       {channelTab === "upload" ? (
         <>
@@ -759,19 +777,6 @@ export function UploadPage() {
         open={addOpen}
         onClose={() => setAddOpen(false)}
         onSendInvite={sendMailboxInvite}
-        ingestion={
-          <div className={!canEditIngest ? "pointer-events-none opacity-90" : undefined}>
-            {ingestLoading && !ruleBook ? (
-              <p className="text-sm text-muted-foreground">Loading ingestion rules…</p>
-            ) : (
-              <IngestionTab
-                compact
-                rules={ingestionRules}
-                onChange={(emailCaptureRules) => patchIngest({ emailCaptureRules })}
-              />
-            )}
-          </div>
-        }
       />
       <MailboxImportDialog
         open={importMailbox != null}
@@ -779,6 +784,11 @@ export function UploadPage() {
         busy={importBusy}
         onClose={() => setImportMailbox(null)}
         onSubmit={(payload) => void startHistoricalImport(payload)}
+      />
+      <UploadAnalysisOverlay
+        open={analysisOpen}
+        onClose={() => setAnalysisOpen(false)}
+        scope={analysisScope}
       />
     </div>
   );

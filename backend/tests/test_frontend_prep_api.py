@@ -76,12 +76,29 @@ async def test_rule_book_config_get_put_roundtrip(
 
 
 @pytest.mark.asyncio
-async def test_rule_book_config_put_invalid_email_rule(client: AsyncClient) -> None:
-    res = await client.get("/api/rule-book/config")
-    body = res.json()["data"]
-    body["email_capture_rules"] = [{"id": "bad", "name": "Bad rule"}]
-    res = await client.put("/api/rule-book/config", json=body)
+async def test_mailboxes_ingestion_rules_put_invalid(client: AsyncClient) -> None:
+    res = await client.put(
+        "/api/mailboxes/ingestion-rules",
+        json={"email_capture_rules": [{"id": "bad", "name": "Bad rule"}]},
+    )
     assert res.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_mailboxes_ingestion_rules_api(client: AsyncClient) -> None:
+    res = await client.get("/api/mailboxes/ingestion-rules")
+    assert res.status_code == 200
+    data = res.json()["data"]
+    assert "email_capture_rules" in data
+    assert isinstance(data["email_capture_rules"], list)
+
+    res = await client.get("/api/rule-book/config?fields=editor")
+    assert res.status_code == 200
+    assert "email_capture_rules" not in res.json()["data"]
+
+    res = await client.get("/api/rule-book/config")
+    assert res.status_code == 200
+    assert "email_capture_rules" not in res.json()["data"]
 
 
 @pytest.mark.asyncio
@@ -563,3 +580,30 @@ async def test_approve_rejects_processed(client: AsyncClient, db_session: AsyncS
 
     res = await client.post(f"/api/approvals/{inv.id}/approve")
     assert res.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_document_matrix_analysis(client: AsyncClient, db_session: AsyncSession) -> None:
+    db_session.add(
+        Invoice(
+            tenant_id=TESTING_TENANT_UUID,
+            vendor="Analysis Vendor",
+            invoice_date=date(2026, 5, 13),
+            status=InvoiceStatus.EXCEPTION,
+            evaluation_status="needs_review",
+            currency="AUD",
+            total=Decimal("1250.00"),
+            file_hash="matrix-analysis-test",
+        )
+    )
+    await db_session.flush()
+
+    res = await client.get("/api/matrix/analysis")
+    assert res.status_code == 200
+    body = res.json()["data"]
+    assert len(body["approval_board"]) == 4
+    assert len(body["processing_funnel"]) == 6
+    assert body["processing_funnel"][0]["stage"] == "Received"
+    assert body["summary"]["document_count"] >= 1
+    assert any(row["items"] > 0 for row in body["approval_board"])
+    assert any(row["items"] > 0 for row in body["exception_mix"]) or body["summary"]["flagged"] >= 1

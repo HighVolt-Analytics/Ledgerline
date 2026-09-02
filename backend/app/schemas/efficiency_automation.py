@@ -46,6 +46,10 @@ class EfficiencyAutomationKpis(BaseModel):
     fte_hours_per_year: Decimal = Decimal("1830")
     documents_processed_ytd: int = 0
     documents_processed_mtd: int = 0
+    documents_capture_email: int = 0
+    documents_capture_upload: int = 0
+    documents_capture_whatsapp: int = 0
+    documents_capture_viber: int = 0
     vault_documents_total: int = 0
     duplicates_prevented_amount: Decimal = Decimal("0")
     duplicates_prevented_events: int = 0

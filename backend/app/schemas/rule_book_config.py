@@ -49,6 +49,7 @@ class EmailCaptureRule(BaseModel):
     mailbox: str = Field(..., min_length=1)
     root: RuleConditionGroup
     action: EmailCaptureAction
+    requires_employee_sender: bool | None = None
     matched_count: int = Field(default=0, ge=0)
     last_matched: str = ""
 

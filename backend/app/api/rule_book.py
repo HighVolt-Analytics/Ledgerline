@@ -6,7 +6,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -63,10 +63,7 @@ from app.services.rule_book.rule_book_config_io import (
     merge_persisted_rule_book_slices,
 )
 from app.services.rule_book.rule_book_evaluate_service import evaluate_rule_book
-from app.services.rule_book.rule_book_ingest_stats import (
-    attach_email_capture_ingest_stats,
-    strip_email_capture_volatile_stats,
-)
+from app.services.rule_book.rule_book_ingest_stats import strip_email_capture_volatile_stats
 from app.services.rule_book.rule_book_save_buffer import (
     flush_rule_book_save_buffer,
     get_buffered_rule_book_raw,
@@ -113,6 +110,7 @@ async def _load_rule_book_response_dict(
     tenant_id: uuid.UUID,
 ) -> dict[str, Any]:
     data = await _load_rule_book_raw_dict(db, tenant_id, validate=True)
+    data.pop("email_capture_rules", None)
     return await attach_masters_to_config_dict(db, tenant_id, data)
 
 
@@ -122,31 +120,13 @@ async def _load_rule_book_editor_dict(
 ) -> dict[str, Any]:
     """Rule Book workspace payload — skip vendor/employee master hydration.
 
-    Ingest match stats are a separate ``fields=ingest_stats`` request so first
-    paint is not blocked on the audit_logs GROUP BY.
+    Email ingestion rules are managed from Upload → Email setup.
     """
     data = await _load_rule_book_raw_dict(db, tenant_id, validate=True)
     data["vendor_masters"] = []
     data["employee_masters"] = []
+    data.pop("email_capture_rules", None)
     return data
-
-
-async def _load_rule_book_ingest_stats_only(
-    db: AsyncSession,
-    tenant_id: uuid.UUID,
-) -> dict[str, Any]:
-    from app.services.rule_book.rule_book_ingest_stats import load_email_capture_ingest_stats
-
-    stats = await load_email_capture_ingest_stats(db, tenant_id)
-    return {
-        "email_capture_ingest_stats": {
-            rule_id: {
-                "matched_count": row.matched_count,
-                "last_matched": row.last_matched,
-            }
-            for rule_id, row in stats.items()
-        }
-    }
 
 
 async def _load_rule_book_document_types_only(
@@ -251,7 +231,7 @@ async def _load_rule_book_team_expenses_only(
 async def get_rule_book_config(
     fields: str | None = Query(
         None,
-        description="Optional slice: document_types, document_sets, vendor_detection, team_expense_posting, team_expenses, expense_rules, purchase_rules, sales_rules, editor, ingest_stats, bank_file_settings, fx_rate_settings",
+        description="Optional slice: document_types, document_sets, vendor_detection, team_expense_posting, team_expenses, expense_rules, purchase_rules, sales_rules, editor, bank_file_settings, fx_rate_settings",
     ),
     ctx: AuthContext = Depends(get_auth_context),
     db: AsyncSession = Depends(get_db),
@@ -280,8 +260,6 @@ async def get_rule_book_config(
         return ApiEnvelope(data=await _load_rule_book_sales_rules_only(db, ctx.tenant_id))
     if token == "editor":
         return ApiEnvelope(data=await _load_rule_book_editor_dict(db, ctx.tenant_id))
-    if token == "ingest_stats":
-        return ApiEnvelope(data=await _load_rule_book_ingest_stats_only(db, ctx.tenant_id))
     return ApiEnvelope(data=await _load_rule_book_response_dict(db, ctx.tenant_id))
 
 
@@ -392,6 +370,7 @@ async def put_rule_book_vendor_detection(
         remap_invoices=False,
     )
     return ApiEnvelope(data={"vendor_detection_config": updated.model_dump()})
+
 
 class BankFileSettingsUpdate(BaseModel):
     bank_file_settings: BankFileSettings
@@ -563,7 +542,8 @@ async def delete_document_type(
         client_ip=client_ip,
     )
 
-    data = await attach_email_capture_ingest_stats(db, ctx.tenant_id, after_raw)
+    data = dict(after_raw)
+    data.pop("email_capture_rules", None)
     data["vendor_masters"] = []
     data["employee_masters"] = []
     return ApiEnvelope(data=data)

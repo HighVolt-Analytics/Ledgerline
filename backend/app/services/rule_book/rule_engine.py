@@ -101,6 +101,8 @@ def _match_value(
     # Trim so UI trailing spaces ("highvolt ") do not break contains/equals.
     haystack = (haystack or "").strip()
     needle = (needle or "").strip()
+    if operator in {"contains", "not_contains", "starts_with", "ends_with"} and not needle:
+        return False
     if case_sensitive:
         a, b = haystack, needle
     else:

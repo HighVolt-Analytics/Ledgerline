@@ -36,7 +36,7 @@ from app.services.reports.exception_status_catalog_builders import (
     _as_date,
     process_efficiency_slice,
 )
-from app.services.reports.position_liquidity_service import _fy_window
+from app.services.reports.dashboard_period import resolve_dashboard_period
 from app.services.reports.report_catalog import CATALOG_BY_ID
 from app.services.reports.team_expense_catalog_builders import build_missing_documents
 from app.services.shared.currency import convert_to_base
@@ -211,6 +211,31 @@ async def _duplicates_prevented(
     return _quantize(total), len(rows)
 
 
+def _capture_channel(inv: Invoice) -> str:
+    """Same channel bucketing as dashboard capture sources."""
+    src = (inv.capture_source or "").strip().lower()
+    if src in {"email", "whatsapp", "viber", "upload"}:
+        return src
+    if getattr(inv, "whatsapp_connection_id", None):
+        return "whatsapp"
+    if getattr(inv, "viber_connection_id", None):
+        return "viber"
+    if (
+        (inv.email_sender and str(inv.email_sender).strip())
+        or inv.email_message_id
+        or inv.connected_mailbox_id is not None
+    ):
+        return "email"
+    return "upload"
+
+
+def _capture_channel_counts(invoices: list[Invoice]) -> dict[str, int]:
+    counts = {"email": 0, "upload": 0, "whatsapp": 0, "viber": 0}
+    for inv in invoices:
+        counts[_capture_channel(inv)] += 1
+    return counts
+
+
 async def _fraud_blocked(
     db: AsyncSession,
     tenant_id: uuid.UUID,
@@ -341,18 +366,20 @@ async def build_efficiency_automation_dashboard(
     *,
     tenant_id: uuid.UUID,
     environment_label: str | None = None,
+    period: str | None = None,
 ) -> EfficiencyAutomationDashboard:
     tenant = await db.get(Tenant, tenant_id)
     base = tenant_currency(tenant)
     labor_rate = tenant_labor_rate_per_hour(tenant)
     as_of = await _institution_today(db, tenant_id)
-    period_start, period_end, period_label = _fy_window(as_of)
+    period_start, period_end, period_label = resolve_dashboard_period(period, as_of)
     mtd_start = _month_start(as_of)
 
     efficiency = await process_efficiency_slice(db, tenant_id, period_start, period_end)
     mtd_efficiency = await process_efficiency_slice(db, tenant_id, mtd_start, period_end)
 
     processed_ytd = await _processed_invoices(db, tenant_id, period_start, period_end)
+    capture_counts = _capture_channel_counts(processed_ytd)
     proc_stats = await _processing_stats(
         db, tenant_id, processed_ytd, base=base, labor_rate=labor_rate
     )
@@ -413,6 +440,8 @@ async def build_efficiency_automation_dashboard(
         f"Documents past retention = vault files older than {DOCUMENT_RETENTION_DAYS} days "
         f"(platform constant; not yet tenant-configurable).",
         "Vault documents = tenant invoices with a stored file (excl. rejected/duplicate shadows).",
+        "Capture channel counts = processed documents grouped by ingest channel "
+        "(email, upload, WhatsApp, Viber).",
         "Sync success = completed ÷ (completed + failed) accounting sync jobs in period.",
     ]
     coverage_gaps = [
@@ -449,6 +478,10 @@ async def build_efficiency_automation_dashboard(
             fte_hours_per_year=FTE_HOURS_PER_YEAR,
             documents_processed_ytd=docs_ytd,
             documents_processed_mtd=docs_mtd,
+            documents_capture_email=capture_counts["email"],
+            documents_capture_upload=capture_counts["upload"],
+            documents_capture_whatsapp=capture_counts["whatsapp"],
+            documents_capture_viber=capture_counts["viber"],
             vault_documents_total=vault_total,
             duplicates_prevented_amount=dup_amount,
             duplicates_prevented_events=dup_events,

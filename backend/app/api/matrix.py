@@ -7,8 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, get_auth_context, get_db
 from app.schemas.common import ApiEnvelope, ResponseMeta
+from app.schemas.matrix_analysis import MatrixAnalysisResponse
 from app.schemas.matrix_api import MatrixListRequest
 from app.schemas.pipeline import MatrixRowResponse
+from app.services.reports.matrix_analysis_service import fetch_matrix_analysis
 from app.services.reports.matrix_service import fetch_document_matrix
 
 router = APIRouter(prefix="/matrix", tags=["matrix"])
@@ -62,5 +64,39 @@ async def document_matrix(
             approval_processing_count=result.processing_count,
             approval_approved_count=result.approved_count,
             approval_rejected_count=result.rejected_count,
+        ),
+    )
+
+
+@router.get("/analysis", response_model=ApiEnvelope[MatrixAnalysisResponse])
+async def document_matrix_analysis(
+    route_target: Annotated[
+        str | None, Query(description="Comma-separated rule book route targets")
+    ] = None,
+    capture_source: Annotated[str | None, Query()] = None,
+    q: Annotated[str | None, Query()] = None,
+    approval_board_column: Annotated[
+        str | None, Query(description="Filter by approvals board column")
+    ] = None,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[MatrixAnalysisResponse]:
+    """Scoped aggregates for Upload analysis overlay (board, pipeline, issues)."""
+    params = MatrixListRequest(
+        route_target=route_target,
+        capture_source=capture_source,
+        q=q,
+        approval_board_column=approval_board_column,
+    )
+    result = await fetch_matrix_analysis(db, tenant_id=ctx.tenant_id, params=params)
+    return ApiEnvelope(
+        data=result,
+        meta=ResponseMeta(
+            total=result.summary.document_count,
+            matrix_document_count=result.summary.document_count,
+            matrix_flagged=result.summary.flagged,
+            matrix_duplicates=result.summary.duplicates,
+            matrix_awaiting=result.summary.awaiting,
+            matrix_paid_this_month=result.summary.paid_this_month,
         ),
     )

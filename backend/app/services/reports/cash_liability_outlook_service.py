@@ -28,6 +28,8 @@ from app.services.reports.payables_catalog_builders import (
     _select_display_payment,
     ap_outstanding_rows,
 )
+from app.services.reports.dashboard_period import resolve_dashboard_period
+from app.services.reports.dashboard_service import _institution_today
 from app.services.reports.statement_builders import _age_bucket
 from app.services.shared.currency import convert_to_base
 from app.tenant_settings import tenant_currency
@@ -248,12 +250,12 @@ async def build_cash_liability_outlook_dashboard(
     *,
     tenant_id: uuid.UUID,
     environment_label: str | None = None,
+    period: str | None = None,
 ) -> CashLiabilityOutlookDashboard:
-    from app.services.reports.dashboard_service import _institution_today
-
     tenant = await db.get(Tenant, tenant_id)
     base = tenant_currency(tenant)
     as_of = await _institution_today(db, tenant_id)
+    period_start, period_end, period_label = resolve_dashboard_period(period, as_of)
     week_plan = _week_starts(as_of)
     buckets = _empty_weeks()
 
@@ -323,6 +325,9 @@ async def build_cash_liability_outlook_dashboard(
         meta=CashLiabilityOutlookMeta(
             currency=base,
             as_of=as_of.isoformat(),
+            period_label=period_label,
+            period_start=period_start.isoformat(),
+            period_end=period_end.isoformat(),
             horizon_weeks=_HORIZON_WEEKS,
             environment_label=environment_label,
             coverage_gaps=coverage_gaps,

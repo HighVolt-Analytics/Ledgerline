@@ -51,7 +51,7 @@ const TENANT_SCOPED_HOOKS = [
   "useRuleBookExpenseRules",
   "useRuleBookPurchaseRules",
   "useRuleBookSalesRules",
-  "useRuleBookIngestStats",
+  "useEmailIngestionRulesDraft",
   "useRecognitionSignalCatalog",
   "useVendorMasters",
   "useEmployeeMasters",

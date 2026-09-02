@@ -29,10 +29,13 @@ const baseKeys = {
   notifications: ["notifications"] as const,
   dashboardOverview: (month: string, activityLimit: number) =>
     ["dashboard", "overview", month, activityLimit] as const,
-  positionLiquidity: ["dashboard", "position-liquidity"] as const,
-  efficiencyAutomation: ["dashboard", "efficiency-automation"] as const,
-  cashLiabilityOutlook: ["dashboard", "cash-liability-outlook"] as const,
-  budgetConcentrationRisk: ["dashboard", "budget-concentration-risk"] as const,
+  positionLiquidity: (period: string) => ["dashboard", "position-liquidity", period] as const,
+  efficiencyAutomation: (period: string) => ["dashboard", "efficiency-automation", period] as const,
+  cashLiabilityOutlook: (period: string) => ["dashboard", "cash-liability-outlook", period] as const,
+  budgetConcentrationRisk: (period: string) => ["dashboard", "budget-concentration-risk", period] as const,
+  cfoAlerts: (period: string) => ["dashboard", "cfo-alerts", period] as const,
+  processEfficiencyTrends: (period: string) =>
+    ["dashboard", "process-efficiency-trends", period] as const,
   reportsAnalytics: (month: string) => ["reports", "analytics", month] as const,
   subledgerApBalances: (asOf?: string) => ["reports", "subledger", "ap", asOf ?? ""] as const,
   subledgerArBalances: (asOf?: string) => ["reports", "subledger", "ar", asOf ?? ""] as const,
@@ -128,6 +131,7 @@ const baseKeys = {
   billing: ["billing"] as const,
   appSettings: ["app-settings"] as const,
   mailboxes: ["mailboxes"] as const,
+  emailIngestionRules: ["mailboxes", "ingestion-rules"] as const,
   myPermissions: ["auth", "permissions"] as const,
   institutionSettings: ["tenants", "institution-settings"] as const,
 };
@@ -137,10 +141,14 @@ export const queryKeys = {
   notifications: () => tenantQueryKey(baseKeys.notifications),
   dashboardOverview: (month: string, activityLimit: number) =>
     tenantQueryKey(baseKeys.dashboardOverview(month, activityLimit)),
-  positionLiquidity: () => tenantQueryKey(baseKeys.positionLiquidity),
-  efficiencyAutomation: () => tenantQueryKey(baseKeys.efficiencyAutomation),
-  cashLiabilityOutlook: () => tenantQueryKey(baseKeys.cashLiabilityOutlook),
-  budgetConcentrationRisk: () => tenantQueryKey(baseKeys.budgetConcentrationRisk),
+  positionLiquidity: (period: string) => tenantQueryKey(baseKeys.positionLiquidity(period)),
+  positionLiquidityAll: () => tenantQueryKey(["dashboard", "position-liquidity"] as const),
+  efficiencyAutomation: (period: string) => tenantQueryKey(baseKeys.efficiencyAutomation(period)),
+  cashLiabilityOutlook: (period: string) => tenantQueryKey(baseKeys.cashLiabilityOutlook(period)),
+  budgetConcentrationRisk: (period: string) => tenantQueryKey(baseKeys.budgetConcentrationRisk(period)),
+  cfoAlerts: (period: string) => tenantQueryKey(baseKeys.cfoAlerts(period)),
+  processEfficiencyTrends: (period: string) =>
+    tenantQueryKey(baseKeys.processEfficiencyTrends(period)),
   reportsAnalytics: (month: string) => tenantQueryKey(baseKeys.reportsAnalytics(month)),
   subledgerApBalances: (asOf?: string) => tenantQueryKey(baseKeys.subledgerApBalances(asOf)),
   subledgerArBalances: (asOf?: string) => tenantQueryKey(baseKeys.subledgerArBalances(asOf)),
@@ -280,6 +288,8 @@ export const queryKeys = {
   billing: () => tenantQueryKey(baseKeys.billing),
   appSettings: () => tenantQueryKey(baseKeys.appSettings),
   mailboxes: () => tenantQueryKey(baseKeys.mailboxes),
+  emailIngestionRules: () => tenantQueryKey(baseKeys.emailIngestionRules),
+  emailIngestionStats: () => tenantQueryKey([...baseKeys.emailIngestionRules, "stats"] as const),
   myPermissions: () => tenantQueryKey(baseKeys.myPermissions),
   institutionSettings: () => tenantQueryKey(baseKeys.institutionSettings),
 };
