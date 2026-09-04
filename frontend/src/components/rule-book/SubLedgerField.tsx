@@ -6,6 +6,7 @@ import {
   subLedgersForLedger,
   subLedgersToSelectOptions,
 } from "@/lib/coaAccountOptions";
+import { LINE_SUB_GL_NONE } from "@/lib/lineGlAccount";
 
 type SubLedgerFieldProps = {
   ledger: string;
@@ -18,6 +19,8 @@ type SubLedgerFieldProps = {
   size?: "sm" | "md";
   includeEmpty?: boolean;
   emptyLabel?: string;
+  includeNone?: boolean;
+  noneLabel?: string;
   "data-testid"?: string;
 };
 
@@ -32,6 +35,8 @@ export function SubLedgerField({
   size = "md",
   includeEmpty = true,
   emptyLabel = "— Optional —",
+  includeNone = false,
+  noneLabel = "None",
   "data-testid": dataTestId,
 }: SubLedgerFieldProps) {
   const ledgerTrimmed = ledger.trim();
@@ -56,7 +61,15 @@ export function SubLedgerField({
       <Select
         value={value}
         onValueChange={onChange}
-        options={subLedgersToSelectOptions(catalog, { includeEmpty, emptyLabel })}
+        options={(
+          includeNone
+            ? [
+                ...(includeEmpty ? [{ value: "", label: emptyLabel }] : []),
+                { value: LINE_SUB_GL_NONE, label: noneLabel },
+                ...subLedgersToSelectOptions(catalog, { includeEmpty: false }),
+              ]
+            : subLedgersToSelectOptions(catalog, { includeEmpty, emptyLabel })
+        )}
         disabled={disabled}
         className={className ?? "w-full"}
         size={size}

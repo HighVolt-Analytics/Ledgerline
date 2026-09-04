@@ -1,26 +1,19 @@
-"""Xero accounting export pipeline APIs (reference, mappings, export, refresh)."""
+"""Xero accounting export pipeline APIs (export, refresh, contacts)."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, actor_from_context, get_db, require_admin
 from app.models.invoice import Invoice, InvoiceStatus
-from app.models.xero_tracking_category import XeroTrackingCategory
 from app.schemas.common import ApiEnvelope
 from app.services.audit.audit_service import log_event
 from app.services.integration.accounting_integration_service import require_xero_ready
-from app.services.integration.accounting_mapping_service import (
-    MappingServiceError,
-    list_mappings,
-    mapping_to_dict,
-    upsert_mapping,
-)
 from app.integrations.xero.client import XeroApiError
 from app.integrations.xero.contacts import (
     create_xero_supplier_contact,
@@ -37,31 +30,11 @@ from app.integrations.xero.export import (
     retry_attachment,
     validate_invoice_for_xero_export,
 )
-from app.integrations.xero.master_data import (
-    list_xero_accounts,
-    list_xero_contacts,
-    list_xero_tax_rates,
-)
 from app.integrations.xero.reconcile import (
     run_export_reconciliation,
 )
 
 router = APIRouter(prefix="/integrations/xero", tags=["xero-export-pipeline"])
-
-
-class MappingUpsertBody(BaseModel):
-    mapping_type: str
-    source_key: str
-    source_label: str | None = None
-    external_id: str | None = None
-    external_code: str | None = None
-    external_name: str | None = None
-    external_option_id: str | None = None
-    is_active: bool = True
-
-
-class MappingsPutBody(BaseModel):
-    mappings: list[MappingUpsertBody] = Field(default_factory=list)
 
 
 class ContactResolveBody(BaseModel):
@@ -96,172 +69,6 @@ def _http_export_error(exc: XeroExportError) -> HTTPException:
             "evidence": ledger_to_dict(exc.ledger) if exc.ledger else None,
         },
     )
-
-
-@router.get("/reference/accounts")
-async def reference_accounts(
-    search: str | None = Query(None),
-    status: str | None = Query(None),
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-    db: AsyncSession = Depends(get_db),
-    ctx: AuthContext = Depends(require_admin),
-) -> ApiEnvelope[dict]:
-    data = await list_xero_accounts(
-        db,
-        tenant_id=ctx.tenant_id,
-        search=search,
-        status=status,
-        limit=limit,
-        offset=offset,
-    )
-    return ApiEnvelope(data=data)
-
-
-@router.get("/reference/tax-rates")
-async def reference_tax_rates(
-    search: str | None = Query(None),
-    status: str | None = Query(None),
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-    db: AsyncSession = Depends(get_db),
-    ctx: AuthContext = Depends(require_admin),
-) -> ApiEnvelope[dict]:
-    data = await list_xero_tax_rates(
-        db,
-        tenant_id=ctx.tenant_id,
-        search=search,
-        status=status,
-        limit=limit,
-        offset=offset,
-    )
-    return ApiEnvelope(data=data)
-
-
-@router.get("/reference/contacts")
-async def reference_contacts(
-    search: str | None = Query(None),
-    status: str | None = Query(None),
-    mapping_status: str | None = Query(None),
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-    db: AsyncSession = Depends(get_db),
-    ctx: AuthContext = Depends(require_admin),
-) -> ApiEnvelope[dict]:
-    data = await list_xero_contacts(
-        db,
-        tenant_id=ctx.tenant_id,
-        search=search,
-        status=status,
-        mapping_status=mapping_status,
-        limit=limit,
-        offset=offset,
-    )
-    return ApiEnvelope(data=data)
-
-
-@router.get("/reference/tracking-categories")
-async def reference_tracking_categories(
-    search: str | None = Query(None),
-    limit: int = Query(100, ge=1, le=500),
-    offset: int = Query(0, ge=0),
-    db: AsyncSession = Depends(get_db),
-    ctx: AuthContext = Depends(require_admin),
-) -> ApiEnvelope[dict]:
-    _, xero_tenant_id = await require_xero_ready(db, ctx.tenant_id)
-    stmt = select(XeroTrackingCategory).where(
-        XeroTrackingCategory.tenant_id == ctx.tenant_id,
-        XeroTrackingCategory.xero_tenant_id == xero_tenant_id,
-        XeroTrackingCategory.sync_status == "active",
-    )
-    if search:
-        like = f"%{search.strip()}%"
-        stmt = stmt.where(
-            (XeroTrackingCategory.name.ilike(like))
-            | (XeroTrackingCategory.option_name.ilike(like))
-        )
-    rows = (
-        await db.execute(
-            stmt.order_by(XeroTrackingCategory.name, XeroTrackingCategory.option_name)
-            .limit(limit)
-            .offset(offset)
-        )
-    ).scalars().all()
-    items = [
-        {
-            "id": r.id,
-            "entity_type": "tracking_category",
-            "external_id": r.xero_tracking_category_id,
-            "option_external_id": r.option_external_id,
-            "code": r.option_name,
-            "name": r.name,
-            "option_name": r.option_name,
-            "status": r.status,
-            "option_status": r.option_status,
-            "is_active": r.is_active,
-            "last_synced_at": r.last_synced_at.isoformat() if r.last_synced_at else None,
-        }
-        for r in rows
-    ]
-    return ApiEnvelope(data={"items": items, "total": len(items)})
-
-
-@router.get("/mappings")
-async def get_mappings(
-    mapping_type: str | None = Query(None),
-    db: AsyncSession = Depends(get_db),
-    ctx: AuthContext = Depends(require_admin),
-) -> ApiEnvelope[dict]:
-    _, xero_tenant_id = await require_xero_ready(db, ctx.tenant_id)
-    rows = await list_mappings(
-        db,
-        tenant_id=ctx.tenant_id,
-        mapping_type=mapping_type,
-        xero_tenant_id=xero_tenant_id,
-    )
-    return ApiEnvelope(data={"items": [mapping_to_dict(r) for r in rows]})
-
-
-@router.put("/mappings")
-async def put_mappings(
-    body: MappingsPutBody,
-    db: AsyncSession = Depends(get_db),
-    ctx: AuthContext = Depends(require_admin),
-) -> ApiEnvelope[dict]:
-    _, xero_tenant_id = await require_xero_ready(db, ctx.tenant_id)
-    saved = []
-    try:
-        for item in body.mappings:
-            row = await upsert_mapping(
-                db,
-                tenant_id=ctx.tenant_id,
-                mapping_type=item.mapping_type,
-                source_key=item.source_key,
-                source_label=item.source_label,
-                external_id=item.external_id,
-                external_code=item.external_code,
-                external_name=item.external_name,
-                external_option_id=item.external_option_id,
-                is_active=item.is_active,
-                user_id=ctx.user_id,
-                xero_tenant_id=xero_tenant_id,
-            )
-            saved.append(mapping_to_dict(row))
-    except MappingServiceError as exc:
-        raise HTTPException(
-            400, detail={"message": str(exc), "code": exc.code}
-        ) from exc
-    actor_name, actor_email = await actor_from_context(db, ctx)
-    await log_event(
-        db,
-        "xero_mappings_updated",
-        tenant_id=ctx.tenant_id,
-        detail={"count": len(saved)},
-        actor_name=actor_name,
-        actor_email=actor_email,
-    )
-    await db.commit()
-    return ApiEnvelope(data={"items": saved})
 
 
 @router.post("/contacts/resolve")

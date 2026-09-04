@@ -4,6 +4,8 @@ from decimal import Decimal
 from types import SimpleNamespace
 import uuid
 
+import pytest
+
 from app.models.line_item import LineItem
 from app.schemas.document_type import DocumentTypeDefinition, DocumentTypePostTo
 from app.schemas.rule_book_config import ChartOfAccountEntry, RuleBookConfigPayload
@@ -19,6 +21,7 @@ from app.services.extraction.llm_coa_catalogue import (
 from app.services.invoice.line_item_gl_service import (
     build_line_item_response,
     effective_line_ledger,
+    line_gl_is_locked,
     line_gl_mapping_applicable,
     line_sub_ledger_review_required,
     missing_line_sub_ledger_indexes,
@@ -370,3 +373,90 @@ def test_accept_llm_sub_ledger_requires_min_confidence() -> None:
         )
         is False
     )
+
+
+def test_fallback_empty_uses_fallback_source_when_catalogue_has_no_default() -> None:
+    config = _config_with_sub_ledgers()
+    invoice = SimpleNamespace(vendor="Unknown Co", document_type_code="DT-08")
+    sub, source, reason = _fallback_sub_ledger(
+        invoice, config, parent_ledger="Cloud Hosting Expense"
+    )
+    assert sub == ""
+    assert source == "fallback"
+    assert "main GL" in reason
+
+
+def test_line_gl_locked_manual_and_fallback_even_when_blank() -> None:
+    assert line_gl_is_locked(SimpleNamespace(sub_ledger=None, gl_mapping_source="manual")) is True
+    assert line_gl_is_locked(SimpleNamespace(sub_ledger="", gl_mapping_source="fallback")) is True
+    assert line_gl_is_locked(SimpleNamespace(sub_ledger=None, gl_mapping_source=None)) is False
+
+
+def test_line_gl_locked_llm_only_when_sub_assigned() -> None:
+    assert (
+        line_gl_is_locked(SimpleNamespace(sub_ledger="Advertising", gl_mapping_source="llm"))
+        is True
+    )
+    assert line_gl_is_locked(SimpleNamespace(sub_ledger=None, gl_mapping_source="llm")) is False
+
+
+def test_line_sub_ledger_review_not_required_when_fallback_or_manual_none() -> None:
+    config = _config_with_sub_ledgers()
+    invoice = SimpleNamespace(
+        document_type_code="DT-01",
+        route_target="Purchase Management",
+        account_name="Cloud Hosting Expense",
+        gl_posting_applicable=True,
+        line_items=[
+            SimpleNamespace(sub_ledger=None, parent_ledger="Cloud Hosting Expense", gl_mapping_source="fallback"),
+            SimpleNamespace(sub_ledger=None, parent_ledger="Cloud Hosting Expense", gl_mapping_source="manual"),
+        ],
+    )
+    assert line_sub_ledger_review_required(invoice, config) is False
+    assert missing_line_sub_ledger_indexes(invoice) == []
+
+
+@pytest.mark.asyncio
+async def test_apply_line_gl_mapping_does_not_overwrite_manual_or_call_llm(
+    monkeypatch,
+) -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.services.classification.line_gl_mapping_service import apply_line_gl_mapping
+
+    async def _boom(**_kwargs):
+        raise AssertionError("sub-ledger LLM should not run for locked lines")
+
+    monkeypatch.setattr(
+        "app.services.classification.line_gl_mapping_service._llm_sub_ledger_assign",
+        _boom,
+    )
+    monkeypatch.setattr(
+        "app.services.classification.line_gl_mapping_service.log_event",
+        AsyncMock(),
+    )
+    session = MagicMock()
+    session.flush = AsyncMock()
+    line = SimpleNamespace(
+        description="15 Nov - 15 Dec 2025",
+        amount=None,
+        sub_ledger="Advertising",
+        parent_ledger="Cloud Hosting Expense",
+        gl_mapping_source="manual",
+    )
+    invoice = SimpleNamespace(
+        id=91,
+        document_type_code="DT-01",
+        route_target="Purchase Management",
+        account_name="Cloud Hosting Expense",
+        account_code="6110",
+        gl_posting_applicable=True,
+        team_expense_kind=None,
+        vendor="instantly",
+        document_text="",
+        document_heading="",
+        line_items=[line],
+    )
+    assert await apply_line_gl_mapping(session, invoice, _config_with_sub_ledgers()) is False
+    assert line.sub_ledger == "Advertising"
+    assert line.gl_mapping_source == "manual"

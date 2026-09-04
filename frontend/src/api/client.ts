@@ -41,8 +41,6 @@ import type {
   XeroExportHistoryRow,
   XeroMasterTotals,
   XeroMasterListMeta,
-  XeroMappingRow,
-  XeroTrackingCategoryRow,
   XeroExportLedgerRow,
   XeroExportQueueItem,
   AuthUser,
@@ -1125,70 +1123,6 @@ export const api = {
       body: JSON.stringify(body),
     });
   },
-  getXeroReferenceAccounts: (params?: {
-    search?: string;
-    status?: string;
-    limit?: number;
-    offset?: number;
-  }) => {
-    const qs = new URLSearchParams();
-    if (params?.search) qs.set("search", params.search);
-    if (params?.status) qs.set("status", params.status);
-    if (params?.limit != null) qs.set("limit", String(params.limit));
-    if (params?.offset != null) qs.set("offset", String(params.offset));
-    const q = qs.toString();
-    return request<XeroMasterListMeta & { items: XeroAccountRow[] }>(
-      `/api/integrations/xero/reference/accounts${q ? `?${q}` : ""}`
-    );
-  },
-  getXeroReferenceTaxRates: (params?: {
-    search?: string;
-    status?: string;
-    limit?: number;
-    offset?: number;
-  }) => {
-    const qs = new URLSearchParams();
-    if (params?.search) qs.set("search", params.search);
-    if (params?.status) qs.set("status", params.status);
-    if (params?.limit != null) qs.set("limit", String(params.limit));
-    if (params?.offset != null) qs.set("offset", String(params.offset));
-    const q = qs.toString();
-    return request<XeroMasterListMeta & { items: XeroTaxRateRow[] }>(
-      `/api/integrations/xero/reference/tax-rates${q ? `?${q}` : ""}`
-    );
-  },
-  getXeroReferenceContacts: (params?: {
-    search?: string;
-    status?: string;
-    mapping_status?: string;
-    limit?: number;
-    offset?: number;
-  }) => {
-    const qs = new URLSearchParams();
-    if (params?.search) qs.set("search", params.search);
-    if (params?.status) qs.set("status", params.status);
-    if (params?.mapping_status) qs.set("mapping_status", params.mapping_status);
-    if (params?.limit != null) qs.set("limit", String(params.limit));
-    if (params?.offset != null) qs.set("offset", String(params.offset));
-    const q = qs.toString();
-    return request<XeroMasterListMeta & { items: XeroContactRow[] }>(
-      `/api/integrations/xero/reference/contacts${q ? `?${q}` : ""}`
-    );
-  },
-  getXeroReferenceTrackingCategories: (params?: {
-    search?: string;
-    limit?: number;
-    offset?: number;
-  }) => {
-    const qs = new URLSearchParams();
-    if (params?.search) qs.set("search", params.search);
-    if (params?.limit != null) qs.set("limit", String(params.limit));
-    if (params?.offset != null) qs.set("offset", String(params.offset));
-    const q = qs.toString();
-    return request<{ items: XeroTrackingCategoryRow[]; total: number }>(
-      `/api/integrations/xero/reference/tracking-categories${q ? `?${q}` : ""}`
-    );
-  },
   getXeroSyncHistory: (params?: { limit?: number; offset?: number }) => {
     const qs = new URLSearchParams();
     if (params?.limit != null) qs.set("limit", String(params.limit));
@@ -1238,17 +1172,6 @@ export const api = {
       evidence: XeroExportLedgerRow;
       attachment?: Record<string, unknown> | null;
     }>(`/api/integrations/xero/invoices/${invoiceId}/export`, { method: "POST" });
-  },
-  getXeroMappings: () => {
-    return request<{ items: XeroMappingRow[] }>("/api/integrations/xero/mappings");
-  },
-  putXeroMappings: (mappings: Array<Partial<XeroMappingRow> & { mapping_type: string; source_key: string }>) => {
-    bustGetCacheByPrefix("/api/integrations/xero");
-    return request<{ items: XeroMappingRow[] }>("/api/integrations/xero/mappings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mappings }),
-    });
   },
   getXeroExportLedger: (params?: { status?: string; limit?: number }) => {
     const qs = new URLSearchParams();

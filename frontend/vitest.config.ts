@@ -75,7 +75,6 @@ export default defineConfig({
       "src/pages/SetupPage.test.tsx",
       "src/pages/IntegrationsPage.test.tsx",
       "src/components/integrations/XeroEvidencePanel.test.tsx",
-      "src/components/integrations/XeroMappingWorkspace.test.tsx",
       "src/components/ledger-link/JournalExportTab.test.tsx",
       "src/components/purchases/ListPaginationFooter.test.tsx",
       "src/components/payments/PayPalProviderCard.test.tsx",

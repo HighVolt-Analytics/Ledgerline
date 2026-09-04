@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import type { ChartOfAccountRow, LineItem } from "@/api/types";
 import {
+  LINE_SUB_GL_NONE,
+  draftSubLedgerFromLine,
   effectiveLineLedger,
+  isLineSubGlNone,
   lineGlMappingReason,
   lineGlSourceLabel,
   lineSubLedgerRequired,
@@ -83,6 +86,7 @@ describe("lineGlAccount", () => {
   it("labels mapping sources honestly", () => {
     expect(lineGlSourceLabel("llm")).toBe("LLM");
     expect(lineGlSourceLabel("doc_type_default")).toBe("Doc type default");
+    expect(lineGlSourceLabel("fallback")).toBe("Fallback");
   });
 
   it("builds mapping reason from persisted metadata", () => {
@@ -105,6 +109,27 @@ describe("lineGlAccount", () => {
       )
     ).toBe(false);
     expect(lineSubLedgerRequired(baseLine, "Operating Expenses", coa)).toBe(false);
+  });
+
+  it("treats None / locked fallback as not required", () => {
+    expect(
+      lineSubLedgerRequired(
+        { ...baseLine, sub_ledger: LINE_SUB_GL_NONE },
+        "Cloud Hosting Expense",
+        coa
+      )
+    ).toBe(false);
+    expect(
+      lineSubLedgerRequired(
+        { ...baseLine, sub_ledger: null, gl_mapping_source: "fallback" },
+        "Cloud Hosting Expense",
+        coa
+      )
+    ).toBe(false);
+    expect(isLineSubGlNone(LINE_SUB_GL_NONE)).toBe(true);
+    expect(
+      draftSubLedgerFromLine({ ...baseLine, sub_ledger: null, gl_mapping_source: "manual" })
+    ).toBe(LINE_SUB_GL_NONE);
   });
 
   it("keeps a selected main GL instead of snapping back to the document-type parent", () => {

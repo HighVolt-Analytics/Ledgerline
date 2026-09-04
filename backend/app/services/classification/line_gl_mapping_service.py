@@ -20,6 +20,7 @@ from app.services.extraction.llm_coa_catalogue import (
 from app.services.invoice.line_item_gl_service import (
     _is_team_expense_invoice,
     apply_sub_ledger_to_line,
+    line_gl_is_locked,
     line_gl_mapping_applicable,
     resolve_doc_type_default_sub_ledger,
     resolve_effective_ledger_mapping,
@@ -58,7 +59,7 @@ def _fallback_sub_ledger(
         parent_ledger, vendor_default, config.chart_of_accounts
     ):
         return vendor_default, "vendor_default", "Vendor default sub-ledger"
-    return "", "main_gl", "No matching sub-ledger — keep main GL"
+    return "", "fallback", "No matching sub-ledger — keep main GL"
 
 
 def _keyword_sub_ledger_hint(description: str, catalogue: list[dict[str, str]]) -> str:
@@ -325,6 +326,8 @@ async def apply_line_gl_mapping(
     ):
         # No children under main GL → every line + TE header keep parent (main GL).
         for line in invoice.line_items or []:
+            if line_gl_is_locked(line):
+                continue
             apply_sub_ledger_to_line(
                 line,
                 sub_ledger="",
@@ -359,16 +362,23 @@ async def apply_line_gl_mapping(
         invoice, config, parent_ledger=parent_ledger
     )
 
-    llm_raw = await _llm_sub_ledger_assign(
-        parent_ledger=parent_ledger,
-        parent_code=parent_code,
-        catalogue=catalogue,
-        invoice=invoice,
-        doc_type_sub_ledger=doc_default,
-        vendor_sub_ledger=vendor_default,
-    )
-    suggestions = _parse_llm_suggestions(llm_raw)
-    doc_sub, doc_confidence, doc_reasoning = _parse_document_sub_ledger(llm_raw)
+    unlocked = [
+        line for line in (invoice.line_items or []) if not line_gl_is_locked(line)
+    ]
+    llm_raw: dict[str, Any] | None = None
+    suggestions: list[dict[str, Any]] = []
+    doc_sub, doc_confidence, doc_reasoning = "", None, ""
+    if unlocked:
+        llm_raw = await _llm_sub_ledger_assign(
+            parent_ledger=parent_ledger,
+            parent_code=parent_code,
+            catalogue=catalogue,
+            invoice=invoice,
+            doc_type_sub_ledger=doc_default,
+            vendor_sub_ledger=vendor_default,
+        )
+        suggestions = _parse_llm_suggestions(llm_raw)
+        doc_sub, doc_confidence, doc_reasoning = _parse_document_sub_ledger(llm_raw)
 
     suggestion_by_index: dict[int, dict[str, Any]] = {}
     for row in suggestions:
@@ -383,6 +393,8 @@ async def apply_line_gl_mapping(
     applied = 0
     # Same content → Sub-GL rules for every line under the fixed parent.
     for index, line in enumerate(invoice.line_items or []):
+        if line_gl_is_locked(line):
+            continue
         row = suggestion_by_index.get(index)
         if row is not None:
             candidate = str(row.get("sub_ledger") or "").strip()

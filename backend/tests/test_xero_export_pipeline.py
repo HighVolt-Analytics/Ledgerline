@@ -47,20 +47,21 @@ from app.services.integration.accounting_mapping_service import get_mapping, ups
 from app.services.integration.canonical_transaction_builder import (
     build_canonical_supplier_invoice,
 )
-from app.services.integration.xero.xero_accpay_adapter import (
+from app.integrations.xero.accpay import (
     assert_draft_status,
     build_accpay_draft_payload,
 )
 from app.integrations.xero.client import XeroApiError
-from app.services.integration.xero.xero_contact_resolution_service import (
+from app.integrations.xero.contacts import (
     resolve_supplier_contact,
 )
-from app.services.integration.xero.xero_error_classification import (
+from app.integrations.xero.errors import (
     ERROR_TERMINAL,
     ERROR_TRANSIENT,
     classify_error,
 )
-from app.services.integration.xero.xero_export_service import (
+from app.integrations.xero.export import (
+    XeroExportError,
     export_supplier_invoice_to_xero,
     retry_attachment,
     validate_invoice_for_xero_export,
@@ -812,7 +813,7 @@ async def test_transient_retry_vs_terminal(db_session):
             return_value=mock_client,
         ),
     ):
-        from app.services.integration.xero.xero_export_service import XeroExportError
+        from app.integrations.xero.export import XeroExportError
 
         with pytest.raises(XeroExportError) as exc:
             await export_supplier_invoice_to_xero(
@@ -840,7 +841,7 @@ async def test_transient_retry_vs_terminal(db_session):
             return_value=mock_client,
         ),
     ):
-        from app.services.integration.xero.xero_export_service import XeroExportError
+        from app.integrations.xero.export import XeroExportError
 
         with pytest.raises(XeroExportError):
             await export_supplier_invoice_to_xero(
@@ -896,7 +897,7 @@ async def test_ambiguous_supplier_human_review(db_session):
         "app.integrations.xero.export.require_xero_ready",
         AsyncMock(return_value=(MagicMock(provider_tenant_id="xero-org-1"), "xero-org-1")),
     ):
-        from app.services.integration.xero.xero_export_service import XeroExportError
+        from app.integrations.xero.export import XeroExportError
 
         with pytest.raises(XeroExportError) as exc:
             await export_supplier_invoice_to_xero(

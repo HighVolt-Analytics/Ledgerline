@@ -13,7 +13,25 @@ const SOURCE_LABELS: Record<string, string> = {
   vendor_default: "Vendor default",
   keyword: "Keyword match",
   manual: "Manual",
+  fallback: "Fallback",
 };
+
+/** Clerk chose None — post on parent main GL; not a COA child name. */
+export const LINE_SUB_GL_NONE = "__none__";
+
+export function isLineSubGlNone(value: string | null | undefined): boolean {
+  return (value ?? "").trim() === LINE_SUB_GL_NONE;
+}
+
+export function draftSubLedgerFromLine(
+  line: Pick<LineItem, "sub_ledger" | "gl_mapping_source">
+): string {
+  const sub = (line.sub_ledger ?? "").trim();
+  if (sub) return sub;
+  const source = (line.gl_mapping_source ?? "").trim().toLowerCase();
+  if (source === "manual" || source === "fallback") return LINE_SUB_GL_NONE;
+  return "";
+}
 
 export function effectiveLineLedger(
   line: Pick<LineItem, "sub_ledger" | "effective_ledger" | "parent_ledger">,
@@ -124,10 +142,13 @@ export function resolveLineGlSelection(
 
 /** True when parent has a COA catalogue and the line still needs a sub-ledger pick. */
 export function lineSubLedgerRequired(
-  line: Pick<LineItem, "sub_ledger">,
+  line: Pick<LineItem, "sub_ledger" | "gl_mapping_source">,
   parentLedger: string,
   accounts: ChartOfAccountRow[]
 ): boolean {
   if (!ledgerHasSubLedgerCatalog(parentLedger, accounts)) return false;
+  if (isLineSubGlNone(line.sub_ledger)) return false;
+  const source = (line.gl_mapping_source ?? "").trim().toLowerCase();
+  if (source === "manual" || source === "fallback") return false;
   return !(line.sub_ledger ?? "").trim();
 }

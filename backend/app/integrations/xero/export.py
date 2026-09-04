@@ -352,7 +352,11 @@ async def validate_invoice_for_xero_export(
                 {
                     "field": "currency",
                     "code": "currency_not_supported",
-                    "message": f"Document currency '{currency}' is not supported by the selected Xero organisation",
+                    "message": (
+                        f"Document currency '{currency}' is not enabled on the selected "
+                        "Xero organisation. Add it in Xero (Organisation settings → "
+                        "Currencies) if the org has multi-currency, then retry export."
+                    ),
                 }
             )
 
@@ -399,6 +403,10 @@ async def export_supplier_invoice_to_xero(
     now = datetime.now(timezone.utc)
     correlation_id = correlation_id_ctx.get() or str(uuid.uuid4())
 
+    from app.integrations.xero.currencies import ensure_invoice_xero_currency
+
+    await ensure_invoice_xero_currency(db, tenant_id=tenant_id, invoice_id=invoice_id)
+
     validation = await validate_invoice_for_xero_export(
         db, tenant_id=tenant_id, invoice_id=invoice_id
     )
@@ -426,6 +434,16 @@ async def export_supplier_invoice_to_xero(
             code="validation_failed",
             bucket=ERROR_TERMINAL,
             blocking_errors=validation["blocking_errors"],
+            ledger=await _ensure_failed_ledger(
+                db,
+                tenant_id=tenant_id,
+                invoice_id=invoice_id,
+                validation=validation,
+                user_id=user_id,
+                correlation_id=correlation_id,
+                code="validation_failed",
+                message="Export validation failed",
+            ),
         )
 
     invoice = await load_invoice_for_export(
@@ -826,6 +844,50 @@ async def _ensure_review_ledger(
     ledger.error_bucket = ERROR_TERMINAL
     ledger.error_code = "ambiguous_supplier_match"
     ledger.error_message = "ambiguous supplier match"
+    ledger.request_correlation_id = correlation_id
+    await db.flush()
+    return ledger
+
+
+async def _ensure_failed_ledger(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    invoice_id: int,
+    validation: dict[str, Any],
+    user_id: int | None,
+    correlation_id: str,
+    code: str,
+    message: str,
+) -> AccountingExportLedger:
+    canonical = validation.get("canonical") or {}
+    qll_id = canonical.get("qll_transaction_id") or str(uuid.uuid4())
+    payload_hash = canonical.get("payload_hash") or "failed"
+    first = (validation.get("blocking_errors") or [{}])[0]
+    detail = str(first.get("message") or message)
+    ledger = await _latest_ledger_for_invoice(
+        db, tenant_id=tenant_id, invoice_id=invoice_id
+    )
+    if ledger is None:
+        ledger = AccountingExportLedger(
+            tenant_id=tenant_id,
+            provider=PROVIDER_XERO,
+            qll_transaction_id=qll_id,
+            source_invoice_id=invoice_id,
+            transaction_type=TXN_SUPPLIER_INVOICE,
+            direction=DIRECTION_OUTBOUND,
+            status=STATUS_FAILED_TERMINAL,
+            payload_version=1,
+            payload_hash=payload_hash,
+            idempotency_key=f"failed:{invoice_id}:{payload_hash[:16]}",
+            canonical_json=json.dumps(canonical, default=str),
+            created_by=user_id,
+        )
+        db.add(ledger)
+    ledger.status = STATUS_FAILED_TERMINAL
+    ledger.error_bucket = ERROR_TERMINAL
+    ledger.error_code = code
+    ledger.error_message = detail[:2000]
     ledger.request_correlation_id = correlation_id
     await db.flush()
     return ledger

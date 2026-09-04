@@ -32,7 +32,7 @@ from app.services.integration.accounting_mapping_service import (
     list_mappings,
     upsert_mapping,
 )
-from app.services.integration.xero.xero_master_data_service import get_master_data_totals
+from app.integrations.xero.master_data import get_master_data_totals
 from app.services.shared.token_vault import encrypt_secret
 from app.tenant_ids import TESTING_TENANT_UUID
 

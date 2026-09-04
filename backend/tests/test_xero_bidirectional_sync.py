@@ -22,11 +22,11 @@ from app.models.xero_connection import XeroConnection
 from app.models.xero_tax_rate import XeroTaxRate
 from app.models.xero_currency import XeroCurrency
 from app.integrations.xero.client import XeroApiError
-from app.services.integration.xero.xero_master_data_service import (
+from app.integrations.xero.master_data import (
     get_master_data_totals,
     list_xero_accounts,
 )
-from app.services.integration.xero.xero_sync_counts import EntitySyncCounters, payload_hash
+from app.integrations.xero.sync_counts import EntitySyncCounters, payload_hash
 from app.integrations.xero.sync import (
     mark_sync_committed,
     sync_contacts,
@@ -550,7 +550,7 @@ async def test_export_validation_accepts_aud_after_currency_sync(db_session, mon
     from app.models.line_item import LineItem
     from app.services.integration.accounting_mapping_service import upsert_mapping
     from app.models.accounting_entity_mapping import MAPPING_TAX
-    from app.services.integration.xero.xero_export_service import validate_invoice_for_xero_export
+    from app.integrations.xero.export import validate_invoice_for_xero_export
 
     await _seed_connected(db_session)
     _mock_xero_client(

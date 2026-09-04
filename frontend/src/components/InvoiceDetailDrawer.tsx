@@ -97,6 +97,7 @@ import {
 } from "@/lib/routePageAdapters";
 import type { EmployeeMaster } from "@/lib/v4RuleBookTypes";
 import { LineGlAccountCell } from "@/components/invoices/LineGlAccountCell";
+import { draftSubLedgerFromLine, isLineSubGlNone } from "@/lib/lineGlAccount";
 import { effectiveMatchPolicy, isTwoWayMatchMode } from "@/lib/documentPlaybookConfig";
 import { InvoicePurchaseDossierSection } from "@/components/invoices/InvoicePurchaseDossierSection";
 import { InvoiceSalesDossierSection } from "@/components/invoices/InvoiceSalesDossierSection";
@@ -657,7 +658,7 @@ function draftFromInvoice(inv: InvoiceDetails, extractionFieldKeys: string[] = [
       unit_price: strField(line.unit_price),
       amount: strField(line.amount),
       parent_ledger: strField(line.parent_ledger),
-      sub_ledger: strField(line.sub_ledger),
+      sub_ledger: draftSubLedgerFromLine(line),
     })),
     skip_steps: skipStepsFromInvoice(inv.processing_overrides),
     extractedFields,
@@ -912,17 +913,19 @@ function payloadFromDraft(draft: InvoiceEditDraft, inv?: InvoiceDetails): Invoic
     total: optionalText(draft.total),
     currency: optionalText(draft.currency)?.toUpperCase() ?? null,
     email_sender: optionalText(draft.email_sender),
-    line_items: draft.line_items.map((line) => ({
-      id: line.id,
-      description: optionalText(line.description),
-      qty: optionalText(line.qty),
-      unit_price: optionalText(line.unit_price),
-      amount: optionalText(line.amount),
-      sub_ledger: optionalText(line.sub_ledger),
-      parent_ledger: optionalText(line.parent_ledger),
-      gl_mapping_source:
-        line.sub_ledger.trim() || line.parent_ledger.trim() ? "manual" : undefined,
-    })),
+    line_items: draft.line_items.map((line) => {
+      const none = isLineSubGlNone(line.sub_ledger);
+      return {
+        id: line.id,
+        description: optionalText(line.description),
+        qty: optionalText(line.qty),
+        unit_price: optionalText(line.unit_price),
+        amount: optionalText(line.amount),
+        sub_ledger: none ? null : optionalText(line.sub_ledger),
+        parent_ledger: optionalText(line.parent_ledger),
+        gl_mapping_source: "manual" as const,
+      };
+    }),
   };
   const overridesPatch = inv
     ? processingOverridesPatchFromDraft(draft.skip_steps, inv.processing_overrides)

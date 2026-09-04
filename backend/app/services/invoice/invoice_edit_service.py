@@ -153,13 +153,20 @@ async def update_invoice_fields(
         await session.flush()
 
         for item in line_items_payload:
-            sub_ledger = item.get("sub_ledger")
-            if isinstance(sub_ledger, str):
-                sub_ledger = sub_ledger.strip() or None
             parent_ledger = item.get("parent_ledger")
             if isinstance(parent_ledger, str):
                 parent_ledger = parent_ledger.strip() or None
             gl_source = item.get("gl_mapping_source")
+            if isinstance(gl_source, str):
+                gl_source = gl_source.strip() or None
+            sub_ledger = item.get("sub_ledger")
+            if isinstance(sub_ledger, str):
+                token = sub_ledger.strip()
+                if token.lower() in {"__none__", "none"}:
+                    sub_ledger = None
+                    gl_source = gl_source or "manual"
+                else:
+                    sub_ledger = token or None
             if (sub_ledger is not None or parent_ledger is not None) and not gl_source:
                 gl_source = "manual"
             cleaned = sanitize_parsed_line_item(

@@ -5,6 +5,7 @@ import pytest
 
 from app.integrations.xero.auto_push import (
     _INFO_KEY,
+    flush_scheduled_xero_auto_push,
     run_scheduled_xero_auto_push,
     schedule_xero_auto_push,
 )
@@ -124,3 +125,19 @@ async def test_run_exports_when_connected(monkeypatch: pytest.MonkeyPatch) -> No
     assert kwargs["invoice_id"] == 7
     assert kwargs["tenant_id"] == TESTING_TENANT_UUID
     assert kwargs["user_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_flush_awaits_queued_export(monkeypatch: pytest.MonkeyPatch) -> None:
+    ran: list[tuple[object, int]] = []
+
+    async def _run(tenant_id, invoice_id):
+        ran.append((tenant_id, invoice_id))
+        return {"skipped": False}
+
+    monkeypatch.setattr("app.integrations.xero.auto_push.run_scheduled_xero_auto_push", _run)
+    session = SimpleNamespace(info={})
+    schedule_xero_auto_push(session, _invoice())
+    await flush_scheduled_xero_auto_push(session)
+    assert ran == [(TESTING_TENANT_UUID, 7)]
+    assert not session.info.get(_INFO_KEY)

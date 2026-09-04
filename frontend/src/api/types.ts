@@ -2239,20 +2239,6 @@ export interface XeroContactRow {
   imported_at: string | null;
 }
 
-export interface XeroTrackingCategoryRow {
-  id: number;
-  entity_type: string;
-  external_id: string | null;
-  option_external_id: string | null;
-  code: string | null;
-  name: string | null;
-  option_name: string | null;
-  status: string | null;
-  option_status: string | null;
-  is_active: boolean;
-  last_synced_at: string | null;
-}
-
 export interface XeroSyncHistoryRow {
   id: number;
   job_type: string;
@@ -2293,18 +2279,6 @@ export interface XeroMasterTotals {
   tax_rates: number;
   contacts: number;
   currencies: number;
-}
-
-export interface XeroMappingRow {
-  id?: number;
-  mapping_type: string;
-  source_key: string;
-  source_label?: string | null;
-  external_id?: string | null;
-  external_code?: string | null;
-  external_name?: string | null;
-  external_option_id?: string | null;
-  is_active?: boolean;
 }
 
 export interface XeroExportLedgerRow {

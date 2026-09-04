@@ -97,6 +97,16 @@ async def _safe_clear_platform_lookup(session: AsyncSession) -> None:
         logger.warning("platform_lookup_clear_failed", exc_info=True)
 
 
+async def _flush_xero_auto_push(session: AsyncSession) -> None:
+    """Await Xero export after commit. Never fail the originating transaction."""
+    try:
+        from app.integrations.xero.auto_push import flush_scheduled_xero_auto_push
+
+        await flush_scheduled_xero_auto_push(session)
+    except Exception:
+        logger.warning("xero_auto_push_flush_failed", exc_info=True)
+
+
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with async_session_factory() as session:
         try:
@@ -105,6 +115,8 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         except Exception:
             await _safe_rollback(session)
             raise
+        else:
+            await _flush_xero_auto_push(session)
         finally:
             await _safe_clear_rls(session)
 
@@ -135,6 +147,8 @@ async def db_session_with_rls(tenant_id: uuid.UUID | int | None):
         except Exception:
             await _safe_rollback(session)
             raise
+        else:
+            await _flush_xero_auto_push(session)
         finally:
             await _safe_clear_rls(session)
 

@@ -13,7 +13,9 @@ import {
 } from "@/lib/coaAccountOptions";
 import { cn } from "@/lib/cn";
 import {
+  LINE_SUB_GL_NONE,
   effectiveLineLedger,
+  isLineSubGlNone,
   lineGlMappingReason,
   lineSubLedgerRequired,
   resolveLineGlSelection,
@@ -79,10 +81,15 @@ export function LineGlAccountCell({
   const { mainLedger, subLedger } = resolveLineGlSelection(line, parentLedger, accounts);
   const hasCatalog = ledgerHasSubLedgerCatalog(mainLedger || parentLedger, accounts);
   const required = lineSubLedgerRequired(
-    { sub_ledger: subLedger },
+    { sub_ledger: subLedger, gl_mapping_source: line.gl_mapping_source },
     mainLedger || parentLedger,
     accounts
   );
+  const noneSelected =
+    isLineSubGlNone(subLedger) ||
+    (!(line.sub_ledger ?? "").trim() &&
+      ((line.gl_mapping_source ?? "").trim().toLowerCase() === "manual" ||
+        (line.gl_mapping_source ?? "").trim().toLowerCase() === "fallback"));
 
   const mainOptions = mergeCoaOptionsWithSavedValue(
     coaAccountsToSelectOptions(accounts, {
@@ -96,7 +103,13 @@ export function LineGlAccountCell({
   const displayLedger = effectiveLineLedger(line, parentLedger);
   const hasSubForCurrentMain = ledgerHasSubLedgerCatalog(mainLedger, accounts);
   const subInMainCatalog = subLedgerExistsInCoa(mainLedger, subLedger, accounts);
-  const renderedSubLedger = hasSubForCurrentMain ? (subInMainCatalog ? subLedger : "") : "";
+  const renderedSubLedger = noneSelected
+    ? LINE_SUB_GL_NONE
+    : hasSubForCurrentMain
+      ? subInMainCatalog
+        ? subLedger
+        : ""
+      : "";
 
   const mainSelect =
     editable && onGlChange ? (
@@ -131,6 +144,7 @@ export function LineGlAccountCell({
           className="invoice-drawer-gl-select w-full"
           data-testid="invoice-sub-gl-select"
           includeEmpty
+          includeNone
           emptyLabel={required ? "— Select sub-GL —" : "— Optional —"}
           size="sm"
         />
@@ -149,7 +163,7 @@ export function LineGlAccountCell({
 
   if (asRowColumns) {
     const mainText = (mainLedger || parentLedger || displayLedger || "").trim();
-    const subText = subLedger.trim();
+    const subText = noneSelected ? "None" : subLedger.trim();
     const mainBody =
       !postingApplies ? (
         <span className="text-xs text-muted-foreground">—</span>
@@ -210,7 +224,7 @@ export function LineGlAccountCell({
       );
     }
     const mainText = (mainLedger || parentLedger || displayLedger || "").trim();
-    const subText = subLedger.trim();
+    const subText = noneSelected ? "None" : subLedger.trim();
     return (
       <>
         <GlDrawerField label="Main GL">

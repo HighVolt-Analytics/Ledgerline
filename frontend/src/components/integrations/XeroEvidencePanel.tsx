@@ -1,5 +1,5 @@
 /**
- * Xero integration evidence: reference data, mappings, export queue, ledger.
+ * Xero integration evidence: synced lists, export queue, ledger.
  */
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/api/client";
@@ -13,7 +13,6 @@ import type {
   XeroSyncHistoryRow,
   XeroTaxRateRow,
 } from "@/api/types";
-import { XeroMappingWorkspace } from "@/components/integrations/XeroMappingWorkspace";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
@@ -27,7 +26,6 @@ type TabId =
   | "accounts"
   | "tax_rates"
   | "contacts"
-  | "mappings"
   | "export_queue"
   | "export_ledger"
   | "sync_history"
@@ -38,7 +36,6 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "accounts", label: "Accounts" },
   { id: "tax_rates", label: "Tax rates" },
   { id: "contacts", label: "Contacts" },
-  { id: "mappings", label: "Mappings" },
   { id: "export_queue", label: "Export queue" },
   { id: "export_ledger", label: "Export evidence" },
   { id: "sync_history", label: "Sync history" },
@@ -275,10 +272,6 @@ export function XeroEvidencePanel({ enabled }: { enabled: boolean }) {
             </li>
           ))}
         </ul>
-      )}
-
-      {tab === "mappings" && (
-        <XeroMappingWorkspace enabled={enabled} onMappingsSaved={reload} />
       )}
 
       {tab === "export_queue" && (

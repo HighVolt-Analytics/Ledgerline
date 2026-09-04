@@ -266,14 +266,33 @@ def line_sub_ledger_gate_applies(
     return parent_ledger_has_sub_ledger_catalogue(parent, config.chart_of_accounts)
 
 
+LINE_GL_LOCKED_EMPTY_OK = frozenset({"manual", "fallback"})
+LINE_GL_ASSIGNED_SOURCES = frozenset(
+    {"llm", "keyword", "doc_type_default", "vendor_default"}
+)
+
+
+def line_gl_is_locked(line: object) -> bool:
+    """True when clerk/AI already decided this line — do not remap or hold."""
+    source = (getattr(line, "gl_mapping_source", None) or "").strip().lower()
+    sub = (getattr(line, "sub_ledger", None) or "").strip()
+    if source in LINE_GL_LOCKED_EMPTY_OK:
+        return True
+    if source in LINE_GL_ASSIGNED_SOURCES and sub:
+        return True
+    return False
+
+
 def missing_line_sub_ledger_indexes(invoice: Invoice) -> list[int]:
-    return [
-        index
-        for index, line in enumerate(getattr(invoice, "line_items", None) or [])
-        if not (getattr(line, "sub_ledger", None) or "").strip()
-        or (getattr(line, "sub_ledger", None) or "").strip().lower()
-        == (getattr(line, "parent_ledger", None) or "").strip().lower()
-    ]
+    missing: list[int] = []
+    for index, line in enumerate(getattr(invoice, "line_items", None) or []):
+        if line_gl_is_locked(line):
+            continue
+        sub = (getattr(line, "sub_ledger", None) or "").strip()
+        parent = (getattr(line, "parent_ledger", None) or "").strip()
+        if not sub or (parent and sub.lower() == parent.lower()):
+            missing.append(index)
+    return missing
 
 
 def line_sub_ledger_review_required(
@@ -297,6 +316,8 @@ def line_sub_ledger_review_required(
     for line in invoice.line_items:
         parent = resolve_line_parent_ledger(line, fallback=fallback)
         if not parent or not parent_ledger_has_sub_ledger_catalogue(parent, accounts):
+            continue
+        if line_gl_is_locked(line):
             continue
         saved = (getattr(line, "sub_ledger", None) or "").strip()
         if saved and saved.lower() != parent.lower():

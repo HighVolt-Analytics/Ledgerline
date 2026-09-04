@@ -2,16 +2,15 @@
 
 Search (contact + tax) and POST happen only when Xero is connected. Failures
 never raise into invoice processing.
+
+Must be awaited after commit. Fire-and-forget create_task is dropped when the
+Celery worker's asyncio.run() loop closes, which left Acc sync Pending forever.
 """
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from typing import Any
-
-from sqlalchemy import event
-from sqlalchemy.orm import Session
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.utils.logger import get_logger
@@ -19,7 +18,6 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 _INFO_KEY = "ledgerlink_xero_auto_push"
-_LISTENER_ATTACHED = False
 
 
 def _ap_invoice_eligible(invoice: Any) -> bool:
@@ -51,31 +49,15 @@ def schedule_xero_auto_push(session: Any, invoice: Any) -> None:
         jobs.append(item)
 
 
-def _after_commit_auto_push(session: Session) -> None:
-    jobs = session.info.pop(_INFO_KEY, None)
-    if not jobs:
-        return
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        logger.warning("xero_auto_push_no_event_loop", jobs=len(jobs))
-        return
+def take_scheduled_xero_auto_push(session: Any) -> list[tuple[str, int]]:
+    return list(_session_info(session).pop(_INFO_KEY, []) or [])
+
+
+async def flush_scheduled_xero_auto_push(session: Any) -> None:
+    """Run queued exports after a successful commit. Safe to call when empty."""
+    jobs = take_scheduled_xero_auto_push(session)
     for tenant_key, invoice_id in jobs:
-        loop.create_task(
-            run_scheduled_xero_auto_push(uuid.UUID(tenant_key), invoice_id),
-            name=f"xero-auto-push-{invoice_id}",
-        )
-
-
-def ensure_auto_push_listener() -> None:
-    global _LISTENER_ATTACHED
-    if _LISTENER_ATTACHED:
-        return
-    event.listen(Session, "after_commit", _after_commit_auto_push)
-    _LISTENER_ATTACHED = True
-
-
-ensure_auto_push_listener()
+        await run_scheduled_xero_auto_push(uuid.UUID(tenant_key), invoice_id)
 
 
 async def run_scheduled_xero_auto_push(tenant_id: uuid.UUID, invoice_id: int) -> dict[str, Any] | None:
