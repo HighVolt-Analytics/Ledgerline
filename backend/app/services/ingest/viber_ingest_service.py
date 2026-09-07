@@ -24,9 +24,11 @@ from app.services.master_data.customer_resolver import resolve_capture_slug
 from app.services.ingest.viber_client import (
     ParsedViberMessage,
     ViberClient,
+    WELCOME_EVENT_TYPES,
     extension_for_mime,
     parse_viber_event,
     send_message_with_retry,
+    sender_id_from_event,
 )
 from app.utils.logger import get_logger
 
@@ -41,6 +43,13 @@ _ALLOWED_MIME = {
 }
 
 _REPLY_BY_KEY = {
+    "welcome": (
+        "Welcome. Please send a photo or PDF of your receipt or invoice to get started."
+    ),
+    "unsupported_type": (
+        "That message type isn't supported. Please send a photo or PDF of your receipt "
+        "so we can process your expense claim."
+    ),
     "duplicate_wait": (
         "We already received this receipt and it is still being processed. "
         "Please wait a moment before sending it again."
@@ -122,6 +131,22 @@ async def _audit_viber_skip(
     )
 
 
+async def send_viber_welcome(*, auth_token: str, event: dict[str, Any]) -> bool:
+    event_name = str(event.get("event") or "")
+    if event_name not in WELCOME_EVENT_TYPES:
+        return False
+    sender_id = sender_id_from_event(event)
+    if not sender_id:
+        logger.warning("viber_welcome_missing_sender", event=event_name)
+        return False
+    await send_message_with_retry(
+        ViberClient(auth_token),
+        receiver_id=sender_id,
+        text=_REPLY_BY_KEY["welcome"],
+    )
+    return True
+
+
 async def ingest_viber_message(
     session: AsyncSession,
     *,
@@ -144,6 +169,11 @@ async def ingest_viber_message(
     message_id = str(msg.message_token) if msg.message_token is not None else None
 
     if msg.skip_ingest:
+        await send_message_with_retry(
+            client,
+            receiver_id=msg.sender_id,
+            text=_REPLY_BY_KEY["unsupported_type"],
+        )
         await _audit_viber_skip(
             session,
             reason="skipped_message_type",

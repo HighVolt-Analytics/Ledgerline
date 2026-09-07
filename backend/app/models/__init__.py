@@ -21,7 +21,9 @@ from app.models.delivery_note import DeliveryNote
 from app.models.delivery_note_line import DeliveryNoteLine
 from app.models.connected_viber import ConnectedViberAccount
 from app.models.connected_whatsapp import ConnectedWhatsapp
+from app.models.connected_slack import ConnectedSlackAccount
 from app.models.meta_webhook_dedupe import MetaWebhookDedupe
+from app.models.slack_webhook_dedupe import SlackWebhookDedupe
 from app.models.dossier_manual_link import DossierManualLink
 from app.models.goods_receipt import GoodsReceipt
 from app.models.goods_receipt_line import GoodsReceiptLine
@@ -110,7 +112,9 @@ __all__ = [
     "ConnectedMailbox",
     "ConnectedViberAccount",
     "ConnectedWhatsapp",
+    "ConnectedSlackAccount",
     "MetaWebhookDedupe",
+    "SlackWebhookDedupe",
     "DailyReconciliation",
     "DossierManualLink",
     "EmployeeMasterRecord",

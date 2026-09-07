@@ -129,6 +129,7 @@ vi.mock("@/api/client", () => ({
       rule_book_config_path: "",
       cors_origins: "",
       whatsapp_configured: false,
+      slack_configured: false,
       app_env: "development",
       payment_environment_label: "Sandbox",
       stripe_mode: "sandbox",
@@ -144,6 +145,12 @@ vi.mock("@/api/client", () => ({
     listMailboxes: vi.fn().mockResolvedValue([]),
     listMailboxConnectionRequests: vi.fn().mockResolvedValue([]),
     getWhatsappStatus: vi.fn().mockResolvedValue({
+      configured: false,
+      webhook_callback_url: "",
+      oauth_callback_url: "",
+      connections: [],
+    }),
+    getSlackStatus: vi.fn().mockResolvedValue({
       configured: false,
       webhook_callback_url: "",
       oauth_callback_url: "",

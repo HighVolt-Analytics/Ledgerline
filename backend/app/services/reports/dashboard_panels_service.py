@@ -57,11 +57,12 @@ from app.services.reports.dashboard_savings import (
 from app.services.shared.currency import sum_amounts_by_currency
 from app.services.tenant.tenant_module_service import is_module_enabled
 
-CaptureId = Literal["email", "whatsapp", "viber", "upload"]
+CaptureId = Literal["email", "whatsapp", "viber", "slack", "upload"]
 
 _CAPTURE_META: list[tuple[CaptureId, str, str]] = [
     ("email", "Email", "/upload?channel=email"),
     ("whatsapp", "WhatsApp", "/upload?channel=whatsapp"),
+    ("slack", "Slack", "/upload?channel=slack"),
     ("viber", "Viber", "/upload?channel=viber"),
     ("upload", "Uploads", "/upload?channel=upload"),
 ]
@@ -104,12 +105,14 @@ _EXTRACTION_SAMPLE_LIMIT = 24
 
 def _normalize_channel(inv: Invoice) -> CaptureId:
     src = (inv.capture_source or "").strip().lower()
-    if src in {"email", "whatsapp", "viber", "upload"}:
+    if src in {"email", "whatsapp", "viber", "slack", "upload"}:
         return src  # type: ignore[return-value]
     if getattr(inv, "whatsapp_connection_id", None):
         return "whatsapp"
     if getattr(inv, "viber_connection_id", None):
         return "viber"
+    if getattr(inv, "slack_connection_id", None):
+        return "slack"
     if (
         (inv.email_sender and str(inv.email_sender).strip())
         or inv.email_message_id
@@ -381,6 +384,7 @@ def _channel_counts(invoices: list[Invoice]) -> dict[CaptureId, int]:
         "email": 0,
         "whatsapp": 0,
         "viber": 0,
+        "slack": 0,
         "upload": 0,
     }
     for inv in invoices:
@@ -418,6 +422,7 @@ def build_capture_sources(
         "email": 0,
         "whatsapp": 0,
         "viber": 0,
+        "slack": 0,
         "upload": 0,
     }
     for inv in processed:
@@ -998,12 +1003,15 @@ async def build_user_layer(
 
         email = (inv.email_sender or inv.employee_email or "").strip().lower()
         phone_token = None
-        if _normalize_channel(inv) in {"whatsapp", "viber"}:
-            phone_token = (
-                f"wa:{inv.whatsapp_connection_id}"
-                if inv.whatsapp_connection_id
-                else f"vb:{inv.viber_connection_id}"
-            )
+        if _normalize_channel(inv) in {"whatsapp", "viber", "slack"}:
+            if inv.whatsapp_connection_id:
+                phone_token = f"wa:{inv.whatsapp_connection_id}"
+            elif inv.viber_connection_id:
+                phone_token = f"vb:{inv.viber_connection_id}"
+            elif getattr(inv, "slack_connection_id", None):
+                phone_token = f"sl:{inv.slack_connection_id}"
+            else:
+                phone_token = None
         dt = (inv.document_type_code or "").strip().upper() or "UNKNOWN"
         vendor = (inv.vendor or "").strip()
         is_handoff = _normalize_channel(inv) == "upload" or (

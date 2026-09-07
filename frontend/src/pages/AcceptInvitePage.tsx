@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "@/api/client";
 import type { InvitePreview } from "@/api/types";
 import { AuthCenteredCard } from "@/components/auth/AuthCenteredCard";
+import { buildLoginPathWithReturn, readReturnTo } from "@/lib/authReturnTo";
 import { formatTenantRole } from "@/lib/tenantRoles";
 import { Eye, EyeOff } from "lucide-react";
 
@@ -10,6 +11,8 @@ export function AcceptInvitePage() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const token = params.get("token") ?? "";
+  const returnTo = readReturnTo(params);
+  const signInPath = returnTo ? buildLoginPathWithReturn(returnTo) : "/login";
 
   const [preview, setPreview] = useState<InvitePreview | null>(null);
   const [loading, setLoading] = useState(true);
@@ -150,7 +153,7 @@ export function AcceptInvitePage() {
           <div className="auth-footer">
             <p>
               Already have an account?{" "}
-              <Link to="/login" className="auth-link-accent">
+              <Link to={signInPath} className="auth-link-accent">
                 Log in
               </Link>
             </p>
@@ -166,16 +169,16 @@ export function AcceptInvitePage() {
           <button
             type="button"
             className="auth-submit"
-            onClick={() => navigate("/login", { state: { fromInvite: true } })}
+            onClick={() => navigate(signInPath, { state: { fromInvite: true } })}
           >
-            Go to sign in
+            {returnTo === "/m" ? "Sign in to open mobile" : "Go to sign in"}
           </button>
         </div>
       )}
 
       {!loading && !token && (
         <div className="auth-footer">
-          <Link to="/login" className="auth-link-accent">
+          <Link to={signInPath} className="auth-link-accent">
             Back to sign in
           </Link>
         </div>

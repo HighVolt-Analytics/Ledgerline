@@ -241,6 +241,7 @@ class EmployeeMaster(BaseModel):
     whatsapp_number: str = ""
     whatsapp_number_2: str = ""
     viber_number: str | None = None
+    slack_user_id: str | None = None
     date_of_joining: str = ""
     department: str = ""
     location: str = ""

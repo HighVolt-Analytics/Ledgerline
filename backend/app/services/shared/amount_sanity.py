@@ -13,8 +13,23 @@ _REASONABLE_GST_RATE = Decimal("100")
 _MAX_CONFIDENCE = Decimal("9.9999")
 
 
-def plausible_money(value: Decimal | None) -> Decimal | None:
+def _as_decimal(value: Decimal | float | int | str | None) -> Decimal | None:
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        return value
+    try:
+        text = str(value).strip().replace(",", "")
+        if not text:
+            return None
+        return Decimal(text)
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+
+
+def plausible_money(value: Decimal | float | int | str | None) -> Decimal | None:
     """Drop values that overflow NUMERIC(12,2) or look like ABNs / IDs."""
+    value = _as_decimal(value)
     if value is None:
         return None
     abs_value = value.copy_abs()
@@ -25,8 +40,9 @@ def plausible_money(value: Decimal | None) -> Decimal | None:
     return value
 
 
-def plausible_qty(value: Decimal | None) -> Decimal | None:
+def plausible_qty(value: Decimal | float | int | str | None) -> Decimal | None:
     """Drop quantities that overflow NUMERIC(12,4) or look like IDs."""
+    value = _as_decimal(value)
     if value is None:
         return None
     abs_value = value.copy_abs()

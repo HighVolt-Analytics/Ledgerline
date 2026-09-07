@@ -9,13 +9,14 @@ from __future__ import annotations
 
 from typing import Literal
 
-CaptureChannel = Literal["email", "whatsapp", "viber", "upload"]
+CaptureChannel = Literal["email", "whatsapp", "viber", "slack", "upload"]
 
 # Manual processing baseline minutes per document by inbound channel.
 MANUAL_BASELINE_MINUTES: dict[CaptureChannel, int] = {
     "email": 12,
     "whatsapp": 15,
     "viber": 12,
+    "slack": 14,
     "upload": 11,
 }
 DEFAULT_MANUAL_BASELINE_MINUTES = 15

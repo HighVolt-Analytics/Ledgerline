@@ -5,6 +5,7 @@ import { api } from "@/api/client";
 import type { ConnectedMailbox, MailboxBackfillJob } from "@/api/types";
 import { ConnectMailboxDialog } from "@/components/ConnectMailboxDialog";
 import { useAuth } from "@/context/AuthContext";
+import { useToast } from "@/context/ToastContext";
 import { useEmailIngestionRulesDraft } from "@/hooks/useEmailIngestionRulesDraft";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import { useMailboxes } from "@/hooks/useMailboxes";
@@ -36,6 +37,7 @@ import { fetchMatrixPage } from "@/lib/matrixApi";
 import { invalidateUploadInvoiceList } from "@/hooks/useUploadInvoiceList";
 import {
   UploadEmailChannelPanel,
+  UploadSlackChannelPanel,
   UploadViberChannelPanel,
   UploadWhatsappChannelPanel,
 } from "@/components/upload/UploadChannelPanels";
@@ -69,7 +71,7 @@ function parseChannelTab(value: string | null): ChannelTab {
 }
 
 function channelHasSetupTab(channel: ChannelTab): boolean {
-  return channel === "email" || channel === "whatsapp" || channel === "viber";
+  return channel === "email" || channel === "whatsapp" || channel === "viber" || channel === "slack";
 }
 
 function channelEmptyTitle(channel: ChannelTab, routeLabel: string | null): string {
@@ -77,6 +79,7 @@ function channelEmptyTitle(channel: ChannelTab, routeLabel: string | null): stri
   if (channel === "email") return "No email documents yet";
   if (channel === "whatsapp") return "No WhatsApp documents yet";
   if (channel === "viber") return "No Viber documents yet";
+  if (channel === "slack") return "No Slack documents yet";
   return "No documents yet";
 }
 
@@ -85,16 +88,19 @@ function channelEmptyHint(channel: ChannelTab, routeLabel: string | null): strin
     return `Documents classified and routed to ${routeLabel} appear here.`;
   }
   if (channel === "all") {
-    return "Upload files from the Upload tab, or capture documents from Email, WhatsApp, or Viber.";
+    return "Upload files from the Upload tab, or capture documents from Email, Slack, WhatsApp, or Viber.";
   }
   if (channel === "upload") {
-    return "Drop files above to upload, or capture documents from the Email, WhatsApp, or Viber tabs. Team expense claims use Email / WhatsApp / Viber when the sender is in Employees.";
+    return "Drop files above to upload, or capture documents from the Email, Slack, WhatsApp, or Viber tabs. Team expense claims use those channels when the sender is in Employees.";
   }
   if (channel === "bank-feeds") {
     return "Import bank statements (PDF or CSV) and reconcile lines on this tab.";
   }
   if (channel === "email") {
     return "Connect a mailbox and fetch mail. Messages from employees in the registry route to Team Expenses.";
+  }
+  if (channel === "slack") {
+    return "Connect Slack to capture documents via DM or @mention. Senders in Employees route to Team Expenses; others follow normal document routing.";
   }
   if (channel === "whatsapp") {
     return "Connect WhatsApp to capture employee claims (sender must match Employees).";
@@ -154,6 +160,7 @@ function parseBankFeedTab(value: string | null): BankFeedQueueTab | null {
 
 export function UploadPage() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const queryClient = useQueryClient();
   const isAdmin = user?.role === "admin";
   const enabledModules = useTenantModules();
@@ -250,6 +257,7 @@ export function UploadPage() {
     setSearchQuery((current) => (current === q ? current : q));
   }, [searchParams]);
   const [addOpen, setAddOpen] = useState(false);
+  const [slackConnectBusy, setSlackConnectBusy] = useState(false);
   const ingestDraftEnabled =
     Boolean(user) && channelTab === "email" && viewTab === "setup";
   const {
@@ -371,6 +379,21 @@ export function UploadPage() {
       matrixRefreshRef.current?.();
     } catch (e) {
       setFetchNotice(e instanceof Error ? e.message : "Failed to remove mailbox");
+    }
+  }
+
+  async function connectSlackWorkspace() {
+    setSlackConnectBusy(true);
+    try {
+      const { authorize_url } = await api.getSlackAuthorizeUrl();
+      window.location.href = authorize_url;
+    } catch (e) {
+      toast({
+        title: "Could not start Slack connection",
+        description: e instanceof Error ? e.message : "Connection failed",
+        variant: "destructive",
+      });
+      setSlackConnectBusy(false);
     }
   }
 
@@ -574,6 +597,8 @@ export function UploadPage() {
       />
     ) : channelTab === "whatsapp" ? (
       <UploadWhatsappChannelPanel docCount={boardCounts.all} />
+    ) : channelTab === "slack" ? (
+      <UploadSlackChannelPanel docCount={boardCounts.all} />
     ) : channelTab === "viber" ? (
       <UploadViberChannelPanel docCount={boardCounts.all} />
     ) : null;
@@ -613,6 +638,16 @@ export function UploadPage() {
                   <span className="inline-flex items-center gap-2">
                     <IntegrationBrandIcon id="graph" size={16} />
                     Email
+                  </span>
+                ),
+              },
+              {
+                value: "slack",
+                testid: "tab-upload-slack",
+                label: (
+                  <span className="inline-flex items-center gap-2">
+                    <IntegrationBrandIcon id="slack" size={16} />
+                    Slack
                   </span>
                 ),
               },
@@ -756,6 +791,15 @@ export function UploadPage() {
         {viewTab === "setup" && channelTab === "email" && isAdmin ? (
           <Button data-testid="button-add-mailbox" onClick={() => setAddOpen(true)}>
             Add mailbox
+          </Button>
+        ) : null}
+        {viewTab === "setup" && channelTab === "slack" && isAdmin ? (
+          <Button
+            data-testid="button-add-slack"
+            disabled={slackConnectBusy}
+            onClick={() => void connectSlackWorkspace()}
+          >
+            {slackConnectBusy ? "Redirecting…" : "Add Slack workspace"}
           </Button>
         ) : null}
       </div>

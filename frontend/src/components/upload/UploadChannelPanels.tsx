@@ -12,7 +12,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { api } from "@/api/client";
-import type { ConnectedMailbox, ViberConnection, WhatsappConnection } from "@/api/types";
+import type { ConnectedMailbox, SlackConnection, ViberConnection, WhatsappConnection } from "@/api/types";
 import { ActionChip } from "@/components/ActionChip";
 import { IntegrationBrandIcon } from "@/components/integrations/IntegrationBrandIcon";
 import { MailboxIngestionRulesPanel } from "@/components/upload/MailboxIngestionRulesPanel";
@@ -446,7 +446,7 @@ function MessagingChannelCard({
   onRemove,
   testIdPrefix,
 }: {
-  brand: "whatsapp" | "viber";
+  brand: "whatsapp" | "viber" | "slack";
   title: string;
   subtitle: string;
   providerLabel: string;
@@ -640,6 +640,141 @@ export function UploadWhatsappChannelPanel({ docCount }: { docCount: number }) {
             try {
               await api.disconnectWhatsapp(conn.id);
               toast({ title: "WhatsApp disconnected" });
+              await load();
+            } catch (e) {
+              toast({
+                title: "Disconnect failed",
+                description: e instanceof Error ? e.message : "Could not disconnect",
+                variant: "destructive",
+              });
+            } finally {
+              setBusyId(null);
+            }
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+export function UploadSlackChannelPanel({ docCount }: { docCount: number }) {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const isAdmin = user?.role === "admin";
+  const [connections, setConnections] = useState<SlackConnection[]>([]);
+  const [configured, setConfigured] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [connectBusy, setConnectBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const status = await api.getSlackStatus({ fresh: true });
+      setConnections(status.connections ?? []);
+      setConfigured(status.configured);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (loading) return null;
+
+  if (connections.length === 0) {
+    return (
+      <Card className="p-4 mb-3 text-sm text-muted-foreground">
+        No Slack workspaces connected yet.{" "}
+        {isAdmin ? (
+          <>
+            <button
+              type="button"
+              className="text-primary hover:underline"
+              disabled={connectBusy || !configured}
+              onClick={async () => {
+                setConnectBusy(true);
+                try {
+                  const { authorize_url } = await api.getSlackAuthorizeUrl();
+                  window.location.href = authorize_url;
+                } catch (e) {
+                  toast({
+                    title: "Could not start Slack connection",
+                    description: e instanceof Error ? e.message : "Connection failed",
+                    variant: "destructive",
+                  });
+                  setConnectBusy(false);
+                }
+              }}
+            >
+              Connect Slack
+            </button>{" "}
+            or open{" "}
+            <Link to="/integrations#slack-integration" className="text-primary hover:underline">
+              Integrations
+            </Link>
+            .
+          </>
+        ) : (
+          <>
+            Ask an admin to connect Slack from{" "}
+            <Link to="/integrations#slack-integration" className="text-primary hover:underline">
+              Integrations
+            </Link>
+            .
+          </>
+        )}
+      </Card>
+    );
+  }
+
+  return (
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 mb-3">
+      {connections.map((conn) => (
+        <MessagingChannelCard
+          key={conn.id}
+          brand="slack"
+          title={conn.team_name || "Slack"}
+          subtitle={conn.team_id}
+          providerLabel="Slack"
+          lastSync={conn.last_sync_at}
+          docCount={docCount}
+          status={conn.connection_status}
+          error={conn.last_error}
+          isAdmin={Boolean(isAdmin)}
+          busy={busyId === conn.id}
+          testIdPrefix={`slack-${conn.id}`}
+          onTest={async () => {
+            setBusyId(conn.id);
+            try {
+              const result = await api.testSlackConnection(conn.id);
+              if (result.ok) {
+                toast({ title: "Slack test passed" });
+              } else {
+                toast({
+                  title: "Slack needs attention",
+                  description: result.warnings.join(" · ") || result.integration_health,
+                  variant: "destructive",
+                });
+              }
+              await load();
+            } catch (e) {
+              toast({
+                title: "Slack test failed",
+                description: e instanceof Error ? e.message : "Test failed",
+                variant: "destructive",
+              });
+            } finally {
+              setBusyId(null);
+            }
+          }}
+          onRemove={async () => {
+            setBusyId(conn.id);
+            try {
+              await api.disconnectSlack(conn.id);
+              toast({ title: "Slack disconnected" });
               await load();
             } catch (e) {
               toast({

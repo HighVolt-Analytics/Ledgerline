@@ -8,6 +8,10 @@ from typing import TypeVar
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
 _TRANSIENT_TYPE_NAMES = frozenset(
     {
         "ConnectionDoesNotExistError",
@@ -48,6 +52,7 @@ async def run_with_transient_db_retry(
     operation: Callable[[], Awaitable[T]],
     *,
     attempts: int = 2,
+    before_retry: Callable[[], Awaitable[None]] | None = None,
 ) -> T:
     """Re-run once on a fresh pooled connection after invalidate()."""
     last_exc: BaseException | None = None
@@ -58,6 +63,21 @@ async def run_with_transient_db_retry(
             last_exc = exc
             if attempt + 1 >= attempts or not is_transient_connection_error(exc):
                 raise
-            await session.invalidate()
+            logger.warning(
+                "db_transient_retry",
+                attempt=attempt + 1,
+                error_type=type(exc).__name__,
+                error=str(exc)[:240],
+            )
+            try:
+                await session.rollback()
+            except Exception:
+                pass
+            try:
+                await session.invalidate()
+            except Exception:
+                pass
+            if before_retry is not None:
+                await before_retry()
     assert last_exc is not None
     raise last_exc

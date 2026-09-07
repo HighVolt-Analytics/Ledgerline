@@ -25,6 +25,7 @@ class AppSettingsResponse(BaseModel):
     rule_book_config_path: str
     cors_origins: str
     whatsapp_configured: bool
+    slack_configured: bool = False
     app_env: str = "development"
     payment_environment_label: str = "Development"
     public_app_base_url: str = ""

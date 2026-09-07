@@ -151,7 +151,7 @@ export function AllDocumentsDetailedTable({
   refreshRef?: MutableRefObject<(() => void) | null>;
   searchQuery?: string;
   onSearchChange?: (value: string) => void;
-  captureSource?: "upload" | "email" | "whatsapp" | "viber";
+  captureSource?: "upload" | "email" | "whatsapp" | "viber" | "slack";
   /** Exact Invoice.route_target (e.g. "Team Expenses"). Omits filter when unset. */
   routeTarget?: string;
   showUploadSource?: boolean;
@@ -189,7 +189,7 @@ export function AllDocumentsDetailedTable({
   const onDocumentCountRef = useLatestRef(onDocumentCount);
   const onBoardCountsRef = useLatestRef(onBoardCounts);
   const quietAuthPending =
-    captureSource === "email" || captureSource === "whatsapp" || captureSource === "viber";
+    captureSource === "email" || captureSource === "whatsapp" || captureSource === "viber" || captureSource === "slack";
 
   useResetOnTenantChange(() => {
     loadSeq.current += 1;

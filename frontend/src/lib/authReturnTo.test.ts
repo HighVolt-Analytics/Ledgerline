@@ -12,6 +12,10 @@ describe("sanitizeReturnPath", () => {
     expect(sanitizeReturnPath("/vault?invoice=36")).toBe("/vault?invoice=36");
   });
 
+  it("allows mobile deep link", () => {
+    expect(sanitizeReturnPath("/m")).toBe("/m");
+  });
+
   it("blocks open redirects and login loops", () => {
     expect(sanitizeReturnPath("//evil.com/vault")).toBeNull();
     expect(sanitizeReturnPath("https://evil.com")).toBeNull();

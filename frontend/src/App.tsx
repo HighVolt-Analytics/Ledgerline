@@ -85,6 +85,11 @@ const SettingsPage = lazy(() =>
 const VaultPage = lazy(() =>
   import("@/pages/VaultPage").then((m) => ({ default: m.VaultPage }))
 );
+const MobilePrototypeRedirect = lazy(() =>
+  import("@/mobile/MobilePrototypeRedirect").then((m) => ({
+    default: m.MobilePrototypeRedirect,
+  }))
+);
 const VendorsPage = lazy(() =>
   import("@/pages/VendorsPage").then((m) => ({ default: m.VendorsPage }))
 );
@@ -515,6 +520,28 @@ export default function App() {
                 }
               />
             </Route>
+          </Route>
+        </Route>
+
+        {/* Mobile: same login/OTP/tenant as desktop, then exact prototype UI (no API yet) */}
+        <Route element={<ProtectedRoute />}>
+          <Route element={<TenantRoute />}>
+            <Route
+              path="/m"
+              element={
+                <LazyPage>
+                  <MobilePrototypeRedirect />
+                </LazyPage>
+              }
+            />
+            <Route
+              path="/m/*"
+              element={
+                <LazyPage>
+                  <MobilePrototypeRedirect />
+                </LazyPage>
+              }
+            />
           </Route>
         </Route>
 

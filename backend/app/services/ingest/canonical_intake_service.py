@@ -81,6 +81,7 @@ def build_ingest_source_metadata(
     connected_mailbox_id: int | None = None,
     viber_connection_id: int | None = None,
     whatsapp_connection_id: int | None = None,
+    slack_connection_id: int | None = None,
     matched_rule_ids: str | None = None,
     route_target: str | None = None,
 ) -> IngestSourceMetadata:
@@ -93,6 +94,7 @@ def build_ingest_source_metadata(
         connected_mailbox_id=connected_mailbox_id,
         viber_connection_id=viber_connection_id,
         whatsapp_connection_id=whatsapp_connection_id,
+        slack_connection_id=slack_connection_id,
         capture_source=capture_source,
         matched_rule_ids=matched_rule_ids,
         route_target=route_target,

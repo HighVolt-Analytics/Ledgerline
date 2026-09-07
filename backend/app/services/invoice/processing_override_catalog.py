@@ -195,3 +195,29 @@ def consume_preserve_extracted_fields(invoice: Invoice) -> bool:
     updated.pop(_PRESERVE_EXTRACTED_FLAG, None)
     invoice.processing_overrides = updated or None
     return True
+
+
+_SKIP_EXTRACTION_FLAG = "skip_extraction"
+
+
+def set_skip_extraction(invoice: Invoice) -> None:
+    """Mark invoice so process_invoice skips OCR / vision field extract."""
+    raw = dict(getattr(invoice, "processing_overrides", None) or {})
+    raw[_SKIP_EXTRACTION_FLAG] = True
+    # Keep user-entered scalars if anything tries to re-extract later.
+    raw[_PRESERVE_EXTRACTED_FLAG] = True
+    invoice.processing_overrides = raw
+
+
+def has_skip_extraction(invoice: Invoice) -> bool:
+    raw = getattr(invoice, "processing_overrides", None)
+    if isinstance(raw, dict) and bool(raw.get(_SKIP_EXTRACTION_FLAG)):
+        return True
+    fields = getattr(invoice, "extracted_fields", None)
+    if isinstance(fields, dict):
+        token = fields.get("manual_entry")
+        if token is True:
+            return True
+        if isinstance(token, str) and token.strip().lower() in {"1", "true", "yes"}:
+            return True
+    return False

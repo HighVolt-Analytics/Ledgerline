@@ -214,12 +214,14 @@ async def _duplicates_prevented(
 def _capture_channel(inv: Invoice) -> str:
     """Same channel bucketing as dashboard capture sources."""
     src = (inv.capture_source or "").strip().lower()
-    if src in {"email", "whatsapp", "viber", "upload"}:
+    if src in {"email", "whatsapp", "viber", "slack", "upload"}:
         return src
     if getattr(inv, "whatsapp_connection_id", None):
         return "whatsapp"
     if getattr(inv, "viber_connection_id", None):
         return "viber"
+    if getattr(inv, "slack_connection_id", None):
+        return "slack"
     if (
         (inv.email_sender and str(inv.email_sender).strip())
         or inv.email_message_id
@@ -230,7 +232,7 @@ def _capture_channel(inv: Invoice) -> str:
 
 
 def _capture_channel_counts(invoices: list[Invoice]) -> dict[str, int]:
-    counts = {"email": 0, "upload": 0, "whatsapp": 0, "viber": 0}
+    counts = {"email": 0, "upload": 0, "whatsapp": 0, "viber": 0, "slack": 0}
     for inv in invoices:
         counts[_capture_channel(inv)] += 1
     return counts
@@ -482,6 +484,7 @@ async def build_efficiency_automation_dashboard(
             documents_capture_upload=capture_counts["upload"],
             documents_capture_whatsapp=capture_counts["whatsapp"],
             documents_capture_viber=capture_counts["viber"],
+            documents_capture_slack=capture_counts.get("slack", 0),
             vault_documents_total=vault_total,
             duplicates_prevented_amount=dup_amount,
             duplicates_prevented_events=dup_events,

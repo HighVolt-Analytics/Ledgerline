@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
-import type { ViberConnection, WhatsappConnection } from "@/api/types";
+import type { SlackConnection, ViberConnection, WhatsappConnection } from "@/api/types";
 import {
   CaptureChannelsStrip,
   type CaptureChannelItem,
@@ -25,6 +25,29 @@ function whatsappChannelRow(conn: WhatsappConnection | null): CaptureChannelItem
     id: "wa",
     name: "WhatsApp Business",
     detail: conn.phone_number || conn.display_name || conn.phone_number_id,
+    connected: true,
+    connectionId: conn.id,
+    healthLabel: health,
+  };
+}
+
+function slackChannelRow(conn: SlackConnection | null): CaptureChannelItem {
+  if (!conn || conn.connection_status !== "connected") {
+    return {
+      id: "sl",
+      name: "Slack",
+      detail: "Connect in Integrations",
+      connected: false,
+    };
+  }
+  const health =
+    conn.integration_health === "connected"
+      ? "healthy"
+      : conn.integration_health.replace(/_/g, " ");
+  return {
+    id: "sl",
+    name: "Slack",
+    detail: conn.team_name || conn.team_id,
     connected: true,
     connectionId: conn.id,
     healthLabel: health,
@@ -59,24 +82,28 @@ export function TeamExpenseChannelsStrip({ enabled = true }: { enabled?: boolean
   const navigate = useNavigate();
   const [channels, setChannels] = useState<CaptureChannelItem[]>([
     whatsappChannelRow(null),
+    slackChannelRow(null),
     viberChannelRow(null),
   ]);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [waStatus, vbStatus] = await Promise.all([
+      const [waStatus, slackStatus, vbStatus] = await Promise.all([
         api.getWhatsappStatus(),
+        api.getSlackStatus(),
         api.getViberStatus(),
       ]);
       const wa = waStatus.connections.find((c) => c.connection_status === "connected");
+      const sl = slackStatus.connections.find((c) => c.connection_status === "connected");
       const vb = vbStatus.connections.find((c) => c.connection_status === "connected");
       setChannels([
         whatsappChannelRow(wa ?? waStatus.connections[0] ?? null),
+        slackChannelRow(sl ?? slackStatus.connections[0] ?? null),
         viberChannelRow(vb ?? vbStatus.connections[0] ?? null),
       ]);
     } catch {
-      setChannels([whatsappChannelRow(null), viberChannelRow(null)]);
+      setChannels([whatsappChannelRow(null), slackChannelRow(null), viberChannelRow(null)]);
     }
   }, []);
 
@@ -101,6 +128,21 @@ export function TeamExpenseChannelsStrip({ enabled = true }: { enabled?: boolean
       }
       return;
     }
+    if (channel.id === "sl") {
+      setBusyId(channel.id);
+      try {
+        const { authorize_url } = await api.getSlackAuthorizeUrl();
+        window.location.href = authorize_url;
+      } catch (err) {
+        toast({
+          title: "Could not start Slack connection",
+          description: err instanceof Error ? err.message : "Try again",
+          variant: "destructive",
+        });
+        setBusyId(null);
+      }
+      return;
+    }
     if (channel.id === "vb") {
       navigate("/integrations#viber-integration");
     }
@@ -117,6 +159,17 @@ export function TeamExpenseChannelsStrip({ enabled = true }: { enabled?: boolean
         } else {
           toast({
             title: "WhatsApp needs attention",
+            description: result.warnings.join(" · ") || result.integration_health,
+            variant: "destructive",
+          });
+        }
+      } else if (channel.id === "sl") {
+        const result = await api.testSlackConnection(channel.connectionId);
+        if (result.ok) {
+          toast({ title: "Slack connection OK", description: "auth.test succeeded." });
+        } else {
+          toast({
+            title: "Slack needs attention",
             description: result.warnings.join(" · ") || result.integration_health,
             variant: "destructive",
           });

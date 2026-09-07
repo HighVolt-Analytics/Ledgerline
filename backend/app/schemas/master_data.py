@@ -70,6 +70,7 @@ class EmployeeMasterCreate(BaseModel):
     whatsapp_number: str = ""
     whatsapp_number_2: str = ""
     viber_number: str | None = None
+    slack_user_id: str | None = None
     date_of_joining: str = ""
     department: str = ""
     location: str = ""
@@ -103,6 +104,7 @@ class EmployeeMasterUpdate(BaseModel):
     whatsapp_number: str | None = None
     whatsapp_number_2: str | None = None
     viber_number: str | None = None
+    slack_user_id: str | None = None
     date_of_joining: str | None = None
     department: str | None = None
     location: str | None = None

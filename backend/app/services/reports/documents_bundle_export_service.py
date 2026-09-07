@@ -308,6 +308,8 @@ def _source_label(invoice: Invoice) -> str:
         return "Email"
     if src == "whatsapp":
         return "WhatsApp"
+    if src == "slack":
+        return "Slack"
     if src == "viber":
         return "Viber"
     if src == "upload":

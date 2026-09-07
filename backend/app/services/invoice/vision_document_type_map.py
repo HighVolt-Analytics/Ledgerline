@@ -308,7 +308,7 @@ def _pool_excluding_team_expenses_without_claim(
 ) -> list[DocumentTypeDefinition]:
     """Drop Team Expenses DTs for upload, or on invoice-like headings without claim cues.
 
-    When ``force_team_expenses`` is set (known employee on email/WhatsApp/Viber),
+    When ``force_team_expenses`` is set (known employee on email/WhatsApp/Viber/upload),
     keep TE catalogue rows so receipts / POS slips / tax-invoice-shaped claims can
     map without requiring explicit "expense claim" title wording.
     """

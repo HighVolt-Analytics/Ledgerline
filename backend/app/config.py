@@ -208,11 +208,11 @@ class Settings(BaseSettings):
         ),
     )
     canonical_intake_channels: str = Field(
-        default="upload,email,whatsapp,viber",
+        default="upload,email,whatsapp,viber,slack",
         validation_alias="CANONICAL_INTAKE_CHANNELS",
         description=(
             "Comma-separated capture channels that use canonical intake "
-            "(upload,email,whatsapp,viber). Empty disables the facade."
+            "(upload,email,whatsapp,viber,slack). Empty disables the facade."
         ),
     )
     pdf_segment_max_pages: int = Field(
@@ -815,6 +815,43 @@ class Settings(BaseSettings):
         validation_alias="WHATSAPP_OAUTH_FRONTEND_RETURN_URL",
     )
 
+    # Slack (shared app; per-tenant workspace install via OAuth v2)
+    slack_client_id: str = Field(default="", validation_alias="SLACK_CLIENT_ID")
+    slack_client_secret: str = Field(default="", validation_alias="SLACK_CLIENT_SECRET")
+    slack_signing_secret: str = Field(default="", validation_alias="SLACK_SIGNING_SECRET")
+    slack_app_id: str = Field(default="", validation_alias="SLACK_APP_ID")
+    slack_oauth_bot_scopes: str = Field(
+        default=(
+            "chat:write,files:read,channels:read,"
+            "im:read,im:history,app_mentions:read,"
+            "users:read,users:read.email"
+        ),
+        validation_alias="SLACK_OAUTH_BOT_SCOPES",
+    )
+    slack_oauth_redirect_uri: str = Field(
+        default="http://localhost:8001/auth/slack/callback",
+        validation_alias="SLACK_OAUTH_REDIRECT_URI",
+    )
+    slack_oauth_frontend_return_url: str = Field(
+        default="",
+        validation_alias="SLACK_OAUTH_FRONTEND_RETURN_URL",
+    )
+    slack_poll_enabled: bool = Field(
+        default=True,
+        validation_alias="SLACK_POLL_ENABLED",
+        description=(
+            "When SYNC_PROCESSING is on, periodically poll Slack DMs for file "
+            "uploads as a safety net when Events API delivery fails."
+        ),
+    )
+    slack_poll_interval_seconds: int = Field(
+        default=45,
+        ge=15,
+        le=600,
+        validation_alias="SLACK_POLL_INTERVAL_SECONDS",
+        description="Seconds between Slack DM poll cycles in sync-processing mode.",
+    )
+
     # Xero accounting OAuth (optional)
     xero_enabled: bool = Field(default=True, validation_alias="XERO_ENABLED")
     xero_client_id: str = Field(default="", validation_alias="XERO_CLIENT_ID")
@@ -1050,8 +1087,7 @@ class Settings(BaseSettings):
         description="Optional dedicated Stripe secret for platform billing; falls back to STRIPE_SECRET_KEY.",
     )
 
-    # Viber Public Account Bot API
-    viber_auth_token: str = Field(default="", validation_alias="VIBER_AUTH_TOKEN")
+    # Viber Public Account Bot API (per-tenant token lives in connected_viber_accounts)
     viber_webhook_url: str = Field(default="", validation_alias="VIBER_WEBHOOK_URL")
 
     @field_validator("root_path", mode="before")
@@ -1149,6 +1185,10 @@ class Settings(BaseSettings):
         wa_redirect = self.whatsapp_oauth_redirect_uri.strip()
         if not wa_redirect or "localhost" in wa_redirect or "127.0.0.1" in wa_redirect:
             self.whatsapp_oauth_redirect_uri = f"{tunnel}/auth/whatsapp/callback"
+
+        slack_redirect = self.slack_oauth_redirect_uri.strip()
+        if not slack_redirect or "localhost" in slack_redirect or "127.0.0.1" in slack_redirect:
+            self.slack_oauth_redirect_uri = f"{tunnel}/auth/slack/callback"
 
         return self
 
@@ -1310,12 +1350,12 @@ class Settings(BaseSettings):
         )
 
     @property
-    def viber_effective_auth_token(self) -> str:
-        return self.viber_auth_token.strip()
-
-    @property
-    def viber_configured(self) -> bool:
-        return bool(self.viber_effective_auth_token)
+    def slack_configured(self) -> bool:
+        return bool(
+            self.slack_client_id.strip()
+            and self.slack_client_secret.strip()
+            and self.slack_signing_secret.strip()
+        )
 
     @property
     def is_production(self) -> bool:
@@ -1401,6 +1441,17 @@ class Settings(BaseSettings):
         explicit = self.whatsapp_oauth_frontend_return_url.strip()
         if explicit:
             return explicit.rstrip("/")
+        return self.graph_oauth_frontend_return_url.rstrip("/")
+
+    @property
+    def slack_frontend_return_url(self) -> str:
+        explicit = self.slack_oauth_frontend_return_url.strip()
+        if explicit:
+            return explicit.rstrip("/")
+        # Prefer WhatsApp's local-dev return URL when set (same Integrations page).
+        wa = self.whatsapp_oauth_frontend_return_url.strip()
+        if wa:
+            return wa.rstrip("/")
         return self.graph_oauth_frontend_return_url.rstrip("/")
 
     @property

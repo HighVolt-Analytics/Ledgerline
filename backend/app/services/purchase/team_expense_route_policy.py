@@ -1,14 +1,18 @@
-"""Team Expenses channel policy: employee identity on email/WhatsApp/Viber only.
+"""Team Expenses channel policy: employee identity on messaging + employee upload.
 
 
 
-Manual upload never routes to Team Expenses. A known employee sender on an
+Email / WhatsApp / Viber: known employee sender forces Team Expenses unless the
 
-allowed capture channel triggers a Team Expenses force unless the document
+document looks commercial (PO / SO / credit note).
 
-itself looks commercial (PO / SO / credit note). Employee-matrix membership
+Upload: same force when the signed-in uploader (or stamped employee_email) matches
 
-is monitoring context, not a classification gate.
+the employee registry, or when an explicit claim/advance intent is pinned.
+
+Slack never routes to Team Expenses. Vendor-invoice intent keeps upload on AP.
+
+Employee-matrix membership is monitoring context, not a classification gate.
 
 """
 
@@ -50,6 +54,14 @@ from app.services.purchase.team_expense_validator import find_employee_by_sender
 
 TEAM_EXPENSE_CAPTURE_CHANNELS = frozenset({"email", "whatsapp", "viber"})
 
+# Mobile / upload intent query values (also stored on extracted_fields).
+TEAM_EXPENSE_INTENT_CLAIM = TEAM_EXPENSE_KIND_CLAIM
+TEAM_EXPENSE_INTENT_ADVANCE = TEAM_EXPENSE_KIND_ADVANCE
+TEAM_EXPENSE_INTENT_VENDOR = "vendor_invoice"
+TEAM_EXPENSE_TE_INTENTS = frozenset(
+    {TEAM_EXPENSE_INTENT_CLAIM, TEAM_EXPENSE_INTENT_ADVANCE}
+)
+
 _PINNED_ADVANCE_KINDS = frozenset({TEAM_EXPENSE_KIND_ADVANCE})
 
 
@@ -62,7 +74,7 @@ def normalize_capture_source(invoice: Any) -> str:
 
     capture = (getattr(invoice, "capture_source", None) or "").strip().lower()
 
-    if capture in TEAM_EXPENSE_CAPTURE_CHANNELS or capture == "upload":
+    if capture in TEAM_EXPENSE_CAPTURE_CHANNELS or capture in {"upload", "slack"}:
 
         return capture
 
@@ -78,21 +90,69 @@ def normalize_capture_source(invoice: Any) -> str:
 
         return "viber"
 
+    if getattr(invoice, "slack_connection_id", None) is not None:
+
+        return "slack"
+
     return "upload"
 
 
 
 
 
-def team_expenses_allowed_capture(capture_source: str | None) -> bool:
+def pinned_team_expense_intent(invoice: Any | None) -> str | None:
+    """Normalize upload/mobile intent from extracted_fields or team_expense_kind pin."""
+    if invoice is None:
+        return None
+    fields = getattr(invoice, "extracted_fields", None) or {}
+    if isinstance(fields, dict):
+        raw = str(fields.get("team_expense_intent") or "").strip().lower()
+        if raw in TEAM_EXPENSE_TE_INTENTS or raw == TEAM_EXPENSE_INTENT_VENDOR:
+            return raw
+    kind = (getattr(invoice, "team_expense_kind", None) or "").strip().lower()
+    if kind in TEAM_EXPENSE_TE_INTENTS:
+        return kind
+    return None
 
+
+def employee_identity_for_te(invoice: Any | None) -> str | None:
+    """Best email identity for TE employee matching (upload stamps uploaded_by)."""
+    if invoice is None:
+        return None
+    for attr in ("employee_email", "uploaded_by_email", "email_sender"):
+        value = getattr(invoice, attr, None)
+        if value and str(value).strip():
+            return str(value).strip()
+    return None
+
+
+def team_expenses_allowed_capture(
+    capture_source: str | None,
+    *,
+    invoice: Any | None = None,
+    employees: Sequence[Any] | None = None,
+) -> bool:
+    """True when this channel may keep a Team Expenses route.
+
+    Messaging channels are always eligible (identity checked in should_force).
+    Upload is eligible only when the uploader/employee identity matches the
+    registry, or an explicit claim/advance intent is pinned for a known employee.
+    Slack is never eligible.
+    """
     src = (capture_source or "").strip().lower()
-
     if src in TEAM_EXPENSE_CAPTURE_CHANNELS:
-
         return True
-
-    return False
+    if src != "upload":
+        return False
+    intent = pinned_team_expense_intent(invoice)
+    if intent == TEAM_EXPENSE_INTENT_VENDOR:
+        return False
+    emp_list = list(employees or [])
+    identity = employee_identity_for_te(invoice)
+    matched = find_employee_by_sender(emp_list, identity) is not None
+    if not matched:
+        return False
+    return True
 
 
 
@@ -100,15 +160,30 @@ def team_expenses_allowed_capture(capture_source: str | None) -> bool:
 
 def should_force_team_expenses(invoice: Any, employees: Sequence[Any] | None) -> bool:
 
-    """True when channel allows TE and sender matches employee registry."""
+    """True when channel allows TE and employee identity matches the registry."""
 
-    if not team_expenses_allowed_capture(normalize_capture_source(invoice)):
-
+    channel = normalize_capture_source(invoice)
+    if channel == "slack":
         return False
 
-    sender = getattr(invoice, "email_sender", None)
+    intent = pinned_team_expense_intent(invoice)
+    if intent == TEAM_EXPENSE_INTENT_VENDOR:
+        return False
 
-    return find_employee_by_sender(list(employees or []), sender) is not None
+    emp_list = list(employees or [])
+    identity = employee_identity_for_te(invoice)
+    if find_employee_by_sender(emp_list, identity) is None:
+        return False
+
+    if channel == "upload":
+        return team_expenses_allowed_capture(
+            channel, invoice=invoice, employees=emp_list
+        )
+
+    if channel not in TEAM_EXPENSE_CAPTURE_CHANNELS:
+        return False
+
+    return True
 
 
 # Content-based commercial structure. Invoice/receipt numbers alone are not
@@ -158,10 +233,16 @@ def should_apply_employee_channel_te_force(
     ``should_force_team_expenses`` is identity/channel only. Role hints are the
     authoritative skip. Employee-matrix membership is never a hard gate.
 
+    Explicit claim/advance upload intent wins over commercial role hints so
+    mobile employees can pin advance/claim forms that OCR mislabels.
+
     ``force_team_expenses`` is the DT-map explicit override (same meaning as
     ``_resolve_force_team_expenses``): True/False short-circuits identity lookup.
     """
     if force_team_expenses is False:
+        return False
+    intent = pinned_team_expense_intent(invoice)
+    if intent == TEAM_EXPENSE_INTENT_VENDOR:
         return False
     channel = (
         bool(force_team_expenses)
@@ -170,6 +251,8 @@ def should_apply_employee_channel_te_force(
     )
     if not channel:
         return False
+    if intent in TEAM_EXPENSE_TE_INTENTS:
+        return True
     return not role_hints_look_commercial(invoice_role_hints(invoice))
 
 
@@ -589,8 +672,27 @@ def ensure_team_expenses_document_type(
 
 def team_expenses_blocked_for_upload(invoice: Any) -> bool:
 
-    """True when capture is upload (TE must not be assigned)."""
+    """True when TE catalogue rows must be dropped for this upload/Slack row.
 
-    return normalize_capture_source(invoice) == "upload"
+    Slack always blocks. Upload blocks unless a known-employee TE path applies
+    (stamped identity + optional claim/advance intent). Vendor intent always blocks.
+    When ``force_team_expenses`` is already true upstream, the DT pool keeps TE
+    rows regardless of this helper.
+    """
+
+    channel = normalize_capture_source(invoice)
+    if channel == "slack":
+        return True
+    if channel != "upload":
+        return False
+    intent = pinned_team_expense_intent(invoice)
+    if intent == TEAM_EXPENSE_INTENT_VENDOR:
+        return True
+    if intent in TEAM_EXPENSE_TE_INTENTS:
+        # Intent pin: keep TE in the pool; identity is enforced in should_force.
+        return False
+    # Without explicit TE intent, keep legacy upload block. Employee force still
+    # bypasses via force_team_expenses in the DT mapper.
+    return True
 
 

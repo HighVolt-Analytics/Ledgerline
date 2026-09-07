@@ -37,6 +37,7 @@ async def get_app_settings() -> ApiEnvelope[AppSettingsResponse]:
             rule_book_config_path=s.rule_book_config_path,
             cors_origins=s.cors_origins,
             whatsapp_configured=s.whatsapp_configured,
+            slack_configured=s.slack_configured,
             app_env=s.app_env,
             payment_environment_label=s.payment_environment_label_resolved,
             public_app_base_url=s.public_app_base_url_resolved,

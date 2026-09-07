@@ -130,7 +130,7 @@ export function DocumentMatrixPanel({
   showTable?: boolean;
   showLegend?: boolean;
   /** When set, only show documents for this Upload channel tab. */
-  captureSource?: "upload" | "email" | "whatsapp" | "viber";
+  captureSource?: "upload" | "email" | "whatsapp" | "viber" | "slack";
   onFlaggedCount?: (count: number) => void;
   onGoUpload?: () => void;
   refreshRef?: MutableRefObject<(() => void) | null>;

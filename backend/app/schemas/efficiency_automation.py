@@ -50,6 +50,7 @@ class EfficiencyAutomationKpis(BaseModel):
     documents_capture_upload: int = 0
     documents_capture_whatsapp: int = 0
     documents_capture_viber: int = 0
+    documents_capture_slack: int = 0
     vault_documents_total: int = 0
     duplicates_prevented_amount: Decimal = Decimal("0")
     duplicates_prevented_events: int = 0

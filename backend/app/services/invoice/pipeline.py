@@ -235,6 +235,94 @@ def _finalize_vendor_counterparty(
         invoice.vendor = None
 
 
+async def _process_manual_entry_skip_extract(
+    session: AsyncSession,
+    invoice: Invoice,
+    *,
+    config,
+    org,
+) -> None:
+    """Skip OCR/vision extract for manual DT capture; evaluate then post or hold for review."""
+    from app.services.audit.audit_service import log_event
+    from app.services.classification.document_type_catalog import (
+        get_document_type_definition,
+        resolved_route_for_definition,
+    )
+    from app.services.dossier.document_ref_service import audit_document_detail
+    from app.services.invoice.invoice_data import invoice_data_from_invoice
+    from app.services.invoice.invoice_evaluation_service import EVAL_NEEDS_REVIEW
+    from app.services.invoice.vision_posting_continue import (
+        continue_vision_understood_posting,
+        resolve_vision_posting_definition,
+        vision_should_continue_posting,
+    )
+    from app.services.shared.notifier import send_notification
+
+    code = (invoice.document_type_code or "").strip().upper()
+    definition = get_document_type_definition(
+        code, document_types=list(config.document_types or [])
+    )
+    await log_event(
+        session,
+        "manual_entry_skip_extraction",
+        invoice_id=invoice.id,
+        detail=audit_document_detail(
+            invoice,
+            document_type_code=code,
+            route_target=invoice.route_target,
+        ),
+    )
+    if definition is None or not getattr(definition, "enabled", True):
+        invoice.status = InvoiceStatus.EXCEPTION
+        invoice.evaluation_status = EVAL_NEEDS_REVIEW
+        await log_event(
+            session,
+            "parsing_failed",
+            invoice_id=invoice.id,
+            detail=audit_document_detail(
+                invoice,
+                reason="manual_entry_dt_missing",
+                document_type_code=code,
+            ),
+        )
+        send_notification(invoice, InvoiceStatus.EXCEPTION)
+        return
+
+    route = resolved_route_for_definition(definition)
+    if route:
+        invoice.route_target = route
+    if invoice.document_type_confidence is None or float(
+        invoice.document_type_confidence or 0.0
+    ) < 0.9:
+        invoice.document_type_confidence = 1.0
+
+    parsed = invoice_data_from_invoice(invoice)
+    await _sync_counterparty_and_evaluate(
+        session,
+        invoice,
+        parsed=parsed,
+        config=config,
+        org=org,
+        force_dt_route=True,
+    )
+
+    posting_defn = resolve_vision_posting_definition(invoice, config) or definition
+    if vision_should_continue_posting(invoice, posting_defn, header_ok=True):
+        await continue_vision_understood_posting(
+            session,
+            invoice,
+            config=config,
+            org=org,
+            definition=posting_defn,
+        )
+        return
+
+    invoice.status = InvoiceStatus.EXCEPTION
+    if not (invoice.evaluation_status or "").strip():
+        invoice.evaluation_status = EVAL_NEEDS_REVIEW
+    send_notification(invoice, InvoiceStatus.EXCEPTION)
+
+
 async def _sync_counterparty_and_evaluate(
     session: AsyncSession,
     invoice: Invoice,
@@ -2317,6 +2405,17 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                 },
             )
         send_notification(invoice, InvoiceStatus.EXCEPTION)
+        return
+
+    from app.services.invoice.processing_override_catalog import has_skip_extraction
+
+    if has_skip_extraction(invoice) and (invoice.document_type_code or "").strip():
+        await _process_manual_entry_skip_extract(
+            session,
+            invoice,
+            config=config,
+            org=org,
+        )
         return
 
     skip_classify_gate = bool(human_locked_dt)

@@ -24,6 +24,7 @@ import type {
   MailboxConnectionRequest,
   ViberConnection,
   WhatsappConnection,
+  SlackConnection,
   XeroReadiness,
 } from "@/api/types";
 import { PageHeader } from "@/components/PageHeader";
@@ -48,6 +49,7 @@ import { XeroEvidencePanel } from "@/components/integrations/XeroEvidencePanel";
 const INTEGRATION_BRANDS: Partial<Record<string, IntegrationBrandId>> = {
   graph: "graph",
   whatsapp: "whatsapp",
+  slack: "slack",
   viber: "viber",
   blob: "blob",
   di: "di",
@@ -240,6 +242,11 @@ export function IntegrationsPage() {
   const [waOAuthUrl, setWaOAuthUrl] = useState<string>("");
   const [waError, setWaError] = useState<string | null>(null);
   const [waBusy, setWaBusy] = useState(false);
+  const [slackConnections, setSlackConnections] = useState<SlackConnection[]>([]);
+  const [slackWebhookUrl, setSlackWebhookUrl] = useState<string>("");
+  const [slackOAuthUrl, setSlackOAuthUrl] = useState<string>("");
+  const [slackError, setSlackError] = useState<string | null>(null);
+  const [slackBusy, setSlackBusy] = useState(false);
   const [accountingBusy, setAccountingBusy] = useState<string | null>(null);
   const [accountingError, setAccountingError] = useState<string | null>(null);
   const [xeroSyncBusy, setXeroSyncBusy] = useState<"settings" | "contacts" | "select" | "verify" | null>(null);
@@ -345,6 +352,26 @@ export function IntegrationsPage() {
       });
   }, [tenantScope]);
 
+  const loadSlack = useCallback((fresh = false) => {
+    if (!canRenderTenantOwnedUi(tenantScope)) return;
+    const scope = captureTenantFetchScope();
+    const seq = loadSeq.current;
+    api
+      .getSlackStatus({ fresh })
+      .then((status) => {
+        if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
+        setSlackConnections(status.connections);
+        setSlackWebhookUrl(status.webhook_callback_url);
+        setSlackOAuthUrl(status.oauth_callback_url);
+        setSlackError(null);
+      })
+      .catch(() => {
+        if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
+        setSlackConnections([]);
+        setSlackWebhookUrl("");
+      });
+  }, [tenantScope]);
+
   const loadViber = useCallback((fresh = false) => {
     if (!canRenderTenantOwnedUi(tenantScope)) return;
     const scope = captureTenantFetchScope();
@@ -383,8 +410,9 @@ export function IntegrationsPage() {
     loadMailboxes();
     loadRequests();
     loadWhatsapp();
+    loadSlack();
     loadViber();
-  }, [loadMailboxes, loadRequests, loadWhatsapp, loadViber, tenantScope]);
+  }, [loadMailboxes, loadRequests, loadWhatsapp, loadSlack, loadViber, tenantScope]);
 
   async function copyInviteLink(url: string) {
     try {
@@ -463,6 +491,38 @@ export function IntegrationsPage() {
     searchParams.delete("reason");
     setSearchParams(searchParams, { replace: true });
   }, [searchParams, setSearchParams, toast, loadWhatsapp]);
+
+  useEffect(() => {
+    const slack = searchParams.get("slack");
+    if (!slack) return;
+    const team = searchParams.get("team");
+    const reason = searchParams.get("reason");
+    if (slack === "connected") {
+      toast({
+        title: "Slack connected",
+        description: team ? `${team} is ready for document capture.` : undefined,
+      });
+      loadSlack(true);
+    } else if (slack === "error") {
+      const messages: Record<string, string> = {
+        invalid_state: "Connection session expired or invalid — try Connect again.",
+        not_admin: "Only admins can connect Slack.",
+        not_configured: "Slack app credentials are missing on the server.",
+        oauth_failed: "Slack login failed or was cancelled.",
+      };
+      const msg = messages[reason ?? ""] ?? reason ?? "Slack connection failed";
+      setSlackError(msg);
+      toast({
+        title: "Slack connection failed",
+        description: msg,
+        variant: "destructive",
+      });
+    }
+    searchParams.delete("slack");
+    searchParams.delete("team");
+    searchParams.delete("reason");
+    setSearchParams(searchParams, { replace: true });
+  }, [searchParams, setSearchParams, toast, loadSlack]);
 
   useEffect(() => {
     const xero = searchParams.get("xero");
@@ -806,6 +866,13 @@ export function IntegrationsPage() {
       icon: MessageCircle,
     },
     {
+      id: "slack",
+      name: "Slack",
+      tagline: slackConnections[0]?.team_name || slackConnections[0]?.team_id || "Document capture",
+      ok: s.slack_configured && slackConnections.some((c) => c.connection_status === "connected"),
+      icon: MessageCircle,
+    },
+    {
       id: "viber",
       name: "Viber",
       tagline: vbConnections[0]?.bot_id || "Team expense capture",
@@ -939,6 +1006,7 @@ export function IntegrationsPage() {
     [
       s,
       waConnections,
+      slackConnections,
       vbConnections,
       xeroItem,
       qboItem,
@@ -1421,6 +1489,163 @@ export function IntegrationsPage() {
                           toast({ title: "WhatsApp disconnected" });
                         } catch (e) {
                           setWaError(e instanceof Error ? e.message : "Disconnect failed");
+                        }
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+
+      <Card className="p-5 mb-6" id="slack-integration">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h2 className="text-sm font-semibold">Slack</h2>
+            <p className="text-xs text-muted-foreground">
+              Connect a Slack workspace so people can send PDFs or photos via DM or @mention.
+              Documents process through the normal pipeline; senders in Employees route to Team
+              Expenses (same as email).
+            </p>
+          </div>
+          <MessageCircle className="h-5 w-5 text-muted-foreground" />
+        </div>
+
+        {slackError && <p className="text-sm text-destructive mb-2">{slackError}</p>}
+
+        {slackOAuthUrl && (
+          <div className="mb-4 rounded-md border border-border bg-muted/40 p-3 space-y-2 max-w-2xl">
+            <p className="text-xs text-muted-foreground">
+              Slack OAuth redirect URL (Slack app → OAuth & Permissions → Redirect URLs):
+            </p>
+            <div className="flex gap-2">
+              <Input readOnly value={slackOAuthUrl} className="text-xs font-mono" />
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="shrink-0"
+                onClick={() => void copyInviteLink(slackOAuthUrl)}
+              >
+                <Copy className="h-4 w-4 mr-1" />
+                Copy
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {slackWebhookUrl && (
+          <div className="mb-4 rounded-md border border-border bg-muted/40 p-3 space-y-2 max-w-2xl">
+            <p className="text-xs text-muted-foreground">
+              Slack Events Request URL (Slack app → Event Subscriptions):
+            </p>
+            <div className="flex gap-2">
+              <Input readOnly value={slackWebhookUrl} className="text-xs font-mono" />
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="shrink-0"
+                onClick={() => void copyInviteLink(slackWebhookUrl)}
+              >
+                <Copy className="h-4 w-4 mr-1" />
+                Copy
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {user?.role === "admin" && (
+          <div className="mb-4">
+            <Button
+              size="sm"
+              disabled={slackBusy || !s.slack_configured}
+              onClick={async () => {
+                setSlackBusy(true);
+                setSlackError(null);
+                try {
+                  const { authorize_url } = await api.getSlackAuthorizeUrl();
+                  window.location.href = authorize_url;
+                } catch (e) {
+                  setSlackError(e instanceof Error ? e.message : "Could not start Slack login");
+                  setSlackBusy(false);
+                }
+              }}
+            >
+              {slackBusy ? "Redirecting…" : "Connect Slack workspace"}
+            </Button>
+            {!s.slack_configured && (
+              <p className="text-xs text-muted-foreground mt-2">
+                Set SLACK_CLIENT_ID, SLACK_CLIENT_SECRET, and SLACK_SIGNING_SECRET in backend .env.
+              </p>
+            )}
+          </div>
+        )}
+
+        {slackConnections.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No Slack workspaces connected yet.</p>
+        ) : (
+          <ul className="space-y-2">
+            {slackConnections.map((conn) => (
+              <li
+                key={conn.id}
+                className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm gap-3"
+              >
+                <div className="min-w-0">
+                  <span className="font-medium">
+                    {conn.team_name || conn.team_id}
+                  </span>
+                  {conn.team_id && (
+                    <span className="text-muted-foreground ml-2 font-mono text-xs">{conn.team_id}</span>
+                  )}
+                  <Badge variant="outline" className="ml-2 text-[10px]">
+                    {conn.integration_health}
+                  </Badge>
+                  {conn.last_error && (
+                    <p className="text-xs text-destructive mt-1">{conn.last_error}</p>
+                  )}
+                </div>
+                {user?.role === "admin" && (
+                  <div className="flex gap-1 shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={async () => {
+                        try {
+                          const result = await api.testSlackConnection(conn.id);
+                          if (result.ok) {
+                            toast({ title: "Slack test passed" });
+                          } else {
+                            toast({
+                              title: "Slack needs attention",
+                              description: result.warnings.join(" · ") || result.integration_health,
+                              variant: "destructive",
+                            });
+                          }
+                          loadSlack(true);
+                        } catch (e) {
+                          setSlackError(e instanceof Error ? e.message : "Test failed");
+                        }
+                      }}
+                    >
+                      Test
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-destructive"
+                      onClick={async () => {
+                        try {
+                          await api.disconnectSlack(conn.id);
+                          loadSlack(true);
+                          toast({ title: "Slack disconnected" });
+                        } catch (e) {
+                          setSlackError(e instanceof Error ? e.message : "Disconnect failed");
                         }
                       }}
                     >

@@ -1,6 +1,7 @@
 export type IntegrationBrandId =
   | "graph"
   | "whatsapp"
+  | "slack"
   | "viber"
   | "blob"
   | "di"

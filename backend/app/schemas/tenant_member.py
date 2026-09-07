@@ -46,6 +46,7 @@ class InviteMemberResponse(BaseModel):
     expires_at: datetime
     email_sent: bool = False
     email_error: str | None = None
+    already_member: bool = False
 
 
 class InvitePreviewResponse(BaseModel):

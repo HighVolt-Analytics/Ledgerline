@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#f7f8fa" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0c0f" media="(prefers-color-scheme: dark)">
+<title>Quantum Ledger Link — Mobile</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/app.css?v=cap-tight1">
+<link rel="icon" type="image/png" href="../ledgerlink-favicon.png">
+<link rel="apple-touch-icon" href="../ledgerlink-favicon.png">
+<script>
+/* Require LedgerLink session (same keys as web login). */
+(function () {
+  try {
+    var token = localStorage.getItem("ledgerline_access_token");
+    if (!token) token = sessionStorage.getItem("ledgerline_access_token");
+    if (!token) {
+      var path = location.pathname || "";
+      var idx = path.indexOf("/mobile/");
+      var prefix = idx >= 0 ? path.slice(0, idx) : "";
+      location.replace(prefix + "/login?returnTo=" + encodeURIComponent("/m"));
+    }
+  } catch (e) { /* ignore */ }
+})();
+</script>
+</head>
+<body>
+<div class="stage">
+  <div class="viewer">
+    <div class="device">
+      <div class="app" id="app">
+        <main class="screens" id="screens">
+
+          <!-- ---------------- HOME ---------------- -->
+          <section class="screen active" data-screen="home" aria-label="Home">
+            <header class="nav">
+              <div class="nav-compact">
+                <span class="title" id="homeCompact">—</span>
+                <div class="nav-right">
+                  <button class="nav-btn" data-go="profile" aria-label="Profile and settings">
+                    <span class="av" id="homeAv" style="width:30px;height:30px;font-size:11px">—</span>
+                  </button>
+                </div>
+              </div>
+              <div class="nav-large">
+                <h1 id="greeting">Good morning</h1>
+                <div class="sub" id="homeSub">—</div>
+              </div>
+            </header>
+            <div class="body" data-scroll>
+              <div class="seg" id="roleSeg" role="group" aria-label="Role" hidden>
+                <button class="active" data-role="employee">Employee</button>
+                <button data-role="approver">Approver</button>
+              </div>
+
+              <!-- Employee panel -->
+              <div data-role-panel="employee">
+                <div class="sect-h">My quarter budget</div>
+                <div class="card">
+                  <div class="budget">
+                    <div class="ring" id="budgetRing"></div>
+                    <div class="budget-meta">
+                      <div class="kv"><span class="k">Remaining</span><span class="v big amt" id="budRem">—</span></div>
+                      <div class="kv"><span class="k">Claimed</span><span class="v amt" id="budUsed">—</span></div>
+                      <div class="kv"><span class="k">Allocated</span><span class="v amt" id="budAlloc">—</span></div>
+                      <div class="kv"><span class="k">Approved &amp; paid</span><span class="v amt" id="budApp">—</span></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="sect-h">Advance outstanding</div>
+                <div class="card adv-card" id="advCardWrap">
+                  <button class="pad" id="advCard" style="width:100%;text-align:left" aria-label="Open advances">
+                    <div style="flex:1;min-width:0">
+                      <div style="display:flex;align-items:baseline;gap:8px">
+                        <span class="amt" id="advAmt" style="font-size:26px;font-weight:650;letter-spacing:-.03em">—</span>
+                        <span class="chip" id="advChip" hidden></span>
+                      </div>
+                      <div style="font-size:13px;color:var(--ink-3);margin-top:4px" id="advTitle">Loading advance…</div>
+                      <div class="bar" style="margin-top:11px" id="advBarWrap" hidden><i id="advBar" class="warn" style="width:0%"></i></div>
+                      <div style="font-size:12px;color:var(--ink-3);margin-top:6px" id="advMeta"></div>
+                    </div>
+                    <svg class="chev" style="margin-top:26px" width="9" height="15" viewBox="0 0 9 15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M1.4 1.4 7 7.5l-5.6 6.1"/></svg>
+                  </button>
+                </div>
+
+                <div class="sect-h">Quick actions</div>
+                <div class="quick">
+                  <button class="qa" data-go="capture">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h1.7l1.1-1.8h6.4L15.8 6h2.7A2.5 2.5 0 0 1 21 8.5v8A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5v-8Z"/><circle cx="12" cy="12.4" r="3.4"/></svg>
+                    Capture
+                  </button>
+                  <button class="qa" data-go="items" data-subtab="claims">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8.5L19 7.5V21H6z"/><path d="M14 3v5h5M9 12.5h6M9 16h4"/></svg>
+                    Claim
+                  </button>
+                  <button class="qa" id="qaAdvance">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2.4"/><circle cx="12" cy="12" r="2.6"/><path d="M6.5 12h.01M17.5 12h.01"/></svg>
+                    Advance
+                  </button>
+                  <button class="qa" data-go="approvals">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5h11M4 12h11M4 17.5h7"/><path d="M17.5 16.6l2 2 3.2-4"/></svg>
+                    Approvals
+                    <span class="badge" id="qaBadge" style="display:none">0</span>
+                  </button>
+                </div>
+
+                <div class="sect-h">Recent activity<span class="r" id="actCount">0 items</span></div>
+                <div class="rows" id="activityRows"></div>
+              </div>
+
+              <!-- Approver panel -->
+              <div data-role-panel="approver" hidden>
+                <div class="sect-h">My approval queue</div>
+                <div class="card">
+                  <div class="pad" style="display:flex;gap:16px;align-items:center">
+                    <div style="flex:1">
+                      <div class="amt" id="apQueueAmt" style="font-size:30px;font-weight:700;letter-spacing:-.035em">—</div>
+                      <div style="font-size:12.5px;color:var(--ink-3);margin-top:3px" id="apQueueSub">Loading queue…</div>
+                      <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap" id="apQueueChips"></div>
+                    </div>
+                    <div class="ring" id="queueRing"></div>
+                  </div>
+                </div>
+
+                <div class="sect-h">Your spend vs budget<span class="r">This quarter</span></div>
+                <div class="card" id="teamRows"></div>
+
+                <div style="padding:16px 16px 0"><button class="btn" data-go="approvals">Open approvals inbox</button></div>
+              </div>
+            </div>
+          </section>
+
+          <!-- ---------------- CAPTURE ---------------- -->
+          <section class="screen" data-screen="capture" aria-label="Capture">
+            <div class="cam">
+              <div class="cam-top">
+                <button class="cam-x" data-go="home" aria-label="Close capture">
+                  <svg width="19" height="19" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 4l12 12M16 4L4 16"/></svg>
+                </button>
+                <span style="font-size:13.5px;font-weight:600">Capture document</span>
+                <button type="button" class="cam-flash" id="capFlash" data-flash="auto" aria-label="Flash Auto" title="Flash">Flash Auto</button>
+              </div>
+              <div class="cap-path" id="capPath" role="group" aria-label="Capture method">
+                <button type="button" class="active" data-path="scan">Scan</button>
+                <button type="button" data-path="fill">Fill form</button>
+              </div>
+              <div id="capScanPanel" class="cap-scan">
+                <div class="cam-intent" id="capIntent" role="group" aria-label="Route as">
+                  <span class="cam-intent-label">Route as</span>
+                  <button type="button" class="active" data-intent="expense_claim">Claim</button>
+                  <button type="button" data-intent="advance_requisition">Advance</button>
+                  <button type="button" data-intent="vendor_invoice">Vendor</button>
+                </div>
+                <p class="cam-hint" id="camHint">Hold steady, then tap the shutter.</p>
+                <div class="viewfinder">
+                  <video id="capVideo" class="cap-video" playsinline muted autoplay></video>
+                  <div class="doc-mock" aria-hidden="true">
+                    <div class="l dk md"></div><div class="l sh"></div>
+                    <div style="height:14px"></div>
+                    <div class="l"></div><div class="l md"></div><div class="l"></div><div class="l xs"></div>
+                    <div style="height:12px"></div>
+                    <div class="l dk sh"></div><div class="l"></div><div class="l md"></div><div class="l"></div>
+                    <div style="height:14px"></div>
+                    <div class="l dk xs"></div>
+                  </div>
+                  <div class="guides" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+                  <span class="cam-pill" id="camPill">Frame the document</span>
+                </div>
+                <div id="capPageStrip" class="cap-page-strip" hidden></div>
+                <div class="cam-bottom">
+                  <div class="cam-modes" role="group" aria-label="Capture style">
+                    <button type="button" class="active" data-mode="invoice">Document</button>
+                    <button type="button" data-mode="receipt">Receipt</button>
+                    <button type="button" data-mode="multipage">Multi-page</button>
+                  </div>
+                  <div class="cam-ctl">
+                    <button type="button" class="cam-alt" id="capFile">
+                      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8.5L19 7.5V21H6z"/><path d="M14 3v5h5"/></svg>
+                      Choose file
+                    </button>
+                    <button type="button" class="shutter" id="shutter" aria-label="Take photo"><i></i></button>
+                    <span class="cam-alt cam-alt--spacer" aria-hidden="true"></span>
+                  </div>
+                </div>
+              </div>
+              <div id="capFillPanel" class="cap-fill" hidden>
+                <div class="cap-fill-scroll" data-scroll>
+                  <p class="cap-fill-hint">Pick a document type, fill fields, then attach one or more reference photos (or a PDF). Multiple photos are combined into one submission.</p>
+                  <label class="cap-fill-label" for="capDtSearch">Document type</label>
+                  <input type="search" id="capDtSearch" class="cap-fill-input" placeholder="Search types…" autocomplete="off">
+                  <div id="capDtList" class="cap-dt-list" role="listbox" aria-label="Document types"></div>
+                  <div id="capDtSelected" class="cap-dt-selected" hidden></div>
+                  <div id="capDtFields" class="cap-dt-fields" hidden></div>
+                  <div id="capFillAttach" class="cap-fill-attach">
+                    <div class="cap-fill-attach-meta" id="capFillFileMeta">No reference images yet</div>
+                    <div id="capFillPageStrip" class="cap-fill-pages" hidden></div>
+                    <div class="cap-fill-attach-actions">
+                      <button type="button" class="btn sec sm" id="capFillFile">Add photos / PDF</button>
+                      <button type="button" class="btn sec sm" id="capFillShot">Take photo</button>
+                    </div>
+                  </div>
+                  <button type="button" class="btn" id="capFillSubmit" disabled>Submit</button>
+                </div>
+              </div>
+              <input type="file" id="capLibraryInput" accept="image/*,application/pdf,.pdf,.jpg,.jpeg,.png,.webp" multiple hidden>
+              <input type="file" id="capFillLibraryInput" accept="image/*,application/pdf,.pdf,.jpg,.jpeg,.png,.webp" multiple hidden>
+            </div>
+          </section>
+
+          <!-- ---------------- APPROVALS ---------------- -->
+          <section class="screen" data-screen="approvals" aria-label="Approvals">
+            <header class="nav">
+              <div class="nav-compact">
+                <span class="title">Approvals</span>
+                <div class="nav-left">
+                  <button class="nav-btn" id="selToggle">Select all</button>
+                </div>
+                <div class="nav-right">
+                  <button class="nav-btn" id="selCancel" hidden>Done</button>
+                </div>
+              </div>
+              <div class="nav-large">
+                <h1>Approvals</h1>
+                <div class="sub" id="apSub">8 items · A$96,340 · 2 overdue SLA</div>
+              </div>
+            </header>
+            <div class="body" data-scroll>
+              <div class="search">
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="7" cy="7" r="4.6"/><path d="M10.6 10.6 14 14"/></svg>
+                <input type="search" id="apSearch" placeholder="Search requester, vendor, amount" aria-label="Search approvals">
+                <button class="clr" id="apClear" hidden aria-label="Clear search">
+                  <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="8" opacity=".35"/><path d="M5.2 5.2l5.6 5.6M10.8 5.2l-5.6 5.6" stroke="var(--surface)" stroke-width="1.6" stroke-linecap="round"/></svg>
+                </button>
+              </div>
+              <div class="chip-bar" id="apChips">
+                <button class="fchip" aria-pressed="false" data-f="all">All</button>
+                <button class="fchip" aria-pressed="false" data-f="exception">Exceptions</button>
+                <button class="fchip" aria-pressed="false" data-f="overdue">Overdue SLA</button>
+                <button class="fchip" aria-pressed="false" data-f="advance">Advances</button>
+              </div>
+              <div id="apList"></div>
+            </div>
+            <div class="bulkbar" id="bulkbar">
+              <span class="n" id="bulkN">0 selected</span>
+              <button class="btn sm pos" id="bulkApprove" style="flex:1">Approve (0)</button>
+              <button class="btn sm sec" id="bulkReject" style="flex:0 0 96px">Reject</button>
+            </div>
+          </section>
+
+          <!-- ---------------- APPROVAL DETAIL ---------------- -->
+          <section class="screen push" data-screen="detail" aria-label="Approval detail">
+            <header class="nav stuck">
+              <div class="nav-compact">
+                <span class="title" id="dTitle">Approval</span>
+                <div class="nav-left">
+                  <button class="nav-btn" data-go="approvals">
+                    <svg width="10" height="16" viewBox="0 0 10 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.2 1.4 2 8l6.2 6.6"/></svg>
+                    Inbox
+                  </button>
+                </div>
+                <div class="nav-right"><button class="nav-btn" id="dFiles" aria-label="Open document">Document</button></div>
+              </div>
+            </header>
+            <div class="body no-tab" data-scroll id="detailBody"></div>
+            <div class="footer-actions">
+              <button class="btn sm sec" id="dReject" style="flex:1;color:var(--neg)">Reject</button>
+              <button class="btn sm pos" id="dApprove" style="flex:1.4">Approve</button>
+            </div>
+          </section>
+
+          <!-- ---------------- MY ITEMS ---------------- -->
+          <section class="screen" data-screen="items" aria-label="My items">
+            <header class="nav">
+              <div class="nav-compact"><span class="title">My items</span></div>
+              <div class="nav-large">
+                <h1>My items</h1>
+                <div class="sub" id="itemsSub">—</div>
+              </div>
+            </header>
+            <div class="body" data-scroll>
+              <div class="subtabs" id="itemTabs" role="group" aria-label="Item type">
+                <button class="active" data-t="claims">Claims</button>
+                <button data-t="invoices">Invoices</button>
+                <button data-t="advances">Advances</button>
+              </div>
+              <div id="itemsList"></div>
+            </div>
+          </section>
+
+          <!-- ---------------- FILES ---------------- -->
+          <section class="screen" data-screen="files" aria-label="Files">
+            <header class="nav">
+              <div class="nav-compact">
+                <span class="title">Files</span>
+                <div class="nav-right">
+                  <button class="nav-btn" id="viewToggle" aria-label="Switch to list view">
+                    <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 5h14M3 10h14M3 15h14"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="nav-large">
+                <h1>Files</h1>
+                <div class="sub" id="filesSub">46,281 documents in vault · AES-256 encrypted</div>
+              </div>
+            </header>
+            <div class="body" data-scroll>
+              <div class="search">
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="7" cy="7" r="4.6"/><path d="M10.6 10.6 14 14"/></svg>
+                <input type="search" id="fSearch" placeholder="Search vendor, type, DT code" aria-label="Search files">
+                <button class="clr" id="fClear" hidden aria-label="Clear search">
+                  <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="8" opacity=".35"/><path d="M5.2 5.2l5.6 5.6M10.8 5.2l-5.6 5.6" stroke="var(--surface)" stroke-width="1.6" stroke-linecap="round"/></svg>
+                </button>
+              </div>
+              <div class="chip-bar" id="fChips"></div>
+              <div id="fResults" style="font-size:11.5px;color:var(--ink-3);padding:0 20px 8px"></div>
+              <div id="fList" class="grid"></div>
+            </div>
+          </section>
+
+          <!-- ---------------- PROFILE ---------------- -->
+          <section class="screen" data-screen="profile" aria-label="Profile and settings">
+            <header class="nav">
+              <div class="nav-compact">
+                <span class="title">Profile</span>
+                <div class="nav-left">
+                  <button class="nav-btn" data-go="home">
+                    <svg width="10" height="16" viewBox="0 0 10 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.2 1.4 2 8l6.2 6.6"/></svg>
+                    Home
+                  </button>
+                </div>
+              </div>
+              <div class="nav-large"><h1>Profile</h1></div>
+            </header>
+            <div class="body" data-scroll>
+              <div class="prof">
+                <span class="av" id="profAv">—</span>
+                <div>
+                  <div class="pn" id="profName">—</div>
+                  <div class="pm" id="profRole">—</div>
+                  <div class="pm" id="profEmail">—</div>
+                </div>
+              </div>
+
+              <div class="sect-h tight">Entity</div>
+              <div class="rows">
+                <button class="row" id="entityRow">
+                  <div class="main"><div class="t" id="entityTitle">—</div><div class="s" id="entitySub">—</div></div>
+                  <span class="r" id="entitySwitchLabel">Switch</span>
+                  <svg class="chev" width="9" height="15" viewBox="0 0 9 15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M1.4 1.4 7 7.5l-5.6 6.1"/></svg>
+                </button>
+              </div>
+
+              <div class="sect-h">Appearance</div>
+              <div class="seg-appear seg-appear--profile" id="profileAppearSeg" role="group" aria-label="Appearance">
+                <button type="button" data-appear="auto" class="active">Auto</button>
+                <button type="button" data-appear="light">Light</button>
+                <button type="button" data-appear="dark">Dark</button>
+              </div>
+
+              <div class="sect-h">Approvals</div>
+              <div class="rows">
+                <div class="row">
+                  <div class="main"><div class="t">Delegate my approvals</div><div class="s" id="delSub">Off · queue stays with you</div></div>
+                  <button class="sw" id="swDelegate" role="switch" aria-checked="false" aria-pressed="false" aria-label="Delegate my approvals"><i></i></button>
+                </div>
+                <button class="row" id="delegateTo">
+                  <div class="main"><div class="t">Delegate to</div><div class="s" id="delTo">Aisha Karim · Sales</div></div>
+                  <svg class="chev" width="9" height="15" viewBox="0 0 9 15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M1.4 1.4 7 7.5l-5.6 6.1"/></svg>
+                </button>
+                <div class="row">
+                  <div class="main"><div class="t">Auto-approve under A$250</div><div class="s">Policy-compliant claims only</div></div>
+                  <button class="sw" role="switch" aria-checked="true" aria-pressed="true" aria-label="Auto-approve under A$250"><i></i></button>
+                </div>
+              </div>
+
+              <div class="sect-h">Notifications</div>
+              <div class="rows">
+                <div class="row">
+                  <div class="main"><div class="t">SLA breach alerts</div><div class="s">Push · immediate</div></div>
+                  <button class="sw" role="switch" aria-checked="true" aria-pressed="true" aria-label="SLA breach alerts"><i></i></button>
+                </div>
+                <div class="row">
+                  <div class="main"><div class="t">Daily approval digest</div><div class="s">Weekdays 8:00 am AEST</div></div>
+                  <button class="sw" role="switch" aria-checked="true" aria-pressed="true" aria-label="Daily approval digest"><i></i></button>
+                </div>
+                <div class="row">
+                  <div class="main"><div class="t">Budget threshold at 90%</div><div class="s">Push and email</div></div>
+                  <button class="sw" role="switch" aria-checked="false" aria-pressed="false" aria-label="Budget threshold alerts"><i></i></button>
+                </div>
+              </div>
+
+              <div class="sect-h">Sync</div>
+              <div class="rows">
+                <div class="row">
+                  <div class="main"><div class="t">Offline queue</div><div class="s" id="offlineSub">2 captures waiting for Wi-Fi</div></div>
+                  <span class="chip warn">Queued</span>
+                </div>
+                <div class="row">
+                  <div class="main"><div class="t">Ledger sync</div><div class="s">Xero · last sync 9:38 am · 99.1% success</div></div>
+                  <span class="chip pos">Healthy</span>
+                </div>
+              </div>
+
+              <div style="padding:18px 16px 8px"><button class="btn sec sm" id="signOut">Sign out</button></div>
+              <p id="profileFoot" style="font-size:11px;color:var(--ink-3);text-align:center;padding:6px 24px 0;line-height:1.5">
+                LedgerLink
+              </p>
+            </div>
+          </section>
+
+        </main>
+
+        <!-- ---------------- TAB BAR ---------------- -->
+        <nav class="tabbar" id="tabbar" aria-label="Main">
+          <button class="tab active" data-tab="home">
+            <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 10.4 12 4l8.5 6.4V20H3.5z"/><path d="M9.6 20v-5.6h4.8V20"/></svg>
+            Home
+          </button>
+          <button class="tab" data-tab="approvals">
+            <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5h11M4 12h11M4 17.5h7"/><path d="M17.5 16.6l2 2 3.2-4"/></svg>
+            Approvals
+            <span class="badge" id="tabBadge">8</span>
+          </button>
+          <button class="tab tab-capture" data-tab="capture" aria-label="Capture">
+            <span class="cap">
+              <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h1.7l1.1-1.8h6.4L15.8 6h2.7A2.5 2.5 0 0 1 21 8.5v8A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5v-8Z"/><circle cx="12" cy="12.4" r="3.4"/></svg>
+            </span>
+          </button>
+          <button class="tab" data-tab="items">
+            <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8.5L19 7.5V21H6z"/><path d="M14 3v5h5M9 12.5h6M9 16h4"/></svg>
+            My items
+          </button>
+          <button class="tab" data-tab="files">
+            <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 7.2A2 2 0 0 1 5.5 5.2h3.3l1.9 2.2h7.8a2 2 0 0 1 2 2v8.4a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>
+            Files
+          </button>
+        </nav>
+
+        <!-- ---------------- SHEET HOST ---------------- -->
+        <div class="scrim" id="scrim"></div>
+        <div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+          <div class="grabber" id="grabber"><i></i></div>
+          <div class="sheet-h"><h3 id="sheetTitle"></h3><p id="sheetSub"></p></div>
+          <div class="sheet-b" id="sheetBody"></div>
+          <div class="sheet-f" id="sheetFoot"></div>
+        </div>
+        <div class="toast" id="toast"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="js/session.js"></script>
+<script src="js/data.js"></script>
+<script src="js/capture-preprocess.js"></script>
+<script src="js/capture-api.js?v=fill-multi-img1"></script>
+<script src="js/capture-ui.js?v=fill-multi-img1"></script>
+<script src="js/app.js?v=shell-mnc1"></script>
+<script data-pplx-inline-edit>
+(function () {
+  if (window === window.top) return;
+
+  const allowedParentOrigins = ["https://www.perplexity.ai","https://perplexity.ai","https://testing.perplexity.ai","https://staging.perplexity.ai","https://*.preview.i.perplexity.ai","http://perplexity.localhost","http://localhost:1420","http://127.0.0.1:1420","http://localhost:3000","http://127.0.0.1:3000","http://localhost:5173","http://127.0.0.1:5173"];
+  const MAX_FONT_BYTES = 500 * 1024;
+  const MAX_TOTAL_FONT_BYTES = 2 * 1024 * 1024;
+  let scrollForwarding = false;
+  let scrollRaf = 0;
+  let trustedTopOrigin = null;
+
+  // Allow entries like "https://*.preview.i.perplexity.ai" — the wildcard
+  // matches a single DNS label (no dots), so "https://*.foo" cannot stretch
+  // across multiple labels.
+  function matchesAllowedOrigin(origin) {
+    if (!origin) return false;
+    for (const entry of allowedParentOrigins) {
+      if (!entry.includes("*")) {
+        if (entry === origin) return true;
+        continue;
+      }
+      const pattern = new RegExp(
+        "^" +
+          entry.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^.]+") +
+          "$",
+      );
+      if (pattern.test(origin)) return true;
+    }
+    return false;
+  }
+
+  // Trust decision: when the sender is same-origin-visible (event.origin is a
+  // real origin like https://www.perplexity.ai) we trust event.origin directly.
+  // When event.origin is "null" (opaque broker srcdoc), we fall back to the
+  // broker's stamped `parentOrigin` to identify the top window. The fallback
+  // is claim-only — we rely on the browser's native `targetOrigin` enforcement
+  // on the response path (see postToTrustedTop) to ensure replies can't be
+  // delivered to anyone but the actual top window of that claimed origin.
+  function getTrustedParentOrigin(event) {
+    const forwardedParentOrigin =
+      typeof event.data.parentOrigin === "string" ? event.data.parentOrigin : null;
+    const parentOrigin = event.origin === "null" ? forwardedParentOrigin : event.origin;
+    return matchesAllowedOrigin(parentOrigin) ? parentOrigin : null;
+  }
+
+  // All responses go to window.top with targetOrigin = the allowlisted origin.
+  // An attacker that iframes us inside their own null-origin broker can claim
+  // any parentOrigin they like, but the browser will drop the reply whenever
+  // the real top's origin doesn't match — so the screenshot never leaves.
+  function postToTrustedTop(message) {
+    if (!trustedTopOrigin) return;
+    try {
+      window.top.postMessage(message, trustedTopOrigin);
+    } catch (_error) {}
+  }
+
+  function inlineAll(original, clone) {
+    if (original.nodeType !== 1 || clone.nodeType !== 1) return;
+
+    try {
+      const computedStyle = getComputedStyle(original);
+      // cssText on a computed style is the serialized declaration in modern
+      // Chromium/Safari — a single read beats enumerating ~400 longhand
+      // properties. Firefox returns "" here, so we fall back on empty.
+      const serialized = computedStyle.cssText;
+      if (serialized) {
+        clone.style.cssText = serialized;
+      } else {
+        const parts = new Array(computedStyle.length);
+        for (let index = 0; index < computedStyle.length; index += 1) {
+          const property = computedStyle[index];
+          parts[index] = `${property}:${computedStyle.getPropertyValue(property)};`;
+        }
+        clone.style.cssText = parts.join("");
+      }
+    } catch (_error) {}
+
+    const originalChildren = original.children;
+    const clonedChildren = clone.children;
+    for (
+      let index = 0;
+      index < originalChildren.length && index < clonedChildren.length;
+      index += 1
+    ) {
+      inlineAll(originalChildren[index], clonedChildren[index]);
+    }
+  }
+
+  function extractFontUrl(srcValue) {
+    const matches = [
+      ...srcValue.matchAll(
+        /url\(["']?([^"')]+)["']?\)(?:\s*format\(["']?([^"')]+)["']?\))?/gi,
+      ),
+    ];
+    if (matches.length === 0) return null;
+    const woff2 = matches.find((m) => m[2] && m[2].toLowerCase().includes("woff2"));
+    if (woff2) return woff2[1];
+    const woff = matches.find((m) => m[2] && m[2].toLowerCase().includes("woff"));
+    if (woff) return woff[1];
+    return matches[0][1];
+  }
+
+  // Cache resolved font URL -> data URI across captures. Fonts on a page
+  // essentially never change, and a batch run emits multiple captures back to
+  // back — without this we'd refetch + re-base64 every time.
+  const fontDataUriCache = new Map();
+  const SRC_DECLARATION_RE = /src\s*:\s*[^;}]+/i;
+
+  async function fetchAsDataUri(url) {
+    if (fontDataUriCache.has(url)) return fontDataUriCache.get(url);
+    let dataUri = null;
+    try {
+      const response = await fetch(url, { mode: "cors", credentials: "omit" });
+      if (response.ok) {
+        const blob = await response.blob();
+        if (blob.size <= MAX_FONT_BYTES) {
+          dataUri = await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () =>
+              resolve(typeof reader.result === "string" ? reader.result : null);
+            reader.onerror = () => resolve(null);
+            reader.readAsDataURL(blob);
+          });
+        }
+      }
+    } catch (_error) {
+      dataUri = null;
+    }
+    fontDataUriCache.set(url, dataUri);
+    return dataUri;
+  }
+
+  function collectFontFaceRuleTexts() {
+    const rules = [];
+    for (const sheet of document.styleSheets) {
+      let cssRules;
+      try {
+        cssRules = sheet.cssRules;
+      } catch (_error) {
+        continue;
+      }
+      if (!cssRules) continue;
+      for (const rule of cssRules) {
+        const cssText = rule.cssText || "";
+        if (cssText.startsWith("@font-face")) rules.push(cssText);
+      }
+    }
+    return rules;
+  }
+
+  async function buildInlinedFontCss() {
+    const ruleTexts = collectFontFaceRuleTexts();
+    if (ruleTexts.length === 0) return null;
+
+    const resolved = ruleTexts.map((cssText) => {
+      if (!SRC_DECLARATION_RE.test(cssText)) return null;
+      const srcMatch = cssText.match(/src\s*:\s*([^;}]+)[;}]/i);
+      if (!srcMatch) return null;
+      const url = extractFontUrl(srcMatch[1]);
+      if (!url) return null;
+      try {
+        return { cssText, url: new URL(url, document.baseURI).href };
+      } catch (_error) {
+        return null;
+      }
+    });
+
+    const dataUris = await Promise.all(
+      resolved.map((entry) => (entry ? fetchAsDataUri(entry.url) : Promise.resolve(null))),
+    );
+
+    const inlined = [];
+    let totalBytes = 0;
+    for (let index = 0; index < resolved.length; index += 1) {
+      const entry = resolved[index];
+      const dataUri = dataUris[index];
+      if (!entry || !dataUri) continue;
+      const approxBytes = dataUri.length * 0.75;
+      if (totalBytes + approxBytes > MAX_TOTAL_FONT_BYTES) break;
+      totalBytes += approxBytes;
+      inlined.push(entry.cssText.replace(SRC_DECLARATION_RE, `src: url("${dataUri}")`));
+    }
+    return inlined.length > 0 ? inlined.join("\n") : null;
+  }
+
+  function stripExternal(clone) {
+    const images = clone.querySelectorAll("img");
+    for (let index = 0; index < images.length; index += 1) {
+      const src = images[index].getAttribute("src");
+      if (src && !src.startsWith("data:")) images[index].removeAttribute("src");
+    }
+
+    const elements = clone.querySelectorAll("*");
+    for (let index = 0; index < elements.length; index += 1) {
+      const style = elements[index].style.cssText;
+      if (style && style.includes("url(")) {
+        elements[index].style.cssText = style.replace(
+          /url\(["']?(?!data:)[^)"']*["']?\)/gi,
+          "none",
+        );
+      }
+    }
+  }
+
+  function emitScroll() {
+    scrollRaf = 0;
+    if (!scrollForwarding) return;
+    postToTrustedTop({
+      type: "INLINE_EDIT_SCROLL",
+      scrollX: window.scrollX,
+      scrollY: window.scrollY,
+    });
+  }
+
+  window.addEventListener(
+    "scroll",
+    function () {
+      if (!scrollForwarding || scrollRaf) return;
+      scrollRaf = requestAnimationFrame(emitScroll);
+    },
+    { passive: true, capture: true },
+  );
+
+  async function handleCaptureRequest(event) {
+    const requestId = event.data.requestId;
+    const scrollX = window.scrollX;
+    const scrollY = window.scrollY;
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+
+    function postResult(dataUrl) {
+      postToTrustedTop({
+        type: "INLINE_EDIT_SCREENSHOT_RESULT",
+        requestId,
+        dataUrl,
+        scrollX,
+        scrollY,
+      });
+    }
+
+    try {
+      // Wait for any pending web fonts to resolve so both inline metrics and
+      // the @font-face inlining below see the same loaded faces.
+      if (document.fonts && document.fonts.ready) {
+        try {
+          await document.fonts.ready;
+        } catch (_error) {}
+      }
+
+      const clone = document.documentElement.cloneNode(true);
+      inlineAll(document.documentElement, clone);
+
+      const removedNodes = clone.querySelectorAll("script,link[rel=\"stylesheet\"],style");
+      for (let index = 0; index < removedNodes.length; index += 1) {
+        removedNodes[index].remove();
+      }
+
+      stripExternal(clone);
+
+      // Re-embed web fonts as data-URI @font-face rules so the SVG rasterizer
+      // can resolve them — external font URLs aren't fetched during
+      // foreignObject rendering, which would otherwise force a fallback face
+      // and change text metrics.
+      const inlinedFontCss = await buildInlinedFontCss();
+      if (inlinedFontCss) {
+        const styleEl = document.createElement("style");
+        styleEl.textContent = inlinedFontCss;
+        const head = clone.querySelector("head");
+        if (head) head.appendChild(styleEl);
+        else clone.insertBefore(styleEl, clone.firstChild);
+      }
+
+      const html = new XMLSerializer().serializeToString(clone);
+      const svg =
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
+        '<foreignObject width="100%" height="100%">' +
+        `<div xmlns="http://www.w3.org/1999/xhtml" style="width:${width}px;height:${height}px;overflow:hidden">` +
+        `<div style="position:relative;left:-${scrollX}px;top:-${scrollY}px">` +
+        html +
+        "</div></div></foreignObject></svg>";
+      const svgUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+      const image = new Image();
+      image.onload = function () {
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext("2d").drawImage(image, 0, 0);
+        postResult(canvas.toDataURL("image/png"));
+      };
+      image.onerror = function () {
+        postResult(null);
+      };
+      image.src = svgUrl;
+    } catch (_error) {
+      postResult(null);
+    }
+  }
+
+  window.addEventListener("message", function (event) {
+    if (!event.data) return;
+    // Only accept messages from the direct parent frame. Blocks sibling /
+    // unrelated-window postMessage senders that could otherwise reach us.
+    if (event.source !== window.parent) return;
+
+    const trustedParentOrigin = getTrustedParentOrigin(event);
+    if (!trustedParentOrigin) return;
+    trustedTopOrigin = trustedParentOrigin;
+
+    if (event.data.type === "INLINE_EDIT_SCROLL_START") {
+      scrollForwarding = true;
+      emitScroll();
+      return;
+    }
+
+    if (event.data.type === "INLINE_EDIT_SCROLL_STOP") {
+      scrollForwarding = false;
+      if (scrollRaf) cancelAnimationFrame(scrollRaf);
+      scrollRaf = 0;
+      return;
+    }
+
+    if (event.data.type !== "INLINE_EDIT_CAPTURE_REQUEST") return;
+
+    handleCaptureRequest(event);
+  });
+})();
+
+
+</script></body>
+</html>

@@ -174,6 +174,16 @@ async def disconnect_connection(
     session: AsyncSession,
     connection: ConnectedViberAccount,
 ) -> None:
+    try:
+        token = decrypt_secret(connection.auth_token_encrypted)
+        if token:
+            await ViberClient(token).set_webhook("")
+    except Exception as exc:
+        logger.warning(
+            "viber_webhook_unregister_failed",
+            connection_id=connection.id,
+            error=str(exc),
+        )
     connection.connection_status = STATUS_DISCONNECTED
     connection.integration_health = STATUS_DISCONNECTED
     connection.auth_token_encrypted = None

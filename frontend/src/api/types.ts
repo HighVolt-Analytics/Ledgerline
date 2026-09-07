@@ -59,6 +59,7 @@ export interface TenantInviteCreated {
   expires_at: string;
   email_sent?: boolean;
   email_error?: string | null;
+  already_member?: boolean;
 }
 
 export interface InvitePreview {
@@ -1427,7 +1428,7 @@ export interface ExecutiveKpis {
 }
 
 export interface CaptureSourceApiRow {
-  id: "email" | "whatsapp" | "viber" | "upload";
+  id: "email" | "whatsapp" | "viber" | "slack" | "upload";
   label: string;
   document_count: number;
   avg_time_saved_minutes: number;
@@ -2014,6 +2015,7 @@ export interface AppSettings {
   rule_book_config_path: string;
   cors_origins: string;
   whatsapp_configured: boolean;
+  slack_configured?: boolean;
   app_env: string;
   payment_environment_label: string;
   public_app_base_url?: string;
@@ -2377,6 +2379,29 @@ export interface WhatsappStatus {
   webhook_callback_url: string;
   oauth_callback_url: string;
   connections: WhatsappConnection[];
+}
+
+export interface SlackConnection {
+  id: number;
+  tenant_id: string;
+  team_id: string;
+  team_name: string | null;
+  bot_user_id: string | null;
+  app_id: string | null;
+  connection_status: string;
+  integration_health: string;
+  last_error: string | null;
+  last_sync_at: string | null;
+  connected_by_user_id: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SlackStatus {
+  configured: boolean;
+  webhook_callback_url: string;
+  oauth_callback_url: string;
+  connections: SlackConnection[];
 }
 
 export interface ViberConnection {

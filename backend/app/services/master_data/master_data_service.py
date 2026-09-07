@@ -95,6 +95,7 @@ def employee_record_to_schema(row: EmployeeMasterRecord) -> EmployeeMasterRespon
         whatsapp_number=row.whatsapp_number or "",
         whatsapp_number_2=row.whatsapp_number_2 or "",
         viber_number=row.viber_number,
+        slack_user_id=row.slack_user_id,
         date_of_joining=row.date_of_joining or "",
         department=row.department or "",
         location=row.location or "",

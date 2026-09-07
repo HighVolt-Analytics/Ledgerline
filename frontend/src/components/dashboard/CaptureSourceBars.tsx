@@ -6,7 +6,7 @@ import { useTheme } from "@/context/ThemeContext";
 import { cn } from "@/lib/cn";
 import { kpiModuleFill, type KpiModuleColor } from "@/lib/kpiModuleColors";
 
-export type CaptureSourceId = "email" | "whatsapp" | "viber" | "upload";
+export type CaptureSourceId = "email" | "whatsapp" | "viber" | "slack" | "upload";
 
 export type CaptureSourceMetric = "documents" | "time_saved" | "manual_time" | "cost_saved";
 
@@ -45,6 +45,17 @@ export const PLACEHOLDER_CAPTURE_SOURCES: CaptureSourceRow[] = [
     costSaved: 0,
     moduleColor: "violet",
     href: "/upload?channel=whatsapp",
+  },
+  {
+    id: "slack",
+    label: "Slack",
+    documentCount: 0,
+    avgTimeSavedMinutes: 14,
+    timeSavedMinutes: 0,
+    manualMinutes: 0,
+    costSaved: 0,
+    moduleColor: "blue",
+    href: "/upload?channel=slack",
   },
   {
     id: "viber",

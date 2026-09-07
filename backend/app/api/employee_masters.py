@@ -8,8 +8,10 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_db, require_admin
+from app.models.tenant import Tenant
 from app.services.audit.audit_service import log_event
-from app.services.auth.privilege_service import require_bank_reveal
+from app.services.auth.auth_email_service import send_tenant_invite_email
+from app.services.auth.privilege_service import require_bank_reveal, require_privilege
 from app.schemas.common import ApiEnvelope
 from app.schemas.master_data import (
     EmployeeImportResultResponse,
@@ -20,6 +22,9 @@ from app.schemas.master_data import (
     EmployeeMasterUpdate,
     MasterConfirmationSendResponse,
 )
+from app.schemas.tenant_member import InviteMemberResponse
+from app.services.tenant.tenant_members_service import create_or_refresh_invite
+from app.tenant_roles import TenantRole
 from app.services.master_data.master_confirmation_service import (
     employee_confirmable_patch_keys,
     maybe_send_after_admin_change,
@@ -285,5 +290,85 @@ async def send_employee_master_confirmation(
             email=result.email,
             error=result.error,
             expires_at=result.expires_at,
+        )
+    )
+
+
+@router.post("/{master_id}/invite-mobile", response_model=ApiEnvelope[InviteMemberResponse])
+async def invite_employee_to_mobile(
+    master_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[InviteMemberResponse]:
+    """Invite Creations employee as Team User; accept link lands on mobile (/m)."""
+    require_privilege(ctx, "Manage Users")
+
+    rows = await list_employee_masters(db, ctx.tenant_id)
+    employee = next((row for row in rows if row.id == master_id), None)
+    if employee is None:
+        raise HTTPException(404, "Employee not found")
+
+    email = (employee.email or "").strip()
+    if not email:
+        raise HTTPException(400, "Employee email is required before inviting to mobile")
+
+    created = await create_or_refresh_invite(
+        db,
+        tenant_id=ctx.tenant_id,
+        email=email,
+        full_name=(employee.name or "").strip() or email.split("@")[0],
+        role=TenantRole.USER.value,
+        invited_by_user_id=ctx.user_id,
+        accept_return_to="/m",
+    )
+    # Persist invite before outbound email so SMTP/Graph cannot hold an open txn.
+    await db.commit()
+
+    tenant = await db.get(Tenant, ctx.tenant_id)
+    email_sent = False
+    email_error: str | None = None
+    if tenant and not created.already_member:
+        delivery = await send_tenant_invite_email(
+            to_email=created.email,
+            tenant_name=tenant.name,
+            role=TenantRole.USER.value,
+            accept_url=created.accept_url,
+            for_mobile=True,
+        )
+        email_sent = delivery.sent
+        email_error = delivery.error
+    elif created.already_member:
+        email_error = (
+            "Already a Team member — share the mobile sign-in link instead of a new invite."
+        )
+
+    actor_name, actor_email = await actor_from_context(db, ctx)
+    client_ip = request.client.host if request.client else None
+    await log_event(
+        db,
+        "employee_mobile_invited" if not created.already_member else "employee_mobile_invite_already_member",
+        tenant_id=ctx.tenant_id,
+        detail={
+            "master_id": master_id,
+            "invite_id": created.invite_id,
+            "email": created.email,
+            "role": TenantRole.USER.value,
+            "already_member": created.already_member,
+        },
+        actor_name=actor_name,
+        actor_email=actor_email,
+        client_ip=client_ip,
+    )
+
+    return ApiEnvelope(
+        data=InviteMemberResponse(
+            invite_id=created.invite_id,
+            email=created.email,
+            accept_url=created.accept_url,
+            expires_at=created.expires_at,
+            email_sent=email_sent,
+            email_error=email_error,
+            already_member=created.already_member,
         )
     )

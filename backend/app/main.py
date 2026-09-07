@@ -55,6 +55,7 @@ from app.api import (
     vendors,
     viber,
     whatsapp,
+    slack,
     xero_webhooks,
     xero_refinement,
     xero_master_data,
@@ -69,6 +70,10 @@ from app.middleware.tenant_context_middleware import TenantContextMiddleware
 from app.services.ingest.inline_mailbox_poller import (
     start_inline_mailbox_poller,
     stop_inline_mailbox_poller,
+)
+from app.services.ingest.inline_slack_poller import (
+    start_inline_slack_poller,
+    stop_inline_slack_poller,
 )
 from app.integrations.xero.background_sync import (
     start_xero_background_sync,
@@ -95,31 +100,74 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     if not settings.auth_required:
         logger.warning(
             "auth_required_disabled",
-            msg="AUTH_REQUIRED=false â€” API will reject unauthenticated tenant requests; "
+            msg="AUTH_REQUIRED=false — API will reject unauthenticated tenant requests; "
             "do not disable in staging or production",
         )
     if settings.application_insights_runtime_enabled:
         setup_application_insights(settings.applicationinsights_connection_string)
-    async with async_session_factory() as session:
-        tenant = await get_or_create_default_tenant(session)
-        await sync_env_mailbox(session, tenant.id)
-        try:
-            from app.services.invoice.invoice_evaluation_service import load_posting_config_for_tenant
-            from app.services.rule_book.extraction_field_config_audit import (
-                log_extraction_field_config_warnings,
-            )
 
-            config = await load_posting_config_for_tenant(session, tenant.id)
-            log_extraction_field_config_warnings(config)
-        except Exception as exc:
-            logger.warning("extraction_field_config_startup_audit_failed", error=str(exc))
-        await session.commit()
-    logger.info("app_started")
+    # Azure / network blips during --reload must not kill the whole API (clients hang
+    # forever on the Vite proxy when startup fails).
+    from app.database import dispose_engine
+    from app.db_transient import is_transient_connection_error
+
+    startup_ok = False
+    last_exc: BaseException | None = None
+    for attempt in range(1, 4):
+        try:
+            async with async_session_factory() as session:
+                tenant = await get_or_create_default_tenant(session)
+                await sync_env_mailbox(session, tenant.id)
+                try:
+                    from app.services.invoice.invoice_evaluation_service import (
+                        load_posting_config_for_tenant,
+                    )
+                    from app.services.rule_book.extraction_field_config_audit import (
+                        log_extraction_field_config_warnings,
+                    )
+
+                    config = await load_posting_config_for_tenant(session, tenant.id)
+                    log_extraction_field_config_warnings(config)
+                except Exception as exc:
+                    logger.warning("extraction_field_config_startup_audit_failed", error=str(exc))
+                await session.commit()
+            startup_ok = True
+            break
+        except BaseException as exc:
+            last_exc = exc
+            logger.warning(
+                "app_startup_db_failed",
+                attempt=attempt,
+                error_type=type(exc).__name__,
+                error=str(exc)[:300],
+            )
+            try:
+                await dispose_engine()
+            except Exception:
+                pass
+            if attempt < 3 and is_transient_connection_error(exc):
+                import asyncio
+
+                await asyncio.sleep(0.4 * attempt)
+                continue
+            break
+
+    if not startup_ok:
+        logger.error(
+            "app_startup_db_skipped",
+            error_type=type(last_exc).__name__ if last_exc else None,
+            error=str(last_exc)[:300] if last_exc else None,
+            msg="Serving API without default-tenant bootstrap; fix DB connectivity",
+        )
+
+    logger.info("app_started", startup_db_ok=startup_ok)
     start_inline_mailbox_poller()
+    start_inline_slack_poller()
     start_xero_background_sync()
     yield
     await flush_all_rule_book_save_buffers()
     await stop_inline_mailbox_poller()
+    await stop_inline_slack_poller()
     await stop_xero_background_sync()
     logger.info("app_stopped")
 
@@ -194,11 +242,13 @@ app.include_router(payments.oauth_public_router, prefix="/api")
 app.include_router(paypal_payments.oauth_public_router, prefix="/api")
 # Accounting OAuth callbacks (Xero, QuickBooks) â€” no JWT.
 app.include_router(accounting_integrations.oauth_public_router, prefix="/api")
-# Meta / WhatsApp OAuth callback and webhooks â€” no JWT.
-# Paths: /webhook/meta, /auth/whatsapp/callback (Front Door routes /ledgerlink/webhook/* and /ledgerlink/auth/*).
+# Meta / WhatsApp / Slack OAuth callbacks and webhooks — no JWT.
+# Paths: /webhook/meta, /auth/whatsapp/callback, /webhook/slack/events, /auth/slack/callback
 app.include_router(whatsapp.public_router)
 app.include_router(whatsapp.webhook_router)
 app.include_router(viber.webhook_router)
+app.include_router(slack.public_router)
+app.include_router(slack.webhook_router)
 
 _api_deps = [Depends(require_user)]
 
@@ -239,6 +289,7 @@ app.include_router(matrix.router, prefix="/api", dependencies=_api_deps)
 app.include_router(dossiers.router, prefix="/api", dependencies=_api_deps)
 app.include_router(mailboxes.router, prefix="/api", dependencies=_api_deps)
 app.include_router(whatsapp.router, prefix="/api", dependencies=_api_deps)
+app.include_router(slack.router, prefix="/api", dependencies=_api_deps)
 app.include_router(accounting_integrations.router, prefix="/api", dependencies=_api_deps)
 app.include_router(xero_refinement.router, prefix="/api", dependencies=_api_deps)
 app.include_router(xero_master_data.router, prefix="/api", dependencies=_api_deps)

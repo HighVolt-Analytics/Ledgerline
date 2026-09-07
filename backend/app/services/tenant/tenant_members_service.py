@@ -54,6 +54,7 @@ class InviteCreated:
     email: str
     accept_url: str
     expires_at: datetime
+    already_member: bool = False
 
 
 @dataclass(frozen=True)
@@ -317,6 +318,7 @@ async def create_invite(
     role: str,
     invited_by_user_id: int | None,
     ttl_days: int = 7,
+    accept_return_to: str | None = None,
 ) -> InviteCreated:
     role_slug = _require_role_slug(role)
     normalized_email = email.strip().lower()
@@ -370,12 +372,92 @@ async def create_invite(
     session.add(invite)
     await session.flush()
 
-    accept_url = build_public_app_path(f"/accept-invite?token={token}")
+    from urllib.parse import urlencode
+
+    query: dict[str, str] = {"token": token}
+    # Same-app relative path only (mobile deep link uses /m).
+    if accept_return_to and accept_return_to.startswith("/") and not accept_return_to.startswith("//"):
+        query["returnTo"] = accept_return_to
+    accept_url = build_public_app_path(f"/accept-invite?{urlencode(query)}")
     return InviteCreated(
         invite_id=invite.id,
         email=normalized_email,
         accept_url=accept_url,
         expires_at=expires_at,
+    )
+
+
+async def create_or_refresh_invite(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    email: str,
+    full_name: str,
+    role: str,
+    invited_by_user_id: int | None,
+    ttl_days: int = 7,
+    accept_return_to: str | None = None,
+) -> InviteCreated:
+    """Create an invite, or refresh a pending one. If already a member, return login deep-link."""
+    from urllib.parse import urlencode
+
+    role_slug = _require_role_slug(role)
+    normalized_email = email.strip().lower()
+    if not normalized_email:
+        raise HTTPException(400, "Email is required")
+
+    tenant = await session.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(404, "Tenant not found")
+
+    existing_user = (
+        await session.execute(
+            select(User)
+            .join(UserTenantMapping, UserTenantMapping.user_id == User.id)
+            .where(
+                User.email.ilike(normalized_email),
+                UserTenantMapping.tenant_id == tenant_id,
+                UserTenantMapping.is_active.is_(True),
+                UserTenantMapping.status == "active",
+            )
+        )
+    ).scalar_one_or_none()
+    if existing_user:
+        login_path = "/login"
+        if accept_return_to and accept_return_to.startswith("/") and not accept_return_to.startswith("//"):
+            login_path = f"/login?{urlencode({'returnTo': accept_return_to})}"
+        return InviteCreated(
+            invite_id=0,
+            email=normalized_email,
+            accept_url=build_public_app_path(login_path),
+            expires_at=_utc_now(),
+            already_member=True,
+        )
+
+    now = _utc_now()
+    pending_rows = (
+        await session.execute(
+            select(TenantMemberInvite).where(
+                TenantMemberInvite.tenant_id == tenant_id,
+                TenantMemberInvite.email.ilike(normalized_email),
+                TenantMemberInvite.accepted_at.is_(None),
+            )
+        )
+    ).scalars().all()
+    for pending in pending_rows:
+        await session.delete(pending)
+    if pending_rows:
+        await session.flush()
+
+    return await create_invite(
+        session,
+        tenant_id=tenant_id,
+        email=normalized_email,
+        full_name=full_name,
+        role=role_slug,
+        invited_by_user_id=invited_by_user_id,
+        ttl_days=ttl_days,
+        accept_return_to=accept_return_to,
     )
 
 

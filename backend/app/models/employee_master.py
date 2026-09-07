@@ -28,6 +28,7 @@ class EmployeeMasterRecord(Base):
     whatsapp_number: Mapped[str] = mapped_column(String(32), default="")
     whatsapp_number_2: Mapped[str] = mapped_column(String(32), default="")
     viber_number: Mapped[str | None] = mapped_column(String(32))
+    slack_user_id: Mapped[str | None] = mapped_column(String(64))
     date_of_joining: Mapped[str] = mapped_column(String(32), default="")
     department: Mapped[str] = mapped_column(String(255), default="")
     location: Mapped[str] = mapped_column(String(255), default="")

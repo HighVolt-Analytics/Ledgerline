@@ -26,6 +26,8 @@ _MESSAGE_EVENT_TYPES = [
     "message",
 ]
 
+WELCOME_EVENT_TYPES = frozenset({"subscribed", "conversation_started"})
+
 
 @dataclass
 class ParsedViberMessage:
@@ -151,6 +153,17 @@ async def send_message_with_retry(
     if last_exc:
         logger.error("viber_send_failed", receiver_id=receiver_id, error=str(last_exc))
     return None
+
+
+def sender_id_from_event(payload: dict[str, Any]) -> str:
+    """Viber user id from message (`sender`) or subscribe/welcome (`user`) payloads."""
+    for key in ("sender", "user"):
+        party = payload.get(key) or {}
+        if isinstance(party, dict):
+            sender_id = str(party.get("id") or "").strip()
+            if sender_id:
+                return sender_id
+    return ""
 
 
 def parse_viber_event(payload: dict[str, Any]) -> ParsedViberMessage | None:

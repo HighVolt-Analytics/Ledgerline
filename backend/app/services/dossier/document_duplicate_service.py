@@ -1006,6 +1006,7 @@ async def create_duplicate_shadow_invoice(
     connected_mailbox_id: int | None = None,
     whatsapp_connection_id: int | None = None,
     viber_connection_id: int | None = None,
+    slack_connection_id: int | None = None,
     email_sender: str | None = None,
     email_subject: str | None = None,
     email_attachment_name: str | None = None,
@@ -1018,13 +1019,14 @@ async def create_duplicate_shadow_invoice(
     Record a duplicate submission without changing the original processed invoice.
 
     Shadow rows omit file_hash so the unique (tenant_id, file_hash) constraint still
-  protects the canonical stored document on the original row.
+    protects the canonical stored document on the original row.
     """
     shadow = Invoice(
         tenant_id=tenant_id,
         connected_mailbox_id=connected_mailbox_id,
         whatsapp_connection_id=whatsapp_connection_id,
         viber_connection_id=viber_connection_id,
+        slack_connection_id=slack_connection_id,
         status=InvoiceStatus.DUPLICATE_SKIPPED,
         file_hash=None,
         vendor=original.vendor,
@@ -1081,6 +1083,7 @@ async def resolve_ingest_duplicate(
     connected_mailbox_id: int | None = None,
     whatsapp_connection_id: int | None = None,
     viber_connection_id: int | None = None,
+    slack_connection_id: int | None = None,
     email_sender: str | None = None,
     email_subject: str | None = None,
     email_attachment_name: str | None = None,
@@ -1167,6 +1170,7 @@ async def resolve_ingest_duplicate(
             connected_mailbox_id=connected_mailbox_id,
             whatsapp_connection_id=whatsapp_connection_id,
             viber_connection_id=viber_connection_id,
+            slack_connection_id=slack_connection_id,
             email_sender=email_sender,
             email_subject=email_subject,
             email_attachment_name=email_attachment_name,

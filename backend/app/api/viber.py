@@ -29,7 +29,8 @@ from app.services.ingest.viber_connection_service import (
     resolve_auth_token,
     test_connection,
 )
-from app.services.ingest.viber_ingest_service import ingest_viber_message
+from app.services.ingest.viber_client import WELCOME_EVENT_TYPES
+from app.services.ingest.viber_ingest_service import ingest_viber_message, send_viber_welcome
 from app.services.ingest.whatsapp_connection_service import try_claim_message_mid
 from app.utils.logger import get_logger
 from app.workers.tasks import queue_invoices_for_processing
@@ -46,9 +47,8 @@ def _to_connection(row: ConnectedViberAccount) -> ViberConnectionResponse:
     return ViberConnectionResponse.model_validate(row)
 
 
-def viber_configured() -> bool:
-    """Viber connect is always available — token is supplied per tenant at connect time."""
-    return True
+def viber_configured(connections: list[ConnectedViberAccount]) -> bool:
+    return any(row.is_connected for row in connections)
 
 
 @router.get("/status", response_model=ApiEnvelope[ViberStatusResponse])
@@ -61,7 +61,7 @@ async def viber_status(
     reachable, hint = await probe_public_webhook(callback_url)
     return ApiEnvelope(
         data=ViberStatusResponse(
-            configured=viber_configured(),
+            configured=viber_configured(connections),
             webhook_callback_url=callback_url,
             webhook_reachable=reachable,
             webhook_reachability_hint=hint,
@@ -166,8 +166,26 @@ async def process_viber_payload(raw_body: bytes, signature: str | None) -> None:
             return
 
         event = str(payload.get("event") or "")
+        if event in WELCOME_EVENT_TYPES:
+            try:
+                token = resolve_auth_token(connection)
+            except Exception as exc:
+                logger.error(
+                    "viber_token_missing",
+                    connection_id=connection.id,
+                    error=str(exc),
+                )
+                return
+            await send_viber_welcome(auth_token=token, event=payload)
+            logger.info(
+                "viber_welcome_sent",
+                viber_event=event,
+                tenant_id=connection.tenant_id,
+            )
+            return
+
         if event != "message":
-            logger.debug("viber_skip_event", event=event)
+            logger.debug("viber_skip_event", viber_event=event)
             return
 
         message_token = str(payload.get("message_token") or "")

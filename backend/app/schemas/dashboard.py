@@ -150,7 +150,7 @@ class ExecutiveKpis(BaseModel):
 
 
 class CaptureSourceRow(BaseModel):
-    id: Literal["email", "whatsapp", "viber", "upload"]
+    id: Literal["email", "whatsapp", "viber", "slack", "upload"]
     label: str
     document_count: int = 0
     avg_time_saved_minutes: int = 0

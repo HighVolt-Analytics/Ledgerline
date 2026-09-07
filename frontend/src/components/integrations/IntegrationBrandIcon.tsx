@@ -8,6 +8,7 @@ import {
   siQuickbooks,
   siRedis,
   siStripe,
+  siSlack,
   siViber,
   siWhatsapp,
   siXero,
@@ -18,6 +19,7 @@ import type { IntegrationBrandId } from "./types";
 const ICONS: Record<IntegrationBrandId, SimpleIcon> = {
   graph: siMicrosoftoutlook,
   whatsapp: siWhatsapp,
+  slack: siSlack,
   viber: siViber,
   blob: siMicrosoftazure,
   di: siAzuredataexplorer,

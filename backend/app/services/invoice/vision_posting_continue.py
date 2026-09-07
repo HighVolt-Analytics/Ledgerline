@@ -405,9 +405,13 @@ async def continue_vision_understood_posting(
         org=org,
         force_dt_route=True,
     )
-    # Team Expenses: employee-channel policy wins; upload never stays on TE.
+    # Team Expenses: employee-channel policy wins; employee upload may stay on TE.
     employees = list(config.employee_masters or [])
-    capture_ok = team_expenses_allowed_capture(normalize_capture_source(loaded))
+    capture_ok = team_expenses_allowed_capture(
+        normalize_capture_source(loaded),
+        invoice=loaded,
+        employees=employees,
+    )
     if should_apply_employee_channel_te_force(loaded, employees):
         apply_employee_channel_team_expenses_route(
             loaded, config.document_types, employees

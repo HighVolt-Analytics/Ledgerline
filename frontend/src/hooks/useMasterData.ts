@@ -269,6 +269,12 @@ export function useSendEmployeeMasterConfirmation() {
   });
 }
 
+export function useInviteEmployeeToMobile() {
+  return useMutation({
+    mutationFn: (id: string) => api.inviteEmployeeToMobile(id),
+  });
+}
+
 export function useImportEmployeeMasters() {
   const queryClient = useQueryClient();
   return useMutation({

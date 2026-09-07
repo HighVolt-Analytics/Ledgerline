@@ -9,6 +9,8 @@ from app.config import get_settings
 _OAUTH_CALLBACK_SUFFIXES = (
     "/auth/whatsapp/callback",
     "/api/auth/whatsapp/callback",
+    "/auth/slack/callback",
+    "/api/auth/slack/callback",
 )
 
 
@@ -64,6 +66,10 @@ def webhook_viber_url() -> str:
     return f"{resolve_public_api_base_url()}/webhook/viber"
 
 
+def webhook_slack_url() -> str:
+    return f"{resolve_public_api_base_url()}/webhook/slack/events"
+
+
 async def probe_public_webhook(url: str, *, timeout: float = 8.0) -> tuple[bool, str | None]:
     """
     Check whether a public webhook URL is reachable (ngrok tunnel up, returns JSON).
@@ -110,3 +116,19 @@ def whatsapp_oauth_callback_url() -> str:
     if explicit:
         return explicit
     return f"{resolve_public_api_base_url()}/auth/whatsapp/callback"
+
+
+def slack_oauth_callback_url() -> str:
+    """OAuth redirect URI — must match Slack app redirect URL and token exchange."""
+    settings = get_settings()
+    explicit = settings.slack_oauth_redirect_uri.strip().rstrip("/")
+    tunnel = settings.public_tunnel_url.strip().rstrip("/")
+    if tunnel and (
+        not explicit
+        or "localhost" in explicit
+        or "127.0.0.1" in explicit
+    ):
+        return f"{tunnel}/auth/slack/callback"
+    if explicit:
+        return explicit
+    return f"{resolve_public_api_base_url()}/auth/slack/callback"

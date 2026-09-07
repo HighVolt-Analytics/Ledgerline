@@ -62,6 +62,10 @@ class Invoice(Base):
         ForeignKey("connected_viber_accounts.id"),
         nullable=True,
     )
+    slack_connection_id: Mapped[int | None] = mapped_column(
+        ForeignKey("connected_slack_accounts.id"),
+        nullable=True,
+    )
     vendor: Mapped[str | None] = mapped_column(String(255))
     abn: Mapped[str | None] = mapped_column(String(11))
     billing_address: Mapped[str | None] = mapped_column(Text)

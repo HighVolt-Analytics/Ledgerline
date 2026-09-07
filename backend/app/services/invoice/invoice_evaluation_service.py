@@ -156,7 +156,9 @@ def evaluate_invoice_routing(
     """Evaluate email route, vendor/customer detection, and category rules for one invoice.
 
     Team Expenses channel policy (highest priority for TE):
-    - Manual upload never routes to Team Expenses.
+    - Upload routes to Team Expenses only when the signed-in uploader matches
+      the employee registry (or explicit claim/advance intent) and the document
+      is not commercial (PO / SO / credit note). Vendor-invoice intent stays AP.
     - Email / WhatsApp / Viber + employee registry match forces Team Expenses
       unless document role hints look commercial (PO / SO / credit note).
       Employee-matrix membership is not a hard gate.
@@ -211,7 +213,11 @@ def evaluate_invoice_routing(
         if dt_code
         else DOCUMENT_TYPE_ROUTE_CONFIDENCE_MIN
     )
-    capture_ok = team_expenses_allowed_capture(normalize_capture_source(invoice))
+    capture_ok = team_expenses_allowed_capture(
+        normalize_capture_source(invoice),
+        invoice=invoice,
+        employees=list(config.employee_masters or []),
+    )
     employees = list(config.employee_masters or [])
 
     if should_apply_employee_channel_te_force(invoice, employees):
@@ -466,7 +472,11 @@ async def apply_invoice_evaluation(
     )
 
     employees = list(config.employee_masters or [])
-    capture_ok = team_expenses_allowed_capture(normalize_capture_source(invoice))
+    capture_ok = team_expenses_allowed_capture(
+        normalize_capture_source(invoice),
+        invoice=invoice,
+        employees=employees,
+    )
 
     # Understood path: catalogue DT route wins over sticky email/ingest routes,
     # except Team Expenses channel policy (employee force / upload block).

@@ -5,6 +5,7 @@ import {
   Loader2,
   Mail,
   Plus,
+  Smartphone,
   Upload,
   UserCircle,
 } from "lucide-react";
@@ -19,6 +20,7 @@ import {
   useDeleteEmployeeMaster,
   useEmployeeMasters,
   useImportEmployeeMasters,
+  useInviteEmployeeToMobile,
   useSendEmployeeMasterConfirmation,
   useUpdateEmployeeMaster,
 } from "@/hooks/useMasterData";
@@ -64,6 +66,7 @@ export function EmployeesTab() {
   const { toast } = useToast();
   const { permissions } = usePermissions();
   const canRevealBank = permissions?.can_reveal_bank === true;
+  const canInviteMobile = permissions?.permissions?.["Manage Users"] === true;
   const [section, setSection] = useState<EmployeeSection>("list");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [pinToTopId, setPinToTopId] = useState<string | null>(null);
@@ -87,6 +90,7 @@ export function EmployeesTab() {
   const deleteMutation = useDeleteEmployeeMaster();
   const importMutation = useImportEmployeeMasters();
   const sendConfirmationMutation = useSendEmployeeMasterConfirmation();
+  const inviteMobileMutation = useInviteEmployeeToMobile();
 
   const sendEmployeeConfirmation = (employee: EmployeeMaster) => {
     sendConfirmationMutation.mutate(employee.id, {
@@ -100,6 +104,63 @@ export function EmployeesTab() {
         toast({
           title: "Could not send confirmation",
           description: err instanceof Error ? err.message : "Send failed",
+          variant: "destructive",
+        }),
+    });
+  };
+
+  const inviteEmployeeToMobile = (employee: EmployeeMaster) => {
+    if (!employee.email?.trim()) {
+      toast({
+        title: "Email required",
+        description: "Add an email on the employee before inviting to mobile.",
+        variant: "destructive",
+      });
+      return;
+    }
+    inviteMobileMutation.mutate(employee.id, {
+      onSuccess: async (result) => {
+        const link = result.accept_url;
+        if (result.already_member) {
+          try {
+            if (link) await navigator.clipboard.writeText(link);
+          } catch {
+            /* ignore clipboard */
+          }
+          toast({
+            title: "Already on the Team",
+            description:
+              `${result.email} already has a Team login. Share the mobile sign-in link` +
+              (link ? ` (copied): ${link}` : "."),
+          });
+          return;
+        }
+        if (result.email_sent) {
+          toast({
+            title: "Mobile invite sent",
+            description: `Team User invite emailed to ${result.email}. Approvals appear only if their role gains Approve later.`,
+          });
+          return;
+        }
+        try {
+          if (link) await navigator.clipboard.writeText(link);
+          toast({
+            title: "Invite ready — copy the link",
+            description: result.email_error
+              ? `Email failed (${result.email_error}). Link copied when possible: ${link}`
+              : `Link copied when possible: ${link}`,
+          });
+        } catch {
+          toast({
+            title: "Invite ready",
+            description: link || "Share the accept link from the server response.",
+          });
+        }
+      },
+      onError: (err) =>
+        toast({
+          title: "Could not invite to mobile",
+          description: err instanceof Error ? err.message : "Invite failed",
           variant: "destructive",
         }),
     });
@@ -335,6 +396,30 @@ export function EmployeesTab() {
                               Remove employee
                             </Button>
                             <div className="flex items-center gap-2">
+                              {canInviteMobile ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={
+                                  inviteMobileMutation.isPending || !cellText(display.email)
+                                }
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  inviteEmployeeToMobile(dirty ? draft : emp);
+                                }}
+                                data-testid={`invite-employee-mobile-${emp.id}`}
+                                title="Creates a Team User membership for mobile capture (/m)"
+                              >
+                                {inviteMobileMutation.isPending ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <>
+                                    <Smartphone className="h-3.5 w-3.5 mr-1" />
+                                    Invite to mobile
+                                  </>
+                                )}
+                              </Button>
+                              ) : null}
                               <Button
                                 size="sm"
                                 variant="outline"

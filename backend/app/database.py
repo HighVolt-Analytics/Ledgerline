@@ -43,8 +43,9 @@ def _build_engine() -> AsyncEngine:
     if os.getenv("CELERY_WORKER") == "1":
         return create_async_engine(url, poolclass=NullPool, connect_args=connect_args)
     # Azure closes idle connections aggressively; recycle before the server does.
+    # Also prefer recently-used sockets (LIFO) so mid-request idle drops are rarer.
     azure = "postgres.database.azure.com" in settings.database_url
-    pool_recycle = 600 if azure else 1800
+    pool_recycle = 300 if azure else 900
     return create_async_engine(
         url,
         echo=False,
@@ -53,8 +54,7 @@ def _build_engine() -> AsyncEngine:
         max_overflow=20,
         pool_recycle=pool_recycle,
         pool_timeout=30,
-        # LIFO prefers recently used sockets so Azure is less likely to kill them idle.
-        pool_use_lifo=azure,
+        pool_use_lifo=True,
         connect_args=connect_args,
     )
 

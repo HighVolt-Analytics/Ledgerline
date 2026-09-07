@@ -1,8 +1,9 @@
 from datetime import date
 from pathlib import Path
+from typing import Literal
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -179,6 +180,21 @@ async def list_invoices(
     invoice_date_to: date | None = None,
     route_target: str | None = Query(None, description="Filter by rule book route target"),
     evaluation_status: EvaluationStatus | None = None,
+    team_expense_kind: str | None = Query(
+        None,
+        description="Filter Team Expenses kind: expense_claim, advance_requisition, direct_payment",
+    ),
+    mine: bool = Query(
+        False,
+        description="Limit to documents for the signed-in user (employee_email / personal captures).",
+    ),
+    mine_scope: Literal["self", "broad"] = Query(
+        "self",
+        description=(
+            "self = employee_email or personal upload/capture by this user; "
+            "broad = also match email_sender / any uploader stamp (legacy)."
+        ),
+    ),
     q: str | None = Query(
         None,
         description="Search vendor, invoice no, PO, document ref, route, GL account, or id",
@@ -211,7 +227,7 @@ async def list_invoices(
             query = query.where(Invoice.connected_mailbox_id == connected_mailbox_id)
         if capture_source and capture_source.strip():
             src = capture_source.strip().lower()
-            if src in {"upload", "email", "whatsapp", "viber"}:
+            if src in {"upload", "email", "whatsapp", "viber", "slack"}:
                 unset_capture = or_(
                     Invoice.capture_source.is_(None),
                     Invoice.capture_source == "",
@@ -227,6 +243,7 @@ async def list_invoices(
                                 Invoice.connected_mailbox_id.is_(None),
                                 Invoice.whatsapp_connection_id.is_(None),
                                 Invoice.viber_connection_id.is_(None),
+                                Invoice.slack_connection_id.is_(None),
                             ),
                         )
                     )
@@ -247,6 +264,16 @@ async def list_invoices(
                             and_(
                                 unset_capture,
                                 Invoice.whatsapp_connection_id.isnot(None),
+                            ),
+                        )
+                    )
+                elif src == "slack":
+                    query = query.where(
+                        or_(
+                            func.lower(Invoice.capture_source) == "slack",
+                            and_(
+                                unset_capture,
+                                Invoice.slack_connection_id.isnot(None),
                             ),
                         )
                     )
@@ -275,6 +302,57 @@ async def list_invoices(
                     (InvoiceStatus.REJECTED, InvoiceStatus.DUPLICATE_SKIPPED)
                 )
             )
+        if team_expense_kind and team_expense_kind.strip():
+            kind = team_expense_kind.strip().lower()
+            if kind == "expense_claim":
+                # Default / legacy TE rows without a kind stamp are treated as claims.
+                query = query.where(
+                    or_(
+                        func.lower(Invoice.team_expense_kind) == kind,
+                        Invoice.team_expense_kind.is_(None),
+                        Invoice.team_expense_kind == "",
+                    )
+                )
+            else:
+                query = query.where(func.lower(Invoice.team_expense_kind) == kind)
+        if mine:
+            actor_email = (ctx.email or "").strip().lower()
+            if not actor_email:
+                query = query.where(Invoice.id == -1)
+            elif mine_scope == "broad":
+                query = query.where(
+                    or_(
+                        func.lower(Invoice.employee_email) == actor_email,
+                        func.lower(Invoice.uploaded_by_email) == actor_email,
+                        func.lower(Invoice.email_sender) == actor_email,
+                        Invoice.email_sender.ilike(f"%<{actor_email}>%"),
+                        Invoice.email_sender.ilike(actor_email),
+                    )
+                )
+            else:
+                # self: only this employee's stamped identity + their personal captures.
+                # Do not match vendor mailbox email_sender or every admin-uploaded AP invoice.
+                personal_capture = or_(
+                    func.lower(Invoice.capture_source).in_(
+                        ("upload", "whatsapp", "viber", "slack")
+                    ),
+                    and_(
+                        or_(
+                            Invoice.capture_source.is_(None),
+                            Invoice.capture_source == "",
+                        ),
+                        Invoice.connected_mailbox_id.is_(None),
+                    ),
+                )
+                query = query.where(
+                    or_(
+                        func.lower(Invoice.employee_email) == actor_email,
+                        and_(
+                            func.lower(Invoice.uploaded_by_email) == actor_email,
+                            personal_capture,
+                        ),
+                    )
+                )
         if evaluation_status is not None:
             query = query.where(Invoice.evaluation_status == evaluation_status.value)
         if q and q.strip():
@@ -686,6 +764,13 @@ async def upload_invoice(
         None,
         description="Purchase document type when uploading PO/GRN/invoice: po, grn, invoice",
     ),
+    team_expense_intent: str | None = Query(
+        None,
+        description=(
+            "Employee mobile/upload intent: expense_claim, advance_requisition, "
+            "or vendor_invoice"
+        ),
+    ),
     defer_processing: bool = Query(
         False,
         description="Skip immediate pipeline run (use with POST /process-batch)",
@@ -696,6 +781,17 @@ async def upload_invoice(
     allowed = (".pdf", ".jpg", ".jpeg", ".png", ".docx", ".webp")
     if not file.filename or not file.filename.lower().endswith(allowed):
         raise HTTPException(400, "Accepted: PDF, JPG, PNG, DOCX, WEBP")
+
+    intent_raw = (team_expense_intent or "").strip().lower() or None
+    if intent_raw and intent_raw not in {
+        "expense_claim",
+        "advance_requisition",
+        "vendor_invoice",
+    }:
+        raise HTTPException(
+            400,
+            "team_expense_intent must be expense_claim, advance_requisition, or vendor_invoice",
+        )
 
     data = await _read_upload_file(file)
     if not data:
@@ -717,6 +813,7 @@ async def upload_invoice(
             purchase_document_type=purchase_document_type,
             actor_name=actor_name,
             actor_email=actor_email,
+            team_expense_intent=intent_raw,
         )
     except IntakeValidationError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -755,6 +852,109 @@ async def upload_invoice(
             db, primary, tenant_id=ctx.tenant_id, has_stored_file=True
         ),
         meta=meta,
+    )
+
+
+@router.post("/manual-capture", response_model=ApiEnvelope[InvoiceResponse])
+async def manual_capture_invoice(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    document_type_code: str = Form(...),
+    fields: str = Form(..., description="JSON object of field_key → value"),
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[InvoiceResponse]:
+    """Create a document from a chosen DT + manual fields; reference file only (no OCR)."""
+    from app.services.invoice.invoice_evaluation_service import load_config_for_tenant
+    from app.services.invoice.manual_capture_service import (
+        ManualCaptureError,
+        finalize_manual_capture_invoice,
+        parse_manual_fields_payload,
+        resolve_active_document_type,
+        validate_manual_fields,
+    )
+
+    if not file.filename or not file.filename.lower().endswith(
+        (".pdf", ".jpg", ".jpeg", ".png", ".docx", ".webp")
+    ):
+        raise HTTPException(400, "Accepted: PDF, JPG, PNG, DOCX, WEBP")
+
+    data = await _read_upload_file(file)
+    if not data:
+        raise HTTPException(400, "Empty file")
+
+    try:
+        field_map, line_items = parse_manual_fields_payload(fields)
+        config = await load_config_for_tenant(db, ctx.tenant_id)
+        definition = resolve_active_document_type(
+            document_type_code, list(config.document_types or [])
+        )
+        validate_manual_fields(definition, field_map, line_items=line_items)
+    except ManualCaptureError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    org = await db.get(Tenant, ctx.tenant_id)
+    tenant_slug = org.slug if org else "default"
+    tenant_name = org.name if org else None
+
+    try:
+        actor_name, actor_email = await actor_from_context(db, ctx)
+        result = await ingest_upload_file(
+            db,
+            tenant_id=ctx.tenant_id,
+            tenant_slug=tenant_slug,
+            tenant_name=tenant_name,
+            filename=Path(file.filename).name,
+            data=data,
+            purchase_document_type=None,
+            actor_name=actor_name,
+            actor_email=actor_email,
+            team_expense_intent=None,
+        )
+    except IntakeValidationError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except DuplicateUploadError:
+        raise HTTPException(409, "Duplicate file already uploaded") from None
+    except InsufficientCreditsError as exc:
+        raise HTTPException(
+            402,
+            f"Insufficient credits: need {exc.required}, balance {exc.balance}. Top up to continue.",
+        ) from exc
+    except PlanFeatureBlockedError as exc:
+        raise HTTPException(403, str(exc)) from exc
+
+    if not result.invoice_ids:
+        if result.duplicate_handled:
+            raise HTTPException(409, "Duplicate file already uploaded")
+        raise HTTPException(400, "Could not ingest file")
+
+    primary = await _get_invoice_for_tenant(db, result.invoice_ids[0], ctx.tenant_id)
+    try:
+        await finalize_manual_capture_invoice(
+            db,
+            tenant_id=ctx.tenant_id,
+            invoice=primary,
+            definition=definition,
+            fields=field_map,
+            actor_email=actor_email,
+            line_items=line_items,
+        )
+    except ManualCaptureError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    await db.commit()
+    await _queue_upload_processing(
+        background_tasks,
+        result.invoice_ids,
+        defer_processing=False,
+        tenant_id=ctx.tenant_id,
+    )
+
+    primary = await _get_invoice_for_tenant(db, result.invoice_ids[0], ctx.tenant_id)
+    return ApiEnvelope(
+        data=await _response_for_invoice(
+            db, primary, tenant_id=ctx.tenant_id, has_stored_file=True
+        ),
     )
 
 

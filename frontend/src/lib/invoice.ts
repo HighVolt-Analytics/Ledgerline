@@ -748,7 +748,7 @@ export function invoiceCanPublishToLedger(inv: Invoice): boolean {
   return Boolean(inv.invoice_date);
 }
 
-export type InvoiceSource = "email" | "upload" | "onedrive" | "whatsapp" | "viber";
+export type InvoiceSource = "email" | "upload" | "onedrive" | "whatsapp" | "viber" | "slack";
 
 export function invoiceSourceKind(
   inv: { capture_source?: string | null } &
@@ -759,6 +759,7 @@ export function invoiceSourceKind(
   // not channel — e.g. Team Expenses uploads still capture_source=upload.
   if (capture === "whatsapp") return "whatsapp";
   if (capture === "viber") return "viber";
+  if (capture === "slack") return "slack";
   if (capture === "email") return "email";
   if (capture === "upload") return "upload";
 
@@ -776,13 +777,14 @@ export function invoiceSourceLabel(source: InvoiceSource): string {
   if (source === "onedrive") return "OneDrive";
   if (source === "whatsapp") return "WhatsApp";
   if (source === "viber") return "Viber";
+  if (source === "slack") return "Slack";
   return "Direct upload";
 }
 
-/** Match an invoice to an Upload page channel tab (All / Upload / Email / WhatsApp / Viber). */
+/** Match an invoice to an Upload page channel tab (All / Upload / Email / WhatsApp / Viber / Slack). */
 export function invoiceMatchesCaptureChannel(
   inv: Invoice,
-  channel: "all" | "upload" | "email" | "whatsapp" | "viber"
+  channel: "all" | "upload" | "email" | "whatsapp" | "viber" | "slack"
 ): boolean {
   if (channel === "all") return true;
   const kind = invoiceSourceKind(inv);

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import smtplib
 from dataclasses import dataclass
 from email.message import EmailMessage
@@ -207,26 +208,44 @@ async def send_tenant_invite_email(
     tenant_name: str,
     role: str,
     accept_url: str,
+    for_mobile: bool = False,
 ) -> InviteEmailResult:
     """Deliver tenant member invite — Graph Mail.Send when configured, else SMTP."""
     settings = get_settings()
     if settings.is_production or graph_mail_send_configured():
         validate_deliverable_email_or_raise(to_email)
     role_label = format_tenant_role_label(role)
-    subject = f"You've been invited to {tenant_name} on LedgerLink"
-    body_text = (
-        f"You have been invited to join {tenant_name} as {role_label}.\n\n"
-        f"Accept your invitation and set your password:\n{accept_url}\n\n"
-        "This link expires in 7 days.\n\n"
-        "If you did not expect this invitation, you can ignore this email."
-    )
-    body_html = (
-        f"<p>You have been invited to join <strong>{tenant_name}</strong> "
-        f"as <strong>{role_label}</strong>.</p>"
-        f'<p><a href="{accept_url}">Accept invitation and set your password</a></p>'
-        "<p>This link expires in 7 days.</p>"
-        "<p>If you did not expect this invitation, you can ignore this email.</p>"
-    )
+    if for_mobile:
+        subject = f"Join {tenant_name} on LedgerLink mobile"
+        body_text = (
+            f"You have been invited to capture expenses for {tenant_name} on LedgerLink mobile.\n\n"
+            f"Accept your invitation, set your password, then open the mobile app:\n{accept_url}\n\n"
+            "This link expires in 7 days.\n\n"
+            "If you did not expect this invitation, you can ignore this email."
+        )
+        body_html = (
+            f"<p>You have been invited to capture expenses for "
+            f"<strong>{tenant_name}</strong> on LedgerLink mobile.</p>"
+            f'<p><a href="{accept_url}">Accept invitation and set your password</a></p>'
+            "<p>After signing in you will land on the mobile capture app.</p>"
+            "<p>This link expires in 7 days.</p>"
+            "<p>If you did not expect this invitation, you can ignore this email.</p>"
+        )
+    else:
+        subject = f"You've been invited to {tenant_name} on LedgerLink"
+        body_text = (
+            f"You have been invited to join {tenant_name} as {role_label}.\n\n"
+            f"Accept your invitation and set your password:\n{accept_url}\n\n"
+            "This link expires in 7 days.\n\n"
+            "If you did not expect this invitation, you can ignore this email."
+        )
+        body_html = (
+            f"<p>You have been invited to join <strong>{tenant_name}</strong> "
+            f"as <strong>{role_label}</strong>.</p>"
+            f'<p><a href="{accept_url}">Accept invitation and set your password</a></p>'
+            "<p>This link expires in 7 days.</p>"
+            "<p>If you did not expect this invitation, you can ignore this email.</p>"
+        )
 
     if not settings.is_production:
         logger.info(
@@ -239,6 +258,24 @@ async def send_tenant_invite_email(
             },
         )
 
+    # Sync Graph/SMTP must not block the asyncio loop (holds DB sessions + stalls all requests).
+    return await asyncio.to_thread(
+        _deliver_tenant_invite_sync,
+        to_email=to_email,
+        subject=subject,
+        body_text=body_text,
+        body_html=body_html,
+    )
+
+
+def _deliver_tenant_invite_sync(
+    *,
+    to_email: str,
+    subject: str,
+    body_text: str,
+    body_html: str,
+) -> InviteEmailResult:
+    settings = get_settings()
     if graph_mail_send_configured():
         graph_result = send_graph_mail(
             to_email=to_email,
@@ -281,8 +318,10 @@ async def send_tenant_invite_email(
                 "or configure GRAPH_MAILBOX + Azure credentials, or run a local SMTP catcher on port 1025."
             ),
         )
-
-    return smtp_result
+    return InviteEmailResult(
+        sent=False,
+        error=smtp_result.error or "Could not send invitation email",
+    )
 
 
 async def send_password_reset_otp_email(*, to_email: str, otp: str) -> InviteEmailResult:

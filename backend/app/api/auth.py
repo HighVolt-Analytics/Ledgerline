@@ -68,7 +68,7 @@ from app.services.auth.auth_session_service import (
 from app.services.signup.signup_fulfillment_service import is_oauth_only_auth_account
 from app.services.auth.membership_enumeration import (
     filter_switchable_memberships,
-    list_memberships_for_auth_account,
+    list_memberships_for_auth_account_resilient,
     membership_is_switchable,
 )
 from app.services.auth.membership_service import ensure_membership, user_has_tenant_access
@@ -141,7 +141,7 @@ def _account_summary_from_membership(m) -> TenantAccountSummary:
 async def _membership_summaries_for_account(
     db: AsyncSession, *, auth_account_id: int
 ) -> list[TenantAccountSummary]:
-    memberships = await list_memberships_for_auth_account(db, auth_account_id=auth_account_id)
+    memberships = await list_memberships_for_auth_account_resilient(db, auth_account_id=auth_account_id)
     switchable = filter_switchable_memberships(memberships)
     return [_account_summary_from_membership(m) for m in switchable]
 
@@ -152,7 +152,7 @@ async def _resolve_switch_target(
     auth_account_id: int,
     target_tenant_id: uuid.UUID,
 ) -> tuple[User, Tenant, str]:
-    memberships = await list_memberships_for_auth_account(db, auth_account_id=auth_account_id)
+    memberships = await list_memberships_for_auth_account_resilient(db, auth_account_id=auth_account_id)
     match = next((m for m in memberships if m.tenant_id == target_tenant_id), None)
     if not match:
         raise HTTPException(403, "You do not have access to this tenant")
@@ -356,7 +356,7 @@ async def reset_password(
     account.password_hash = hash_password(body.password)
     await db.flush()
 
-    memberships = await list_memberships_for_auth_account(
+    memberships = await list_memberships_for_auth_account_resilient(
         db, auth_account_id=account.id
     )
     for membership in memberships:
@@ -470,7 +470,7 @@ async def verify_otp_endpoint(
         auth_account_id=auth_account_id,
     )
 
-    all_memberships = await list_memberships_for_auth_account(
+    all_memberships = await list_memberships_for_auth_account_resilient(
         db,
         auth_account_id=account.id,
         log_source="verify_otp",
@@ -600,7 +600,7 @@ async def select_tenant(
         target_tenant_id=str(body.tenant_id),
     )
 
-    all_memberships = await list_memberships_for_auth_account(
+    all_memberships = await list_memberships_for_auth_account_resilient(
         db,
         auth_account_id=auth_account_id,
         log_source="select_tenant",
@@ -801,7 +801,7 @@ async def my_memberships(
         raise HTTPException(401, "Session invalid")
     async with cross_tenant_db_lookup(db, restore_tenant_id=ctx.tenant_id):
         memberships = filter_switchable_memberships(
-            await list_memberships_for_auth_account(
+            await list_memberships_for_auth_account_resilient(
                 db, auth_account_id=user.auth_account_id
             )
         )

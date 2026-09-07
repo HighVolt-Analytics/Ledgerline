@@ -149,6 +149,7 @@ class IngestSourceMetadata:
     connected_mailbox_id: int | None = None
     viber_connection_id: int | None = None
     whatsapp_connection_id: int | None = None
+    slack_connection_id: int | None = None
     capture_source: str | None = None
     matched_rule_ids: str | None = None
     route_target: str | None = None
@@ -306,6 +307,7 @@ async def _try_resolve_duplicate(
         connected_mailbox_id=meta.connected_mailbox_id,
         whatsapp_connection_id=meta.whatsapp_connection_id,
         viber_connection_id=meta.viber_connection_id,
+        slack_connection_id=meta.slack_connection_id,
         email_sender=meta.email_sender,
         email_subject=meta.email_subject,
         email_attachment_name=meta.email_attachment_name or filename,
@@ -396,6 +398,7 @@ async def _try_resolve_bundle_duplicate(
         connected_mailbox_id=meta.connected_mailbox_id,
         whatsapp_connection_id=meta.whatsapp_connection_id,
         viber_connection_id=meta.viber_connection_id,
+        slack_connection_id=meta.slack_connection_id,
         email_sender=meta.email_sender,
         email_subject=meta.email_subject,
         email_attachment_name=meta.email_attachment_name or filename,
@@ -489,6 +492,7 @@ async def _create_invoice_from_bytes(
         connected_mailbox_id=meta.connected_mailbox_id,
         viber_connection_id=meta.viber_connection_id,
         whatsapp_connection_id=meta.whatsapp_connection_id,
+        slack_connection_id=meta.slack_connection_id,
         status=InvoiceStatus.PENDING,
         file_hash=file_hash,
         content_fingerprint=content_fingerprint,
@@ -720,7 +724,7 @@ async def _ingest_file_with_fanout_core(
     """
     meta = source or IngestSourceMetadata()
     channel = (meta.capture_source or "upload").lower()
-    if channel in {"whatsapp", "viber"}:
+    if channel in {"whatsapp", "viber", "slack"}:
         from app.services.credit_service import PlanFeatureBlockedError, assert_can_ingest_via_channel
 
         try:
@@ -1138,6 +1142,7 @@ async def ingest_upload_file(
     purchase_document_type: str | None,
     actor_name: str | None = None,
     actor_email: str | None = None,
+    team_expense_intent: str | None = None,
 ) -> IngestUploadResult:
     """Upload API entry point — logs invoice_uploaded for single-file ingest."""
     from app.services.ingest.canonical_intake_service import (
@@ -1164,18 +1169,70 @@ async def ingest_upload_file(
             )
         except IntakeValidationError:
             raise
-        return outcome.result
+        result = outcome.result
+    else:
+        result = await ingest_file_with_fanout(
+            session,
+            tenant_id=tenant_id,
+            tenant_slug=tenant_slug,
+            tenant_name=tenant_name,
+            filename=filename,
+            data=data,
+            purchase_document_type=purchase_document_type,
+            source=source,
+            log_upload_event=True,
+            actor_name=actor_name,
+            actor_email=actor_email,
+        )
 
-    return await ingest_file_with_fanout(
-        session,
-        tenant_id=tenant_id,
-        tenant_slug=tenant_slug,
-        tenant_name=tenant_name,
-        filename=filename,
-        data=data,
-        purchase_document_type=purchase_document_type,
-        source=source,
-        log_upload_event=True,
-        actor_name=actor_name,
-        actor_email=actor_email,
+    if result.invoice_ids:
+        await stamp_employee_upload_team_expense_fields(
+            session,
+            tenant_id=tenant_id,
+            invoice_ids=result.invoice_ids,
+            actor_email=actor_email,
+            team_expense_intent=team_expense_intent,
+        )
+    return result
+
+
+async def stamp_employee_upload_team_expense_fields(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    invoice_ids: list[int],
+    actor_email: str | None,
+    team_expense_intent: str | None,
+) -> None:
+    """Stamp employee_email + optional TE intent on fresh upload rows."""
+    from app.models.invoice import Invoice
+    from app.services.master_data.master_data_service import get_employee_master_by_email
+    from app.services.purchase.team_expense_route_policy import (
+        TEAM_EXPENSE_INTENT_VENDOR,
+        TEAM_EXPENSE_TE_INTENTS,
     )
+
+    intent = (team_expense_intent or "").strip().lower() or None
+    if intent and intent not in TEAM_EXPENSE_TE_INTENTS and intent != TEAM_EXPENSE_INTENT_VENDOR:
+        intent = None
+
+    emp = None
+    if actor_email and str(actor_email).strip():
+        emp = await get_employee_master_by_email(
+            session, tenant_id, str(actor_email).strip()
+        )
+
+    for invoice_id in invoice_ids:
+        inv = await session.get(Invoice, invoice_id)
+        if inv is None or inv.tenant_id != tenant_id:
+            continue
+        if emp is not None and (emp.email or "").strip():
+            inv.employee_email = emp.email.strip()
+        if intent:
+            fields = dict(inv.extracted_fields or {})
+            fields["team_expense_intent"] = intent
+            inv.extracted_fields = fields
+            if intent in TEAM_EXPENSE_TE_INTENTS:
+                inv.team_expense_kind = intent
+    await session.flush()
+

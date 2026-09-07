@@ -192,3 +192,31 @@ async def list_memberships_for_auth_account(
             email_pivot_added=email_pivot_added,
         )
     return all_memberships
+
+
+async def list_memberships_for_auth_account_resilient(
+    session: AsyncSession,
+    *,
+    auth_account_id: int,
+    log_source: str | None = None,
+    restore_platform_lookup: bool = True,
+) -> list[TenantMembershipAccount]:
+    """Same as list_memberships_for_auth_account, with retries on dropped DB sockets.
+
+    Login/OTP often sits on a pooled connection while Redis OTP work runs; Azure (or
+    the network) may close that socket before the memberships JOIN. Retry with a
+    fresh connection and re-apply platform-lookup GUC when needed.
+    """
+    from app.db_transient import run_with_transient_db_retry
+    from app.tenant_rls import apply_platform_lookup_session
+
+    async def _run() -> list[TenantMembershipAccount]:
+        if restore_platform_lookup:
+            await apply_platform_lookup_session(session)
+        return await list_memberships_for_auth_account(
+            session,
+            auth_account_id=auth_account_id,
+            log_source=log_source,
+        )
+
+    return await run_with_transient_db_retry(session, _run, attempts=3)

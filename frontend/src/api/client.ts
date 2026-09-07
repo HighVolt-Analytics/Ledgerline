@@ -158,6 +158,7 @@ import type {
   PaypalTransactionsResponse,
   WhatsappStatus,
   ViberStatus,
+  SlackStatus,
 } from "./types";
 
 import { resolveApiBase } from "@/lib/apiBase";
@@ -1017,6 +1018,30 @@ export const api = {
     }>(`/api/integrations/whatsapp/test/${id}`, { method: "POST" });
   },
 
+  getSlackStatus: (options?: FreshRequestOptions) => {
+    const path = "/api/integrations/slack/status";
+    if (options?.fresh) bustGetCache(path);
+    return request<SlackStatus>(path);
+  },
+  getSlackAuthorizeUrl: () =>
+    request<{ authorize_url: string }>("/api/integrations/slack/authorize-url"),
+  disconnectSlack: (id: number) => {
+    bustGetCache("/api/integrations/slack/status");
+    return request<{ disconnected: boolean; id: number }>(
+      `/api/integrations/slack/disconnect/${id}`,
+      { method: "DELETE" }
+    );
+  },
+  testSlackConnection: (id: number) => {
+    bustGetCache("/api/integrations/slack/status");
+    return request<{
+      ok: boolean;
+      integration_health: string;
+      warnings: string[];
+      profile: Record<string, unknown>;
+    }>(`/api/integrations/slack/test/${id}`, { method: "POST" });
+  },
+
   getAccountingIntegrationsStatus: (options?: FreshRequestOptions) => {
     const path = "/api/integrations/status";
     if (options?.fresh) bustGetCache(path);
@@ -1639,6 +1664,11 @@ export const api = {
   sendEmployeeMasterConfirmation: (masterId: string) =>
     request<{ sent: boolean; email?: string | null; error?: string | null; expires_at?: string | null }>(
       `/api/employee-masters/${encodeURIComponent(masterId)}/send-confirmation`,
+      { method: "POST" }
+    ),
+  inviteEmployeeToMobile: (masterId: string) =>
+    request<TenantInviteCreated>(
+      `/api/employee-masters/${encodeURIComponent(masterId)}/invite-mobile`,
       { method: "POST" }
     ),
   listDepartmentBudgets: (department?: string) => {

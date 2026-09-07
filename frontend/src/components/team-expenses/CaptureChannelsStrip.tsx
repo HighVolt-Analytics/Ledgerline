@@ -38,7 +38,7 @@ export function CaptureChannelsStrip({
         const Icon = channelIcon(ch.id);
         const busy = actionBusyId === ch.id;
         const brand =
-          ch.id === "wa" ? "whatsapp" : ch.id === "vb" ? "viber" : null;
+          ch.id === "wa" ? "whatsapp" : ch.id === "vb" ? "viber" : ch.id === "sl" ? "slack" : null;
         return (
           <div key={ch.id} className="relative">
             <button
