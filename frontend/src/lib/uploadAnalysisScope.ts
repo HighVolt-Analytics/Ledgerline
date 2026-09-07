@@ -22,6 +22,7 @@ const CHANNEL_LABELS: Record<AllDocumentsChannelTab, string> = {
   email: "Email",
   whatsapp: "WhatsApp",
   viber: "Viber",
+  slack: "Slack",
   "bank-feeds": "Bank feeds",
 };
 
@@ -113,6 +114,7 @@ export const CHANNEL_FUNNEL_LABEL: Record<AllDocumentsChannelTab, string> = {
   email: "Email capture YTD",
   whatsapp: "WhatsApp claims YTD",
   viber: "Viber claims YTD",
+  slack: "Slack claims YTD",
   "bank-feeds": "Bank feed lines YTD",
 };
 

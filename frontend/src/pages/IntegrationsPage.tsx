@@ -869,7 +869,7 @@ export function IntegrationsPage() {
       id: "slack",
       name: "Slack",
       tagline: slackConnections[0]?.team_name || slackConnections[0]?.team_id || "Document capture",
-      ok: s.slack_configured && slackConnections.some((c) => c.connection_status === "connected"),
+      ok: Boolean(s.slack_configured) && slackConnections.some((c) => c.connection_status === "connected"),
       icon: MessageCircle,
     },
     {
