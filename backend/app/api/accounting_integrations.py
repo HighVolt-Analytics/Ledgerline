@@ -526,22 +526,11 @@ async def quickbooks_oauth_callback(
             error=str(exc),
             tenant_id=str(tenant_id),
         )
-        await record_integration_error(
+        await _record_oauth_failure(
             db,
             tenant_id=tenant_id,
             provider=provider,
             message=str(exc),
         )
-        await log_event(
-            db,
-            "accounting_integration_error",
-            tenant_id=tenant_id,
-            detail={
-                "provider": provider,
-                "reason": str(exc)[:200],
-            },
-        )
-        await db.commit()
-        url = _append_query(return_base, {query_key: "error", "reason": "oauth_failed"})
-        return RedirectResponse(url=url, status_code=302)
+        return _error_redirect(return_base, query_key, "oauth_failed")
 

@@ -80,6 +80,9 @@ def capture_config():
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
     AuditLog.__table__.c.detail.type = JSON()
     from app.models.credit_ledger import CreditLedgerEntry
+    from app.models.qbo_account import QboAccount  # noqa: F401
+    from app.models.qbo_contact import QboContact  # noqa: F401
+    from app.models.qbo_tax_code import QboTaxCode  # noqa: F401
 
     CreditLedgerEntry.__table__.c.azure_cost_breakdown_json.type = JSON()
     engine = create_async_engine(TEST_DB, echo=False)

@@ -29,6 +29,7 @@ from app.schemas.chart_of_accounts import (
     UpdateChartOfAccountsRequest,
     UpsertXeroChartOfAccountRequest,
 )
+from app.integrations.qbo.accounts import QboAccountWriteError
 from app.integrations.xero.accounts import XeroAccountWriteError
 from app.schemas.tax_rates import (
     CreateTaxRateRequest,
@@ -37,12 +38,16 @@ from app.schemas.tax_rates import (
     UpdateTaxRatesRequest,
 )
 from app.services.master_data.chart_of_accounts_service import (
+    create_qbo_chart_of_account,
     create_xero_chart_of_account,
+    delete_qbo_chart_of_account,
     delete_xero_chart_of_account,
     load_chart_of_accounts,
+    pull_qbo_chart_of_account,
     pull_xero_chart_of_account,
     save_chart_of_accounts,
     sync_chart_of_accounts,
+    update_qbo_chart_of_account,
     update_xero_chart_of_account,
 )
 from app.services.master_data.tax_rates_service import (
@@ -296,7 +301,7 @@ async def sync_chart_of_accounts_route(
         raise HTTPException(403, "Support sessions cannot sync chart of accounts")
     try:
         saved = await sync_chart_of_accounts(db, ctx.tenant_id)
-    except XeroAccountWriteError as exc:
+    except (XeroAccountWriteError, QboAccountWriteError) as exc:
         raise HTTPException(exc.status_code, exc.message) from exc
     return ApiEnvelope(data=saved)
 
@@ -388,6 +393,97 @@ async def pull_xero_chart_of_account_route(
             updated_by_user_id=ctx.user_id,
         )
     except XeroAccountWriteError as exc:
+        raise HTTPException(exc.status_code, exc.message) from exc
+    return ApiEnvelope(data=saved)
+
+
+@router.post("/current/chart-of-accounts/quickbooks", response_model=ApiEnvelope[ChartOfAccountsResponse])
+async def create_qbo_chart_of_account_route(
+    body: UpsertXeroChartOfAccountRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[ChartOfAccountsResponse]:
+    if ctx.is_support_session:
+        raise HTTPException(403, "Support sessions cannot edit chart of accounts")
+    try:
+        saved = await create_qbo_chart_of_account(
+            db,
+            ctx.tenant_id,
+            body,
+            updated_by_user_id=ctx.user_id,
+        )
+    except QboAccountWriteError as exc:
+        raise HTTPException(exc.status_code, exc.message) from exc
+    return ApiEnvelope(data=saved)
+
+
+@router.put(
+    "/current/chart-of-accounts/quickbooks/{account_id}",
+    response_model=ApiEnvelope[ChartOfAccountsResponse],
+)
+async def update_qbo_chart_of_account_route(
+    account_id: str,
+    body: UpsertXeroChartOfAccountRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[ChartOfAccountsResponse]:
+    if ctx.is_support_session:
+        raise HTTPException(403, "Support sessions cannot edit chart of accounts")
+    try:
+        saved = await update_qbo_chart_of_account(
+            db,
+            ctx.tenant_id,
+            account_id,
+            body,
+            updated_by_user_id=ctx.user_id,
+        )
+    except QboAccountWriteError as exc:
+        raise HTTPException(exc.status_code, exc.message) from exc
+    return ApiEnvelope(data=saved)
+
+
+@router.delete(
+    "/current/chart-of-accounts/quickbooks/{account_id}",
+    response_model=ApiEnvelope[ChartOfAccountsResponse],
+)
+async def delete_qbo_chart_of_account_route(
+    account_id: str,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[ChartOfAccountsResponse]:
+    if ctx.is_support_session:
+        raise HTTPException(403, "Support sessions cannot edit chart of accounts")
+    try:
+        saved = await delete_qbo_chart_of_account(
+            db,
+            ctx.tenant_id,
+            account_id,
+            updated_by_user_id=ctx.user_id,
+        )
+    except QboAccountWriteError as exc:
+        raise HTTPException(exc.status_code, exc.message) from exc
+    return ApiEnvelope(data=saved)
+
+
+@router.post(
+    "/current/chart-of-accounts/quickbooks/{account_id}/pull",
+    response_model=ApiEnvelope[ChartOfAccountsResponse],
+)
+async def pull_qbo_chart_of_account_route(
+    account_id: str,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[ChartOfAccountsResponse]:
+    if ctx.is_support_session:
+        raise HTTPException(403, "Support sessions cannot edit chart of accounts")
+    try:
+        saved = await pull_qbo_chart_of_account(
+            db,
+            ctx.tenant_id,
+            account_id,
+            updated_by_user_id=ctx.user_id,
+        )
+    except QboAccountWriteError as exc:
         raise HTTPException(exc.status_code, exc.message) from exc
     return ApiEnvelope(data=saved)
 

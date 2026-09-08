@@ -6,6 +6,26 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.integrations.qbo.account_types import (
+    PROVIDER_QBO,
+    ledger_type_for_qbo,
+    normalize_account_type,
+)
+from app.integrations.qbo.accounts import (
+    QboAccountWriteError,
+    children_of,
+    create_account_in_qbo,
+    get_qbo_account,
+    inactivate_account_in_qbo,
+    is_system_qbo_account,
+    is_top_level_qbo_account,
+    list_active_qbo_accounts,
+    local_code_for_qbo,
+    sub_ledgers_from_children,
+    sync_accounts_from_qbo,
+    update_account_in_qbo,
+)
+from app.integrations.qbo.store import QboNotReadyError, require_qbo_ready
 from app.integrations.xero.account_types import (
     PROVIDER_XERO,
     ledger_type_for_xero,
@@ -21,6 +41,7 @@ from app.integrations.xero.accounts import (
     sync_accounts_from_xero,
     update_account_in_xero,
 )
+from app.models.qbo_account import QboAccount
 from app.integrations.xero.client import XeroApiError
 from app.integrations.xero.store import require_xero_ready
 from app.schemas.chart_of_accounts import (
@@ -38,6 +59,27 @@ from app.schemas.rule_book_config import (
 from app.schemas.tax_rates import BillProcessingTaxProvider
 from app.services.rule_book.account_mapper import clear_rule_book_cache
 from app.services.rule_book.rule_book_config_io import load_rule_book_config_dict, save_rule_book_config
+
+
+async def _qbo_connection(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+):
+    try:
+        return await require_qbo_ready(session, tenant_id)
+    except (RuntimeError, QboNotReadyError):
+        return None
+
+
+def _qbo_provider(integration: object) -> BillProcessingTaxProvider:
+    organisation = getattr(integration, "display_name", None)
+    organisation_name = str(organisation).strip() if organisation else None
+    return BillProcessingTaxProvider(
+        id="quickbooks_online",
+        name="QuickBooks",
+        organisation_name=organisation_name or None,
+        connected=True,
+    )
 
 
 async def _xero_connection(
@@ -109,7 +151,7 @@ def _unique_name(entries: list[ChartOfAccountEntry], name: str, *, except_code: 
     cleaned = name.strip()[:128] or "Account"
     if not _name_taken(entries, cleaned, except_code=except_code):
         return cleaned
-    suffix = f" ({(except_code or '').strip()})" if (except_code or "").strip() else " (Xero)"
+    suffix = f" ({(except_code or '').strip()})" if (except_code or "").strip() else " (remote)"
     base = cleaned[: max(1, 128 - len(suffix))]
     candidate = f"{base}{suffix}"[:128]
     if not _name_taken(entries, candidate, except_code=except_code):
@@ -177,6 +219,69 @@ async def _persist_entries(
     return list(updated.chart_of_accounts)
 
 
+def _qbo_platform_row(
+    row: QboAccount,
+    local: ChartOfAccountEntry | None,
+    children: list[QboAccount],
+    *,
+    in_catalogue: bool,
+) -> PlatformChartOfAccount:
+    locked = is_system_qbo_account(row)
+    ledger_type = ledger_type_for_qbo(
+        account_type=row.account_type,
+        classification=row.classification,
+    )
+    subtype = normalize_account_type(ledger_type, row.account_type)
+    providers = list(local.linked_providers) if local else []
+    if PROVIDER_QBO not in providers:
+        providers = [*providers, PROVIDER_QBO]
+    sub_ledgers = list(local.sub_ledgers) if local else sub_ledgers_from_children(children)
+    return PlatformChartOfAccount(
+        xero_account_id=row.qbo_account_id,
+        code=local_code_for_qbo(row),
+        name=(row.name or (local.name if local else "") or "").strip(),
+        type=ledger_type,
+        sub_type=subtype,
+        can_edit=not locked,
+        can_delete=not locked,
+        can_pull=not in_catalogue,
+        linked_providers=providers,
+        sub_ledgers=sub_ledgers,
+        status="ACTIVE" if row.active else "INACTIVE",
+    )
+
+
+async def _qbo_connected_payload(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    entries: list[ChartOfAccountEntry],
+    integration: object,
+    realm_id: str,
+) -> ChartOfAccountsResponse:
+    qbo_rows = await list_active_qbo_accounts(session, tenant_id, realm_id)
+    catalogue = _by_code(entries)
+    qbo_codes = {_code_key(local_code_for_qbo(row)) for row in qbo_rows if is_top_level_qbo_account(row)}
+    local_accounts = [entry for entry in entries if _code_key(entry.code) not in qbo_codes]
+    platform_accounts = [
+        _qbo_platform_row(
+            row,
+            catalogue.get(_code_key(local_code_for_qbo(row))),
+            children_of(row.qbo_account_id, qbo_rows),
+            in_catalogue=_code_key(local_code_for_qbo(row)) in catalogue,
+        )
+        for row in qbo_rows
+        if is_top_level_qbo_account(row)
+    ]
+    return ChartOfAccountsResponse(
+        accounts=list(entries),
+        local_accounts=local_accounts,
+        platform_accounts=platform_accounts,
+        xero_connected=False,
+        source="quickbooks_online",
+        provider=_qbo_provider(integration),
+    )
+
+
 def _platform_row(
     row: XeroAccount,
     local: ChartOfAccountEntry | None,
@@ -239,6 +344,10 @@ async def load_chart_of_accounts(
     tenant_id: uuid.UUID,
 ) -> ChartOfAccountsResponse:
     entries = await _entries(session, tenant_id)
+    qbo = await _qbo_connection(session, tenant_id)
+    if qbo is not None:
+        integration, realm_id = qbo
+        return await _qbo_connected_payload(session, tenant_id, entries, integration, realm_id)
     connected = await _xero_connection(session, tenant_id)
     if connected is None:
         return ChartOfAccountsResponse.from_entries(entries)
@@ -254,6 +363,31 @@ async def save_chart_of_accounts(
     updated_by_user_id: int | None = None,
 ) -> ChartOfAccountsResponse:
     incoming = body.to_entries()
+    qbo = await _qbo_connection(session, tenant_id)
+    if qbo is not None:
+        _integration, realm_id = qbo
+        existing = await _entries(session, tenant_id)
+        qbo_rows = await list_active_qbo_accounts(session, tenant_id, realm_id)
+        qbo_codes = {
+            _code_key(local_code_for_qbo(row))
+            for row in qbo_rows
+            if is_top_level_qbo_account(row)
+        }
+        seen = {_code_key(entry.code) for entry in incoming}
+        merged = list(incoming)
+        for entry in existing:
+            key = _code_key(entry.code)
+            if key in seen:
+                continue
+            if key in qbo_codes:
+                merged.append(entry)
+        await _persist_entries(
+            session,
+            tenant_id,
+            merged,
+            updated_by_user_id=updated_by_user_id,
+        )
+        return await load_chart_of_accounts(session, tenant_id)
     connected = await _xero_connection(session, tenant_id)
     if connected is None:
         await _persist_entries(
@@ -289,9 +423,20 @@ async def sync_chart_of_accounts(
     session: AsyncSession,
     tenant_id: uuid.UUID,
 ) -> ChartOfAccountsResponse:
+    if await _qbo_connection(session, tenant_id) is not None:
+        try:
+            await sync_accounts_from_qbo(session, tenant_id)
+        except QboAccountWriteError:
+            raise
+        except Exception as exc:
+            raise QboAccountWriteError(
+                str(exc) or "Could not sync accounts from QuickBooks",
+                status_code=502,
+            ) from exc
+        return await load_chart_of_accounts(session, tenant_id)
     if await _xero_connection(session, tenant_id) is None:
         raise XeroAccountWriteError(
-            "Connect Xero in Integrations before syncing accounts.",
+            "Connect Xero or QuickBooks in Integrations before syncing accounts.",
             status_code=400,
         )
     try:
@@ -352,20 +497,21 @@ async def _persist_locked_sub_ledgers(
     subtype: str,
     sub_ledgers: list[SubLedgerEntry],
     updated_by_user_id: int | None,
+    provider: str = PROVIDER_XERO,
 ) -> ChartOfAccountsResponse:
     entries = await _entries(session, tenant_id)
     key = _code_key(cached_code)
     if not key:
-        raise XeroAccountWriteError("This Xero account has no code to store locally.")
+        raise XeroAccountWriteError("This account has no code to store locally.")
     existing = _by_code(entries).get(key)
     next_entry = _clip_entry(
         code=cached_code,
         name=(existing.name if existing is not None else cached_name) or cached_code,
         ledger_type=existing.type if existing is not None else ledger_type,
         sub_type=existing.sub_type if existing is not None else subtype,
-        linked_providers=_with_provider(existing, PROVIDER_XERO).linked_providers
+        linked_providers=_with_provider(existing, provider).linked_providers
         if existing is not None
-        else [PROVIDER_XERO],
+        else [provider],
         sub_ledgers=list(sub_ledgers),
     )
     entries = _upsert_linked(entries, next_entry, match_key=key)
@@ -506,6 +652,255 @@ async def pull_xero_chart_of_account(
             sub_type=row.account_type,
             linked_providers=[PROVIDER_XERO],
             sub_ledgers=[],
+        )
+    )
+    await _persist_entries(session, tenant_id, entries, updated_by_user_id=updated_by_user_id)
+    return await load_chart_of_accounts(session, tenant_id)
+
+
+async def _ensure_qbo_subaccounts(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    realm_id: str,
+    parent: QboAccount,
+    sub_ledgers: list[SubLedgerEntry],
+    account_type: str,
+) -> None:
+    rows = await list_active_qbo_accounts(session, tenant_id, realm_id)
+    remaining = children_of(parent.qbo_account_id, rows)
+    for sub in sub_ledgers:
+        code_key = _code_key(sub.code)
+        name_key = sub.name.strip().lower()
+        match = next(
+            (
+                child
+                for child in remaining
+                if _code_key(local_code_for_qbo(child)) == code_key
+                or (child.name or "").strip().lower() == name_key
+            ),
+            None,
+        )
+        if match is not None:
+            remaining = [child for child in remaining if child.qbo_account_id != match.qbo_account_id]
+            if is_system_qbo_account(match):
+                continue
+            await update_account_in_qbo(
+                session,
+                tenant_id,
+                match.qbo_account_id,
+                code=sub.code,
+                name=sub.name,
+                account_type=account_type,
+            )
+            continue
+        await create_account_in_qbo(
+            session,
+            tenant_id,
+            code=sub.code,
+            name=sub.name,
+            account_type=account_type,
+            parent_id=parent.qbo_account_id,
+        )
+    for leftover in remaining:
+        if is_system_qbo_account(leftover):
+            continue
+        await inactivate_account_in_qbo(session, tenant_id, leftover.qbo_account_id)
+
+
+async def create_qbo_chart_of_account(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    body: UpsertXeroChartOfAccountRequest,
+    *,
+    updated_by_user_id: int | None = None,
+) -> ChartOfAccountsResponse:
+    entries = await _entries(session, tenant_id)
+    key = _code_key(body.code)
+    if _name_taken(entries, body.name, except_code=key):
+        raise QboAccountWriteError(
+            f"A local account named {body.name.strip()!r} already exists. Rename it before pushing."
+        )
+    account_type = normalize_account_type(body.type, body.sub_type)
+    created = await create_account_in_qbo(
+        session,
+        tenant_id,
+        code=body.code,
+        name=body.name,
+        account_type=account_type,
+    )
+    connected = await _qbo_connection(session, tenant_id)
+    realm_id = connected[1] if connected is not None else ""
+    await _ensure_qbo_subaccounts(
+        session,
+        tenant_id,
+        realm_id,
+        created,
+        list(body.sub_ledgers),
+        account_type,
+    )
+    entries = await _entries(session, tenant_id)
+    catalogue = _by_code(entries)
+    key = _code_key(local_code_for_qbo(created) or body.code)
+    existing = catalogue.get(key)
+    next_entry = _clip_entry(
+        code=local_code_for_qbo(created) or body.code,
+        name=(created.name or body.name),
+        ledger_type=body.type,
+        sub_type=account_type,
+        linked_providers=[PROVIDER_QBO],
+        sub_ledgers=list(existing.sub_ledgers if existing is not None else body.sub_ledgers),
+    )
+    entries = _upsert_linked(entries, next_entry, match_key=key)
+    await _persist_entries(session, tenant_id, entries, updated_by_user_id=updated_by_user_id)
+    return await load_chart_of_accounts(session, tenant_id)
+
+
+async def update_qbo_chart_of_account(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    qbo_account_id: str,
+    body: UpsertXeroChartOfAccountRequest,
+    *,
+    updated_by_user_id: int | None = None,
+) -> ChartOfAccountsResponse:
+    connected = await _qbo_connection(session, tenant_id)
+    if connected is None:
+        raise QboAccountWriteError("Connect QuickBooks in Integrations first.", status_code=400)
+    _integration, realm_id = connected
+    cached = await get_qbo_account(session, tenant_id, realm_id, qbo_account_id)
+    if cached is None:
+        raise QboAccountWriteError("QuickBooks account not found", status_code=404)
+    account_type = normalize_account_type(body.type, body.sub_type)
+    old_key = _code_key(local_code_for_qbo(cached) or body.code)
+    if is_system_qbo_account(cached):
+        await _ensure_qbo_subaccounts(
+            session, tenant_id, realm_id, cached, list(body.sub_ledgers), account_type
+        )
+        return await _persist_locked_sub_ledgers(
+            session,
+            tenant_id,
+            cached_code=local_code_for_qbo(cached) or body.code,
+            cached_name=cached.name or body.name,
+            ledger_type=ledger_type_for_qbo(
+                account_type=cached.account_type,
+                classification=cached.classification,
+            ),
+            subtype=account_type,
+            sub_ledgers=list(body.sub_ledgers),
+            updated_by_user_id=updated_by_user_id,
+            provider=PROVIDER_QBO,
+        )
+    new_key = _code_key(body.code)
+    entries = await _entries(session, tenant_id)
+    if new_key != old_key and new_key in _by_code(entries):
+        raise QboAccountWriteError("That account code already exists in the local chart of accounts.")
+    if _name_taken(entries, body.name, except_code=old_key or new_key):
+        raise QboAccountWriteError(f"A local account named {body.name.strip()!r} already exists.")
+    updated = await update_account_in_qbo(
+        session,
+        tenant_id,
+        qbo_account_id,
+        code=body.code,
+        name=body.name,
+        account_type=account_type,
+    )
+    await _ensure_qbo_subaccounts(
+        session, tenant_id, realm_id, updated, list(body.sub_ledgers), account_type
+    )
+    entries = await _entries(session, tenant_id)
+    new_key = _code_key(local_code_for_qbo(updated) or body.code)
+    existing = _by_code(entries).get(old_key) or _by_code(entries).get(new_key)
+    next_entry = _clip_entry(
+        code=local_code_for_qbo(updated) or body.code,
+        name=(updated.name or body.name),
+        ledger_type=body.type,
+        sub_type=account_type,
+        linked_providers=_with_provider(existing, PROVIDER_QBO).linked_providers
+        if existing is not None
+        else [PROVIDER_QBO],
+        sub_ledgers=list(body.sub_ledgers),
+    )
+    entries = _upsert_linked(entries, next_entry, match_key=old_key or new_key)
+    await _persist_entries(session, tenant_id, entries, updated_by_user_id=updated_by_user_id)
+    return await load_chart_of_accounts(session, tenant_id)
+
+
+async def delete_qbo_chart_of_account(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    qbo_account_id: str,
+    *,
+    updated_by_user_id: int | None = None,
+) -> ChartOfAccountsResponse:
+    connected = await _qbo_connection(session, tenant_id)
+    if connected is None:
+        raise QboAccountWriteError("Connect QuickBooks in Integrations first.", status_code=400)
+    _integration, realm_id = connected
+    rows = await list_active_qbo_accounts(session, tenant_id, realm_id)
+    for child in children_of(qbo_account_id, rows):
+        if not is_system_qbo_account(child):
+            await inactivate_account_in_qbo(session, tenant_id, child.qbo_account_id)
+    deleted = await inactivate_account_in_qbo(session, tenant_id, qbo_account_id)
+    entries = await _entries(session, tenant_id)
+    key = _code_key(local_code_for_qbo(deleted))
+    if not key:
+        return await load_chart_of_accounts(session, tenant_id)
+    catalogue = _by_code(entries)
+    existing = catalogue.get(key)
+    if existing is None:
+        ledger_type = ledger_type_for_qbo(
+            account_type=deleted.account_type,
+            classification=deleted.classification,
+        )
+        entries.append(
+            _clip_entry(
+                code=local_code_for_qbo(deleted),
+                name=deleted.name or "QuickBooks account",
+                ledger_type=ledger_type,
+                sub_type=deleted.account_type,
+                linked_providers=[],
+                sub_ledgers=sub_ledgers_from_children(children_of(qbo_account_id, rows)),
+            )
+        )
+    else:
+        entries = [
+            _without_provider(item, PROVIDER_QBO) if _code_key(item.code) == key else item
+            for item in entries
+        ]
+    await _persist_entries(session, tenant_id, entries, updated_by_user_id=updated_by_user_id)
+    return await load_chart_of_accounts(session, tenant_id)
+
+
+async def pull_qbo_chart_of_account(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    qbo_account_id: str,
+    *,
+    updated_by_user_id: int | None = None,
+) -> ChartOfAccountsResponse:
+    connected = await _qbo_connection(session, tenant_id)
+    if connected is None:
+        raise QboAccountWriteError("Connect QuickBooks in Integrations first.", status_code=400)
+    _integration, realm_id = connected
+    row = await get_qbo_account(session, tenant_id, realm_id, qbo_account_id)
+    if row is None or not row.active:
+        raise QboAccountWriteError("QuickBooks account not found", status_code=404)
+    key = _code_key(local_code_for_qbo(row))
+    if not key:
+        raise QboAccountWriteError("This QuickBooks account has no code to pull.")
+    entries = await _entries(session, tenant_id)
+    if key in _by_code(entries):
+        raise QboAccountWriteError("This account already exists in the local chart of accounts.")
+    qbo_rows = await list_active_qbo_accounts(session, tenant_id, realm_id)
+    ledger_type = ledger_type_for_qbo(account_type=row.account_type, classification=row.classification)
+    entries.append(
+        _clip_entry(
+            code=local_code_for_qbo(row),
+            name=_unique_name(entries, (row.name or "").strip() or local_code_for_qbo(row), except_code=key),
+            ledger_type=ledger_type,
+            sub_type=row.account_type,
+            linked_providers=[PROVIDER_QBO],
+            sub_ledgers=sub_ledgers_from_children(children_of(row.qbo_account_id, qbo_rows)),
         )
     )
     await _persist_entries(session, tenant_id, entries, updated_by_user_id=updated_by_user_id)

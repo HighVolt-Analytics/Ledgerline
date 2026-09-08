@@ -22,16 +22,25 @@ describe("resolveBillProcessingTaxSource", () => {
     ).toEqual({ kind: "adapter", adapterId: "xero" });
   });
 
-  it("keeps unknown connected platforms distinct so UI can swap later", () => {
+  it("resolves the QuickBooks adapter from source or provider", () => {
     expect(
       resolveBillProcessingTaxSource({
         source: "quickbooks_online",
         provider: { id: "quickbooks_online", name: "QuickBooks", connected: true },
       })
+    ).toEqual({ kind: "adapter", adapterId: "qbo" });
+  });
+
+  it("keeps unknown connected platforms distinct so UI can swap later", () => {
+    expect(
+      resolveBillProcessingTaxSource({
+        source: "myob",
+        provider: { id: "myob", name: "MYOB", connected: true },
+      })
     ).toEqual({
       kind: "unsupported",
-      providerId: "quickbooks_online",
-      providerName: "QuickBooks",
+      providerId: "myob",
+      providerName: "MYOB",
     });
   });
 });

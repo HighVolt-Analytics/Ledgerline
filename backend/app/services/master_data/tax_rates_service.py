@@ -6,6 +6,9 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.integrations.qbo.client import QboApiError
+from app.integrations.qbo.store import QboNotReadyError, require_qbo_ready
+from app.integrations.qbo.tax_codes import create_tax_code_in_qbo, list_synced_tax_codes, sync_tax_codes_from_qbo
 from app.integrations.xero.client import XeroApiError
 from app.integrations.xero.store import require_xero_ready
 from app.integrations.xero.tax_rates import (
@@ -27,6 +30,35 @@ from app.schemas.tax_rates import (
 )
 from app.services.rule_book.account_mapper import clear_rule_book_cache
 from app.services.rule_book.rule_book_config_io import load_rule_book_config_dict, save_rule_book_config
+
+
+async def qbo_connection(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> tuple[object, str] | None:
+    try:
+        return await require_qbo_ready(session, tenant_id)
+    except (RuntimeError, QboNotReadyError):
+        return None
+
+
+def _qbo_tax_provider(integration: object) -> BillProcessingTaxProvider:
+    organisation = getattr(integration, "display_name", None)
+    organisation_name = str(organisation).strip() if organisation else None
+    return BillProcessingTaxProvider(
+        id="quickbooks_online",
+        name="QuickBooks",
+        organisation_name=organisation_name or None,
+        connected=True,
+    )
+
+
+def _qbo_tax_response(entries: list[TaxRateEntry], integration: object) -> TaxRatesResponse:
+    return TaxRatesResponse.from_entries(
+        entries,
+        source="quickbooks_online",
+        provider=_qbo_tax_provider(integration),
+    )
 
 
 async def xero_connection(
@@ -62,6 +94,11 @@ async def load_tax_rates(
     session: AsyncSession,
     tenant_id: uuid.UUID,
 ) -> TaxRatesResponse:
+    qbo = await qbo_connection(session, tenant_id)
+    if qbo is not None:
+        integration, realm_id = qbo
+        entries = await list_synced_tax_codes(session, tenant_id, realm_id)
+        return _qbo_tax_response(entries, integration)
     connected = await xero_connection(session, tenant_id)
     if connected is not None:
         integration, xero_tenant_id = connected
@@ -79,6 +116,11 @@ async def save_tax_rates(
     *,
     updated_by_user_id: int | None = None,
 ) -> TaxRatesResponse:
+    if await qbo_connection(session, tenant_id) is not None:
+        raise XeroTaxRateWriteError(
+            "QuickBooks is connected. Tax codes are synced from QuickBooks and cannot be edited here.",
+            status_code=409,
+        )
     if await xero_connection(session, tenant_id) is not None:
         raise XeroTaxRateWriteError(
             "Xero is connected. Add or delete tax rates individually so they stay in sync.",
@@ -108,6 +150,21 @@ async def create_tax_rate(
     *,
     updated_by_user_id: int | None = None,
 ) -> TaxRatesResponse:
+    if await qbo_connection(session, tenant_id) is not None:
+        try:
+            await create_tax_code_in_qbo(
+                session,
+                tenant_id,
+                display_name=body.display_name,
+                report_type=body.tax_type,
+                components=body.components,
+            )
+        except QboApiError as exc:
+            raise XeroTaxRateWriteError(
+                exc.message or "QuickBooks rejected the tax code",
+                status_code=exc.status_code or 502,
+            ) from exc
+        return await load_tax_rates(session, tenant_id)
     connected = await xero_connection(session, tenant_id)
     if connected is not None:
         try:
@@ -152,6 +209,11 @@ async def delete_tax_rate(
     *,
     updated_by_user_id: int | None = None,
 ) -> TaxRatesResponse:
+    if await qbo_connection(session, tenant_id) is not None:
+        raise XeroTaxRateWriteError(
+            "QuickBooks tax codes are managed in QuickBooks. Sync this page to refresh the list.",
+            status_code=409,
+        )
     connected = await xero_connection(session, tenant_id)
     if connected is not None:
         await delete_tax_rate_in_xero(session, tenant_id, rate_id)
@@ -177,6 +239,11 @@ async def update_tax_rate(
     *,
     updated_by_user_id: int | None = None,
 ) -> TaxRatesResponse:
+    if await qbo_connection(session, tenant_id) is not None:
+        raise XeroTaxRateWriteError(
+            "QuickBooks tax codes are managed in QuickBooks. Sync this page to refresh the list.",
+            status_code=409,
+        )
     connected = await xero_connection(session, tenant_id)
     if connected is not None:
         try:
@@ -227,9 +294,18 @@ async def sync_tax_rates(
     session: AsyncSession,
     tenant_id: uuid.UUID,
 ) -> TaxRatesResponse:
+    if await qbo_connection(session, tenant_id) is not None:
+        try:
+            await sync_tax_codes_from_qbo(session, tenant_id)
+        except QboApiError as exc:
+            raise XeroTaxRateWriteError(
+                exc.message or "Could not sync tax rates from QuickBooks",
+                status_code=exc.status_code or 502,
+            ) from exc
+        return await load_tax_rates(session, tenant_id)
     if await xero_connection(session, tenant_id) is None:
         raise XeroTaxRateWriteError(
-            "Connect Xero in Integrations before syncing tax rates.",
+            "Connect Xero or QuickBooks in Integrations before syncing tax rates.",
             status_code=400,
         )
     try:

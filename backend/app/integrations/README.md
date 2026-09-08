@@ -39,16 +39,24 @@ app/integrations/
     master_data.py      # list cached Xero rows
     organisation_isolation.py
     verify.py / readiness.py / reconcile.py
+  qbo/
+    oauth.py / tokens.py / store.py / client.py
+    contacts.py         # Vendor + Customer pull; vendor/customer create
+    tax_codes.py        # TaxCode + TaxRate pull; TaxService create
+    accounts.py         # Account + subaccount pull/create/update
 ```
 
 ## Rules for a new provider (for example QBO)
 
 1. Add `app/integrations/<provider>/` with the same roles: oauth, tokens, store, client, sync, export.
 2. Do not put provider HTTP inside `core/`. `core/` stays OAuth state and token crypto only.
-3. Do not add a Settings mapping grid. Codes on the document must already exist in the remote org (contact may be created; GL and tax must exist; currency is sent as ISO and must be enabled on the org).
+3. Do not add a Settings mapping grid. Codes on the document must already exist in the remote org (contact/vendor may be created; GL and tax must exist; currency is sent as ISO and must be enabled on the org).
 4. Keep FastAPI routers in `app/api/` and tables in `app/models/`.
 5. Auto-export only after a successful invoice transaction commit. Never fire-and-forget on a Celery `asyncio.run()` loop.
 6. Connection readiness is one function in that provider’s `store.py` (Xero: `require_xero_ready`). Re-export it if an older service still imports it.
+7. A tenant may have only one of Xero or QuickBooks connected. Connecting one disconnects the other.
+
+QBO so far: OAuth + exclusive connection + Pulled contacts (Vendor and Customer pull and create) + Settings → Tax (sync + create) + Settings → Chart of accounts (`accounts.py` / `qbo_accounts`, including subaccounts). Bill export is not in this package yet.
 
 ## Xero runtime path
 

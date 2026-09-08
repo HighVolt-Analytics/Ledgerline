@@ -21,7 +21,7 @@ from app.integrations.xero.store import (
     upsert_connections,
     upsert_tokens,
 )
-from app.models.accounting_integration import AccountingIntegration
+from app.models.accounting_integration import AccountingIntegration, AccountingIntegrationStatus, AccountingProvider
 
 
 def build_connect_url(*, tenant_id: uuid.UUID, user_id: int) -> str:
@@ -59,11 +59,22 @@ async def complete_oauth_callback(
         tenant_id=tenant_id,
         connections=payload["connections"],
     )
-    return await apply_org_selection(
+    integration = await apply_org_selection(
         db,
         integration=integration,
         connections=persisted,
     )
+    if integration.status == AccountingIntegrationStatus.CONNECTED.value:
+        from app.services.integration.accounting_integration_service import (
+            disconnect_peer_accounting_provider,
+        )
+
+        await disconnect_peer_accounting_provider(
+            db,
+            tenant_id=tenant_id,
+            keep_provider=AccountingProvider.XERO.value,
+        )
+    return integration
 
 
 async def list_xero_connections(
@@ -79,8 +90,19 @@ async def select_xero_connection(
     tenant_id: uuid.UUID,
     xero_connection_id: str,
 ) -> AccountingIntegration:
-    return await select_connection(
+    integration = await select_connection(
         db,
         tenant_id=tenant_id,
         xero_connection_id=xero_connection_id,
     )
+    if integration.status == AccountingIntegrationStatus.CONNECTED.value:
+        from app.services.integration.accounting_integration_service import (
+            disconnect_peer_accounting_provider,
+        )
+
+        await disconnect_peer_accounting_provider(
+            db,
+            tenant_id=tenant_id,
+            keep_provider=AccountingProvider.XERO.value,
+        )
+    return integration

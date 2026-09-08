@@ -583,6 +583,21 @@ export function IntegrationsPage() {
   }, [searchParams, setSearchParams, toast, reloadAccounting]);
 
   async function startAccountingConnect(provider: "xero" | "quickbooks_online") {
+    const otherConnected =
+      provider === "xero"
+        ? accountingStatus?.quickbooks_online.status === "connected"
+        : accountingStatus?.xero.status === "connected";
+    if (otherConnected) {
+      const label = provider === "xero" ? "Xero" : "QuickBooks";
+      const other = provider === "xero" ? "QuickBooks" : "Xero";
+      if (
+        !window.confirm(
+          `Only one accounting connection is allowed. Connecting ${label} will disconnect ${other}. Continue?`
+        )
+      ) {
+        return;
+      }
+    }
     setAccountingBusy(provider);
     setAccountingError(null);
     try {

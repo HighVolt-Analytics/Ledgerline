@@ -14,15 +14,22 @@ export function usePulledXeroContacts(enabled = true) {
     staleTime: 30_000,
   });
   const xeroConnected = statusQuery.data?.xero.status === "connected";
+  const qboConnected = statusQuery.data?.quickbooks_online.status === "connected";
+  const connectedProvider = qboConnected ? "quickbooks" : xeroConnected ? "xero" : null;
   const listQuery = useTenantQuery({
-    queryKey: queryKeys.xeroPulledContacts(),
-    queryFn: () => api.getXeroContactsList({ limit: LIST_LIMIT, offset: 0 }),
-    enabled: enabled && xeroConnected && !statusQuery.blocked,
+    queryKey: connectedProvider === "quickbooks" ? queryKeys.qboPulledContacts() : queryKeys.xeroPulledContacts(),
+    queryFn: () =>
+      connectedProvider === "quickbooks"
+        ? api.getQboContactsList({ limit: LIST_LIMIT, offset: 0 })
+        : api.getXeroContactsList({ limit: LIST_LIMIT, offset: 0 }),
+    enabled: enabled && Boolean(connectedProvider) && !statusQuery.blocked,
     staleTime: 30_000,
   });
 
   return {
     xeroConnected,
+    qboConnected,
+    connectedProvider,
     loading: Boolean(statusQuery.isLoading && statusQuery.data === undefined),
     status: statusQuery.data ?? null,
     contacts: listQuery.data?.items ?? [],
@@ -36,9 +43,16 @@ export function usePulledXeroContacts(enabled = true) {
 export function useSyncPulledXeroContacts() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => api.syncXeroContacts(),
+    mutationFn: async () => {
+      const status = await api.getAccountingIntegrationsStatus({ fresh: true });
+      if (status.quickbooks_online.status === "connected") {
+        return api.syncQboContacts();
+      }
+      return api.syncXeroContacts();
+    },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.xeroPulledContacts() });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.qboPulledContacts() });
     },
   });
 }
@@ -46,9 +60,34 @@ export function useSyncPulledXeroContacts() {
 export function useCreatePulledXeroContact() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (legalName: string) => api.createXeroContact({ legal_name: legalName }),
+    mutationFn: async (draft: {
+      legal_name: string;
+      entity_type?: "vendor" | "customer";
+      given_name?: string;
+      family_name?: string;
+      company_name?: string;
+      email?: string;
+      phone?: string;
+      tax_identifier?: string;
+    }) => {
+      const status = await api.getAccountingIntegrationsStatus({ fresh: true });
+      if (status.quickbooks_online.status === "connected") {
+        return api.createQboContact({
+          legal_name: draft.legal_name,
+          entity_type: draft.entity_type ?? "vendor",
+          given_name: draft.given_name,
+          family_name: draft.family_name,
+          company_name: draft.company_name,
+          email: draft.email,
+          phone: draft.phone,
+          tax_identifier: draft.tax_identifier,
+        });
+      }
+      return api.createXeroContact({ legal_name: draft.legal_name });
+    },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.xeroPulledContacts() });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.qboPulledContacts() });
     },
   });
 }

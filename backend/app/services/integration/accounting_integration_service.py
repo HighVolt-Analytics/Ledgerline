@@ -56,10 +56,7 @@ def resolve_xero_scopes() -> str:
 
 
 def quickbooks_configured() -> bool:
-    settings = get_settings()
-    return bool(
-        settings.quickbooks_client_id.strip() and settings.quickbooks_client_secret.strip()
-    )
+    return get_settings().quickbooks_configured
 
 
 def provider_configured(provider: str) -> bool:
@@ -547,6 +544,24 @@ async def _upsert_integration(
     return row
 
 
+async def disconnect_peer_accounting_provider(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    keep_provider: str,
+) -> None:
+    """Only one of Xero or QuickBooks may stay connected for a tenant."""
+    if keep_provider == AccountingProvider.QUICKBOOKS_ONLINE.value:
+        await disconnect_xero(db, tenant_id=tenant_id)
+        return
+    if keep_provider == AccountingProvider.XERO.value:
+        await disconnect_integration(
+            db,
+            tenant_id=tenant_id,
+            provider=AccountingProvider.QUICKBOOKS_ONLINE.value,
+        )
+
+
 async def _mark_integration_error(
     db: AsyncSession,
     *,
@@ -654,7 +669,7 @@ async def _exchange_quickbooks_code(
         realm_id=realm_id,
     )
 
-    return await _upsert_integration(
+    row = await _upsert_integration(
         db,
         tenant_id=tenant_id,
         provider=AccountingProvider.QUICKBOOKS_ONLINE.value,
@@ -666,6 +681,45 @@ async def _exchange_quickbooks_code(
         expires_at=expires_at,
         scopes=str(scopes) if scopes else None,
     )
+    await disconnect_peer_accounting_provider(
+        db,
+        tenant_id=tenant_id,
+        keep_provider=AccountingProvider.QUICKBOOKS_ONLINE.value,
+    )
+    try:
+        from app.integrations.qbo.contacts import sync_contacts as sync_qbo_contacts
+
+        async with db.begin_nested():
+            await sync_qbo_contacts(db, tenant_id)
+    except Exception as exc:
+        logger.warning(
+            "qbo_contacts_initial_sync_failed",
+            tenant_id=str(tenant_id),
+            error=str(exc),
+        )
+    try:
+        from app.integrations.qbo.tax_codes import sync_tax_codes_from_qbo
+
+        async with db.begin_nested():
+            await sync_tax_codes_from_qbo(db, tenant_id)
+    except Exception as exc:
+        logger.warning(
+            "qbo_tax_codes_initial_sync_failed",
+            tenant_id=str(tenant_id),
+            error=str(exc),
+        )
+    try:
+        from app.integrations.qbo.accounts import sync_accounts_from_qbo
+
+        async with db.begin_nested():
+            await sync_accounts_from_qbo(db, tenant_id)
+    except Exception as exc:
+        logger.warning(
+            "qbo_accounts_initial_sync_failed",
+            tenant_id=str(tenant_id),
+            error=str(exc),
+        )
+    return row
 
 
 async def complete_oauth_callback(

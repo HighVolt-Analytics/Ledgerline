@@ -76,4 +76,39 @@ describe("TaxRatesPanel", () => {
     expect(screen.getByText("Demo Org")).toBeTruthy();
     expect(screen.getByText("Connected")).toBeTruthy();
   });
+
+  it("shows QuickBooks tax codes as a read-only synced table", () => {
+    useTaxRates.mockReturnValue({
+      data: {
+        tax_rates: [
+          {
+            id: "11",
+            display_name: "GST on Purchases",
+            tax_type: "PURCHASES",
+            components: [{ name: "GST", rate: 10 }],
+            total_rate: 10,
+            can_delete: false,
+            can_edit: false,
+            source: "quickbooks_online",
+          },
+        ],
+        source: "quickbooks_online",
+        provider: {
+          id: "quickbooks_online",
+          name: "QuickBooks",
+          organisation_name: "Sandbox Co",
+          connected: true,
+        },
+      } satisfies TaxRatesPayload,
+      isLoading: false,
+      isError: false,
+      blocked: false,
+    });
+    renderPanel();
+    expect(screen.getByTestId("button-sync-tax-rates")).toBeTruthy();
+    expect(screen.getByText("GST on Purchases")).toBeTruthy();
+    expect(screen.getByText("Sandbox Co")).toBeTruthy();
+    expect(screen.queryByTestId("button-add-tax-rate")).toBeTruthy();
+    expect(screen.queryByTestId("button-edit-tax-rate-11")).toBeNull();
+  });
 });

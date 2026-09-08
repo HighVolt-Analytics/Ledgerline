@@ -82,6 +82,9 @@ from app.models.vendor import VendorRegistry
 from app.models.vendor_master import VendorMasterRecord
 from app.models.xero_connection import XeroConnection
 from app.models.xero_account import XeroAccount
+from app.models.qbo_account import QboAccount
+from app.models.qbo_tax_code import QboTaxCode
+from app.models.qbo_contact import QboContact
 from app.models.xero_contact import XeroContact
 from app.models.xero_currency import XeroCurrency
 from app.models.xero_organisation_profile import XeroOrganisationProfile
@@ -166,6 +169,9 @@ __all__ = [
     "VendorRegistry",
     "XeroConnection",
     "XeroAccount",
+    "QboAccount",
+    "QboContact",
+    "QboTaxCode",
     "XeroContact",
     "XeroCurrency",
     "XeroOrganisationProfile",

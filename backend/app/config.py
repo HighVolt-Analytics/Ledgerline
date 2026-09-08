@@ -884,6 +884,7 @@ class Settings(BaseSettings):
     )
 
     # QuickBooks Online accounting OAuth (optional)
+    quickbooks_enabled: bool = Field(default=True, validation_alias="QUICKBOOKS_ENABLED")
     quickbooks_client_id: str = Field(default="", validation_alias="QUICKBOOKS_CLIENT_ID")
     quickbooks_client_secret: str = Field(
         default="",
@@ -1489,6 +1490,8 @@ class Settings(BaseSettings):
 
     @property
     def quickbooks_configured(self) -> bool:
+        if not self.quickbooks_enabled:
+            return False
         return bool(
             self.quickbooks_client_id.strip() and self.quickbooks_client_secret.strip()
         )

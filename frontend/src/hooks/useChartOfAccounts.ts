@@ -150,6 +150,53 @@ export function usePullXeroChartOfAccount() {
   });
 }
 
+export function useCreateQboChartOfAccount() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Parameters<typeof api.createQboChartOfAccount>[0]) =>
+      api.createQboChartOfAccount(body),
+    onSuccess: async (payload) => {
+      await applyCoaCaches(queryClient, payload);
+    },
+  });
+}
+
+export function useUpdateQboChartOfAccount() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      accountId,
+      body,
+    }: {
+      accountId: string;
+      body: Parameters<typeof api.updateQboChartOfAccount>[1];
+    }) => api.updateQboChartOfAccount(accountId, body),
+    onSuccess: async (payload) => {
+      await applyCoaCaches(queryClient, payload);
+    },
+  });
+}
+
+export function useDeleteQboChartOfAccount() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (accountId: string) => api.deleteQboChartOfAccount(accountId),
+    onSuccess: async (payload) => {
+      await applyCoaCaches(queryClient, payload);
+    },
+  });
+}
+
+export function usePullQboChartOfAccount() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (accountId: string) => api.pullQboChartOfAccount(accountId),
+    onSuccess: async (payload) => {
+      await applyCoaCaches(queryClient, payload);
+    },
+  });
+}
+
 export type ChartOfAccountRowLocal = ChartOfAccountRow & { _rowKey: string };
 
 export function newChartOfAccountRow(): ChartOfAccountRowLocal {

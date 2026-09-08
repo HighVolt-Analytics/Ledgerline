@@ -239,7 +239,7 @@ export interface OrgTaxRateRow {
   can_edit?: boolean;
   xero_tax_type?: string | null;
   status?: string | null;
-  source?: "xero" | "local";
+  source?: "xero" | "local" | "quickbooks_online";
 }
 
 export type OrgTaxRateWrite = Omit<OrgTaxRateRow, "id" | "total_rate" | "can_delete" | "source"> & {
@@ -2226,7 +2226,8 @@ export interface XeroTaxRateRow {
 export interface XeroContactRow {
   id: number;
   xero_contact_id: string;
-  xero_tenant_id: string;
+  xero_tenant_id?: string;
+  qbo_entity_id?: string;
   name: string | null;
   email_address: string | null;
   is_supplier: boolean;

@@ -60,6 +60,7 @@ from app.api import (
     xero_refinement,
     xero_master_data,
     xero_export_pipeline,
+    qbo_contacts,
 )
 from app.api.deps import CorrelationIdMiddleware, require_super_admin, require_user
 from app.config import get_settings
@@ -294,6 +295,7 @@ app.include_router(accounting_integrations.router, prefix="/api", dependencies=_
 app.include_router(xero_refinement.router, prefix="/api", dependencies=_api_deps)
 app.include_router(xero_master_data.router, prefix="/api", dependencies=_api_deps)
 app.include_router(xero_export_pipeline.router, prefix="/api", dependencies=_api_deps)
+app.include_router(qbo_contacts.router, prefix="/api", dependencies=_api_deps)
 app.include_router(viber.router, prefix="/api", dependencies=_api_deps)
 app.include_router(tenants.router, prefix="/api", dependencies=_api_deps)
 app.include_router(tenant_members.router, prefix="/api", dependencies=_api_deps)

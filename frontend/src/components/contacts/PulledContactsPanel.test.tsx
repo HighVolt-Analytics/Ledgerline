@@ -40,6 +40,8 @@ describe("PulledContactsPanel", () => {
   it("asks to connect Xero when not connected", () => {
     usePulledXeroContacts.mockReturnValue({
       xeroConnected: false,
+      qboConnected: false,
+      connectedProvider: null,
       loading: false,
       status: { xero: { status: "disconnected", display_name: null } },
       contacts: [],
@@ -54,6 +56,8 @@ describe("PulledContactsPanel", () => {
   it("shows sync and pulled names when Xero is connected", () => {
     usePulledXeroContacts.mockReturnValue({
       xeroConnected: true,
+      qboConnected: false,
+      connectedProvider: "xero",
       loading: false,
       status: { xero: { status: "connected", display_name: "Demo Org" } },
       contacts: [
@@ -71,5 +75,33 @@ describe("PulledContactsPanel", () => {
     expect(screen.getByTestId("button-sync-pulled-contacts")).toBeTruthy();
     expect(screen.getByText("Acme Supplies")).toBeTruthy();
     expect(screen.getByTestId("button-add-pulled-contact")).toBeTruthy();
+  });
+
+  it("shows QuickBooks pulled names when QuickBooks is connected", () => {
+    usePulledXeroContacts.mockReturnValue({
+      xeroConnected: false,
+      qboConnected: true,
+      connectedProvider: "quickbooks",
+      loading: false,
+      status: {
+        xero: { status: "disconnected", display_name: null },
+        quickbooks_online: { status: "connected", display_name: "Sandbox Co" },
+      },
+      contacts: [
+        {
+          xero_contact_id: "vendor:56",
+          qbo_entity_id: "56",
+          name: "QBO Vendor",
+          is_supplier: true,
+          is_customer: false,
+        },
+      ],
+      contactsLoading: false,
+      contactsError: false,
+    });
+    renderPanel();
+    expect(screen.getByText("QBO Vendor")).toBeTruthy();
+    expect(screen.getByText("Vendor")).toBeTruthy();
+    expect(screen.getByTestId("button-sync-pulled-contacts")).toBeTruthy();
   });
 });

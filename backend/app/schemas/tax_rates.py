@@ -56,7 +56,7 @@ class TaxRateEntry(BaseModel):
     can_edit: bool = True
     xero_tax_type: str | None = None
     status: str | None = None
-    source: Literal["xero", "local"] = "local"
+    source: Literal["xero", "local", "quickbooks_online"] = "local"
 
     @field_validator("id", mode="before")
     @classmethod
@@ -92,7 +92,7 @@ class BillProcessingTaxProvider(BaseModel):
 class TaxRatesResponse(BaseModel):
     tax_rates: list[TaxRateEntry] = Field(default_factory=list)
     xero_connected: bool = False
-    source: Literal["none", "xero"] = "none"
+    source: Literal["none", "xero", "quickbooks_online"] = "none"
     provider: BillProcessingTaxProvider | None = None
 
     @classmethod
@@ -101,10 +101,10 @@ class TaxRatesResponse(BaseModel):
         entries: list[TaxRateEntry],
         *,
         xero_connected: bool = False,
-        source: Literal["none", "xero"] | None = None,
+        source: Literal["none", "xero", "quickbooks_online"] | None = None,
         provider: BillProcessingTaxProvider | None = None,
     ) -> "TaxRatesResponse":
-        resolved_source: Literal["none", "xero"] = source or (
+        resolved_source: Literal["none", "xero", "quickbooks_online"] = source or (
             "xero" if xero_connected else "none"
         )
         return cls(

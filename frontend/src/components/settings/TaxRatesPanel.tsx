@@ -63,10 +63,14 @@ export function TaxRatesPanel({ canEdit = false }: TaxRatesPanelProps) {
     );
   }
 
-  if (source.adapterId === "xero") {
+  if (source.adapterId === "xero" || source.adapterId === "qbo") {
     return (
       <div data-testid="tax-rates-panel">
-        <XeroTaxRatesView canEdit={canEdit} payload={data ?? { tax_rates: [] }} />
+        <XeroTaxRatesView
+          adapterId={source.adapterId}
+          canEdit={canEdit}
+          payload={data ?? { tax_rates: [] }}
+        />
       </div>
     );
   }

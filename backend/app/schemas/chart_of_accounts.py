@@ -27,7 +27,7 @@ class ChartOfAccountsResponse(BaseModel):
     local_accounts: list[ChartOfAccountEntry] = Field(default_factory=list)
     platform_accounts: list[PlatformChartOfAccount] = Field(default_factory=list)
     xero_connected: bool = False
-    source: Literal["none", "xero"] = "none"
+    source: Literal["none", "xero", "quickbooks_online"] = "none"
     provider: BillProcessingTaxProvider | None = None
 
     @classmethod
@@ -55,7 +55,7 @@ class UpdateChartOfAccountsRequest(BaseModel):
 
 
 class UpsertXeroChartOfAccountRequest(BaseModel):
-    code: str = Field(..., min_length=1, max_length=10)
+    code: str = Field(..., min_length=1, max_length=32)
     name: str = Field(..., min_length=1, max_length=150)
     type: ChartOfAccountType
     sub_type: str = Field(..., min_length=1, max_length=32)

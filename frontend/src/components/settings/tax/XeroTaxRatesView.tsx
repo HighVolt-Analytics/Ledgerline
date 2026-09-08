@@ -16,10 +16,11 @@ import {
   useSyncTaxRates,
   useUpdateTaxRate,
 } from "@/hooks/useTaxRates";
-import { billProcessingTaxAdapter } from "@/lib/billProcessingTax";
+import { billProcessingTaxAdapter, type BillProcessingTaxAdapterId } from "@/lib/billProcessingTax";
 import { formatTaxPercent, taxRateTypeLabel } from "@/lib/taxRates";
 
 type XeroTaxRatesViewProps = {
+  adapterId?: BillProcessingTaxAdapterId;
   canEdit?: boolean;
   payload: TaxRatesPayload;
 };
@@ -28,9 +29,13 @@ function rateKey(row: OrgTaxRateRow): string {
   return row.xero_tax_type || row.id;
 }
 
-export function XeroTaxRatesView({ canEdit = false, payload }: XeroTaxRatesViewProps) {
+export function XeroTaxRatesView({
+  adapterId = "xero",
+  canEdit = false,
+  payload,
+}: XeroTaxRatesViewProps) {
   const { toast } = useToast();
-  const adapter = billProcessingTaxAdapter("xero");
+  const adapter = billProcessingTaxAdapter(adapterId);
   const createMutation = useCreateTaxRate();
   const updateMutation = useUpdateTaxRate();
   const deleteMutation = useDeleteTaxRate();
@@ -40,7 +45,9 @@ export function XeroTaxRatesView({ canEdit = false, payload }: XeroTaxRatesViewP
   const [pendingDelete, setPendingDelete] = useState<OrgTaxRateRow | null>(null);
   const rows = payload.tax_rates ?? [];
   const formBusy = createMutation.isPending || updateMutation.isPending;
-  const colCount = canEdit ? 5 : 3;
+  const allowWrite = canEdit && adapter.supportsWrite;
+  const allowCreate = canEdit && Boolean(adapter.supportsCreate ?? adapter.supportsWrite);
+  const colCount = allowWrite ? 5 : 3;
   const organisationName = payload.provider?.organisation_name ?? null;
 
   const closeForm = () => {
@@ -52,10 +59,10 @@ export function XeroTaxRatesView({ canEdit = false, payload }: XeroTaxRatesViewP
     try {
       if (editing) {
         await updateMutation.mutateAsync({ rateId: rateKey(editing), body: row });
-        toast({ title: "Tax rate updated in Xero" });
+        toast({ title: `Tax rate updated in ${adapter.name}` });
       } else {
         await createMutation.mutateAsync(row);
-        toast({ title: "Tax rate saved in Xero" });
+        toast({ title: `Tax rate saved in ${adapter.name}` });
       }
       closeForm();
     } catch (err) {
@@ -70,10 +77,10 @@ export function XeroTaxRatesView({ canEdit = false, payload }: XeroTaxRatesViewP
       toast({
         title: `Synced ${result.tax_rates.length} tax rate${
           result.tax_rates.length === 1 ? "" : "s"
-        } from Xero`,
+        } from ${adapter.name}`,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Could not sync tax rates from Xero";
+      const message = err instanceof Error ? err.message : `Could not sync tax rates from ${adapter.name}`;
       toast({ title: message, variant: "destructive" });
     }
   };
@@ -82,7 +89,7 @@ export function XeroTaxRatesView({ canEdit = false, payload }: XeroTaxRatesViewP
     if (!pendingDelete) return;
     try {
       await deleteMutation.mutateAsync(rateKey(pendingDelete));
-      toast({ title: "Tax rate deleted in Xero" });
+      toast({ title: `Tax rate deleted in ${adapter.name}` });
       setPendingDelete(null);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Could not delete tax rate";
@@ -126,10 +133,10 @@ export function XeroTaxRatesView({ canEdit = false, payload }: XeroTaxRatesViewP
           <thead>
             <tr className="border-b border-border text-left text-xs text-muted-foreground">
               <th className="px-3 py-2 font-medium">Display name</th>
-              {canEdit ? <th className="px-3 py-2 w-12 font-medium">Edit</th> : null}
+              {allowWrite ? <th className="px-3 py-2 w-12 font-medium">Edit</th> : null}
               <th className="px-3 py-2 font-medium">Tax type</th>
               <th className="px-3 py-2 font-medium">Rate</th>
-              {canEdit ? <th className="px-3 py-2 w-12 text-right font-medium"> </th> : null}
+              {allowWrite ? <th className="px-3 py-2 w-12 text-right font-medium"> </th> : null}
             </tr>
           </thead>
           <tbody>
@@ -155,7 +162,7 @@ export function XeroTaxRatesView({ canEdit = false, payload }: XeroTaxRatesViewP
                         </p>
                       </div>
                     </td>
-                    {canEdit ? (
+                    {allowWrite ? (
                       <td className="px-3 py-2">
                         <Button
                           type="button"
@@ -188,7 +195,7 @@ export function XeroTaxRatesView({ canEdit = false, payload }: XeroTaxRatesViewP
                       </Badge>
                     </td>
                     <td className="px-3 py-2 tnum">{formatTaxPercent(row.total_rate)}</td>
-                    {canEdit ? (
+                    {allowWrite ? (
                       <td className="px-3 py-2 text-right">
                         <Button
                           type="button"
@@ -222,7 +229,7 @@ export function XeroTaxRatesView({ canEdit = false, payload }: XeroTaxRatesViewP
         </table>
       </Card>
 
-      {canEdit ? (
+      {allowCreate ? (
         <Button
           type="button"
           variant="outline"
@@ -237,7 +244,7 @@ export function XeroTaxRatesView({ canEdit = false, payload }: XeroTaxRatesViewP
           <Plus className="mr-1 h-4 w-4" />
           Add tax rate
         </Button>
-      ) : (
+      ) : canEdit ? null : (
         <p className="text-sm text-muted-foreground">Only admins can edit tax rates.</p>
       )}
 
@@ -253,7 +260,7 @@ export function XeroTaxRatesView({ canEdit = false, payload }: XeroTaxRatesViewP
       <ConfirmDialog
         open={pendingDelete != null}
         title="Delete tax rate?"
-        description={`“${pendingDelete?.display_name ?? ""}” will be deleted in Xero as well as here.`}
+        description={`“${pendingDelete?.display_name ?? ""}” will be deleted in ${adapter.name} as well as here.`}
         confirmLabel="Delete"
         destructive
         busy={deleteMutation.isPending}

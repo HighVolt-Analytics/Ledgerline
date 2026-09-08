@@ -39,6 +39,7 @@ def _accounting_settings(monkeypatch: pytest.MonkeyPatch) -> None:
         "XERO_REDIRECT_URI",
         "http://localhost:8001/api/integrations/xero/callback",
     )
+    monkeypatch.setenv("QUICKBOOKS_ENABLED", "true")
     monkeypatch.setenv("QUICKBOOKS_CLIENT_ID", "qbo-client")
     monkeypatch.setenv("QUICKBOOKS_CLIENT_SECRET", "qbo-secret")
     monkeypatch.setenv(
@@ -89,6 +90,15 @@ def test_oauth_state_rejects_provider_mismatch() -> None:
 def test_provider_configured_flags() -> None:
     assert xero_configured()
     assert quickbooks_configured()
+
+
+def test_quickbooks_configured_respects_enabled_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("QUICKBOOKS_ENABLED", "false")
+    get_settings.cache_clear()
+    assert not quickbooks_configured()
+    get_settings.cache_clear()
 
 
 def test_build_connect_urls_include_provider_hosts() -> None:
@@ -204,6 +214,73 @@ async def test_disconnect_clears_only_current_tenant(db_session, client) -> None
     await db_session.refresh(connected)
     assert connected.status == AccountingIntegrationStatus.DISCONNECTED.value
     assert connected.access_token_encrypted is None
+
+
+@pytest.mark.asyncio
+async def test_quickbooks_connect_disconnects_xero(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    xero = AccountingIntegration(
+        tenant_id=TESTING_TENANT_UUID,
+        provider=AccountingProvider.XERO.value,
+        status=AccountingIntegrationStatus.CONNECTED.value,
+        display_name="Xero Org",
+        provider_tenant_id="xero-org",
+        access_token_encrypted=encrypt_secret("xero-token"),
+    )
+    db_session.add(xero)
+    await db_session.flush()
+
+    token_response = MagicMock()
+    token_response.status_code = 200
+    token_response.json.return_value = {
+        "access_token": "qbo-access",
+        "refresh_token": "qbo-refresh",
+        "expires_in": 3600,
+        "scope": "com.intuit.quickbooks.accounting",
+    }
+    company_response = MagicMock()
+    company_response.status_code = 200
+    company_response.json.return_value = {"CompanyInfo": {"CompanyName": "Sandbox Co"}}
+    empty_query = MagicMock()
+    empty_query.status_code = 200
+    empty_query.json.return_value = {"QueryResponse": {}}
+    empty_query.content = b"{}"
+
+    async def _get(url, *args, **kwargs):
+        if "query" in str(url):
+            return empty_query
+        return company_response
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=token_response)
+    mock_client.get = AsyncMock(side_effect=_get)
+    mock_client.delete = AsyncMock(return_value=MagicMock(status_code=204))
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    monkeypatch.setattr(
+        "app.services.integration.accounting_integration_service.httpx.AsyncClient",
+        lambda *args, **kwargs: mock_client,
+    )
+    monkeypatch.setattr(
+        "app.integrations.qbo.client.httpx.AsyncClient",
+        lambda *args, **kwargs: mock_client,
+    )
+
+    row = await complete_oauth_callback(
+        db_session,
+        provider=AccountingProvider.QUICKBOOKS_ONLINE.value,
+        code="code",
+        tenant_id=TESTING_TENANT_UUID,
+        user_id=1,
+        realm_id="934145000",
+    )
+    await db_session.refresh(xero)
+    assert row.status == AccountingIntegrationStatus.CONNECTED.value
+    assert xero.status == AccountingIntegrationStatus.DISCONNECTED.value
+    assert xero.access_token_encrypted is None
 
 
 @pytest.mark.asyncio

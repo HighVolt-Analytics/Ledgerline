@@ -772,6 +772,46 @@ export const api = {
       `/api/tenants/current/chart-of-accounts/xero/${encodeURIComponent(accountId)}/pull`,
       { method: "POST" }
     ),
+  createQboChartOfAccount: (body: {
+    code: string;
+    name: string;
+    type: string;
+    sub_type: string;
+    sub_ledgers?: { code: string; name: string; origin?: string }[];
+  }) =>
+    request<ChartOfAccountsPayload>("/api/tenants/current/chart-of-accounts/quickbooks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  updateQboChartOfAccount: (
+    accountId: string,
+    body: {
+      code: string;
+      name: string;
+      type: string;
+      sub_type: string;
+      sub_ledgers?: { code: string; name: string; origin?: string }[];
+    }
+  ) =>
+    request<ChartOfAccountsPayload>(
+      `/api/tenants/current/chart-of-accounts/quickbooks/${encodeURIComponent(accountId)}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }
+    ),
+  deleteQboChartOfAccount: (accountId: string) =>
+    request<ChartOfAccountsPayload>(
+      `/api/tenants/current/chart-of-accounts/quickbooks/${encodeURIComponent(accountId)}`,
+      { method: "DELETE" }
+    ),
+  pullQboChartOfAccount: (accountId: string) =>
+    request<ChartOfAccountsPayload>(
+      `/api/tenants/current/chart-of-accounts/quickbooks/${encodeURIComponent(accountId)}/pull`,
+      { method: "POST" }
+    ),
   getTaxRates: () => request<TaxRatesPayload>("/api/tenants/current/tax-rates"),
   syncTaxRates: () =>
     request<TaxRatesPayload>("/api/tenants/current/tax-rates/sync", { method: "POST" }),
@@ -1092,6 +1132,44 @@ export const api = {
     bustGetCacheByPrefix("/api/integrations/xero");
     return request<XeroSyncContactsResult>("/api/integrations/xero/sync/contacts", {
       method: "POST",
+    });
+  },
+  getQboContactsList: (params?: { search?: string; limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.search) qs.set("search", params.search);
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    if (params?.offset != null) qs.set("offset", String(params.offset));
+    const q = qs.toString();
+    return request<XeroMasterListMeta & { items: XeroContactRow[] }>(
+      `/api/integrations/quickbooks/contacts${q ? `?${q}` : ""}`
+    );
+  },
+  syncQboContacts: () => {
+    bustGetCacheByPrefix("/api/integrations/quickbooks");
+    return request<XeroSyncContactsResult>("/api/integrations/quickbooks/contacts/sync", {
+      method: "POST",
+    });
+  },
+  createQboContact: (body: {
+    legal_name: string;
+    entity_type?: "vendor" | "customer";
+    given_name?: string;
+    family_name?: string;
+    company_name?: string;
+    email?: string;
+    phone?: string;
+    tax_identifier?: string;
+  }) => {
+    bustGetCacheByPrefix("/api/integrations/quickbooks");
+    return request<{
+      created: boolean;
+      reused: boolean;
+      contact_id: string;
+      name?: string | null;
+    }>("/api/integrations/quickbooks/contacts/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
     });
   },
   getXeroAccounts: (params?: { search?: string; status?: string; limit?: number; offset?: number }) => {

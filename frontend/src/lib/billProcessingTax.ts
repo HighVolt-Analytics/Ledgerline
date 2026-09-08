@@ -11,12 +11,28 @@ export const BILL_PROCESSING_TAX_ADAPTERS = {
     name: "Xero",
     brandId: "xero" as IntegrationBrandId,
     supportsSync: true,
+    supportsWrite: true,
+    supportsCreate: true,
     description:
       "These rates match your connected Xero organisation. New and edited custom rates are written to Xero. Default Xero rates cannot be edited or deleted.",
     emptyRates: "No tax rates synced yet. Use the sync arrow to pull rates from Xero.",
     syncLabel: "Sync tax rates from Xero",
     syncingLabel: "Syncing tax rates from Xero…",
     lockedRateMessage: "This is a default Xero tax rate and cannot be changed.",
+  },
+  qbo: {
+    id: "qbo",
+    name: "QuickBooks",
+    brandId: "qbo" as IntegrationBrandId,
+    supportsSync: true,
+    supportsWrite: false,
+    supportsCreate: true,
+    description:
+      "These tax codes match your connected QuickBooks company. Add a code here to create it in QuickBooks (needs a tax agency in that company). Existing codes cannot be edited here.",
+    emptyRates: "No tax codes synced yet. Use the sync arrow to pull tax codes from QuickBooks.",
+    syncLabel: "Sync tax rates from QuickBooks",
+    syncingLabel: "Syncing tax rates from QuickBooks…",
+    lockedRateMessage: "QuickBooks tax codes are changed in QuickBooks, then synced here.",
   },
 } as const;
 
@@ -42,6 +58,10 @@ export function resolveBillProcessingTaxSource(
 
   if (providerId === "xero" || payload?.xero_connected) {
     return { kind: "adapter", adapterId: "xero" };
+  }
+
+  if (providerId === "quickbooks_online" || providerId === "qbo" || providerId === "quickbooks") {
+    return { kind: "adapter", adapterId: "qbo" };
   }
 
   if (providerId in BILL_PROCESSING_TAX_ADAPTERS) {

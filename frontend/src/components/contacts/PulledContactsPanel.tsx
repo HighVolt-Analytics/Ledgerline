@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import { Loader2, Plus, RefreshCw } from "lucide-react";
 import { useState } from "react";
 
-import { CreatePulledXeroContactDialog } from "@/components/contacts/CreatePulledXeroContactDialog";
+import { CreatePulledXeroContactDialog, type PulledContactDraft } from "@/components/contacts/CreatePulledXeroContactDialog";
 import { BillProcessingConnectionChip } from "@/components/settings/tax/BillProcessingConnectionChip";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -21,7 +21,7 @@ type PulledContactsPanelProps = {
 export function PulledContactsPanel({ canEdit = false }: PulledContactsPanelProps) {
   const { toast } = useToast();
   const {
-    xeroConnected,
+    connectedProvider,
     loading,
     status,
     contacts,
@@ -31,33 +31,39 @@ export function PulledContactsPanel({ canEdit = false }: PulledContactsPanelProp
   const syncMutation = useSyncPulledXeroContacts();
   const createMutation = useCreatePulledXeroContact();
   const [dialogOpen, setDialogOpen] = useState(false);
-  const organisationName = status?.xero.display_name ?? null;
+  const providerLabel = connectedProvider === "quickbooks" ? "QuickBooks" : "Xero";
+  const organisationName =
+    connectedProvider === "quickbooks"
+      ? status?.quickbooks_online.display_name ?? null
+      : status?.xero.display_name ?? null;
 
   const handleSync = async () => {
     try {
       const result = await syncMutation.mutateAsync();
       const count = result.contacts?.persisted_total ?? result.contact ?? 0;
       toast({
-        title: `Synced ${count} contact${count === 1 ? "" : "s"} from Xero`,
+        title: `Synced ${count} contact${count === 1 ? "" : "s"} from ${providerLabel}`,
       });
     } catch (err) {
       toast({
-        title: err instanceof Error ? err.message : "Could not sync contacts from Xero",
+        title: err instanceof Error ? err.message : `Could not sync contacts from ${providerLabel}`,
         variant: "destructive",
       });
     }
   };
 
-  const handleSave = async (name: string) => {
+  const handleSave = async (draft: PulledContactDraft) => {
     try {
-      const result = await createMutation.mutateAsync(name);
+      const result = await createMutation.mutateAsync(draft);
       toast({
-        title: result.reused ? "Contact already exists in Xero" : "Contact saved in Xero",
+        title: result.reused
+          ? `Contact already exists in ${providerLabel}`
+          : `Contact saved in ${providerLabel}`,
       });
       setDialogOpen(false);
     } catch (err) {
       toast({
-        title: err instanceof Error ? err.message : "Could not save contact in Xero",
+        title: err instanceof Error ? err.message : `Could not save contact in ${providerLabel}`,
         variant: "destructive",
       });
     }
@@ -71,21 +77,21 @@ export function PulledContactsPanel({ canEdit = false }: PulledContactsPanelProp
     );
   }
 
-  if (contactsError && !xeroConnected) {
+  if (contactsError && !connectedProvider) {
     return (
       <Card className="w-full p-6 text-sm text-destructive" data-testid="pulled-contacts-panel">
-        Could not load Xero connection status. Refresh the page or open Integrations.
+        Could not load accounting connection status. Refresh the page or open Integrations.
       </Card>
     );
   }
 
-  if (!xeroConnected) {
+  if (!connectedProvider) {
     return (
       <div className="w-full space-y-4" data-testid="pulled-contacts-panel">
         <h2 className="text-sm font-semibold">Pulled contacts</h2>
         <Card className="w-full p-8" data-testid="pulled-contacts-connect-note">
           <p className="text-center text-sm text-muted-foreground">
-            Connect Xero to view pulled contacts.{" "}
+            Connect Xero or QuickBooks to view pulled contacts.{" "}
             <Link to="/integrations" className="text-primary hover:underline">
               Open Integrations
             </Link>
@@ -109,8 +115,8 @@ export function PulledContactsPanel({ canEdit = false }: PulledContactsPanelProp
                 className="h-7 w-7 cursor-pointer text-muted-foreground"
                 onClick={() => void handleSync()}
                 disabled={syncMutation.isPending}
-                aria-label="Sync contacts from Xero"
-                title="Sync contacts from Xero"
+                aria-label={`Sync contacts from ${providerLabel}`}
+                title={`Sync contacts from ${providerLabel}`}
                 data-testid="button-sync-pulled-contacts"
               >
                 {syncMutation.isPending ? (
@@ -122,8 +128,8 @@ export function PulledContactsPanel({ canEdit = false }: PulledContactsPanelProp
             ) : null}
           </div>
           <BillProcessingConnectionChip
-            brandId="xero"
-            providerName="Xero"
+            brandId={connectedProvider === "quickbooks" ? "qbo" : "xero"}
+            providerName={providerLabel}
             organisationName={organisationName}
           />
           {canEdit ? (
@@ -140,7 +146,8 @@ export function PulledContactsPanel({ canEdit = false }: PulledContactsPanelProp
           ) : null}
         </div>
         <p className="mt-1 text-sm text-muted-foreground">
-          Names from the connected Xero organisation. Save creates the contact in Xero.
+          Names from the connected {providerLabel} organisation. Save creates the contact in{" "}
+          {providerLabel}.
         </p>
       </div>
 
@@ -163,18 +170,23 @@ export function PulledContactsPanel({ canEdit = false }: PulledContactsPanelProp
               {contacts.length === 0 ? (
                 <tr>
                   <td colSpan={2} className="px-3 py-8 text-center text-sm text-muted-foreground">
-                    No contacts pulled yet. Sync from Xero or add a name.
+                    No contacts pulled yet. Sync from {providerLabel} or add a name.
                   </td>
                 </tr>
               ) : (
                 contacts.map((row) => (
-                  <tr key={row.xero_contact_id} className="row-band border-b border-border/60">
+                  <tr
+                    key={row.xero_contact_id || row.qbo_entity_id || row.name}
+                    className="row-band border-b border-border/60"
+                  >
                     <td className="px-3 py-2">{row.name || "—"}</td>
                     <td className="px-3 py-2 text-muted-foreground">
                       {row.is_supplier && row.is_customer
                         ? "Supplier · Customer"
                         : row.is_supplier
-                          ? "Supplier"
+                          ? connectedProvider === "quickbooks"
+                            ? "Vendor"
+                            : "Supplier"
                           : row.is_customer
                             ? "Customer"
                             : "Contact"}
@@ -190,8 +202,9 @@ export function PulledContactsPanel({ canEdit = false }: PulledContactsPanelProp
       <CreatePulledXeroContactDialog
         open={dialogOpen}
         busy={createMutation.isPending}
+        provider={connectedProvider === "quickbooks" ? "quickbooks" : "xero"}
         onClose={() => setDialogOpen(false)}
-        onSave={(name) => void handleSave(name)}
+        onSave={(draft) => void handleSave(draft)}
       />
     </div>
   );

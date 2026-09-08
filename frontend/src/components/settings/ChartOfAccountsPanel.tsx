@@ -29,15 +29,24 @@ import {
   newChartOfAccountRow,
   normalizeChartOfAccountType,
   useChartOfAccountsWorkspace,
+  useCreateQboChartOfAccount,
   useCreateXeroChartOfAccount,
+  useDeleteQboChartOfAccount,
   useDeleteXeroChartOfAccount,
+  usePullQboChartOfAccount,
   usePullXeroChartOfAccount,
   useSaveChartOfAccounts,
   useSyncChartOfAccounts,
+  useUpdateQboChartOfAccount,
   useUpdateXeroChartOfAccount,
 } from "@/hooks/useChartOfAccounts";
 import { cn } from "@/lib/cn";
 import { newClientRowKey } from "@/lib/clientRowKey";
+import {
+  defaultQboAccountType,
+  normalizeQboAccountType,
+  qboAccountTypeOptions,
+} from "@/lib/qboAccountTypes";
 import { defaultXeroSubtype, normalizeXeroSubtype, xeroSubtypeOptions } from "@/lib/xeroAccountTypes";
 
 type SubLedgerRowLocal = SubLedgerRow & { _rowKey: string };
@@ -139,6 +148,11 @@ function ProviderTags({ providers }: { providers?: string[] }) {
             <IntegrationBrandIcon id="xero" size={12} />
             Xero
           </span>
+        ) : id === "quickbooks" || id === "quickbooks_online" || id === "qbo" ? (
+          <span key={id} className="inline-flex items-center gap-1 rounded-full border border-border px-1.5 py-0.5 text-[10px]">
+            <IntegrationBrandIcon id="qbo" size={12} />
+            QuickBooks
+          </span>
         ) : (
           <Badge key={id} variant="outline" className="text-[10px]">
             {id}
@@ -158,13 +172,21 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
   const updateXero = useUpdateXeroChartOfAccount();
   const deleteXero = useDeleteXeroChartOfAccount();
   const pullXero = usePullXeroChartOfAccount();
+  const createQbo = useCreateQboChartOfAccount();
+  const updateQbo = useUpdateQboChartOfAccount();
+  const deleteQbo = useDeleteQboChartOfAccount();
+  const pullQbo = usePullQboChartOfAccount();
   const [localRows, setLocalRows] = useState<ChartOfAccountRowLocal[]>([]);
   const [platformRows, setPlatformRows] = useState<PlatformRowLocal[]>([]);
   const [dirty, setDirty] = useState(false);
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
   const stagedRef = useRef<PlatformRowLocal[]>([]);
-  const xeroConnected = Boolean(data?.xero_connected);
-  const lockedMessage = "This is a default Xero account and cannot be changed.";
+  const isQbo = data?.source === "quickbooks_online";
+  const platformConnected = Boolean(data?.xero_connected) || isQbo;
+  const platformName = isQbo ? "QuickBooks" : "Xero";
+  const lockedMessage = isQbo
+    ? "This is a default QuickBooks account and cannot be changed."
+    : "This is a default Xero account and cannot be changed.";
 
   useEffect(() => {
     stagedRef.current = platformRows.filter((row) => row.staged);
@@ -260,11 +282,11 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
         code: row.code,
         name: row.name,
         type: row.type,
-        sub_type: defaultXeroSubtype(row.type),
+        sub_type: isQbo ? defaultQboAccountType(row.type) : defaultXeroSubtype(row.type),
         can_edit: true,
         can_delete: true,
         can_pull: false,
-        linked_providers: ["xero"],
+        linked_providers: isQbo ? ["quickbooks"] : ["xero"],
         subLedgers: row.subLedgers,
         status: "STAGED",
       },
@@ -304,13 +326,21 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
       code: row.code.trim(),
       name: row.name.trim(),
       type: row.type,
-      sub_type: normalizeXeroSubtype(row.type, row.sub_type),
+      sub_type: isQbo
+        ? normalizeQboAccountType(row.type, row.sub_type)
+        : normalizeXeroSubtype(row.type, row.sub_type),
       sub_ledgers: compactSubs(row.subLedgers),
     };
     try {
       if (row.staged) {
-        await createXero.mutateAsync(body);
-        toast({ title: "Account created in Xero" });
+        if (isQbo) await createQbo.mutateAsync(body);
+        else await createXero.mutateAsync(body);
+        toast({ title: `Account created in ${platformName}` });
+      } else if (isQbo) {
+        await updateQbo.mutateAsync({ accountId: row.xero_account_id, body });
+        toast({
+          title: row.can_edit === false ? "Sub-ledgers saved" : "Account updated in QuickBooks",
+        });
       } else {
         await updateXero.mutateAsync({ accountId: row.xero_account_id, body });
         toast({
@@ -320,7 +350,7 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
       onSaved?.();
     } catch (err) {
       toast({
-        title: err instanceof Error ? err.message : "Could not save Xero account",
+        title: err instanceof Error ? err.message : `Could not save ${platformName} account`,
         variant: "destructive",
       });
     }
@@ -427,14 +457,15 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
     </tr>
   );
 
-  const localColSpan = canEdit ? (xeroConnected ? 6 : 5) : 4;
+  const localColSpan = canEdit ? (platformConnected ? 6 : 5) : 4;
 
   return (
     <div className="w-full space-y-6" data-testid="chart-of-accounts-panel">
       <div>
         <h2 className="text-sm font-semibold">Chart of accounts</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Local GL accounts used for posting. Sub-ledgers stay in LedgerLink and are not sent to Xero.
+          Local GL accounts used for posting. Sub-ledgers stay in LedgerLink when Xero is connected.
+          When QuickBooks is connected, sub-ledgers are written as QuickBooks subaccounts.
         </p>
       </div>
 
@@ -446,7 +477,7 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
               <th className="px-2 py-2 font-medium">Code</th>
               <th className="px-3 py-2 font-medium">GL Account</th>
               <th className="px-3 py-2 font-medium">Type</th>
-              {canEdit && xeroConnected ? <th className="px-2 py-2 w-10 font-medium">Push</th> : null}
+              {canEdit && platformConnected ? <th className="px-2 py-2 w-10 font-medium">Push</th> : null}
               {canEdit ? <th className="px-3 py-2 w-10" /> : null}
             </tr>
           </thead>
@@ -454,8 +485,8 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
             {localRows.length === 0 ? (
               <tr>
                 <td colSpan={localColSpan} className="px-3 py-8 text-center text-sm text-muted-foreground">
-                  {xeroConnected
-                    ? "No local-only accounts. Parents that exist in Xero appear in the list below."
+                  {platformConnected
+                    ? `No local-only accounts. Parents that exist in ${platformName} appear in the list below.`
                     : "No accounts yet."}
                 </td>
               </tr>
@@ -535,7 +566,7 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
                           </Badge>
                         )}
                       </td>
-                      {canEdit && xeroConnected ? (
+                      {canEdit && platformConnected ? (
                         <td className="px-2 py-2">
                           <Button
                             type="button"
@@ -543,8 +574,8 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
                             size="icon"
                             className="h-8 w-8 cursor-pointer text-muted-foreground hover:text-foreground"
                             onClick={() => pushLocal(index)}
-                            aria-label={`Push ${row.name || row.code} to Xero`}
-                            title="Push to Xero"
+                            aria-label={`Push ${row.name || row.code} to ${platformName}`}
+                            title={`Push to ${platformName}`}
                             data-testid={`coa-push-${index}`}
                           >
                             <ArrowUpFromLine className="h-4 w-4" />
@@ -562,7 +593,7 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
                               setLocalRows((prev) => prev.filter((_, i) => i !== index));
                               setDirty(true);
                             }}
-                            disabled={!xeroConnected && localRows.length <= 1}
+                            disabled={!platformConnected && localRows.length <= 1}
                             aria-label="Remove account"
                           >
                             <Trash2 className="h-4 w-4" />
@@ -621,10 +652,10 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
         <p className="text-sm text-muted-foreground">Only admins can edit the chart of accounts.</p>
       )}
 
-      {xeroConnected ? (
-        <div className="space-y-3" data-testid="xero-chart-of-accounts">
+      {platformConnected ? (
+        <div className="space-y-3" data-testid="platform-chart-of-accounts">
           <div className="flex flex-wrap items-center gap-3">
-            <h2 className="text-sm font-semibold">Xero chart of accounts</h2>
+            <h2 className="text-sm font-semibold">{platformName} chart of accounts</h2>
             {canEdit ? (
               <Button
                 type="button"
@@ -633,30 +664,31 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
                 className="h-7 w-7 cursor-pointer text-muted-foreground"
                 onClick={() => {
                   void syncMutation.mutateAsync().then(
-                    () => toast({ title: "Synced accounts from Xero" }),
+                    () => toast({ title: `Synced accounts from ${platformName}` }),
                     (err: unknown) =>
                       toast({
-                        title: err instanceof Error ? err.message : "Could not sync from Xero",
+                        title: err instanceof Error ? err.message : `Could not sync from ${platformName}`,
                         variant: "destructive",
                       })
                   );
                 }}
                 disabled={syncMutation.isPending}
-                aria-label="Sync chart of accounts from Xero"
+                aria-label={`Sync chart of accounts from ${platformName}`}
                 data-testid="button-sync-chart-of-accounts"
               >
                 <RefreshCw className={syncMutation.isPending ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
               </Button>
             ) : null}
             <BillProcessingConnectionChip
-              brandId="xero"
-              providerName="Xero"
+              brandId={isQbo ? "qbo" : "xero"}
+              providerName={platformName}
               organisationName={data?.provider?.organisation_name}
             />
           </div>
           <p className="text-sm text-muted-foreground">
-            Exact copy of GL accounts in the connected Xero organisation. Assign a sub type, then Save to
-            write to Xero.
+            {isQbo
+              ? "Exact copy of GL accounts in the connected QuickBooks company. Sub-ledgers are QuickBooks subaccounts. Assign a type, then Save to write to QuickBooks."
+              : "Exact copy of GL accounts in the connected Xero organisation. Assign a sub type, then Save to write to Xero."}
           </p>
           <Card className="overflow-hidden">
             <table className="w-full text-sm">
@@ -676,7 +708,7 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
                 {platformRows.length === 0 ? (
                   <tr>
                     <td colSpan={canEdit ? 8 : 5} className="px-3 py-8 text-center text-sm text-muted-foreground">
-                      No Xero accounts yet. Use sync, or push a local account.
+                      No {platformName} accounts yet. Use sync, or push a local account.
                     </td>
                   </tr>
                 ) : (
@@ -750,7 +782,9 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
                                         ? {
                                             ...item,
                                             type: next,
-                                            sub_type: defaultXeroSubtype(next),
+                                            sub_type: isQbo
+                                              ? defaultQboAccountType(next)
+                                              : defaultXeroSubtype(next),
                                             dirty: true,
                                           }
                                         : item
@@ -769,7 +803,11 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
                           <td className="px-3 py-2">
                             {canEdit && !locked ? (
                               <Select
-                                value={normalizeXeroSubtype(row.type, row.sub_type)}
+                                value={
+                                  isQbo
+                                    ? normalizeQboAccountType(row.type, row.sub_type)
+                                    : normalizeXeroSubtype(row.type, row.sub_type)
+                                }
                                 onValueChange={(sub_type) =>
                                   setPlatformRows((prev) =>
                                     prev.map((item, i) =>
@@ -777,7 +815,9 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
                                     )
                                   )
                                 }
-                                options={xeroSubtypeOptions(row.type)}
+                                options={
+                                  isQbo ? qboAccountTypeOptions(row.type) : xeroSubtypeOptions(row.type)
+                                }
                                 className="w-full min-w-[8rem]"
                               />
                             ) : (
@@ -793,9 +833,15 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
                                 variant="ghost"
                                 size="icon"
                                 className="h-8 w-8 cursor-pointer text-muted-foreground disabled:opacity-40"
-                                disabled={row.staged || row.can_pull === false || pullXero.isPending}
+                                disabled={
+                                  row.staged ||
+                                  row.can_pull === false ||
+                                  pullXero.isPending ||
+                                  pullQbo.isPending
+                                }
                                 onClick={() => {
-                                  void pullXero.mutateAsync(row.xero_account_id).then(
+                                  const pull = isQbo ? pullQbo : pullXero;
+                                  void pull.mutateAsync(row.xero_account_id).then(
                                     () => toast({ title: "Account pulled into local chart of accounts" }),
                                     (err: unknown) =>
                                       toast({
@@ -823,9 +869,14 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
                                   variant="ghost"
                                   size="icon"
                                   className="h-8 w-8 cursor-pointer"
-                                  disabled={createXero.isPending || updateXero.isPending}
+                                  disabled={
+                                    createXero.isPending ||
+                                    updateXero.isPending ||
+                                    createQbo.isPending ||
+                                    updateQbo.isPending
+                                  }
                                   onClick={() => void savePlatformRow(index)}
-                                  aria-label="Save to Xero"
+                                  aria-label={`Save to ${platformName}`}
                                   data-testid={`coa-xero-save-${index}`}
                                 >
                                   <Save className="h-4 w-4" />
@@ -841,7 +892,9 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
                                 size="icon"
                                 className="h-8 w-8 text-muted-foreground hover:text-destructive"
                                 disabled={
-                                  (!row.staged && row.can_delete === false) || deleteXero.isPending
+                                  (!row.staged && row.can_delete === false) ||
+                                  deleteXero.isPending ||
+                                  deleteQbo.isPending
                                 }
                                 onClick={() => {
                                   if (row.staged) {
@@ -852,11 +905,18 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
                                     toast({ title: lockedMessage });
                                     return;
                                   }
-                                  void deleteXero.mutateAsync(row.xero_account_id).then(
-                                    () => toast({ title: "Account deleted in Xero and moved to local" }),
+                                  const remove = isQbo ? deleteQbo : deleteXero;
+                                  void remove.mutateAsync(row.xero_account_id).then(
+                                    () =>
+                                      toast({
+                                        title: `Account deleted in ${platformName} and moved to local`,
+                                      }),
                                     (err: unknown) =>
                                       toast({
-                                        title: err instanceof Error ? err.message : "Could not delete in Xero",
+                                        title:
+                                          err instanceof Error
+                                            ? err.message
+                                            : `Could not delete in ${platformName}`,
                                         variant: "destructive",
                                       })
                                   );
