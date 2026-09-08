@@ -601,7 +601,7 @@ export function Layout() {
   );
 
   const renderPrimarySection = (section: PrimarySection, iconOnly: boolean) => {
-    const { id, label, icon: Icon, iconTone, groups } = section;
+    const { id, label, icon: Icon, iconTone } = section;
     return (
       <div key={id} className="primary-sidebar__section">
         <button

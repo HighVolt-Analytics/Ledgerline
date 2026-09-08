@@ -507,7 +507,7 @@ export function BanksTab({ canEdit = true }: { canEdit?: boolean }) {
                         <Button
                           size="sm"
                           disabled={busy}
-                          variant={registering?.id === item.id ? "secondary" : "default"}
+                          variant={registering?.id === item.id ? "outline" : "default"}
                           onClick={() => openRegistration(item)}
                           data-testid={`pending-bank-register-${item.id}`}
                         >

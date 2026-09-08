@@ -438,7 +438,7 @@ export function MobileQuickActionsPanel({ canEdit = false }: MobileQuickActionsP
           {canEdit ? (
             <Button
               type="button"
-              variant="secondary"
+              variant="outline"
               onClick={openCreate}
               disabled={saving || pickerOptions.length === 0}
               data-testid="mobile-qa-add"
