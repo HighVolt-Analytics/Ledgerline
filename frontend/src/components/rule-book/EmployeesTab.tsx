@@ -7,7 +7,6 @@ import {
   Plus,
   Smartphone,
   Upload,
-  UserCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -25,10 +24,14 @@ import {
   useUpdateEmployeeMaster,
 } from "@/hooks/useMasterData";
 import { useRuleBookTeamExpensePosting } from "@/hooks/useRuleBookConfig";
+import { useTeamExpenseAdvanceSettlement } from "@/hooks/useTeamExpenseReports";
 import { ledgerExistsInCoa } from "@/lib/coaAccountOptions";
 import { useChartOfAccounts } from "@/hooks/useChartOfAccounts";
 import { cn } from "@/lib/cn";
+import { money, normalizeCurrencyCode, toNumber } from "@/lib/format";
+import { matchesListSearch } from "@/lib/listSearch";
 import type { EmployeeMaster } from "@/lib/v4RuleBookTypes";
+import { useInstitutionSettings } from "@/hooks/useInstitutionSettings";
 import { EmployeeDetailPanel } from "./EmployeeDetailPanel";
 import { EmployeeImportDialog } from "./EmployeeImportDialog";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -38,7 +41,13 @@ const EMPLOYEE_SECTIONS = [
   { value: "list", label: "Employee list", testid: "tab-employees-list" },
 ] as const;
 
+const LIST_VIEWS = [
+  { value: "details", label: "Employee details", testid: "employees-view-details" },
+  { value: "advance", label: "Advance details", testid: "employees-view-advance" },
+] as const;
+
 type EmployeeSection = (typeof EMPLOYEE_SECTIONS)[number]["value"];
+type ListView = (typeof LIST_VIEWS)[number]["value"];
 
 function cellText(value?: string | null) {
   return value?.trim() ?? "";
@@ -46,6 +55,11 @@ function cellText(value?: string | null) {
 
 function isPendingEmployee(emp: EmployeeMaster) {
   return emp.status === "Pending verification";
+}
+
+function employeeInitial(name: string) {
+  const ch = name.trim().charAt(0);
+  return ch ? ch.toUpperCase() : "?";
 }
 
 function StatusDot({ status }: { status: string }) {
@@ -62,20 +76,38 @@ function StatusDot({ status }: { status: string }) {
   );
 }
 
-export function EmployeesTab() {
+export function EmployeesTab({
+  initialSearchQuery = null,
+}: {
+  initialSearchQuery?: string | null;
+}) {
   const { toast } = useToast();
   const { permissions } = usePermissions();
   const canRevealBank = permissions?.can_reveal_bank === true;
   const canInviteMobile = permissions?.permissions?.["Manage Users"] === true;
   const [section, setSection] = useState<EmployeeSection>("list");
+  const [listView, setListView] = useState<ListView>("details");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [pinToTopId, setPinToTopId] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [revealBank, setRevealBank] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, EmployeeMaster>>({});
   const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set());
+  const listSearch = initialSearchQuery?.trim() ?? "";
 
   const { data: employees = [], isLoading } = useEmployeeMasters(true, revealBank && canRevealBank);
+  const { data: advanceRows = [], isLoading: advanceLoading } = useTeamExpenseAdvanceSettlement(
+    !isLoading
+  );
+  const { data: institution } = useInstitutionSettings(!isLoading);
+  const booksCurrency = normalizeCurrencyCode(institution?.currency) ?? "";
+  const advanceByEmployeeId = useMemo(() => {
+    const map = new Map<string, (typeof advanceRows)[number]>();
+    for (const row of advanceRows) {
+      map.set(row.employee_id, row);
+    }
+    return map;
+  }, [advanceRows]);
   const bankMasked = !revealBank;
   const toggleRevealBank = () => {
     if (!canRevealBank) return;
@@ -286,198 +318,299 @@ export function EmployeesTab() {
   };
 
   const listedEmployees = useMemo(() => {
-    if (!pinToTopId) return employees;
-    const idx = employees.findIndex((emp) => emp.id === pinToTopId);
-    if (idx <= 0) return employees;
-    return [employees[idx]!, ...employees.slice(0, idx), ...employees.slice(idx + 1)];
-  }, [employees, pinToTopId]);
+    const base = (() => {
+      if (!pinToTopId) return employees;
+      const idx = employees.findIndex((emp) => emp.id === pinToTopId);
+      if (idx <= 0) return employees;
+      return [employees[idx]!, ...employees.slice(0, idx), ...employees.slice(idx + 1)];
+    })();
+    if (!listSearch) return base;
+    return base.filter((emp) =>
+      matchesListSearch(
+        listSearch,
+        emp.name,
+        emp.email,
+        emp.role,
+        emp.department,
+        emp.location,
+        emp.status
+      )
+    );
+  }, [employees, pinToTopId, listSearch]);
 
   const pendingEmployees = useMemo(
-    () => employees.filter((emp) => isPendingEmployee(emp) && emp.id !== pinToTopId),
-    [employees, pinToTopId]
+    () =>
+      employees.filter(
+        (emp) =>
+          isPendingEmployee(emp) &&
+          emp.id !== pinToTopId &&
+          (!listSearch ||
+            matchesListSearch(
+              listSearch,
+              emp.name,
+              emp.email,
+              emp.role,
+              emp.department,
+              emp.location,
+              emp.status
+            ))
+      ),
+    [employees, pinToTopId, listSearch]
   );
 
-  const renderEmployeeTable = (rows: EmployeeMaster[], emptyLabel: string) => (
-    <Card className="p-0 overflow-hidden">
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-xs text-muted-foreground border-b border-border text-left">
-              <th className="px-3 py-2 font-medium">Employee</th>
-              <th className="px-3 py-2 font-medium">WhatsApp</th>
-              <th className="px-3 py-2 font-medium">Email</th>
-              <th className="px-3 py-2 font-medium">Department</th>
-              <th className="px-3 py-2 font-medium">Location</th>
-              <th className="px-3 py-2 font-medium">Supervisor 1</th>
-              <th className="px-3 py-2 font-medium">Supervisor 2</th>
-              <th className="px-3 py-2 font-medium">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
-              <tr>
-                <td colSpan={8} className="px-3 py-8 text-center text-sm text-muted-foreground">
-                  {emptyLabel}
-                </td>
+  const renderEmployeeTable = (rows: EmployeeMaster[], emptyLabel: string) => {
+    const showAdvance = listView === "advance";
+    const colCount = showAdvance ? 7 : 8;
+    const fmt = (value: number | string | null | undefined) =>
+      money(toNumber(value), booksCurrency);
+
+    return (
+      <Card className="p-0 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-xs text-muted-foreground border-b border-border text-left">
+                <th className="px-3 py-2 font-medium">Employee</th>
+                {showAdvance ? (
+                  <>
+                    <th className="px-3 py-2 font-medium text-right">Took</th>
+                    <th className="px-3 py-2 font-medium text-right">Used</th>
+                    <th className="px-3 py-2 font-medium text-right">Outstanding</th>
+                    <th className="px-3 py-2 font-medium text-right">Pending claims</th>
+                    <th className="px-3 py-2 font-medium text-right">Available</th>
+                  </>
+                ) : (
+                  <>
+                    <th className="px-3 py-2 font-medium">WhatsApp</th>
+                    <th className="px-3 py-2 font-medium">Email</th>
+                    <th className="px-3 py-2 font-medium">Department</th>
+                    <th className="px-3 py-2 font-medium">Location</th>
+                    <th className="px-3 py-2 font-medium">Supervisor 1</th>
+                    <th className="px-3 py-2 font-medium">Supervisor 2</th>
+                  </>
+                )}
+                <th className="px-3 py-2 font-medium">Status</th>
               </tr>
-            ) : (
-              rows.map((emp) => {
-                const open = expandedId === emp.id;
-                const draft = getDraft(emp);
-                const dirty = dirtyIds.has(emp.id);
-                const display = dirty ? draft : emp;
-                const role = display.role?.trim();
-                return (
-                  <Fragment key={emp.id}>
-                    <tr
-                      className="row-band border-b border-border/60 last:border-0 cursor-pointer hover:bg-muted/40"
-                      onClick={() => {
-                        if (open) closeEmployee(emp.id);
-                        else openEmployee(emp.id);
-                      }}
-                      data-testid={`employee-row-${emp.id}`}
-                    >
-                      <td className="px-3 py-2">
-                        <div className="flex items-center gap-1.5">
-                          {open ? (
-                            <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                          ) : (
-                            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                          )}
-                          <UserCircle className="h-4 w-4 text-muted-foreground shrink-0" />
-                          <span className="font-medium">
-                            {display.name}
-                            {dirty && (
-                              <span className="ml-2 text-[10px] ds-warning-text">
-                                unsaved
-                              </span>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={colCount}
+                    className="px-3 py-8 text-center text-sm text-muted-foreground"
+                  >
+                    {emptyLabel}
+                  </td>
+                </tr>
+              ) : (
+                rows.map((emp) => {
+                  const open = expandedId === emp.id;
+                  const draft = getDraft(emp);
+                  const dirty = dirtyIds.has(emp.id);
+                  const display = dirty ? draft : emp;
+                  const role = display.role?.trim();
+                  const float = advanceByEmployeeId.get(emp.id);
+                  const took = toNumber(float?.advance_taken);
+                  const used = toNumber(float?.advance_used);
+                  const outstanding = float
+                    ? toNumber(float.advance_ledger_balance)
+                    : toNumber(emp.advanceBalance);
+                  const pending = toNumber(float?.pending_against_advance);
+                  const available = float
+                    ? toNumber(float.available_advance)
+                    : Math.max(outstanding - pending, 0);
+                  const phone = cellText(display.whatsappNumber);
+                  return (
+                    <Fragment key={emp.id}>
+                      <tr
+                        className="row-band border-b border-border/60 last:border-0 cursor-pointer hover:bg-muted/40"
+                        onClick={() => {
+                          if (open) closeEmployee(emp.id);
+                          else openEmployee(emp.id);
+                        }}
+                        data-testid={`employee-row-${emp.id}`}
+                      >
+                        <td className="px-3 py-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            {open ? (
+                              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                            ) : (
+                              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                             )}
-                          </span>
-                        </div>
-                        {role ? (
-                          <span className="text-[11px] text-muted-foreground ml-9">{role}</span>
-                        ) : null}
-                      </td>
-                      <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">
-                        {cellText(display.whatsappNumber)}
-                      </td>
-                      <td className="px-3 py-2 text-xs text-muted-foreground max-w-[180px] truncate">
-                        {cellText(display.email)}
-                      </td>
-                      <td className="px-3 py-2 text-xs">{cellText(display.department)}</td>
-                      <td className="px-3 py-2 text-xs">{cellText(display.location)}</td>
-                      <td className="px-3 py-2 text-xs">{cellText(display.supervisor1)}</td>
-                      <td className="px-3 py-2 text-xs">{cellText(display.supervisor2)}</td>
-                      <td className="px-3 py-2">
-                        <StatusDot status={display.status} />
-                      </td>
-                    </tr>
-                    {open && (
-                      <tr>
-                        <td colSpan={8} className="p-0 border-b border-border">
-                          <EmployeeDetailPanel
-                            emp={draft}
-                            onChange={(patch) => patchDraft(emp.id, patch)}
-                            masked={bankMasked}
-                            onToggleMask={canRevealBank ? toggleRevealBank : undefined}
-                          />
-                          <div className="flex items-center justify-between gap-2 px-4 pb-4 bg-muted/20">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-8 px-2 text-xs text-muted-foreground hover:text-destructive"
-                              disabled={deleteMutation.isPending}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                remove(emp.id);
-                              }}
-                              data-testid={`remove-employee-${emp.id}`}
+                            <span
+                              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold text-foreground"
+                              aria-hidden
                             >
-                              Remove employee
-                            </Button>
-                            <div className="flex items-center gap-2">
-                              {canInviteMobile ? (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={
-                                  inviteMobileMutation.isPending || !cellText(display.email)
-                                }
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  inviteEmployeeToMobile(dirty ? draft : emp);
-                                }}
-                                data-testid={`invite-employee-mobile-${emp.id}`}
-                                title="Creates a Team User membership for mobile capture (/m)"
-                              >
-                                {inviteMobileMutation.isPending ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <>
-                                    <Smartphone className="h-3.5 w-3.5 mr-1" />
-                                    Invite to mobile
-                                  </>
-                                )}
-                              </Button>
-                              ) : null}
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={sendConfirmationMutation.isPending}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  sendEmployeeConfirmation(dirty ? draft : emp);
-                                }}
-                                data-testid={`send-employee-confirmation-${emp.id}`}
-                              >
-                                {sendConfirmationMutation.isPending ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <>
-                                    <Mail className="h-3.5 w-3.5 mr-1" />
-                                    {emp.confirmationSentAt ? "Resend confirmation" : "Send confirmation"}
-                                  </>
-                                )}
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  closeEmployee(emp.id);
-                                }}
-                              >
-                                Cancel
-                              </Button>
-                              <Button
-                                size="sm"
-                                disabled={!dirty || updateMutation.isPending}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  saveDraft(emp.id);
-                                }}
-                                data-testid={`save-employee-${emp.id}`}
-                              >
-                                {updateMutation.isPending ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  "Save employee"
-                                )}
-                              </Button>
+                              {employeeInitial(display.name)}
+                            </span>
+                            <div className="min-w-0">
+                              <div className="font-medium truncate">
+                                {display.name}
+                                {dirty ? (
+                                  <span className="ml-2 text-[10px] ds-warning-text">unsaved</span>
+                                ) : null}
+                              </div>
+                              <div className="text-[11px] text-muted-foreground truncate">
+                                {phone || role || "—"}
+                              </div>
                             </div>
                           </div>
                         </td>
+                        {showAdvance ? (
+                          <>
+                            <td className="px-3 py-2 text-right tnum whitespace-nowrap">
+                              {advanceLoading && !float ? "…" : fmt(took)}
+                            </td>
+                            <td className="px-3 py-2 text-right tnum whitespace-nowrap">
+                              {advanceLoading && !float ? "…" : fmt(used)}
+                            </td>
+                            <td className="px-3 py-2 text-right tnum whitespace-nowrap">
+                              {advanceLoading && !float ? (
+                                "…"
+                              ) : outstanding > 0 ? (
+                                <span className="inline-flex rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-300">
+                                  {fmt(outstanding)}
+                                </span>
+                              ) : (
+                                fmt(outstanding)
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-right tnum whitespace-nowrap text-muted-foreground">
+                              {advanceLoading && !float ? "…" : fmt(pending)}
+                            </td>
+                            <td className="px-3 py-2 text-right tnum whitespace-nowrap">
+                              {advanceLoading && !float ? "…" : fmt(available)}
+                            </td>
+                          </>
+                        ) : (
+                          <>
+                            <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">
+                              {phone || "—"}
+                            </td>
+                            <td className="px-3 py-2 text-xs text-muted-foreground max-w-[180px] truncate">
+                              {cellText(display.email)}
+                            </td>
+                            <td className="px-3 py-2 text-xs">{cellText(display.department)}</td>
+                            <td className="px-3 py-2 text-xs">{cellText(display.location)}</td>
+                            <td className="px-3 py-2 text-xs">{cellText(display.supervisor1)}</td>
+                            <td className="px-3 py-2 text-xs">{cellText(display.supervisor2)}</td>
+                          </>
+                        )}
+                        <td className="px-3 py-2">
+                          <StatusDot status={display.status} />
+                        </td>
                       </tr>
-                    )}
-                  </Fragment>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
-    </Card>
-  );
+                      {open && (
+                        <tr>
+                          <td colSpan={colCount} className="p-0 border-b border-border">
+                            <EmployeeDetailPanel
+                              emp={draft}
+                              onChange={(patch) => patchDraft(emp.id, patch)}
+                              masked={bankMasked}
+                              onToggleMask={canRevealBank ? toggleRevealBank : undefined}
+                              advanceFloat={float ?? null}
+                            />
+                            <div className="flex items-center justify-between gap-2 px-4 pb-4 bg-muted/20">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 px-2 text-xs text-muted-foreground hover:text-destructive"
+                                disabled={deleteMutation.isPending}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  remove(emp.id);
+                                }}
+                                data-testid={`remove-employee-${emp.id}`}
+                              >
+                                Remove employee
+                              </Button>
+                              <div className="flex items-center gap-2">
+                                {canInviteMobile ? (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={
+                                      inviteMobileMutation.isPending || !cellText(display.email)
+                                    }
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      inviteEmployeeToMobile(dirty ? draft : emp);
+                                    }}
+                                    data-testid={`invite-employee-mobile-${emp.id}`}
+                                    title="Creates a Team User membership for mobile capture"
+                                  >
+                                    {inviteMobileMutation.isPending ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <>
+                                        <Smartphone className="h-3.5 w-3.5 mr-1" />
+                                        Invite to mobile
+                                      </>
+                                    )}
+                                  </Button>
+                                ) : null}
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={sendConfirmationMutation.isPending}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    sendEmployeeConfirmation(dirty ? draft : emp);
+                                  }}
+                                  data-testid={`send-employee-confirmation-${emp.id}`}
+                                >
+                                  {sendConfirmationMutation.isPending ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <>
+                                      <Mail className="h-3.5 w-3.5 mr-1" />
+                                      {emp.confirmationSentAt
+                                        ? "Resend confirmation"
+                                        : "Send confirmation"}
+                                    </>
+                                  )}
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    closeEmployee(emp.id);
+                                  }}
+                                >
+                                  Cancel
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  disabled={!dirty || updateMutation.isPending}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    saveDraft(emp.id);
+                                  }}
+                                  data-testid={`save-employee-${emp.id}`}
+                                >
+                                  {updateMutation.isPending ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    "Save employee"
+                                  )}
+                                </Button>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    );
+  };
+
 
   if (isLoading) {
     return <CreationsEmployeesTabSkeleton />;
@@ -517,37 +650,91 @@ export function EmployeesTab() {
       />
 
       <PageTabPanel value="pending" active={section} className="mt-0 space-y-4">
+        <div className="flex justify-end">
+          <div
+            className="inline-flex flex-wrap gap-1 rounded-lg border border-border bg-card p-1"
+            role="tablist"
+            aria-label="Employee list view"
+            data-testid="employees-list-view-toggle"
+          >
+            {LIST_VIEWS.map((view) => (
+              <button
+                key={view.value}
+                type="button"
+                role="tab"
+                aria-selected={listView === view.value}
+                onClick={() => setListView(view.value)}
+                data-testid={view.testid}
+                className={cn(
+                  "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                  listView === view.value
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover-elevate"
+                )}
+              >
+                {view.label}
+              </button>
+            ))}
+          </div>
+        </div>
         {renderEmployeeTable(pendingEmployees, "No employees pending verification.")}
       </PageTabPanel>
 
       <PageTabPanel value="list" active={section} className="mt-0 space-y-4">
-        <div className="flex justify-end flex-wrap gap-2">
-          {canRevealBank ? (
-            <button
-              type="button"
-              onClick={toggleRevealBank}
-              className="text-xs text-muted-foreground hover:text-foreground self-center"
-              data-testid="toggle-bank-mask"
+        <div className="flex justify-between items-center flex-wrap gap-2">
+          <div
+            className="inline-flex flex-wrap gap-1 rounded-lg border border-border bg-card p-1"
+            role="tablist"
+            aria-label="Employee list view"
+            data-testid="employees-list-view-toggle"
+          >
+            {LIST_VIEWS.map((view) => (
+              <button
+                key={view.value}
+                type="button"
+                role="tab"
+                aria-selected={listView === view.value}
+                onClick={() => setListView(view.value)}
+                data-testid={view.testid}
+                className={cn(
+                  "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                  listView === view.value
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover-elevate"
+                )}
+              >
+                {view.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex justify-end flex-wrap gap-2">
+            {canRevealBank ? (
+              <button
+                type="button"
+                onClick={toggleRevealBank}
+                className="text-xs text-muted-foreground hover:text-foreground self-center"
+                data-testid="toggle-bank-mask"
+              >
+                {bankMasked ? "Show bank details" : "Hide bank details"}
+              </button>
+            ) : null}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setImportOpen(true)}
+              data-testid="button-import-employees"
             >
-              {bankMasked ? "Show bank details" : "Hide bank details"}
-            </button>
-          ) : null}
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setImportOpen(true)}
-            data-testid="button-import-employees"
-          >
-            <Upload className="h-4 w-4 mr-1" /> Import
-          </Button>
-          <Button
-            size="sm"
-            onClick={addEmployee}
-            disabled={createMutation.isPending}
-            data-testid="button-new-employee"
-          >
-            <Plus className="h-4 w-4 mr-1" /> New Employee
-          </Button>
+              <Upload className="h-4 w-4 mr-1" /> Import
+            </Button>
+            <Button
+              size="sm"
+              onClick={addEmployee}
+              disabled={createMutation.isPending}
+              data-testid="button-new-employee"
+            >
+              <Plus className="h-4 w-4 mr-1" /> New Employee
+            </Button>
+          </div>
         </div>
         {renderEmployeeTable(listedEmployees, "No employees in the list yet.")}
       </PageTabPanel>

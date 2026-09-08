@@ -815,7 +815,10 @@ async def my_permissions(
     ctx: AuthContext = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ) -> ApiEnvelope[PermissionsResponse]:
+    from app.tenant_settings import tenant_mobile_quick_actions
+
     modules = await enabled_modules_map(db, ctx.tenant_id)
+    tenant = await db.get(Tenant, ctx.tenant_id)
     return ApiEnvelope(
         data=PermissionsResponse(
             role=ctx.role,
@@ -823,6 +826,7 @@ async def my_permissions(
             permissions=permissions_for_context(ctx),
             enabled_modules=modules,
             can_reveal_bank=can_reveal_bank_details(ctx),
+            mobile_quick_actions=tenant_mobile_quick_actions(tenant),
         )
     )
 

@@ -63,6 +63,7 @@ export default defineConfig({
       "src/lib/uploadRouteFilter.test.ts",
       "src/lib/allDocumentsSummary.test.ts",
       "src/lib/allDocumentsDetailed.test.ts",
+      "src/lib/transactionAuth.test.ts",
       "src/lib/bankFeedCopy.test.ts",
       "src/lib/taxRates.test.ts",
       "src/lib/xeroAccountTypes.test.ts",

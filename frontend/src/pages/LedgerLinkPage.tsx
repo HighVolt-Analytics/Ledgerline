@@ -65,7 +65,7 @@ export function LedgerLinkPage() {
     return (
       <div>
         <PageHeader
-          title="Accounting"
+          title="Ledger Sync"
           subtitle="Reconcile double-entry postings, then export or push to your accounting system."
         />
         <p className="text-sm text-muted-foreground">Sign in to view accounting data.</p>
@@ -77,7 +77,7 @@ export function LedgerLinkPage() {
     return (
       <div>
         <PageHeader
-          title="Accounting"
+          title="Ledger Sync"
           subtitle="Reconcile double-entry postings, then export or push to your accounting system."
         />
         <PageLoader variant="table" />
@@ -89,7 +89,7 @@ export function LedgerLinkPage() {
     return (
       <div>
         <PageHeader
-          title="Accounting"
+          title="Ledger Sync"
           subtitle="Reconcile double-entry postings, then export or push to your accounting system."
         />
         <p className="text-sm text-destructive">
@@ -102,7 +102,7 @@ export function LedgerLinkPage() {
   return (
     <div>
       <PageHeader
-        title="Accounting"
+        title="Ledger Sync"
         subtitle="Reconcile double-entry postings, then export or push to your accounting system."
       >
         <PageTabs value={tab} onChange={changeTab} className="flex-wrap h-auto" tabs={LL_TABS} />

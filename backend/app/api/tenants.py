@@ -70,6 +70,7 @@ from app.services.tenant.tenant_setup_checklist_service import build_setup_check
 from app.jurisdiction.packs import jurisdiction_api_view, tenant_jurisdiction
 from app.tenant_settings import (
     DEFAULT_CURRENCY,
+    InvalidMobileQuickActionsError,
     default_institution_settings,
     institution_settings_view,
     merge_institution_settings,
@@ -78,6 +79,7 @@ from app.tenant_settings import (
     tenant_currency,
     tenant_industry,
     tenant_labor_rate_per_hour,
+    tenant_mobile_quick_actions,
     tenant_onboarding_completed,
     UnsupportedCurrencyError,
 )
@@ -149,6 +151,7 @@ def _institution_response(tenant: Tenant, *, has_ledger_activity: bool = False) 
         **juris,
         labor_rate_per_hour=tenant_labor_rate_per_hour(tenant),
         has_ledger_activity=has_ledger_activity,
+        mobile_quick_actions=tenant_mobile_quick_actions(tenant),
     )
 
 
@@ -659,6 +662,7 @@ async def update_institution_settings(
         and body.locale is None
         and body.custom_bundle_field_key is None
         and body.labor_rate_per_hour is None
+        and body.mobile_quick_actions is None
     ):
         raise HTTPException(400, "No settings to update")
 
@@ -674,6 +678,11 @@ async def update_institution_settings(
         )
 
     try:
+        mqa = (
+            body.mobile_quick_actions.model_dump(by_alias=True)
+            if body.mobile_quick_actions is not None
+            else None
+        )
         tenant.settings_json = merge_institution_settings(
             tenant.settings_json,
             country=body.country,
@@ -682,12 +691,15 @@ async def update_institution_settings(
             custom_bundle_field_key=body.custom_bundle_field_key,
             currency=body.currency,
             labor_rate_per_hour=body.labor_rate_per_hour,
+            mobile_quick_actions=mqa,
         )
         if body.currency is not None and str(body.currency).strip():
             from app.services.shared.currency_catalog_service import ensure_currency_row
 
             tenant.currency = await ensure_currency_row(db, body.currency)
     except UnsupportedCurrencyError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except InvalidMobileQuickActionsError as exc:
         raise HTTPException(400, str(exc)) from exc
 
     await db.commit()

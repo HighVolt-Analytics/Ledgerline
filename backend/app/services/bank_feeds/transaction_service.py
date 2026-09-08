@@ -65,6 +65,7 @@ async def list_transactions(
     bank_account_id: int,
     match_status: str | None = None,
     reconcile: bool = False,
+    reconciled: bool = False,
     date_from: date | None = None,
     date_to: date | None = None,
     page: int = 1,
@@ -80,6 +81,15 @@ async def list_transactions(
                 [
                     BankTxnMatchStatus.UNMATCHED.value,
                     BankTxnMatchStatus.SUGGESTED.value,
+                ]
+            )
+        )
+    elif reconciled:
+        filters.append(
+            BankTransaction.match_status.in_(
+                [
+                    BankTxnMatchStatus.MATCHED.value,
+                    BankTxnMatchStatus.POSTED.value,
                 ]
             )
         )

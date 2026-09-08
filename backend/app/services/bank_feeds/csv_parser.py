@@ -5,7 +5,6 @@ from __future__ import annotations
 import csv
 import io
 
-from app.models.bank_feed import BankTxnDirection
 from app.services.bank_feeds.parse_common import (
     CsvParseError,
     CsvParseResult,
@@ -36,7 +35,11 @@ __all__ = [
 
 
 def parse_canonical_bank_csv(content: bytes) -> CsvParseResult:
-    """Parse the fixed Phase-2 template. Encoding: UTF-8 (with BOM tolerated)."""
+    """Parse the fixed Phase-2 template. Encoding: UTF-8 (with BOM tolerated).
+
+    Leading metadata lines (e.g. ``Account Number: 123456789``) are skipped until
+    the canonical header row is found so bank identity can live above the grid.
+    """
     if not content or not content.strip():
         return CsvParseResult(rows=[], errors=[CsvParseError(0, "Uploaded file is empty")])
 
@@ -48,7 +51,28 @@ def parse_canonical_bank_csv(content: bytes) -> CsvParseResult:
             errors=[CsvParseError(0, "File must be UTF-8 encoded CSV")],
         )
 
-    reader = csv.DictReader(io.StringIO(text))
+    lines = text.splitlines()
+    header_idx: int | None = None
+    for i, line in enumerate(lines):
+        cols = [(c or "").strip() for c in next(csv.reader([line]), [])]
+        if all(h in cols for h in CANONICAL_HEADERS):
+            header_idx = i
+            break
+    if header_idx is None:
+        return CsvParseResult(
+            rows=[],
+            errors=[
+                CsvParseError(
+                    0,
+                    "Missing required columns: "
+                    + ", ".join(CANONICAL_HEADERS)
+                    + f". Expected: {', '.join(CANONICAL_HEADERS)}",
+                )
+            ],
+        )
+
+    body = "\n".join(lines[header_idx:])
+    reader = csv.DictReader(io.StringIO(body))
     if reader.fieldnames is None:
         return CsvParseResult(rows=[], errors=[CsvParseError(0, "CSV has no header row")])
 

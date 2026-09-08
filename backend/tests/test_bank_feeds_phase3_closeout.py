@@ -49,7 +49,7 @@ async def test_mutate_requires_post_privilege(
 
     create = await client.post(
         "/api/bank-feeds/accounts",
-        json={"name": "No Post", "currency": "AUD"},
+        json={"name": "No Post", "currency": "AUD", "account_number": "12345678", "coa_account_name": "Bank Account"},
     )
     assert create.status_code == 403
     assert "Post" in create.json()["detail"]
@@ -94,7 +94,7 @@ async def test_manual_match_audit_and_unmatch_rematch_remaining(
 
     acc = await client.post(
         "/api/bank-feeds/accounts",
-        json={"name": "Ops", "currency": "AUD"},
+        json={"name": "Ops", "currency": "AUD", "account_number": "12345678", "coa_account_name": "Bank Account"},
     )
     account_id = acc.json()["data"]["id"]
 
@@ -224,7 +224,7 @@ async def test_match_targets_filtered_by_bank_account_currency(
 
     acc = await client.post(
         "/api/bank-feeds/accounts",
-        json={"name": "AUD Ops", "currency": "AUD"},
+        json={"name": "AUD Ops", "currency": "AUD", "account_number": "12345678", "coa_account_name": "Bank Account"},
     )
     assert acc.status_code == 201, acc.text
     account_id = acc.json()["data"]["id"]

@@ -399,6 +399,13 @@ function fixFromIssueMessage(message: string, inv: Invoice): string | null {
     return "Sales register — link or upload the SO / DN, then reprocess";
   }
   if (
+    text.includes("possible duplicate") ||
+    text.includes("duplicate conflict") ||
+    text.includes("duplicate")
+  ) {
+    return "Open document — confirm it is unique, or mark as duplicate";
+  }
+  if (
     text.includes("approver") ||
     text.includes("approval") ||
     text.includes("sign-off") ||

@@ -389,8 +389,8 @@ export function BankFeedTxnDrawer({
                     </p>
                   ) : (
                     <p className="text-xs text-muted-foreground">
-                      Bank narration rules apply only while unmatched. Matching a payment
-                      or collection clears this category.
+                      Assign a category here while unmatched. Matching a payment or
+                      collection clears it.
                     </p>
                   )}
                   <div className="flex flex-wrap gap-2 items-center">

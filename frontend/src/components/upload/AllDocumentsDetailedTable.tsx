@@ -15,8 +15,6 @@ import {
   UploadColumnHeaderLink,
 } from "@/components/upload/CounterpartyCreationsLink";
 import {
-  DuplicatePossibleBadge,
-  NatureBadge,
   PaymentStatusPill,
   PipelineStatusBadge,
   RouteText,
@@ -33,6 +31,8 @@ import {
 } from "@/components/upload/UploadCellText";
 import { UploadColumnCell, UploadColumnProcessingIndicator } from "@/components/upload/UploadColumnCell";
 import { UploadDocumentRowActions } from "@/components/upload/UploadDocumentRowActions";
+import { TransactionAuthCell } from "@/components/upload/TransactionAuthCell";
+import { TransactionAuthDialog } from "@/components/upload/TransactionAuthDialog";
 import { InvoiceIssueHintIcon } from "@/components/inbox/InvoiceIssueHintIcon";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
@@ -42,14 +42,20 @@ import { useRuleBookDocumentTypes } from "@/hooks/useRuleBookConfig";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { UPLOAD_POLL_FAST_MS, UPLOAD_POLL_MS } from "@/lib/uploadPolling";
-import { duplicateCellValue, normalizeAuthSyncLabel } from "@/lib/allDocumentsDetailed";
+import {
+  isDuplicateNotificationRow,
+  normalizeAuthSyncLabel,
+} from "@/lib/allDocumentsDetailed";
 import {
   documentNature,
   formatDocDate,
   formatUploadedAt,
   postingStatusLabel,
+  toMatrixFlagType,
   toMatrixPaymentStatus,
+  allDocumentsActionIssues,
 } from "@/lib/allDocumentsSummary";
+import { buildTransactionAuthView, type TransactionAuthView } from "@/lib/transactionAuth";
 import { documentDisplayRef, money } from "@/lib/format";
 import { counterpartyName, glPostingApplicable, invoiceSourceKind, invoiceSourceLabel } from "@/lib/invoice";
 import { approveAndProcess } from "@/lib/invoiceActions";
@@ -107,18 +113,43 @@ function AuthSyncBadge({
   );
 }
 
+function duplicateIssueSummary(
+  inv: MatrixRow["invoice"],
+  matrixRow: MatrixRow,
+  cells: ReturnType<typeof stagesToCells>,
+  payment: ReturnType<typeof toMatrixPaymentStatus>,
+  nature: ReturnType<typeof documentNature>,
+  documentTypes: Parameters<typeof documentNature>[1]
+): { stage: null; message: string } | null {
+  const actionIssues = allDocumentsActionIssues({
+    inv,
+    flag: toMatrixFlagType(matrixRow.flag ?? "Clean"),
+    flagReason: matrixRow.flag_reason,
+    cells,
+    payment,
+    nature,
+    documentTypes,
+    conflictWith: matrixRow.conflict_with,
+    duplicateReviewSuggested: inv.duplicate_review_suggested,
+  });
+  const primary = actionIssues.primary;
+  if (!primary) return null;
+  return {
+    stage: null,
+    message: primary.detail ? `${primary.label}: ${primary.detail}` : primary.label,
+  };
+}
+
 function summaryPipelineModes(
   inv: MatrixRow["invoice"],
   documentTypes: Parameters<typeof documentNature>[1],
-  processingIds: ReadonlySet<number>,
-  nature: ReturnType<typeof documentNature>
+  processingIds: ReadonlySet<number>
 ) {
   const opts = { processingIds, documentTypes };
   return {
     active: isInvoicePipelineActive(inv, processingIds),
     type: uploadColumnDisplayMode(inv, "documentType", opts),
     route: uploadColumnDisplayMode(inv, "route", opts),
-    nature: valueOrProcessingMode(Boolean(nature), inv, processingIds),
     invoiceNo: uploadColumnDisplayMode(inv, "documentMeta", opts),
     counterparty: uploadColumnDisplayMode(inv, "counterparty", opts),
     invoiceDate: valueOrProcessingMode(Boolean(inv.invoice_date?.trim()), inv, processingIds),
@@ -144,6 +175,8 @@ export function AllDocumentsDetailedTable({
   emptyHint = "Upload files or capture documents from Email, WhatsApp, or Viber.",
   approvalBoardColumns = EMPTY_UPLOAD_APPROVAL_FILTER,
   onBoardCounts,
+  focusInvoiceId = null,
+  onFocusInvoiceConsumed,
 }: {
   onFlaggedCount?: (count: number) => void;
   onDocumentCount?: (count: number) => void;
@@ -160,6 +193,9 @@ export function AllDocumentsDetailedTable({
   emptyHint?: string;
   approvalBoardColumns?: Array<"review" | "processing" | "approved" | "rejected">;
   onBoardCounts?: (counts: UploadApprovalBoardCounts) => void;
+  /** Open document drawer from deep link (e.g. Notifications → Duplicate files). */
+  focusInvoiceId?: number | null;
+  onFocusInvoiceConsumed?: () => void;
 }) {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -180,6 +216,10 @@ export function AllDocumentsDetailedTable({
   const [drawerInitialTab, setDrawerInitialTab] = useState<InvoiceDrawerTab>("fields");
   const [processingIds, setProcessingIds] = useState<Set<number>>(() => new Set());
   const [busyActionId, setBusyActionId] = useState<number | null>(null);
+  const [authDialog, setAuthDialog] = useState<{
+    inv: Invoice;
+    auth: TransactionAuthView;
+  } | null>(null);
 
   const searchQuery = controlledSearch ?? localSearch;
   const setSearchQuery = onSearchChange ?? setLocalSearch;
@@ -188,6 +228,7 @@ export function AllDocumentsDetailedTable({
   const onFlaggedCountRef = useLatestRef(onFlaggedCount);
   const onDocumentCountRef = useLatestRef(onDocumentCount);
   const onBoardCountsRef = useLatestRef(onBoardCounts);
+  const onFocusInvoiceConsumedRef = useLatestRef(onFocusInvoiceConsumed);
   const quietAuthPending =
     captureSource === "email" || captureSource === "whatsapp" || captureSource === "viber" || captureSource === "slack";
 
@@ -202,6 +243,7 @@ export function AllDocumentsDetailedTable({
     setDrawerInitialTab("fields");
     setProcessingIds(new Set());
     setBusyActionId(null);
+    setAuthDialog(null);
     setLoading(true);
   });
 
@@ -211,8 +253,16 @@ export function AllDocumentsDetailedTable({
     setDrawerOpen(true);
   }
 
+  useEffect(() => {
+    if (focusInvoiceId == null || focusInvoiceId <= 0) return;
+    openInvoiceDrawer(focusInvoiceId, "fields");
+    onFocusInvoiceConsumedRef.current?.();
+  }, [focusInvoiceId]);
+
   const matrixQueryParams = useMemo(() => {
-    const params: Record<string, string> = {};
+    const params: Record<string, string> = {
+      matrix_filter: "exclude_duplicates",
+    };
     if (captureSource) params.capture_source = captureSource;
     if (routeTarget) params.route_target = routeTarget;
     if (debouncedSearch) params.q = debouncedSearch;
@@ -331,7 +381,10 @@ export function AllDocumentsDetailedTable({
     };
   }, [load, refreshRef]);
 
-  const rows = useMemo(() => sortMatrixRowsNewestFirst(matrixData), [matrixData]);
+  const rows = useMemo(
+    () => sortMatrixRowsNewestFirst(matrixData).filter((row) => !isDuplicateNotificationRow(row)),
+    [matrixData]
+  );
 
   const hasActiveProcessing = useMemo(
     () =>
@@ -363,8 +416,8 @@ export function AllDocumentsDetailedTable({
     return <CapturedDocumentsSkeleton rows={8} />;
   }
 
-  if (!loading && rows.length === 0) {
-    return (
+  const tableBody =
+    !loading && rows.length === 0 ? (
       <EmptyState
         className="all-docs-table-card"
         title={emptyTitle}
@@ -377,11 +430,7 @@ export function AllDocumentsDetailedTable({
           ) : undefined
         }
       />
-    );
-  }
-
-  return (
-    <>
+    ) : (
       <Card className="all-docs-table-card overflow-hidden" data-testid="all-documents-summary-table">
         {showSearchHeader ? (
           <div className="flex items-center px-3 sm:px-4 py-3 border-b border-border">
@@ -399,12 +448,19 @@ export function AllDocumentsDetailedTable({
           {rows.map((matrixRow) => {
             const inv = matrixRow.invoice;
             const docRef = documentDisplayRef(inv);
-            const dup = duplicateCellValue(matrixRow);
             const nature = documentNature(inv, documentTypes);
             const cells = stagesToCells(matrixRow.stages);
-            const posting = postingStatusLabel(inv, cells, documentTypes, nature);
-            const modes = summaryPipelineModes(inv, documentTypes, processingIds, nature);
-            return (
+                const payment = toMatrixPaymentStatus(matrixRow.payment_status);
+                const posting = postingStatusLabel(inv, cells, documentTypes, nature);
+                const modes = summaryPipelineModes(inv, documentTypes, processingIds);
+                const transactionAuth = buildTransactionAuthView({
+                  inv,
+                  matrixRow,
+                  cells,
+                  documentTypes,
+                  nature,
+                });
+                return (
               <button
                 key={inv.id}
                 type="button"
@@ -417,6 +473,12 @@ export function AllDocumentsDetailedTable({
                     <div className="font-medium tnum inline-flex items-center gap-1.5 min-w-0 max-w-full">
                       {modes.active ? <UploadColumnProcessingIndicator /> : null}
                       <span className="truncate">{docRef}</span>
+                    </div>
+                    <div className="text-[11px] text-muted-foreground mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                      {showUploadSource ? (
+                        <InboxSourceBadge kind={invoiceSourceKind(inv)} />
+                      ) : null}
+                      <span className="tnum">uploaded {formatUploadedAt(inv.created_at)}</span>
                     </div>
                     <div className="mt-1">
                       <UploadColumnCell mode={modes.type}>
@@ -432,34 +494,39 @@ export function AllDocumentsDetailedTable({
                       <UploadColumnCell mode={modes.invoiceDate}>
                         {formatDocDate(inv.invoice_date)}
                         {inv.due_date ? ` · due ${formatDocDate(inv.due_date)}` : ""}
-                        {` · uploaded ${formatUploadedAt(inv.created_at)}`}
                       </UploadColumnCell>
                     </div>
-                    <div className="text-[11px] text-muted-foreground mt-1 flex flex-wrap gap-2">
-                      {showUploadSource ? (
-                        <InboxSourceBadge kind={invoiceSourceKind(inv)} />
-                      ) : null}
-                      {dup.kind === "possible" ? (
-                        <span className="text-[#b05374] dark:text-[#e7b6c3]">
-                          Dup: {dup.label}
-                        </span>
-                      ) : dup.kind === "conflict" ? (
-                        <span>Dup: {dup.label}</span>
-                      ) : null}
-                    </div>
                   </div>
-                  <div className="shrink-0 tnum font-normal text-sm">
-                    <UploadColumnCell mode={modes.total} align="right">
-                      {money(inv.total, inv.currency)}
-                    </UploadColumnCell>
+                  <div className="shrink-0 flex flex-col items-end gap-1.5">
+                    <div className="tnum font-normal text-sm">
+                      <UploadColumnCell mode={modes.total} align="right">
+                        {money(inv.total, inv.currency)}
+                      </UploadColumnCell>
+                    </div>
+                    <span
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => e.stopPropagation()}
+                    >
+                      <InvoiceIssueHintIcon
+                        inv={inv}
+                        cells={cells}
+                        flagReason={matrixRow.flag_reason}
+                        issue={duplicateIssueSummary(
+                          inv,
+                          matrixRow,
+                          cells,
+                          payment,
+                          nature,
+                          documentTypes
+                        )}
+                        testId={`all-docs-issue-mobile-${docRef}`}
+                      />
+                    </span>
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5 mt-2">
                   <UploadColumnCell mode={modes.route}>
                     <RouteText inv={inv} documentTypes={documentTypes} />
-                  </UploadColumnCell>
-                  <UploadColumnCell mode={modes.nature}>
-                    <NatureBadge nature={nature} />
                   </UploadColumnCell>
                   <UploadColumnCell mode={modes.ledger}>
                     <InboxGlAccountBadge
@@ -467,6 +534,18 @@ export function AllDocumentsDetailedTable({
                       glPostingApplicable={glPostingApplicable(inv, documentTypes)}
                     />
                   </UploadColumnCell>
+                  <span
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => e.stopPropagation()}
+                  >
+                    <UploadColumnCell mode={modes.derived}>
+                      <TransactionAuthCell
+                        auth={transactionAuth}
+                        testId={`transaction-auth-mobile-${docRef}`}
+                        onOpen={() => setAuthDialog({ inv, auth: transactionAuth })}
+                      />
+                    </UploadColumnCell>
+                  </span>
                   <UploadColumnCell mode={modes.derived}>
                     <PipelineStatusBadge label={posting} />
                   </UploadColumnCell>
@@ -510,10 +589,9 @@ export function AllDocumentsDetailedTable({
                 {showUploadSource ? (
                   <th className="px-3 py-2 font-medium" title="Upload source">Upload source</th>
                 ) : null}
-                <th className="px-3 py-2 font-medium" title="Duplicate">Duplicate</th>
+                <th className="px-3 py-2 font-medium" title="When this document was uploaded">Uploaded</th>
                 <th className="px-3 py-2 font-medium" title="Type">Type</th>
                 <th className="px-3 py-2 font-medium" title="Route">Route</th>
-                <th className="px-3 py-2 font-medium" title="Nature">Nature</th>
                 <th className="px-3 py-2 font-medium" title="Invoice no.">Invoice no.</th>
                 <th className="px-3 py-2 font-medium" title="Counterparty">
                   <CounterpartyColumnHeaderLink label="Counterparty" />
@@ -522,21 +600,11 @@ export function AllDocumentsDetailedTable({
                 <th className="px-3 py-2 font-medium" title="Due date">Due date</th>
                 <th className="px-3 py-2 font-medium" title="Currency + amount">Currency + amount</th>
                 <th className="px-3 py-2 font-medium" title="Ledger">Ledger</th>
-                <th className="px-3 py-2 font-medium" title="Advance Auth">
-                  <UploadColumnHeaderLink
-                    label="Advance Auth"
-                    to="/team-expenses"
-                    hint="Click to go to Team Expenses"
-                    testId="matrix-advance-auth-header-link"
-                  />
-                </th>
-                <th className="px-3 py-2 font-medium" title="Budget auth">
-                  <UploadColumnHeaderLink
-                    label="Budget auth"
-                    to="/team-expenses"
-                    hint="Click to go to Team Expenses"
-                    testId="matrix-budget-auth-header-link"
-                  />
+                <th
+                  className="px-3 py-2 font-medium"
+                  title="Click a status to view Privilege, Advance, and Budget authorization"
+                >
+                  <span className="counterparty-creations-link font-medium">Transaction Auth</span>
                 </th>
                 <th className="px-3 py-2 font-medium" title="Posting">Posting</th>
                 <th className="px-3 py-2 font-medium" title="Payment auth">
@@ -548,11 +616,12 @@ export function AllDocumentsDetailedTable({
                   />
                 </th>
                 <th className="px-3 py-2 font-medium" title="Acc sync">Acc sync</th>
-                <th className="px-3 py-2 font-medium" title="When this document was uploaded">Uploaded</th>
-                <th className="px-3 py-2 font-medium" title="Actions">Actions</th>
+                <th className="px-3 py-2 font-medium" title="Row actions">
+                  Actions
+                </th>
                 <th
                   className="px-2 py-2 font-medium text-center w-10"
-                  title="Issue details — hover for how to resolve"
+                  title="Notifications — hover for issue and how to resolve"
                 >
                   i
                 </th>
@@ -562,12 +631,18 @@ export function AllDocumentsDetailedTable({
               {rows.map((matrixRow) => {
                 const inv = matrixRow.invoice;
                 const docRef = documentDisplayRef(inv);
-                const dup = duplicateCellValue(matrixRow);
                 const nature = documentNature(inv, documentTypes);
                 const cells = stagesToCells(matrixRow.stages);
                 const posting = postingStatusLabel(inv, cells, documentTypes, nature);
                 const payment = toMatrixPaymentStatus(matrixRow.payment_status);
-                const modes = summaryPipelineModes(inv, documentTypes, processingIds, nature);
+                const modes = summaryPipelineModes(inv, documentTypes, processingIds);
+                const transactionAuth = buildTransactionAuthView({
+                  inv,
+                  matrixRow,
+                  cells,
+                  documentTypes,
+                  nature,
+                });
 
                 return (
                   <tr
@@ -598,15 +673,10 @@ export function AllDocumentsDetailedTable({
                       </td>
                     ) : null}
                     <td className="px-3 py-2.5">
-                      {dup.kind === "empty" ? (
-                        <span className="text-muted-foreground text-xs">—</span>
-                      ) : dup.kind === "possible" ? (
-                        <UploadCellClip title={dup.label}>
-                          <DuplicatePossibleBadge label={dup.label} />
-                        </UploadCellClip>
-                      ) : (
-                        <UploadCellText value={dup.label} className="tnum text-xs font-medium" />
-                      )}
+                      <UploadCellText
+                        value={formatUploadedAt(inv.created_at)}
+                        className="tnum text-xs"
+                      />
                     </td>
                     <td className="px-3 py-2.5">
                       <UploadColumnCell mode={modes.type}>
@@ -619,13 +689,6 @@ export function AllDocumentsDetailedTable({
                       <UploadColumnCell mode={modes.route}>
                         <UploadCellClip>
                           <RouteText inv={inv} documentTypes={documentTypes} />
-                        </UploadCellClip>
-                      </UploadColumnCell>
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <UploadColumnCell mode={modes.nature}>
-                        <UploadCellClip title={nature ?? undefined}>
-                          <NatureBadge nature={nature} />
                         </UploadCellClip>
                       </UploadColumnCell>
                     </td>
@@ -664,30 +727,17 @@ export function AllDocumentsDetailedTable({
                         </UploadCellClip>
                       </UploadColumnCell>
                     </td>
-                    <td className="px-3 py-2.5">
+                    <td
+                      className="px-3 py-2.5"
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => e.stopPropagation()}
+                    >
                       <UploadColumnCell mode={modes.derived}>
-                        <UploadColumnCellLink
-                          to="/team-expenses"
-                          hint="Open Team Expenses"
-                          testId="matrix-advance-auth-cell-link"
-                        >
-                          <UploadCellClip title={normalizeAuthSyncLabel(matrixRow.advance_auth)}>
-                            <AuthSyncBadge label={matrixRow.advance_auth} />
-                          </UploadCellClip>
-                        </UploadColumnCellLink>
-                      </UploadColumnCell>
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <UploadColumnCell mode={modes.derived}>
-                        <UploadColumnCellLink
-                          to="/team-expenses"
-                          hint="Open Team Expenses"
-                          testId="matrix-budget-auth-cell-link"
-                        >
-                          <UploadCellClip title={normalizeAuthSyncLabel(matrixRow.budget_auth)}>
-                            <AuthSyncBadge label={matrixRow.budget_auth} />
-                          </UploadCellClip>
-                        </UploadColumnCellLink>
+                        <TransactionAuthCell
+                          auth={transactionAuth}
+                          testId={`transaction-auth-${docRef}`}
+                          onOpen={() => setAuthDialog({ inv, auth: transactionAuth })}
+                        />
                       </UploadColumnCell>
                     </td>
                     <td className="px-3 py-2.5">
@@ -720,12 +770,6 @@ export function AllDocumentsDetailedTable({
                         </UploadCellClip>
                       </UploadColumnCell>
                     </td>
-                    <td className="px-3 py-2.5">
-                      <UploadCellText
-                        value={formatUploadedAt(inv.created_at)}
-                        className="tnum text-xs"
-                      />
-                    </td>
                     <td
                       className="all-docs-actions-cell px-3 py-2.5"
                       onClick={(e) => e.stopPropagation()}
@@ -749,6 +793,14 @@ export function AllDocumentsDetailedTable({
                         inv={inv}
                         cells={cells}
                         flagReason={matrixRow.flag_reason}
+                        issue={duplicateIssueSummary(
+                          inv,
+                          matrixRow,
+                          cells,
+                          payment,
+                          nature,
+                          documentTypes
+                        )}
                         testId={`all-docs-issue-${docRef}`}
                       />
                     </td>
@@ -766,6 +818,11 @@ export function AllDocumentsDetailedTable({
           onPageChange={setPage}
         />
       </Card>
+    );
+
+  return (
+    <>
+      {tableBody}
 
       {drawerInvoiceId != null ? (
         <Suspense fallback={null}>
@@ -792,6 +849,13 @@ export function AllDocumentsDetailedTable({
           />
         </Suspense>
       ) : null}
+
+      <TransactionAuthDialog
+        open={authDialog != null}
+        inv={authDialog?.inv ?? null}
+        auth={authDialog?.auth ?? null}
+        onClose={() => setAuthDialog(null)}
+      />
     </>
   );
 }

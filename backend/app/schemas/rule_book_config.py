@@ -169,6 +169,7 @@ class BankDetails(BaseModel):
     account_number: str = ""
     account_name: str = ""
     bank_name: str = ""
+    pay_id: str | None = None
     swift: str | None = None
     iban: str | None = None
 

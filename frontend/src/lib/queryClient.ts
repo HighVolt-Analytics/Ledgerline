@@ -27,6 +27,7 @@ export function tenantQueryKey<const T extends readonly unknown[]>(
 const baseKeys = {
   navBadges: ["dashboard", "badges"] as const,
   notifications: ["notifications"] as const,
+  duplicateFileNotifications: ["notifications", "duplicate-files"] as const,
   dashboardOverview: (month: string, activityLimit: number) =>
     ["dashboard", "overview", month, activityLimit] as const,
   positionLiquidity: (period: string) => ["dashboard", "position-liquidity", period] as const,
@@ -113,6 +114,7 @@ const baseKeys = {
   bankFeedImports: ["bank-feeds", "imports"] as const,
   bankFeedTxnNotes: ["bank-feeds", "txn-notes"] as const,
   bankFeedUnsettled: ["bank-feeds", "unsettled"] as const,
+  bankFeedPendingAccounts: ["bank-feeds", "pending-accounts"] as const,
   walletSummary: ["payments", "wallet-summary"] as const,
   stripeAccount: ["stripeAccount"] as const,
   stripeBalance: ["stripeBalance"] as const,
@@ -140,6 +142,7 @@ const baseKeys = {
 export const queryKeys = {
   navBadges: () => tenantQueryKey(baseKeys.navBadges),
   notifications: () => tenantQueryKey(baseKeys.notifications),
+  duplicateFileNotifications: () => tenantQueryKey(baseKeys.duplicateFileNotifications),
   dashboardOverview: (month: string, activityLimit: number) =>
     tenantQueryKey(baseKeys.dashboardOverview(month, activityLimit)),
   positionLiquidity: (period: string) => tenantQueryKey(baseKeys.positionLiquidity(period)),
@@ -270,6 +273,8 @@ export const queryKeys = {
     tenantQueryKey([...baseKeys.bankFeedTxnNotes, transactionId ?? "none"] as const),
   bankFeedUnsettled: (page: number, pageSize = 50) =>
     tenantQueryKey([...baseKeys.bankFeedUnsettled, page, pageSize] as const),
+  bankFeedPendingAccounts: () =>
+    tenantQueryKey([...baseKeys.bankFeedPendingAccounts] as const),
   walletSummary: () => tenantQueryKey(baseKeys.walletSummary),
   stripeAccount: () => tenantQueryKey(baseKeys.stripeAccount),
   stripeBalance: () => tenantQueryKey(baseKeys.stripeBalance),

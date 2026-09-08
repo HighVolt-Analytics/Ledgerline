@@ -11,7 +11,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/app.css?v=cap-tight1">
+<link rel="stylesheet" href="css/app.css?v=mqa-shell-x1">
 <link rel="icon" type="image/png" href="../ledgerlink-favicon.png">
 <link rel="apple-touch-icon" href="../ledgerlink-favicon.png">
 <script>
@@ -50,7 +50,6 @@
               </div>
               <div class="nav-large">
                 <h1 id="greeting">Good morning</h1>
-                <div class="sub" id="homeSub">—</div>
               </div>
             </header>
             <div class="body" data-scroll>
@@ -61,22 +60,25 @@
 
               <!-- Employee panel -->
               <div data-role-panel="employee">
-                <div class="sect-h">My quarter budget</div>
-                <div class="card">
+                <div class="sect-h">My budget
+                  <button type="button" class="budget-line-btn" id="budgetLineBtn" aria-haspopup="listbox" aria-expanded="false" aria-label="Select budget line">
+                    <span id="budgetLineLabel">All</span>
+                    <svg width="10" height="6" viewBox="0 0 10 6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 1.2 5 5l4-3.8"/></svg>
+                  </button>
+                </div>
+                <div class="card" id="budgetCard" role="button" tabindex="0" aria-label="Open budget analysis">
                   <div class="budget">
                     <div class="ring" id="budgetRing"></div>
                     <div class="budget-meta">
                       <div class="kv"><span class="k">Remaining</span><span class="v big amt" id="budRem">—</span></div>
-                      <div class="kv"><span class="k">Claimed</span><span class="v amt" id="budUsed">—</span></div>
-                      <div class="kv"><span class="k">Allocated</span><span class="v amt" id="budAlloc">—</span></div>
-                      <div class="kv"><span class="k">Approved &amp; paid</span><span class="v amt" id="budApp">—</span></div>
+                      <div class="kv"><span class="k">Spent</span><span class="v amt" id="budApp">—</span></div>
                     </div>
                   </div>
                 </div>
 
                 <div class="sect-h">Advance outstanding</div>
                 <div class="card adv-card" id="advCardWrap">
-                  <button class="pad" id="advCard" style="width:100%;text-align:left" aria-label="Open advances">
+                  <button type="button" class="pad" id="advCard" aria-label="Open advance analysis">
                     <div style="flex:1;min-width:0">
                       <div style="display:flex;align-items:baseline;gap:8px">
                         <span class="amt" id="advAmt" style="font-size:26px;font-weight:650;letter-spacing:-.03em">—</span>
@@ -90,29 +92,14 @@
                   </button>
                 </div>
 
-                <div class="sect-h">Quick actions</div>
-                <div class="quick">
-                  <button class="qa" data-go="capture">
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h1.7l1.1-1.8h6.4L15.8 6h2.7A2.5 2.5 0 0 1 21 8.5v8A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5v-8Z"/><circle cx="12" cy="12.4" r="3.4"/></svg>
-                    Capture
-                  </button>
-                  <button class="qa" data-go="items" data-subtab="claims">
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8.5L19 7.5V21H6z"/><path d="M14 3v5h5M9 12.5h6M9 16h4"/></svg>
-                    Claim
-                  </button>
-                  <button class="qa" id="qaAdvance">
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2.4"/><circle cx="12" cy="12" r="2.6"/><path d="M6.5 12h.01M17.5 12h.01"/></svg>
-                    Advance
-                  </button>
-                  <button class="qa" data-go="approvals">
+                <div class="sect-h" id="qaSectH">Quick actions</div>
+                <div class="quick" id="qaGrid">
+                  <button class="qa" data-go="approvals" data-qa="approvals" type="button">
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5h11M4 12h11M4 17.5h7"/><path d="M17.5 16.6l2 2 3.2-4"/></svg>
                     Approvals
                     <span class="badge" id="qaBadge" style="display:none">0</span>
                   </button>
                 </div>
-
-                <div class="sect-h">Recent activity<span class="r" id="actCount">0 items</span></div>
-                <div class="rows" id="activityRows"></div>
               </div>
 
               <!-- Approver panel -->
@@ -129,7 +116,7 @@
                   </div>
                 </div>
 
-                <div class="sect-h">Your spend vs budget<span class="r">This quarter</span></div>
+                <div class="sect-h">Your budget</div>
                 <div class="card" id="teamRows"></div>
 
                 <div style="padding:16px 16px 0"><button class="btn" data-go="approvals">Open approvals inbox</button></div>
@@ -152,12 +139,6 @@
                 <button type="button" data-path="fill">Fill form</button>
               </div>
               <div id="capScanPanel" class="cap-scan">
-                <div class="cam-intent" id="capIntent" role="group" aria-label="Route as">
-                  <span class="cam-intent-label">Route as</span>
-                  <button type="button" class="active" data-intent="expense_claim">Claim</button>
-                  <button type="button" data-intent="advance_requisition">Advance</button>
-                  <button type="button" data-intent="vendor_invoice">Vendor</button>
-                </div>
                 <p class="cam-hint" id="camHint">Hold steady, then tap the shutter.</p>
                 <div class="viewfinder">
                   <video id="capVideo" class="cap-video" playsinline muted autoplay></video>
@@ -175,6 +156,7 @@
                 </div>
                 <div id="capPageStrip" class="cap-page-strip" hidden></div>
                 <div class="cam-bottom">
+                  <div class="chip-bar cam-route-bar" id="capIntent" role="group" aria-label="Form" hidden></div>
                   <div class="cam-modes" role="group" aria-label="Capture style">
                     <button type="button" class="active" data-mode="invoice">Document</button>
                     <button type="button" data-mode="receipt">Receipt</button>
@@ -228,7 +210,7 @@
               </div>
               <div class="nav-large">
                 <h1>Approvals</h1>
-                <div class="sub" id="apSub">8 items · A$96,340 · 2 overdue SLA</div>
+                <div class="sub" id="apSub">Loading queue…</div>
               </div>
             </header>
             <div class="body" data-scroll>
@@ -240,10 +222,7 @@
                 </button>
               </div>
               <div class="chip-bar" id="apChips">
-                <button class="fchip" aria-pressed="false" data-f="all">All</button>
-                <button class="fchip" aria-pressed="false" data-f="exception">Exceptions</button>
-                <button class="fchip" aria-pressed="false" data-f="overdue">Overdue SLA</button>
-                <button class="fchip" aria-pressed="false" data-f="advance">Advances</button>
+                <button class="fchip" aria-pressed="true" data-f="all">All</button>
               </div>
               <div id="apList"></div>
             </div>
@@ -271,7 +250,8 @@
             <div class="body no-tab" data-scroll id="detailBody"></div>
             <div class="footer-actions">
               <button class="btn sm sec" id="dReject" style="flex:1;color:var(--neg)">Reject</button>
-              <button class="btn sm pos" id="dApprove" style="flex:1.4">Approve</button>
+              <button class="btn sm sec" id="dEscalate" style="flex:1">Escalate</button>
+              <button class="btn sm pos" id="dApprove" style="flex:1.2">Approve</button>
             </div>
           </section>
 
@@ -285,20 +265,33 @@
               </div>
             </header>
             <div class="body" data-scroll>
-              <div class="subtabs" id="itemTabs" role="group" aria-label="Item type">
-                <button class="active" data-t="claims">Claims</button>
-                <button data-t="invoices">Invoices</button>
-                <button data-t="advances">Advances</button>
+              <div class="item-filter">
+                <div class="item-filter-label">Filter by form</div>
+                <div class="chip-bar item-chip-bar" id="itemTabs" role="group" aria-label="Filter by form"></div>
               </div>
               <div id="itemsList"></div>
             </div>
           </section>
 
-          <!-- ---------------- FILES ---------------- -->
-          <section class="screen" data-screen="files" aria-label="Files">
+          <!-- ---------------- HISTORY ---------------- -->
+          <section class="screen" data-screen="history" aria-label="History">
+            <header class="nav">
+              <div class="nav-compact"><span class="title">History</span></div>
+              <div class="nav-large">
+                <h1>History</h1>
+                <div class="sub" id="historySub">Your claims and advances</div>
+              </div>
+            </header>
+            <div class="body" data-scroll>
+              <div class="rows" id="historyList"></div>
+            </div>
+          </section>
+
+          <!-- ---------------- ANALYSIS (files vault) ---------------- -->
+          <section class="screen" data-screen="files" aria-label="Analysis">
             <header class="nav">
               <div class="nav-compact">
-                <span class="title">Files</span>
+                <span class="title">Analysis</span>
                 <div class="nav-right">
                   <button class="nav-btn" id="viewToggle" aria-label="Switch to list view">
                     <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 5h14M3 10h14M3 15h14"/></svg>
@@ -306,8 +299,8 @@
                 </div>
               </div>
               <div class="nav-large">
-                <h1>Files</h1>
-                <div class="sub" id="filesSub">46,281 documents in vault · AES-256 encrypted</div>
+                <h1>Analysis</h1>
+                <div class="sub" id="filesSub">Documents in vault · AES-256 encrypted</div>
               </div>
             </header>
             <div class="body" data-scroll>
@@ -348,11 +341,44 @@
                 </div>
               </div>
 
-              <div class="sect-h tight">Entity</div>
+              <div class="sect-h tight">Account</div>
               <div class="rows">
-                <button class="row" id="entityRow">
+                <button type="button" class="row" id="entityRow">
                   <div class="main"><div class="t" id="entityTitle">—</div><div class="s" id="entitySub">—</div></div>
                   <span class="r" id="entitySwitchLabel">Switch</span>
+                  <svg class="chev" width="9" height="15" viewBox="0 0 9 15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M1.4 1.4 7 7.5l-5.6 6.1"/></svg>
+                </button>
+                <button type="button" class="row" id="profOrgRow">
+                  <div class="main"><div class="t">Organisation details</div><div class="s" id="profOrgSub">—</div></div>
+                  <svg class="chev" width="9" height="15" viewBox="0 0 9 15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M1.4 1.4 7 7.5l-5.6 6.1"/></svg>
+                </button>
+                <button type="button" class="row" id="profConfirmRow">
+                  <div class="main"><div class="t">Confirmation</div><div class="s" id="profConfirmSub">Loading…</div></div>
+                  <span class="chip" id="profConfirmChip">—</span>
+                  <svg class="chev" width="9" height="15" viewBox="0 0 9 15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M1.4 1.4 7 7.5l-5.6 6.1"/></svg>
+                </button>
+                <button type="button" class="row" id="profPhonesRow">
+                  <div class="main"><div class="t">Phone numbers</div><div class="s" id="profPhonesSub">—</div></div>
+                  <svg class="chev" width="9" height="15" viewBox="0 0 9 15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M1.4 1.4 7 7.5l-5.6 6.1"/></svg>
+                </button>
+                <button type="button" class="row" id="profBankRow">
+                  <div class="main"><div class="t">Bank account &amp; PayID</div><div class="s" id="profBankSub">—</div></div>
+                  <svg class="chev" width="9" height="15" viewBox="0 0 9 15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M1.4 1.4 7 7.5l-5.6 6.1"/></svg>
+                </button>
+              </div>
+
+              <div class="sect-h">Preferences</div>
+              <div class="rows">
+                <button type="button" class="row" id="profApprovalsRow">
+                  <div class="main"><div class="t">Approvals</div><div class="s" id="profApprovalsSub">Delegation &amp; auto-approve</div></div>
+                  <svg class="chev" width="9" height="15" viewBox="0 0 9 15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M1.4 1.4 7 7.5l-5.6 6.1"/></svg>
+                </button>
+                <button type="button" class="row" id="profNotifyRow">
+                  <div class="main"><div class="t">Notifications</div><div class="s" id="profNotifySub">Alerts &amp; digests</div></div>
+                  <svg class="chev" width="9" height="15" viewBox="0 0 9 15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M1.4 1.4 7 7.5l-5.6 6.1"/></svg>
+                </button>
+                <button type="button" class="row" id="profSyncRow">
+                  <div class="main"><div class="t">Sync</div><div class="s" id="profSyncSub">Offline queue &amp; ledger</div></div>
                   <svg class="chev" width="9" height="15" viewBox="0 0 9 15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M1.4 1.4 7 7.5l-5.6 6.1"/></svg>
                 </button>
               </div>
@@ -362,50 +388,6 @@
                 <button type="button" data-appear="auto" class="active">Auto</button>
                 <button type="button" data-appear="light">Light</button>
                 <button type="button" data-appear="dark">Dark</button>
-              </div>
-
-              <div class="sect-h">Approvals</div>
-              <div class="rows">
-                <div class="row">
-                  <div class="main"><div class="t">Delegate my approvals</div><div class="s" id="delSub">Off · queue stays with you</div></div>
-                  <button class="sw" id="swDelegate" role="switch" aria-checked="false" aria-pressed="false" aria-label="Delegate my approvals"><i></i></button>
-                </div>
-                <button class="row" id="delegateTo">
-                  <div class="main"><div class="t">Delegate to</div><div class="s" id="delTo">Aisha Karim · Sales</div></div>
-                  <svg class="chev" width="9" height="15" viewBox="0 0 9 15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M1.4 1.4 7 7.5l-5.6 6.1"/></svg>
-                </button>
-                <div class="row">
-                  <div class="main"><div class="t">Auto-approve under A$250</div><div class="s">Policy-compliant claims only</div></div>
-                  <button class="sw" role="switch" aria-checked="true" aria-pressed="true" aria-label="Auto-approve under A$250"><i></i></button>
-                </div>
-              </div>
-
-              <div class="sect-h">Notifications</div>
-              <div class="rows">
-                <div class="row">
-                  <div class="main"><div class="t">SLA breach alerts</div><div class="s">Push · immediate</div></div>
-                  <button class="sw" role="switch" aria-checked="true" aria-pressed="true" aria-label="SLA breach alerts"><i></i></button>
-                </div>
-                <div class="row">
-                  <div class="main"><div class="t">Daily approval digest</div><div class="s">Weekdays 8:00 am AEST</div></div>
-                  <button class="sw" role="switch" aria-checked="true" aria-pressed="true" aria-label="Daily approval digest"><i></i></button>
-                </div>
-                <div class="row">
-                  <div class="main"><div class="t">Budget threshold at 90%</div><div class="s">Push and email</div></div>
-                  <button class="sw" role="switch" aria-checked="false" aria-pressed="false" aria-label="Budget threshold alerts"><i></i></button>
-                </div>
-              </div>
-
-              <div class="sect-h">Sync</div>
-              <div class="rows">
-                <div class="row">
-                  <div class="main"><div class="t">Offline queue</div><div class="s" id="offlineSub">2 captures waiting for Wi-Fi</div></div>
-                  <span class="chip warn">Queued</span>
-                </div>
-                <div class="row">
-                  <div class="main"><div class="t">Ledger sync</div><div class="s">Xero · last sync 9:38 am · 99.1% success</div></div>
-                  <span class="chip pos">Healthy</span>
-                </div>
               </div>
 
               <div style="padding:18px 16px 8px"><button class="btn sec sm" id="signOut">Sign out</button></div>
@@ -418,28 +400,34 @@
         </main>
 
         <!-- ---------------- TAB BAR ---------------- -->
+        <!-- Employee order: Home · My items · Capture · History · Analysis
+             Approver order: Home · Approvals · Capture · History · Analysis -->
         <nav class="tabbar" id="tabbar" aria-label="Main">
-          <button class="tab active" data-tab="home">
+          <button class="tab active" data-tab="home" style="order:1">
             <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 10.4 12 4l8.5 6.4V20H3.5z"/><path d="M9.6 20v-5.6h4.8V20"/></svg>
             Home
           </button>
-          <button class="tab" data-tab="approvals">
-            <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5h11M4 12h11M4 17.5h7"/><path d="M17.5 16.6l2 2 3.2-4"/></svg>
-            Approvals
-            <span class="badge" id="tabBadge">8</span>
+          <button class="tab" data-tab="items" style="order:2">
+            <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8.5L19 7.5V21H6z"/><path d="M14 3v5h5M9 12.5h6M9 16h4"/></svg>
+            My items
           </button>
-          <button class="tab tab-capture" data-tab="capture" aria-label="Capture">
+          <button class="tab tab-capture" data-tab="capture" aria-label="Capture" style="order:3">
             <span class="cap">
               <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h1.7l1.1-1.8h6.4L15.8 6h2.7A2.5 2.5 0 0 1 21 8.5v8A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5v-8Z"/><circle cx="12" cy="12.4" r="3.4"/></svg>
             </span>
           </button>
-          <button class="tab" data-tab="items">
-            <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8.5L19 7.5V21H6z"/><path d="M14 3v5h5M9 12.5h6M9 16h4"/></svg>
-            My items
+          <button class="tab" data-tab="history" style="order:4">
+            <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.2"/><path d="M12 7.8V12l2.8 1.8"/></svg>
+            History
           </button>
-          <button class="tab" data-tab="files">
-            <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 7.2A2 2 0 0 1 5.5 5.2h3.3l1.9 2.2h7.8a2 2 0 0 1 2 2v8.4a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>
-            Files
+          <button class="tab" data-tab="files" style="order:5">
+            <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5h10.5L18 8.5V19H4z"/><path d="M14.5 5v3.5H18M7.5 12.5h7M7.5 15.5h5"/><path d="M7.5 9.2h3"/></svg>
+            Analysis
+          </button>
+          <button class="tab" data-tab="approvals" style="order:2;display:none">
+            <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5h11M4 12h11M4 17.5h7"/><path d="M17.5 16.6l2 2 3.2-4"/></svg>
+            Approvals
+            <span class="badge" id="tabBadge">8</span>
           </button>
         </nav>
 
@@ -457,12 +445,12 @@
   </div>
 </div>
 
-<script src="js/session.js"></script>
-<script src="js/data.js"></script>
-<script src="js/capture-preprocess.js"></script>
-<script src="js/capture-api.js?v=fill-multi-img1"></script>
-<script src="js/capture-ui.js?v=fill-multi-img1"></script>
-<script src="js/app.js?v=shell-mnc1"></script>
+<script src="js/session.js?v=mqa-prof3"></script>
+<script src="js/data.js?v=mqa-items-dt1"></script>
+<script src="js/capture-preprocess.js?v=no-act-perm1"></script>
+<script src="js/capture-api.js?v=mqa-items-dt1"></script>
+<script src="js/capture-ui.js?v=mqa-cap-route2"></script>
+<script src="js/app.js?v=mqa-shell-x1"></script>
 <script data-pplx-inline-edit>
 (function () {
   if (window === window.top) return;

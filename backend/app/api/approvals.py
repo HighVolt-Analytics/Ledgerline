@@ -7,11 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, get_auth_context, get_db
 from app.api.http_errors import http_bad_request, http_not_found
-from app.schemas.approvals import ApprovalListRequest
+from app.schemas.approvals import ApprovalListRequest, EscalateApprovalRequest
 from app.schemas.common import ApiEnvelope, ResponseMeta
 from app.schemas.invoice import InvoiceResponse
 from app.services.approval.approval_api_service import (
     approve_invoice_action,
+    escalate_invoice_action,
     list_approvals_board,
     list_approvals_queue,
     permanently_delete_invoice_action,
@@ -117,6 +118,27 @@ async def reject_invoice_route(
     require_privilege(ctx, "Reject")
     try:
         response = await reject_invoice_action(db, ctx, invoice_id=invoice_id)
+    except LookupError as exc:
+        raise http_not_found(exc) from exc
+    except ValueError as exc:
+        raise http_bad_request(exc) from exc
+    await db.commit()
+    return ApiEnvelope(data=response)
+
+
+@router.post("/{invoice_id}/escalate", response_model=ApiEnvelope[InvoiceResponse])
+async def escalate_invoice_route(
+    invoice_id: int,
+    body: EscalateApprovalRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[InvoiceResponse]:
+    """Escalate an approval-queue item with a note; item stays in the queue."""
+    require_privilege(ctx, "Approve")
+    try:
+        response = await escalate_invoice_action(
+            db, ctx, invoice_id=invoice_id, note=body.note
+        )
     except LookupError as exc:
         raise http_not_found(exc) from exc
     except ValueError as exc:

@@ -604,10 +604,22 @@ def _apply_search(query, q: str | None):
     return query.where(or_(*clauses))
 
 
+def _duplicate_notification_predicate():
+    """Hard skips + weak T4 review suggestions — Upload notifications queue."""
+    return or_(
+        Invoice.status == InvoiceStatus.DUPLICATE_SKIPPED,
+        Invoice.duplicate_review_suggested.is_(True),
+    )
+
+
 def _apply_matrix_filter(query, matrix_filter: str | None, *, tenant_id: uuid.UUID):
     token = (matrix_filter or "all").strip().lower()
     if token in {"", "all"}:
         return query
+    if token == "duplicates":
+        return query.where(_duplicate_notification_predicate())
+    if token in {"exclude_duplicates", "no_duplicates"}:
+        return query.where(~_duplicate_notification_predicate())
     if token == "anomalies":
         return query.where(
             or_(

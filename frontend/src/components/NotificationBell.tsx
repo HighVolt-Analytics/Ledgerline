@@ -1,16 +1,23 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
-import { Bell, CheckCheck, X } from "lucide-react";
+import { AlertTriangle, Bell, CheckCheck, Copy, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useNotifications } from "@/hooks/useNotifications";
-import type { NotificationItem } from "@/api/types";
+import { useTenantQuery } from "@/hooks/useTenantQuery";
+import type { MatrixRow, NotificationItem } from "@/api/types";
 import {
   formatUnreadBadge,
   groupNotificationsByDay,
+  isDuplicateFileNotificationEvent,
   notificationSeverityIcon,
   relativeNotificationTime,
 } from "@/lib/notifications";
+import { duplicateNotificationCopy } from "@/lib/allDocumentsDetailed";
+import { documentDisplayRef } from "@/lib/format";
+import { counterpartyName } from "@/lib/invoice";
+import { fetchMatrixPage } from "@/lib/matrixApi";
+import { queryKeys } from "@/lib/queryClient";
 import { cn } from "@/lib/cn";
 import { kpiModuleIconClass } from "@/lib/kpiModuleColors";
 
@@ -26,6 +33,29 @@ function severityKpiTone(severity: NotificationItem["severity"]): "rose" | "rust
   return "blue";
 }
 
+function duplicateRowToNotification(row: MatrixRow): NotificationItem {
+  const inv = row.invoice;
+  const copy = duplicateNotificationCopy(row);
+  const party = counterpartyName(inv);
+  const ref = documentDisplayRef(inv);
+  const title =
+    party && party !== "—"
+      ? `${ref} · ${party} — ${copy.title}`
+      : `${ref} — ${copy.title}`;
+  return {
+    id: `dup-${inv.id}`,
+    source: "system",
+    audit_log_id: null,
+    event: inv.status === "duplicate_skipped" ? "duplicate_skipped" : "duplicate_review_suggested",
+    title,
+    summary: copy.detail,
+    severity: "action",
+    href: `/upload?invoice=${inv.id}`,
+    created_at: inv.created_at ?? new Date().toISOString(),
+    is_unread: true,
+  };
+}
+
 function NotificationCard({
   item,
   onOpen,
@@ -33,7 +63,10 @@ function NotificationCard({
   item: NotificationItem;
   onOpen: (href: string | null) => void;
 }) {
-  const Icon = notificationSeverityIcon(item.severity);
+  const Icon =
+    isDuplicateFileNotificationEvent(item.event) || item.event === "duplicate_review_suggested"
+      ? AlertTriangle
+      : notificationSeverityIcon(item.severity);
   const tone = severityKpiTone(item.severity);
   const clickable = Boolean(item.href);
   const Tag = clickable ? "button" : "article";
@@ -85,20 +118,44 @@ export function NotificationBell({ collapsed = false, variant = "sidebar" }: Not
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [showDuplicateFiles, setShowDuplicateFiles] = useState(false);
   const { data, isLoading, markAllRead } = useNotifications();
   const isHeader = variant === "header";
 
   const unreadCount = data?.unread_count ?? 0;
   const badgeLabel = formatUnreadBadge(unreadCount);
   const items = data?.items ?? [];
-  const groups = groupNotificationsByDay(items);
+
+  const duplicateQuery = useTenantQuery({
+    queryKey: queryKeys.duplicateFileNotifications(),
+    queryFn: () =>
+      fetchMatrixPage(1, { matrix_filter: "duplicates", page_size: "50" }, true),
+    enabled: open,
+    staleTime: 30_000,
+  });
+
+  const duplicateItems = useMemo(
+    () => (duplicateQuery.data?.rows ?? []).map(duplicateRowToNotification),
+    [duplicateQuery.data?.rows]
+  );
+  const duplicateTotal = duplicateQuery.data?.total ?? duplicateItems.length;
+
+  const visibleItems = useMemo(() => {
+    if (showDuplicateFiles) return duplicateItems;
+    return items.filter((item) => !isDuplicateFileNotificationEvent(item.event));
+  }, [showDuplicateFiles, duplicateItems, items]);
+
+  const groups = groupNotificationsByDay(visibleItems);
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setShowDuplicateFiles(false);
+      return;
+    }
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") setOpen(false);
     };
@@ -120,6 +177,10 @@ export function NotificationBell({ collapsed = false, variant = "sidebar" }: Not
     if (unreadCount === 0) return;
     markAllRead.mutate();
   }
+
+  const listLoading = showDuplicateFiles
+    ? duplicateQuery.isLoading || duplicateQuery.isFetching
+    : isLoading;
 
   return (
     <>
@@ -207,14 +268,17 @@ export function NotificationBell({ collapsed = false, variant = "sidebar" }: Not
                       <X className="h-4 w-4" />
                     </Button>
                     <h2 className="notifications-drawer__title">Notifications</h2>
-                    {unreadCount > 0 ? (
+                    {unreadCount > 0 && !showDuplicateFiles ? (
                       <span className="notifications-drawer__count">{unreadCount}</span>
+                    ) : null}
+                    {showDuplicateFiles && duplicateTotal > 0 ? (
+                      <span className="notifications-drawer__count">{duplicateTotal}</span>
                     ) : null}
                   </div>
                   <button
                     type="button"
                     className="notifications-drawer__mark-all approvals-action-chip approvals-action-chip--review"
-                    disabled={unreadCount === 0 || markAllRead.isPending}
+                    disabled={unreadCount === 0 || markAllRead.isPending || showDuplicateFiles}
                     onClick={handleMarkAllRead}
                   >
                     <CheckCheck className="approvals-action-chip__icon" />
@@ -222,17 +286,46 @@ export function NotificationBell({ collapsed = false, variant = "sidebar" }: Not
                   </button>
                 </header>
 
+                <div className="notifications-drawer__toolbar">
+                  <button
+                    type="button"
+                    className={cn(
+                      "notifications-drawer__toggle",
+                      showDuplicateFiles && "notifications-drawer__toggle--active"
+                    )}
+                    aria-pressed={showDuplicateFiles}
+                    data-testid="notifications-duplicate-files-toggle"
+                    onClick={() => setShowDuplicateFiles((prev) => !prev)}
+                  >
+                    <Copy className="h-3.5 w-3.5" aria-hidden />
+                    Duplicate files
+                    {duplicateTotal > 0 ? (
+                      <span className="notifications-drawer__toggle-count">{duplicateTotal}</span>
+                    ) : null}
+                  </button>
+                </div>
+
                 <div className="notifications-drawer__body">
-                  {isLoading ? (
+                  {listLoading ? (
                     <p className="notifications-drawer__empty">Loading…</p>
-                  ) : items.length === 0 ? (
+                  ) : visibleItems.length === 0 ? (
                     <div className="notifications-drawer__empty-state">
                       <span className="notifications-drawer__empty-icon">
-                        <Bell className="h-5 w-5" />
+                        {showDuplicateFiles ? (
+                          <Copy className="h-5 w-5" />
+                        ) : (
+                          <Bell className="h-5 w-5" />
+                        )}
                       </span>
-                      <p className="notifications-drawer__empty-title">No notifications yet</p>
+                      <p className="notifications-drawer__empty-title">
+                        {showDuplicateFiles
+                          ? "No duplicate files"
+                          : "No notifications yet"}
+                      </p>
                       <p className="notifications-drawer__empty-copy">
-                        Activity from documents, payments, and integrations will show up here.
+                        {showDuplicateFiles
+                          ? "When a file is detected as a duplicate, it appears here instead of the documents table."
+                          : "Activity from documents, payments, and integrations will show up here."}
                       </p>
                     </div>
                   ) : (

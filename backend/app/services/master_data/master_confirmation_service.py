@@ -379,6 +379,9 @@ def _parse_bank(raw: Any) -> BankDetails:
         account_number=str(raw.get("account_number") or ""),
         account_name=str(raw.get("account_name") or ""),
         bank_name=str(raw.get("bank_name") or ""),
+        pay_id=str(raw.get("pay_id") or "") or None,
+        swift=str(raw.get("swift") or "") or None,
+        iban=str(raw.get("iban") or "") or None,
     )
 
 

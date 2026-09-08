@@ -7,7 +7,7 @@ from datetime import date
 
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +19,7 @@ from app.schemas.audit import AuditLogResponse
 from app.schemas.bank_feed import (
     BankAccountCreate,
     BankAccountResponse,
+    BankAccountUpdate,
     BankCreateRequest,
     BankFeedImportListResponse,
     BankFeedImportResponse,
@@ -35,7 +36,11 @@ from app.schemas.bank_feed import (
     ManualMatchRequest,
     MatchRunItemResponse,
     MatchRunResponse,
+    PendingBankAccountPromote,
+    PendingBankAccountResponse,
+    PendingBankPromoteResponse,
     SetCategoryRequest,
+    UnassignedStatementIngestResponse,
     UnmatchRequest,
     UnsettledSettlementCountResponse,
     UnsettledSettlementListResponse,
@@ -51,6 +56,7 @@ from app.services.bank_feeds import (
     import_service,
     match_service,
     match_targets,
+    pending_account_service,
     transaction_service,
     transfer_service,
 )
@@ -227,8 +233,9 @@ async def create_account(
         tenant_id=ctx.tenant_id,
         name=body.name,
         currency=currency,
-        account_mask=body.account_mask,
+        account_number=body.account_number,
         coa_account_name=body.coa_account_name,
+        account_mask=body.account_mask,
     )
     actor_name, actor_email = await actor_from_context(db, ctx)
     await log_event(
@@ -239,6 +246,7 @@ async def create_account(
             "bank_account_id": row.id,
             "name": row.name,
             "currency": row.currency,
+            "account_number": row.account_number,
             "coa_account_code": row.coa_account_code,
             "coa_account_name": row.coa_account_name,
         },
@@ -248,6 +256,291 @@ async def create_account(
     )
     await db.commit()
     return ApiEnvelope(data=BankAccountResponse.model_validate(row))
+
+
+@router.patch("/accounts/{account_id}", response_model=ApiEnvelope[BankAccountResponse])
+async def update_account(
+    account_id: int,
+    body: BankAccountUpdate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[BankAccountResponse]:
+    require_privilege(ctx, "Post")
+    try:
+        currency = validate_bank_account_currency(body.currency)
+    except UnsupportedBankCurrencyError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    row = await account_service.update_bank_account(
+        db,
+        tenant_id=ctx.tenant_id,
+        account_id=account_id,
+        name=body.name,
+        currency=currency,
+        account_number=body.account_number,
+        coa_account_name=body.coa_account_name,
+        account_mask=body.account_mask,
+    )
+    if row is None:
+        raise HTTPException(404, "Bank account not found")
+    actor_name, actor_email = await actor_from_context(db, ctx)
+    await log_event(
+        db,
+        "bank_account_updated",
+        tenant_id=ctx.tenant_id,
+        detail={
+            "bank_account_id": row.id,
+            "name": row.name,
+            "currency": row.currency,
+            "account_number": row.account_number,
+            "coa_account_name": row.coa_account_name,
+        },
+        actor_name=actor_name,
+        actor_email=actor_email,
+        client_ip=request.client.host if request.client else None,
+    )
+    await db.commit()
+    await db.refresh(row)
+    return ApiEnvelope(data=BankAccountResponse.model_validate(row))
+
+
+@router.delete("/accounts/{account_id}", response_model=ApiEnvelope[BankAccountResponse])
+async def delete_account(
+    account_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[BankAccountResponse]:
+    """Archive (soft-delete) a bank account so it no longer appears in active lists."""
+    require_privilege(ctx, "Post")
+    row = await account_service.archive_bank_account(
+        db, tenant_id=ctx.tenant_id, account_id=account_id
+    )
+    if row is None:
+        raise HTTPException(404, "Bank account not found")
+    actor_name, actor_email = await actor_from_context(db, ctx)
+    await log_event(
+        db,
+        "bank_account_archived",
+        tenant_id=ctx.tenant_id,
+        detail={"bank_account_id": row.id, "name": row.name},
+        actor_name=actor_name,
+        actor_email=actor_email,
+        client_ip=request.client.host if request.client else None,
+    )
+    await db.commit()
+    await db.refresh(row)
+    return ApiEnvelope(data=BankAccountResponse.model_validate(row))
+
+
+@router.post(
+    "/pending-imports",
+    response_model=ApiEnvelope[UnassignedStatementIngestResponse],
+    status_code=201,
+)
+async def upload_pending_statement_import(
+    request: Request,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[UnassignedStatementIngestResponse]:
+    """Ingest a statement with no bank selected: auto-import if account number matches, else Pending."""
+    require_privilege(ctx, "Post")
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(400, "Uploaded file is empty")
+    if len(raw) > _MAX_IMPORT_BYTES:
+        raise HTTPException(400, "Statement file exceeds 10 MB limit")
+
+    actor_name, actor_email = await actor_from_context(db, ctx)
+    result = await pending_account_service.ingest_unassigned_bank_statement(
+        db,
+        tenant_id=ctx.tenant_id,
+        content=raw,
+        filename=file.filename,
+        require_parse_success=False,
+        actor_user_id=ctx.user_id,
+        actor_name=actor_name,
+        actor_email=actor_email,
+        client_ip=request.client.host if request.client else None,
+    )
+    if result is None:
+        raise HTTPException(400, "Could not queue bank statement")
+
+    if result.disposition == "auto_imported" and result.account is not None:
+        await log_event(
+            db,
+            "bank_statement_auto_imported",
+            tenant_id=ctx.tenant_id,
+            detail={
+                "bank_account_id": result.account.id,
+                "filename": file.filename,
+                "match_reason": result.match_reason,
+                "import_id": result.import_result.import_row.id if result.import_result else None,
+                "accepted_count": (
+                    result.import_result.import_row.accepted_count if result.import_result else None
+                ),
+                "reused_existing": result.reused_existing,
+            },
+            actor_name=actor_name,
+            actor_email=actor_email,
+            client_ip=request.client.host if request.client else None,
+        )
+        await db.commit()
+        import_payload = None
+        if result.import_result is not None:
+            import_payload = _import_response(
+                result.import_result.import_row,
+                reused_existing=result.import_result.reused_existing,
+                categorized_count=result.import_result.categorized_count,
+            )
+        return ApiEnvelope(
+            data=UnassignedStatementIngestResponse(
+                disposition="auto_imported",
+                match_reason=result.match_reason,
+                account=BankAccountResponse.model_validate(result.account),
+                import_result=import_payload,
+            )
+        )
+
+    assert result.pending is not None
+    await log_event(
+        db,
+        "pending_bank_account_queued",
+        tenant_id=ctx.tenant_id,
+        detail={
+            "pending_bank_account_id": result.pending.id,
+            "filename": result.pending.filename,
+            "file_sha256": result.pending.file_sha256,
+            "reused_existing": result.reused_existing,
+            "extracted_count": result.pending.extracted_count,
+            "match_reason": result.match_reason,
+        },
+        actor_name=actor_name,
+        actor_email=actor_email,
+        client_ip=request.client.host if request.client else None,
+    )
+    await db.commit()
+    return ApiEnvelope(
+        data=UnassignedStatementIngestResponse(
+            disposition="pending",
+            match_reason=result.match_reason,
+            pending=PendingBankAccountResponse.model_validate(result.pending),
+        )
+    )
+
+
+@router.get(
+    "/pending-accounts",
+    response_model=ApiEnvelope[list[PendingBankAccountResponse]],
+)
+async def list_pending_accounts(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[list[PendingBankAccountResponse]]:
+    rows = await pending_account_service.list_pending_bank_accounts(
+        db, tenant_id=ctx.tenant_id
+    )
+    return ApiEnvelope(data=[PendingBankAccountResponse.model_validate(r) for r in rows])
+
+
+@router.post(
+    "/pending-accounts/{pending_id}/promote",
+    response_model=ApiEnvelope[PendingBankPromoteResponse],
+)
+async def promote_pending_account(
+    pending_id: int,
+    body: PendingBankAccountPromote,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[PendingBankPromoteResponse]:
+    require_privilege(ctx, "Post")
+    try:
+        currency = validate_bank_account_currency(body.currency)
+    except UnsupportedBankCurrencyError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    actor_name, actor_email = await actor_from_context(db, ctx)
+    try:
+        result = await pending_account_service.promote_pending_bank_account(
+            db,
+            tenant_id=ctx.tenant_id,
+            pending_id=pending_id,
+            name=body.name,
+            account_number=body.account_number,
+            currency=currency,
+            coa_account_name=body.coa_account_name,
+            bank_account_id=body.bank_account_id,
+            actor_user_id=ctx.user_id,
+            actor_name=actor_name,
+            actor_email=actor_email,
+            client_ip=request.client.host if request.client else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(400, "Pending statement file is missing") from exc
+
+    await log_event(
+        db,
+        "pending_bank_account_promoted",
+        tenant_id=ctx.tenant_id,
+        detail={
+            "pending_bank_account_id": result.pending.id,
+            "bank_account_id": result.account.id,
+            "import_id": result.import_result.import_row.id if result.import_result else None,
+            "accepted_count": (
+                result.import_result.import_row.accepted_count if result.import_result else None
+            ),
+        },
+        actor_name=actor_name,
+        actor_email=actor_email,
+        client_ip=request.client.host if request.client else None,
+    )
+    await db.commit()
+
+    import_payload = None
+    if result.import_result is not None:
+        import_payload = _import_response(
+            result.import_result.import_row,
+            reused_existing=result.import_result.reused_existing,
+            categorized_count=result.import_result.categorized_count,
+        )
+    return ApiEnvelope(
+        data=PendingBankPromoteResponse(
+            account=BankAccountResponse.model_validate(result.account),
+            import_result=import_payload,
+            pending=PendingBankAccountResponse.model_validate(result.pending),
+        )
+    )
+
+
+@router.post("/pending-accounts/{pending_id}/dismiss", status_code=204, response_class=Response)
+async def dismiss_pending_account(
+    pending_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> Response:
+    require_privilege(ctx, "Post")
+    row = await pending_account_service.dismiss_pending_bank_account(
+        db, tenant_id=ctx.tenant_id, pending_id=pending_id
+    )
+    if row is None:
+        raise HTTPException(404, "Pending bank account not found")
+    actor_name, actor_email = await actor_from_context(db, ctx)
+    await log_event(
+        db,
+        "pending_bank_account_dismissed",
+        tenant_id=ctx.tenant_id,
+        detail={"pending_bank_account_id": pending_id},
+        actor_name=actor_name,
+        actor_email=actor_email,
+        client_ip=request.client.host if request.client else None,
+    )
+    await db.commit()
+    return Response(status_code=204)
 
 
 @router.post(
@@ -352,6 +645,10 @@ async def list_account_transactions(
     account_id: int,
     match_status: str | None = Query(None),
     reconcile: bool = Query(False),
+    reconciled: bool = Query(
+        False,
+        description="When true, return matched + posted statement lines.",
+    ),
     date_from: date | None = Query(None),
     date_to: date | None = Query(None),
     page: int = Query(1, ge=1),
@@ -369,8 +666,9 @@ async def list_account_transactions(
         db,
         tenant_id=ctx.tenant_id,
         bank_account_id=account_id,
-        match_status=None if reconcile else match_status,
+        match_status=None if reconcile or reconciled else match_status,
         reconcile=reconcile,
+        reconciled=reconciled,
         date_from=date_from,
         date_to=date_to,
         page=page,

@@ -11,7 +11,6 @@ import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import { useMailboxes } from "@/hooks/useMailboxes";
 import { canRenderTenantOwnedUi } from "@/lib/tenantSession";
 import { MailboxImportDialog } from "@/components/mailboxes/MailboxImportDialog";
-import { NotificationBell } from "@/components/NotificationBell";
 import { PageHeader } from "@/components/PageHeader";
 import { PageTabs } from "@/components/PageTabs";
 import { ListSearchInput } from "@/components/ListSearchInput";
@@ -146,15 +145,12 @@ function isMailboxPollable(mb: ConnectedMailbox): boolean {
 }
 
 function parseBankFeedTab(value: string | null): BankFeedQueueTab | null {
-  if (
-    value === "reconcile" ||
-    value === "unsettled" ||
-    value === "matched" ||
-    value === "posted" ||
-    value === "excluded"
-  ) {
+  if (value === "pending" || value === "reconciled" || value === "statement") {
     return value;
   }
+  // Legacy deep-links from the previous five-tab IA
+  if (value === "reconcile" || value === "unsettled") return "pending";
+  if (value === "matched" || value === "posted" || value === "excluded") return "reconciled";
   return null;
 }
 
@@ -705,7 +701,6 @@ export function UploadPage() {
               <BarChart3 className="h-4 w-4" aria-hidden />
               Analysis
             </Button>
-            <NotificationBell variant="header" />
           </div>
         }
       />
@@ -842,6 +837,19 @@ export function UploadPage() {
   const showUploadSourceColumn = channelTab === "all";
   const documentRouteTarget = routeTargetsForDocumentAreas(documentAreas);
   const routeLabel = documentRouteTarget ?? null;
+  const focusInvoiceId = useMemo(() => {
+    const raw = searchParams.get("invoice");
+    if (!raw) return null;
+    const id = Number(raw);
+    return Number.isFinite(id) && id > 0 ? id : null;
+  }, [searchParams]);
+
+  const clearFocusInvoice = () => {
+    if (!searchParams.has("invoice")) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete("invoice");
+    setSearchParams(next, { replace: true });
+  };
 
   return workspaceShell(
     channelTab === "bank-feeds" ? (
@@ -866,6 +874,8 @@ export function UploadPage() {
         onSearchChange={setSearchQuery}
         approvalBoardColumns={approvalFilter}
         onBoardCounts={setBoardCountsIfChanged}
+        focusInvoiceId={focusInvoiceId}
+        onFocusInvoiceConsumed={clearFocusInvoice}
       />
     )
   );

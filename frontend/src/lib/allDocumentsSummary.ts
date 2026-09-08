@@ -208,18 +208,50 @@ export function allDocumentsActionIssues(input: {
   payment: MatrixPaymentStatus;
   nature: AllDocumentsNature;
   documentTypes?: DocumentTypeDefinition[] | null;
+  conflictWith?: string | null;
+  duplicateReviewSuggested?: boolean;
 }): { primary: AllDocumentsActionIssue | null; all: AllDocumentsActionIssue[] } {
-  const { inv, flag, flagReason, cells, payment, nature, documentTypes } = input;
+  const {
+    inv,
+    flag,
+    flagReason,
+    cells,
+    payment,
+    nature,
+    documentTypes,
+    conflictWith,
+    duplicateReviewSuggested,
+  } = input;
   const issues: AllDocumentsActionIssue[] = [];
   const postingApplies = glPostingApplicable(inv, documentTypes);
   const transactional = nature === "Transactional";
   const parseSettled = matrixStageSettled(stageCell(cells, "Parsed").state);
 
-  if (flag !== "Clean") {
+  const conflict = (conflictWith ?? "").trim();
+  if (conflict) {
     issues.push({
-      label: flag,
-      detail: (flagReason ?? "").trim() || undefined,
+      label: "Duplicate conflict",
+      detail: `Conflicts with ${conflict}`,
     });
+  } else if (duplicateReviewSuggested || inv.duplicate_review_suggested) {
+    issues.push({
+      label: "Possible duplicate",
+      detail: "Review suggested — confirm unique or mark as duplicate",
+    });
+  }
+
+  if (flag !== "Clean") {
+    if (
+      !(
+        flag === "Duplicate Suspected" &&
+        issues.some((i) => /duplicate/i.test(i.label))
+      )
+    ) {
+      issues.push({
+        label: flag,
+        detail: (flagReason ?? "").trim() || undefined,
+      });
+    }
   }
 
   if (parseSettled && !visionDocumentTypeLabel(inv)) {
@@ -231,10 +263,6 @@ export function allDocumentsActionIssues(input: {
     if (!name || name === "—") {
       issues.push({ label: "Counterparty missing" });
     }
-  }
-
-  if (parseSettled && nature == null && !storedDocumentTypeCode(inv)) {
-    issues.push({ label: "Nature unknown" });
   }
 
   if (transactional && !(inv.invoice_date ?? "").trim()) {

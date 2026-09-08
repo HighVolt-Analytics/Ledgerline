@@ -24,6 +24,9 @@ import type {
   BankTransactionList,
   BankTransactionMatch,
   BankMatchTarget,
+  PendingBankAccount,
+  PendingBankPromoteResult,
+  UnassignedStatementIngestResult,
   UnsettledSettlementCount,
   UnsettledSettlementList,
   AccountingIntegrationsStatus,
@@ -707,6 +710,7 @@ export const api = {
     locale?: string;
     custom_bundle_field_key?: string;
     labor_rate_per_hour?: number;
+    mobile_quick_actions?: import("@/lib/mobileQuickActions").MobileQuickActionsSettings;
   }) =>
     request<InstitutionSettings>("/api/tenants/current/institution", {
       method: "PATCH",
@@ -2691,8 +2695,9 @@ export const api = {
   createBankAccount: (body: {
     name: string;
     currency: string;
+    account_number: string;
     account_mask?: string | null;
-    coa_account_name?: string | null;
+    coa_account_name: string;
   }) => {
     bustGetCacheByPrefix("/api/bank-feeds");
     return request<BankAccount>("/api/bank-feeds/accounts", {
@@ -2700,6 +2705,88 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+  },
+  updateBankAccount: (
+    accountId: number,
+    body: {
+      name: string;
+      currency: string;
+      account_number: string;
+      account_mask?: string | null;
+      coa_account_name: string;
+    }
+  ) => {
+    bustGetCacheByPrefix("/api/bank-feeds");
+    return request<BankAccount>(`/api/bank-feeds/accounts/${accountId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  },
+  deleteBankAccount: (accountId: number) => {
+    bustGetCacheByPrefix("/api/bank-feeds");
+    return request<BankAccount>(`/api/bank-feeds/accounts/${accountId}`, {
+      method: "DELETE",
+    });
+  },
+  listPendingBankAccounts: (options?: FreshRequestOptions) => {
+    const path = "/api/bank-feeds/pending-accounts";
+    if (options?.fresh) bustGetCache(path);
+    return request<PendingBankAccount[]>(path);
+  },
+  importPendingBankStatement: async (file: File): Promise<UnassignedStatementIngestResult> => {
+    const fd = new FormData();
+    fd.append("file", file);
+    bustGetCacheByPrefix("/api/bank-feeds");
+    const res = await fetch(`${BASE}/api/bank-feeds/pending-imports`, {
+      method: "POST",
+      body: fd,
+      headers: getScopedAuthHeaders(),
+    });
+    if (!res.ok) {
+      const msg = await parseErrorResponse(res);
+      if (res.status === 401) {
+        void notifyUnauthorized();
+      }
+      throw new ApiError(msg, res.status);
+    }
+    const json = (await res.json()) as ApiEnvelope<UnassignedStatementIngestResult>;
+    if (json.error) throw new Error(json.error.message);
+    return json.data;
+  },
+  promotePendingBankAccount: (
+    pendingId: number,
+    body: {
+      name: string;
+      account_number: string;
+      currency: string;
+      coa_account_name: string;
+      bank_account_id?: number | null;
+    }
+  ) => {
+    bustGetCacheByPrefix("/api/bank-feeds");
+    return request<PendingBankPromoteResult>(
+      `/api/bank-feeds/pending-accounts/${pendingId}/promote`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }
+    );
+  },
+  dismissPendingBankAccount: async (pendingId: number): Promise<void> => {
+    bustGetCacheByPrefix("/api/bank-feeds");
+    const res = await fetch(`${BASE}/api/bank-feeds/pending-accounts/${pendingId}/dismiss`, {
+      method: "POST",
+      headers: getScopedAuthHeaders(),
+    });
+    if (!res.ok) {
+      const msg = await parseErrorResponse(res);
+      if (res.status === 401) {
+        void notifyUnauthorized();
+      }
+      throw new ApiError(msg, res.status);
+    }
   },
   importBankFeedStatement: async (accountId: number, file: File): Promise<BankFeedImport> => {
     const fd = new FormData();
@@ -2731,6 +2818,7 @@ export const api = {
     params?: {
       match_status?: string;
       reconcile?: boolean;
+      reconciled?: boolean;
       date_from?: string;
       date_to?: string;
       page?: number;
@@ -2740,6 +2828,7 @@ export const api = {
   ) => {
     const qs = new URLSearchParams();
     if (params?.reconcile) qs.set("reconcile", "true");
+    else if (params?.reconciled) qs.set("reconciled", "true");
     else if (params?.match_status) qs.set("match_status", params.match_status);
     if (params?.date_from) qs.set("date_from", params.date_from);
     if (params?.date_to) qs.set("date_to", params.date_to);

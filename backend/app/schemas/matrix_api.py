@@ -17,7 +17,10 @@ class MatrixListRequest(BaseModel):
     q: str | None = Field(None, description="Search vendor, invoice no, PO, document ref")
     matrix_filter: str | None = Field(
         None,
-        description="all | anomalies | awaiting | paid | pending | failed",
+        description=(
+            "all | anomalies | awaiting | paid | pending | failed | "
+            "duplicates | exclude_duplicates"
+        ),
     )
     approval_board_column: str | None = Field(
         None,

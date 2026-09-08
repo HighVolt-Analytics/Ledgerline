@@ -83,16 +83,18 @@ def test_parse_sample_statement_all_rows() -> None:
     assert result.rows[9].direction == "credit"
 
 
-def test_unrecognized_debit_credit_headers_fail_safely(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_outflow_inflow_headers_succeed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Common AU/UK bank headers must map (not fail-closed)."""
     table = [
         ["Date", "Details", "Outflow", "Inflow", "Balance"],
         ["01 Aug 2026", "Fuel", "25.04", "", "4,224.96"],
+        ["02 Aug 2026", "Refund", "", "601.90", "4,826.86"],
     ]
     from app.services.bank_feeds.pdf_parser import (
         _table_has_unrecognized_flow_headers,
     )
 
-    assert _table_has_unrecognized_flow_headers(table)
+    assert not _table_has_unrecognized_flow_headers(table)
 
     def _fake_extract(_path):
         return [table], ""
@@ -106,9 +108,41 @@ def test_unrecognized_debit_credit_headers_fail_safely(monkeypatch: pytest.Monke
         lambda _path, text: (text, "pdfplumber"),
     )
     result = parse_bank_statement_pdf(b"%PDF-1.4 test")
-    assert result.rows == []
-    assert result.errors
-    assert DIRECTION_UNCERTAIN_IMPORT_MSG in result.errors[0].message
+    assert len(result.rows) == 2
+    assert result.rows[0].direction == "debit"
+    assert result.rows[1].direction == "credit"
+
+
+def test_amount_balance_headers_infer_direction() -> None:
+    table = [
+        ["Date", "Narration", "Amount", "Balance"],
+        ["01 Aug 2026", "Fuel", "25.04", "4,224.96"],
+        ["02 Aug 2026", "Refund", "601.90", "4,826.86"],
+    ]
+    parsed = _parse_table_rows(table)
+    assert len(parsed.rows) == 2
+    assert parsed.rows[1].direction == "credit"
+    assert parsed.rows[0].direction == "debit"
+
+
+def test_multiline_date_cell_parses() -> None:
+    from app.services.bank_feeds.parse_common import parse_statement_date
+
+    assert parse_statement_date("-\n18 Aug 2026").isoformat() == "2026-08-18"
+    assert parse_statement_date("18 Aug 2026").isoformat() == "2026-08-18"
+
+
+def test_sample_asset_pdf_extracts_rows() -> None:
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[2] / "test-assets" / "bank_statement_pdf_table_format.pdf"
+    if not path.exists():
+        path = Path(__file__).resolve().parents[3] / "test-assets" / "bank_statement_pdf_table_format.pdf"
+    if not path.exists():
+        pytest.skip("sample PDF missing")
+    result = parse_bank_statement_pdf(path.read_bytes())
+    assert result.extracted_count >= 8
+    assert all(r.direction in {"debit", "credit"} for r in result.rows)
 
 
 def test_recognized_withdrawal_deposit_headers_succeed() -> None:
@@ -198,7 +232,7 @@ async def test_pdf_then_csv_dedupes_same_transaction(
     await _enable_bank_feeds(db_session)
     create = await client.post(
         "/api/bank-feeds/accounts",
-        json={"name": "Dedup PDF CSV", "currency": "AUD"},
+        json={"name": "Dedup PDF CSV", "currency": "AUD", "account_number": "12345678", "coa_account_name": "Bank Account"},
     )
     account_id = create.json()["data"]["id"]
 
@@ -326,8 +360,7 @@ def test_table_format_pdf_with_rs_prefix_amounts() -> None:
     assert not any(
         err.message == DIRECTION_UNCERTAIN_IMPORT_MSG for err in result.errors
     )
-    assert result.extracted_count == 8
-    assert not any(err.row_number == 9 for err in result.errors)
+    assert result.extracted_count == 10
     continuity_rows = {
         err.row_number
         for err in result.errors

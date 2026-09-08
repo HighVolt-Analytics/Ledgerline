@@ -179,6 +179,7 @@ export type VendorMaster = {
     accountNumber: string;
     accountName: string;
     bankName: string;
+    payId?: string;
     swift?: string;
     iban?: string;
   };
@@ -228,6 +229,7 @@ export type EmployeeMaster = {
     accountNumber: string;
     accountName: string;
     bankName: string;
+    payId?: string;
     swift?: string;
     iban?: string;
   };

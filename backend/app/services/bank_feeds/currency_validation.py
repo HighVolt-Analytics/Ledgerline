@@ -1,21 +1,16 @@
-"""Bank account currency allowlist — matches frontend CURRENCIES / CURRENCY_SEEDS."""
+"""Bank account currency validation — ISO 4217 via shared catalog (pycountry)."""
 
 from __future__ import annotations
 
-from app.currency_catalog import ACTIVE_CURRENCY_CODES
+from app.tenant_settings import UnsupportedCurrencyError, validate_currency_code
 
 
-class UnsupportedBankCurrencyError(ValueError):
-    """Raised when currency is not in the platform-supported bank-feed allowlist."""
+class UnsupportedBankCurrencyError(UnsupportedCurrencyError):
+    """Raised when currency is not a valid ISO 4217 code."""
 
 
 def validate_bank_account_currency(code: str | None) -> str:
-    token = (code or "").strip().upper()
-    if len(token) != 3:
-        raise UnsupportedBankCurrencyError("currency must be a 3-letter ISO code")
-    if token not in ACTIVE_CURRENCY_CODES:
-        supported = ", ".join(sorted(ACTIVE_CURRENCY_CODES))
-        raise UnsupportedBankCurrencyError(
-            f"Unsupported currency {token!r}; supported: {supported}"
-        )
-    return token
+    try:
+        return validate_currency_code(code)
+    except UnsupportedCurrencyError as exc:
+        raise UnsupportedBankCurrencyError(str(exc)) from exc

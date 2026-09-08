@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { Invoice, MatrixRow } from "@/api/types";
 import {
   duplicateCellValue,
+  duplicateNotificationCopy,
+  isDuplicateNotificationRow,
   normalizeAuthSyncLabel,
 } from "@/lib/allDocumentsDetailed";
 
@@ -53,6 +55,30 @@ describe("duplicateCellValue", () => {
 
   it("returns empty dash otherwise", () => {
     expect(duplicateCellValue(row())).toEqual({ label: "—", kind: "empty" });
+  });
+});
+
+describe("isDuplicateNotificationRow", () => {
+  it("flags hard skips and soft review", () => {
+    expect(
+      isDuplicateNotificationRow(row({ invoice: inv({ status: "duplicate_skipped" }) }))
+    ).toBe(true);
+    expect(
+      isDuplicateNotificationRow(
+        row({ invoice: inv({ duplicate_review_suggested: true }) })
+      )
+    ).toBe(true);
+    expect(isDuplicateNotificationRow(row({ flag: "Duplicate Suspected" }))).toBe(true);
+    expect(isDuplicateNotificationRow(row({ conflict_with: "DOC-2" }))).toBe(true);
+    expect(isDuplicateNotificationRow(row())).toBe(false);
+  });
+});
+
+describe("duplicateNotificationCopy", () => {
+  it("uses conflict wording when conflict_with is set", () => {
+    expect(duplicateNotificationCopy(row({ conflict_with: "INV-9" })).title).toBe(
+      "Duplicate conflict"
+    );
   });
 });
 

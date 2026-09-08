@@ -418,30 +418,40 @@ export function BankFeedReconcilePanel({
         )}
 
         {activeTab === "transfer" && (
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-end">
-            <Field label="To account">
-              <Select
-                value={transferAccountId}
-                onValueChange={setTransferAccountId}
-                options={transferOptions}
-                placeholder="Select destination account"
-                searchable
-                disabled={!canPost || busy}
-                size="sm"
-                className="w-full"
-                data-testid={`bf-transfer-account-${txn.id}`}
-              />
-            </Field>
-            <Field label="Why">
-              <input
-                type="text"
-                value={transferDescription}
-                onChange={(e) => setTransferDescription(e.target.value)}
-                disabled={!canPost || busy}
-                className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
-                data-testid={`bf-transfer-why-${txn.id}`}
-              />
-            </Field>
+          <div className="space-y-2">
+            <p className="text-[11px] text-muted-foreground leading-snug">
+              Use Transfer when this money moved between two of your own bank accounts — not as
+              income or expense.
+            </p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-end">
+              <Field label={moneyIn ? "From account" : "To account"}>
+                <Select
+                  value={transferAccountId}
+                  onValueChange={setTransferAccountId}
+                  options={transferOptions}
+                  placeholder={
+                    moneyIn
+                      ? "Select the account funds came from"
+                      : "Select the destination account"
+                  }
+                  searchable
+                  disabled={!canPost || busy}
+                  size="sm"
+                  className="w-full"
+                  data-testid={`bf-transfer-account-${txn.id}`}
+                />
+              </Field>
+              <Field label="Why">
+                <input
+                  type="text"
+                  value={transferDescription}
+                  onChange={(e) => setTransferDescription(e.target.value)}
+                  disabled={!canPost || busy}
+                  className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                  data-testid={`bf-transfer-why-${txn.id}`}
+                />
+              </Field>
+            </div>
           </div>
         )}
 

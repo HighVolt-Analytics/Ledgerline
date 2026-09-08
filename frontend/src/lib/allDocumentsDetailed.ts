@@ -19,6 +19,43 @@ export function duplicateCellValue(row: MatrixRow): {
   return { label: "—", kind: "empty" };
 }
 
+/** Documents that belong in Upload Notifications — not the main documents table. */
+export function isDuplicateNotificationRow(row: MatrixRow): boolean {
+  const inv = row.invoice;
+  if (inv.status === "duplicate_skipped") return true;
+  if (inv.duplicate_review_suggested) return true;
+  if ((row.flag ?? "").trim() === "Duplicate Suspected") return true;
+  if ((row.conflict_with ?? "").trim()) return true;
+  return false;
+}
+
+export function duplicateNotificationCopy(row: MatrixRow): {
+  title: string;
+  detail: string;
+} {
+  const dup = duplicateCellValue(row);
+  const reason = (row.flag_reason ?? "").trim();
+  if (dup.kind === "conflict") {
+    return {
+      title: "Duplicate conflict",
+      detail: reason || `Conflicts with ${dup.label}`,
+    };
+  }
+  if (
+    row.invoice.status === "duplicate_skipped" ||
+    (row.flag ?? "").trim() === "Duplicate Suspected"
+  ) {
+    return {
+      title: "Duplicate detected",
+      detail: reason || "This document was skipped as a duplicate — review to confirm",
+    };
+  }
+  return {
+    title: "Possible duplicate",
+    detail: reason || "Review suggested — confirm unique or mark as duplicate",
+  };
+}
+
 export function normalizeAuthSyncLabel(raw: string | null | undefined): AuthSyncLabel {
   const token = (raw ?? "").trim();
   if (!token || token === "—" || token === "-") return "—";

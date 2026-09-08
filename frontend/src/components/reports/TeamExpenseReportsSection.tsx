@@ -324,7 +324,7 @@ function DepartmentBudgetUtilizationTable({
       ) : rows.length === 0 ? (
         <EmptyState
           title="No GL budgets for current period"
-          hint="Configure budgets on Team Expenses → GL budgets."
+          hint="Configure budgets on Settings → GL Budget."
         />
       ) : (
         <div className="space-y-2">

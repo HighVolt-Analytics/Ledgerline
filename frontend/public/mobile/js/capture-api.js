@@ -106,18 +106,60 @@
       (result.data && (result.data.document_types || result.data.documentTypes)) ||
       [];
     if (!Array.isArray(rows)) return [];
+    function inferKindFromLabels(title, shortTitle) {
+      var blob = [title, shortTitle]
+        .map(function (x) { return String(x || '').trim().toLowerCase(); })
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+      if (!blob) return '';
+      if (blob.indexOf('expense against advance') >= 0) return 'expense_claim';
+      if (blob.indexOf('expense claim') >= 0 || blob.indexOf('reimbursement') >= 0) {
+        return 'expense_claim';
+      }
+      if (blob.indexOf('advance requisition') >= 0 || blob.indexOf('advance request') >= 0) {
+        return 'advance_requisition';
+      }
+      if (blob.indexOf('employee advance') >= 0 && blob.indexOf('expense') < 0) {
+        return 'advance_requisition';
+      }
+      if (blob.indexOf('payment voucher') >= 0 || blob.indexOf('direct payment') >= 0) {
+        return 'direct_payment';
+      }
+      return '';
+    }
+    function reconcileKind(configured, title, shortTitle) {
+      var inferred = inferKindFromLabels(title, shortTitle);
+      var raw = String(configured || '').trim().toLowerCase();
+      if (raw === 'expense_against_advance') raw = 'expense_claim';
+      var pinned =
+        raw === 'expense_claim' ||
+        raw === 'advance_requisition' ||
+        raw === 'direct_payment'
+          ? raw
+          : '';
+      if (inferred) {
+        if (pinned && pinned !== inferred) return inferred;
+        return pinned || inferred;
+      }
+      return pinned;
+    }
     return rows
       .filter(function (dt) {
         return dt && dt.enabled !== false && String(dt.code || '').trim();
       })
       .map(function (dt) {
+        var title = String(dt.title || dt.short_title || dt.shortTitle || dt.code || '').trim();
+        var shortTitle = String(dt.short_title || dt.shortTitle || '').trim();
+        var configured = dt.team_expense_kind || dt.teamExpenseKind || '';
         return {
           code: String(dt.code || '').trim().toUpperCase(),
-          title: String(dt.title || dt.short_title || dt.shortTitle || dt.code || '').trim(),
+          title: title,
           requiredFields: dt.required_fields || dt.requiredFields || [],
           extractionFields: dt.extraction_fields || dt.extractionFields || [],
           routeTarget: dt.route_target || dt.routeTarget || '',
-          teamExpenseKind: dt.team_expense_kind || dt.teamExpenseKind || ''
+          teamExpenseKind: reconcileKind(configured, title, shortTitle) || configured || '',
+          shortTitle: shortTitle
         };
       })
       .sort(function (a, b) {
@@ -629,7 +671,7 @@
     if (!isFinite(amt)) amt = 0;
     var title = String(inv.vendor || inv.document_ref || ('#' + inv.id)).trim();
     var ref = String(inv.document_ref || inv.invoice_no || ('#' + inv.id)).trim();
-    var dt = String(inv.document_type_code || '').trim();
+    var dt = String(inv.document_type_code || '').trim().toUpperCase();
     var date = formatItemDate(inv);
     var sub = [ref, date, dt].filter(Boolean).join(' · ');
     return {
@@ -640,6 +682,7 @@
       chip: [chip.tone, chip.label],
       prog: chip.prog,
       tone: chip.tone,
+      dt: dt,
       kind: String(inv.team_expense_kind || ''),
       status: String(inv.status || ''),
       route: String(inv.route_target || '')
@@ -659,28 +702,6 @@
     return null;
   }
 
-  async function listEmployeeMasters() {
-    var result = await apiFetch('/api/employee-masters', {
-      method: 'GET',
-      headers: authHeaders(),
-      cache: 'no-store'
-    });
-    return Array.isArray(result.data) ? result.data : [];
-  }
-
-  async function fetchBudgetUtilization() {
-    try {
-      var result = await apiFetch('/api/reports/team-expenses/budget-utilization', {
-        method: 'GET',
-        headers: authHeaders(),
-        cache: 'no-store'
-      });
-      return Array.isArray(result.data) ? result.data : [];
-    } catch (e) {
-      return null;
-    }
-  }
-
   async function fetchAdvanceSettlement() {
     try {
       var result = await apiFetch('/api/reports/team-expenses/advance-settlement', {
@@ -694,69 +715,459 @@
     }
   }
 
+  async function fetchEmployeeSpendDetail() {
+    try {
+      var result = await apiFetch('/api/reports/team-expenses/employee-spend-detail', {
+        method: 'GET',
+        headers: authHeaders(),
+        cache: 'no-store'
+      });
+      return Array.isArray(result.data) ? result.data : [];
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async function fetchDepartmentBudgetUtilization() {
+    try {
+      var result = await apiFetch('/api/reports/team-expenses/department-budget-utilization', {
+        method: 'GET',
+        headers: authHeaders(),
+        cache: 'no-store'
+      });
+      return Array.isArray(result.data) ? result.data : [];
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async function fetchDepartmentBudgets() {
+    try {
+      var result = await apiFetch('/api/department-budgets', {
+        method: 'GET',
+        headers: authHeaders(),
+        cache: 'no-store'
+      });
+      return Array.isArray(result.data) ? result.data : [];
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function leftPctFromUtil(utilPct) {
+    if (utilPct == null || !isFinite(Number(utilPct))) return null;
+    var left = 1 - Number(utilPct) / 100;
+    if (left < 0) left = 0;
+    if (left > 1) left = 1;
+    return left;
+  }
+
+  function leftPctFromBudget(budgetAmt, spentAmt) {
+    var budget = Number(budgetAmt) || 0;
+    if (budget <= 0) return null;
+    var spent = Number(spentAmt) || 0;
+    var left = 1 - spent / budget;
+    if (left < 0) left = 0;
+    if (left > 1) left = 1;
+    return left;
+  }
+
+  function filterEmployeeRows(rows, email) {
+    var want = normEmail(email);
+    if (!want || !Array.isArray(rows)) return [];
+    return rows.filter(function (row) {
+      return normEmail(row.email) === want;
+    });
+  }
+
+  function currentPeriodKeys() {
+    var d = new Date();
+    var y = d.getFullYear();
+    var m = d.getMonth() + 1;
+    var q = Math.floor((m - 1) / 3) + 1;
+    return {
+      monthly: y + '-' + (m < 10 ? '0' + m : String(m)),
+      quarterly: y + '-Q' + q,
+      annual: String(y)
+    };
+  }
+
+  function periodKindRank(kind) {
+    var k = String(kind || '').toLowerCase();
+    if (k === 'quarterly') return 3;
+    if (k === 'annual') return 2;
+    if (k === 'monthly') return 1;
+    return 0;
+  }
+
+  function isCurrentPeriodRow(row, keys) {
+    var kind = String(row.period_kind || '').toLowerCase();
+    var periodKey = String(row.period_key || '').trim();
+    return !!(keys[kind] && keys[kind] === periodKey);
+  }
+
   /**
-   * Home finance strip for the signed-in employee (budget + advance float).
-   * Prefers Team Expense reports; falls back to employee master + my advances.
+   * One row per gl_ledger.
+   * Prefer current-period pots; if none, use the newest available pot for that GL
+   * (so stale months like 2026-08 still show after month roll).
+   */
+  function pickGlBudgetRows(rows) {
+    var keys = currentPeriodKeys();
+    var best = {};
+    (rows || []).forEach(function (row) {
+      var gl = String(row.gl_ledger || '').trim();
+      if (!gl) return;
+      var allocated = Number(row.allocated) || 0;
+      if (allocated <= 0) return;
+      var glKey = gl.toLowerCase();
+      var current = isCurrentPeriodRow(row, keys) ? 1 : 0;
+      var rank = periodKindRank(row.period_kind);
+      var periodKey = String(row.period_key || '');
+      var prev = best[glKey];
+      if (
+        !prev ||
+        current > prev.current ||
+        (current === prev.current && rank > prev.rank) ||
+        (current === prev.current && rank === prev.rank && periodKey > prev.periodKey)
+      ) {
+        best[glKey] = {
+          current: current,
+          rank: rank,
+          periodKey: periodKey,
+          row: row
+        };
+      }
+    });
+    return Object.keys(best).map(function (k) {
+      return best[k].row;
+    });
+  }
+
+  function budgetLineFromGlRow(row) {
+    var gl = String(row.gl_ledger || '').trim();
+    var budgetAmt = Number(row.allocated) || 0;
+    var spent = Number(row.consumed) || 0;
+    var remaining =
+      row.remaining != null && isFinite(Number(row.remaining))
+        ? Math.max(0, Number(row.remaining))
+        : Math.max(0, budgetAmt - spent);
+    var fromUtil = leftPctFromUtil(row.utilization_pct);
+    var periodLabel = [row.period_kind, row.period_key].filter(Boolean).join(' ');
+    return {
+      key: gl.toLowerCase(),
+      label: gl,
+      sub: periodLabel,
+      remaining: remaining,
+      approved: 0,
+      leftPct: fromUtil != null ? fromUtil : leftPctFromBudget(budgetAmt, spent),
+      budgetAmt: budgetAmt,
+      spent: spent,
+      hasBudget: budgetAmt > 0 || spent > 0
+    };
+  }
+
+  function budgetLineFromSpendRow(row) {
+    var sub = String(row.sub_ledger || '').trim();
+    var main = String(row.main_gl || '').trim();
+    var budgetAmt = Number(row.sub_gl_budget) || 0;
+    var spent = Number(row.employee_spend_ytd) || 0;
+    var remaining = Math.max(0, budgetAmt - spent);
+    var approved = Number(row.cash_reimbursed_ytd) || 0;
+    var fromUtil = leftPctFromUtil(row.pct_of_sub_gl_used);
+    var leftPct = fromUtil != null ? fromUtil : leftPctFromBudget(budgetAmt, spent);
+    var label = sub || main || 'Expense line';
+    var matchKeys = [];
+    if (sub) matchKeys.push(sub.toLowerCase());
+    if (main) matchKeys.push(main.toLowerCase());
+    if (!matchKeys.length) matchKeys.push('line');
+    return {
+      key: matchKeys[0],
+      matchKeys: matchKeys,
+      label: label,
+      sub: main && sub && main !== sub ? main : '',
+      remaining: remaining,
+      approved: approved,
+      leftPct: leftPct,
+      budgetAmt: budgetAmt,
+      spent: spent,
+      hasBudget: budgetAmt > 0 || spent > 0 || approved > 0
+    };
+  }
+
+  function mergeGlLinesWithMySpend(glLines, spendLines) {
+    var byKey = {};
+    (glLines || []).forEach(function (line) {
+      byKey[line.key] = Object.assign({}, line);
+    });
+    (spendLines || []).forEach(function (spend) {
+      var keys = spend.matchKeys && spend.matchKeys.length ? spend.matchKeys : [spend.key];
+      var existing = null;
+      for (var i = 0; i < keys.length; i++) {
+        if (byKey[keys[i]]) {
+          existing = byKey[keys[i]];
+          break;
+        }
+      }
+      if (existing) {
+        existing.approved = Number(spend.approved) || 0;
+        if (existing.approved > 0 || (Number(spend.spent) || 0) > 0) {
+          existing.hasBudget = true;
+        }
+      } else if (spend.hasBudget) {
+        byKey[spend.key] = Object.assign({}, spend);
+      }
+    });
+    return Object.keys(byKey)
+      .map(function (k) {
+        return byKey[k];
+      })
+      .sort(function (a, b) {
+        return String(a.label).localeCompare(String(b.label));
+      });
+  }
+
+  async function fetchChartOfAccounts() {
+    try {
+      var result = await apiFetch('/api/rule-book/config', {
+        method: 'GET',
+        headers: authHeaders(),
+        cache: 'no-store'
+      });
+      var data = result.data || {};
+      return Array.isArray(data.chart_of_accounts) ? data.chart_of_accounts : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  /** Map Sub-GL → parent name, and parent → child names from COA. */
+  function buildCoaIndex(coa) {
+    var subToParent = {};
+    var parentChildren = {};
+    (coa || []).forEach(function (entry) {
+      var parent = String(entry.name || '').trim();
+      if (!parent) return;
+      var children = [];
+      (entry.sub_ledgers || []).forEach(function (sub) {
+        var child = String((sub && (sub.name || sub.account_name)) || '').trim();
+        if (!child) return;
+        children.push(child);
+        subToParent[child.toLowerCase()] = parent;
+      });
+      parentChildren[parent.toLowerCase()] = {
+        name: parent,
+        children: children
+      };
+    });
+    return { subToParent: subToParent, parentChildren: parentChildren };
+  }
+
+  function snapshotFromParts(remaining, approved, budgetAmt, spent, hasBudget) {
+    return {
+      remaining: remaining,
+      approved: approved,
+      leftPct: leftPctFromBudget(budgetAmt, spent),
+      budgetAmt: budgetAmt,
+      spent: spent,
+      hasBudget: !!hasBudget || remaining > 0 || approved > 0
+    };
+  }
+
+  function aggregateBudgetAll(lines) {
+    var remaining = 0;
+    var approved = 0;
+    var budgetSum = 0;
+    var spentSum = 0;
+    var hasBudget = false;
+    (lines || []).forEach(function (line) {
+      remaining += Number(line.remaining) || 0;
+      approved += Number(line.approved) || 0;
+      budgetSum += Number(line.budgetAmt) || 0;
+      spentSum += Number(line.spent) || 0;
+      if (line.hasBudget) hasBudget = true;
+    });
+    return snapshotFromParts(remaining, approved, budgetSum, spentSum, hasBudget);
+  }
+
+  /**
+   * Group flat GL budget lines into parent → sub-ledger tree using COA.
+   * Selectable lines include parents and subs; All sums parent-level nodes only
+   * (avoids double-counting parent + child pots).
+   */
+  function buildBudgetTree(lines, coaIndex) {
+    var byKey = {};
+    (lines || []).forEach(function (line) {
+      byKey[line.key] = Object.assign({}, line);
+    });
+
+    var groups = {};
+    function ensureGroup(parentName) {
+      var pk = parentName.toLowerCase();
+      if (!groups[pk]) {
+        groups[pk] = {
+          key: pk,
+          label: parentName,
+          children: [],
+          childKeys: {}
+        };
+      }
+      return groups[pk];
+    }
+
+    Object.keys(byKey).forEach(function (key) {
+      var line = byKey[key];
+      var parentName = coaIndex.subToParent[key];
+      if (parentName) {
+        var g = ensureGroup(parentName);
+        if (!g.childKeys[key]) {
+          g.childKeys[key] = 1;
+          g.children.push(line);
+        }
+        return;
+      }
+      if (coaIndex.parentChildren[key]) {
+        ensureGroup(line.label || key);
+        groups[key].parentLine = line;
+        return;
+      }
+      // Standalone budgeted GL (no COA parent/child) — treat as its own parent.
+      var solo = ensureGroup(line.label || key);
+      solo.parentLine = line;
+    });
+
+    // Attach COA sub-ledgers that have budget rows under known parents.
+    Object.keys(coaIndex.parentChildren).forEach(function (pk) {
+      var info = coaIndex.parentChildren[pk];
+      var g = groups[pk];
+      if (!g) {
+        var anyChildBudget = info.children.some(function (c) {
+          return !!byKey[c.toLowerCase()];
+        });
+        if (!anyChildBudget && !byKey[pk]) return;
+        g = ensureGroup(info.name);
+      }
+      info.children.forEach(function (childName) {
+        var ck = childName.toLowerCase();
+        if (g.childKeys[ck]) return;
+        if (byKey[ck]) {
+          g.childKeys[ck] = 1;
+          g.children.push(byKey[ck]);
+        }
+      });
+      g.children.sort(function (a, b) {
+        return String(a.label).localeCompare(String(b.label));
+      });
+    });
+
+    var tree = Object.keys(groups)
+      .map(function (pk) {
+        var g = groups[pk];
+        var childAgg = aggregateBudgetAll(g.children);
+        var parentLine = g.parentLine;
+        var nodeSnap = parentLine
+          ? snapshotFromParts(
+              Number(parentLine.remaining) || 0,
+              Number(parentLine.approved) || 0,
+              Number(parentLine.budgetAmt) || 0,
+              Number(parentLine.spent) || 0,
+              parentLine.hasBudget
+            )
+          : childAgg;
+        var selectable = Object.assign(
+          {
+            key: g.key,
+            label: g.label,
+            sub: g.children.length
+              ? g.children.length + ' sub-ledger' + (g.children.length === 1 ? '' : 's')
+              : 'Parent ledger',
+            kind: 'parent'
+          },
+          nodeSnap
+        );
+        return {
+          key: g.key,
+          label: g.label,
+          kind: 'parent',
+          hasChildren: g.children.length > 0,
+          line: selectable,
+          children: g.children.map(function (c) {
+            return Object.assign({}, c, {
+              kind: 'sub',
+              parentKey: g.key,
+              sub: g.label
+            });
+          })
+        };
+      })
+      .filter(function (node) {
+        return node.line.hasBudget || node.children.length > 0;
+      })
+      .sort(function (a, b) {
+        return String(a.label).localeCompare(String(b.label));
+      });
+
+    var flat = [];
+    tree.forEach(function (node) {
+      flat.push(node.line);
+      node.children.forEach(function (c) {
+        flat.push(c);
+      });
+    });
+
+    var all = aggregateBudgetAll(tree.map(function (node) {
+      return node.line;
+    }));
+
+    return { tree: tree, lines: flat, all: all };
+  }
+
+  /**
+   * Home finance strip for the signed-in employee.
+   * GL department budgets are the source of lines; employee spend-detail
+   * overlays Approved Amt when the employee has claim activity on a line.
    */
   async function loadMyHomeFinance(userEmail) {
     var email = normEmail(userEmail);
     var out = {
-      budget: 0,
-      claimed: 0,
-      approved: 0,
       remaining: 0,
+      approved: 0,
+      leftPct: null,
       hasBudget: false,
+      all: { remaining: 0, approved: 0, leftPct: null, hasBudget: false },
+      lines: [],
+      tree: [],
       advance: null
     };
 
-    var budgetRows = await fetchBudgetUtilization();
-    var budgetRow = budgetRows ? matchEmployeeRow(budgetRows, email) : null;
-    if (budgetRow) {
-      out.budget = Number(budgetRow.budget_quarterly) || 0;
-      out.claimed = Number(budgetRow.qtd_spent) || 0;
-      out.remaining =
-        budgetRow.quarterly_remaining != null
-          ? Number(budgetRow.quarterly_remaining)
-          : out.budget - out.claimed;
-      out.hasBudget = out.budget > 0 || out.claimed > 0;
-    } else {
-      try {
-        var masters = await listEmployeeMasters();
-        var emp = matchEmployeeRow(masters, email);
-        if (emp) {
-          var limits = emp.spending_limits || emp.budget || {};
-          out.budget = Number(limits.quarterly) || 0;
-          out.claimed = Number(emp.qtd_spent) || 0;
-          out.remaining = out.budget - out.claimed;
-          out.hasBudget = out.budget > 0 || out.claimed > 0;
-        }
-      } catch (e) {
-        /* leave zeros */
+    var glUtilPromise = fetchDepartmentBudgetUtilization();
+    var coaPromise = fetchChartOfAccounts();
+    var spendPromise = fetchEmployeeSpendDetail();
+
+    var glRows = await glUtilPromise;
+    var glLines = glRows && glRows.length ? pickGlBudgetRows(glRows).map(budgetLineFromGlRow) : [];
+
+    if (!glLines.length) {
+      var budgetList = await fetchDepartmentBudgets();
+      if (budgetList && budgetList.length) {
+        glLines = pickGlBudgetRows(budgetList).map(budgetLineFromGlRow);
       }
     }
 
-    try {
-      var claims = await listMyClaims(50);
-      var approved = 0;
-      claims.forEach(function (inv) {
-        var st = String(inv.status || '').toLowerCase();
-        if (st === 'posted' || st === 'paid' || st === 'exported') {
-          var n = Number(inv.total);
-          if (isFinite(n)) approved += n;
-        }
-      });
-      out.approved = approved;
-      if (!out.hasBudget && claims.length) {
-        var claimedSum = 0;
-        claims.forEach(function (inv) {
-          var n = Number(inv.total);
-          if (isFinite(n)) claimedSum += n;
-        });
-        out.claimed = claimedSum;
-      }
-    } catch (e) {
-      /* keep approved 0 */
-    }
+    var spendRows = await spendPromise;
+    var spendLines = spendRows
+      ? filterEmployeeRows(spendRows, email).map(budgetLineFromSpendRow)
+      : [];
+
+    var merged = mergeGlLinesWithMySpend(glLines, spendLines);
+    var coa = await coaPromise;
+    var built = buildBudgetTree(merged, buildCoaIndex(coa));
+    out.tree = built.tree;
+    out.lines = built.lines;
+    out.all = built.all;
+    out.remaining = out.all.remaining;
+    out.approved = out.all.approved;
+    out.leftPct = out.all.leftPct;
+    out.hasBudget = out.all.hasBudget;
 
     var advRows = await fetchAdvanceSettlement();
     var advRow = advRows ? matchEmployeeRow(advRows, email) : null;

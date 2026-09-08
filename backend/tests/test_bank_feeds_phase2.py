@@ -113,7 +113,7 @@ async def test_create_account_rejects_unsupported_currency(
     await _enable_bank_feeds(db_session)
     res = await client.post(
         "/api/bank-feeds/accounts",
-        json={"name": "Bad Currency", "currency": "IND"},
+        json={"name": "Bad Currency", "currency": "IND", "account_number": "12345678", "coa_account_name": "Bank Account"},
     )
     assert res.status_code == 422, res.text
     detail = res.json()["detail"]
@@ -135,7 +135,7 @@ async def test_create_account_import_list_and_idempotent_reupload(
 
     create = await client.post(
         "/api/bank-feeds/accounts",
-        json={"name": "Operating AUD", "currency": "aud", "account_mask": "****1234"},
+        json={"name": "Operating AUD", "currency": "aud", "account_mask": "****1234", "account_number": "12345678", "coa_account_name": "Bank Account"},
     )
     assert create.status_code == 201, create.text
     account = create.json()["data"]
@@ -207,7 +207,7 @@ async def test_import_rejects_duplicate_row_by_fingerprint(
     await _enable_bank_feeds(db_session)
     create = await client.post(
         "/api/bank-feeds/accounts",
-        json={"name": "Ops", "currency": "AUD"},
+        json={"name": "Ops", "currency": "AUD", "account_number": "12345678", "coa_account_name": "Bank Account"},
     )
     account_id = create.json()["data"]["id"]
 
@@ -242,7 +242,7 @@ async def test_import_allows_shared_reference_different_amount_date(
     await _enable_bank_feeds(db_session)
     create = await client.post(
         "/api/bank-feeds/accounts",
-        json={"name": "Ops Split", "currency": "AUD"},
+        json={"name": "Ops Split", "currency": "AUD", "account_number": "12345678", "coa_account_name": "Bank Account"},
     )
     account_id = create.json()["data"]["id"]
 
@@ -325,7 +325,7 @@ async def test_import_pdf_statement_via_api(
     await _enable_bank_feeds(db_session)
     create = await client.post(
         "/api/bank-feeds/accounts",
-        json={"name": "PDF Ops", "currency": "AUD"},
+        json={"name": "PDF Ops", "currency": "AUD", "account_number": "12345678", "coa_account_name": "Bank Account"},
     )
     account_id = create.json()["data"]["id"]
 
@@ -363,7 +363,7 @@ async def test_failed_pdf_import_can_be_retried_same_file(
     await _enable_bank_feeds(db_session)
     create = await client.post(
         "/api/bank-feeds/accounts",
-        json={"name": "Retry PDF", "currency": "AUD"},
+        json={"name": "Retry PDF", "currency": "AUD", "account_number": "12345678", "coa_account_name": "Bank Account"},
     )
     account_id = create.json()["data"]["id"]
     pdf_bytes = _make_statement_pdf(

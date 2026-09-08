@@ -1,5 +1,5 @@
 /** Bank feeds UI gates — keep in sync with backend feature_flags.py intent. */
-export const BANK_FEEDS_TRANSFER_ENABLED = false;
+export const BANK_FEEDS_TRANSFER_ENABLED = true;
 
 /** Accepted bank statement upload formats (UI + client validation). */
 export const BANK_FEED_IMPORT_ACCEPT = ".pdf,.csv,application/pdf,text/csv";

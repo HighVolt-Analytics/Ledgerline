@@ -432,7 +432,7 @@ async def _build_budget_variance(
         if rows
         else (
             f"{_BUDGET_VARIANCE_NOTES} No GL account budget is set on or before this as-at date. "
-            "Add a budget on Team Expenses."
+            "Add a budget on Settings → GL Budget."
         ),
     )
 

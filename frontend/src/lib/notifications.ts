@@ -126,6 +126,16 @@ export function formatUnreadBadge(count: number): string {
   return String(count);
 }
 
+const DUPLICATE_FILE_EVENTS = new Set([
+  "duplicate_skipped",
+  "duplicate_in_progress",
+  "duplicate_reingest_rejected",
+]);
+
+export function isDuplicateFileNotificationEvent(event: string | null | undefined): boolean {
+  return DUPLICATE_FILE_EVENTS.has((event ?? "").trim());
+}
+
 export type NotificationDayGroup = "Today" | "Yesterday" | "Earlier";
 
 function startOfLocalDay(date: Date): number {

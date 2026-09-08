@@ -16,6 +16,7 @@ from app.services.reports.matrix_service import (
     derive_matrix_budget_auth,
     derive_matrix_flag,
     derive_matrix_payment_status,
+    _apply_matrix_filter,
     AUTH_DONE,
     AUTH_FAILED,
     AUTH_NA,
@@ -702,3 +703,18 @@ def test_pipeline_error_issue_and_resolution_hints() -> None:
     assert "journal posting failed" in issue.lower()
     assert fix is not None
     assert "reprocess" in fix.lower()
+
+
+def test_matrix_filter_duplicates_and_exclude_duplicates() -> None:
+    from sqlalchemy import select
+
+    base = select(Invoice.id)
+    all_q = _apply_matrix_filter(base, "all", tenant_id=TESTING_TENANT_UUID)
+    dup_q = _apply_matrix_filter(base, "duplicates", tenant_id=TESTING_TENANT_UUID)
+    excl_q = _apply_matrix_filter(
+        base, "exclude_duplicates", tenant_id=TESTING_TENANT_UUID
+    )
+    assert all_q is base
+    assert "duplicate_review_suggested" in str(dup_q)
+    assert "duplicate_review_suggested" in str(excl_q)
+    assert str(dup_q) != str(excl_q)

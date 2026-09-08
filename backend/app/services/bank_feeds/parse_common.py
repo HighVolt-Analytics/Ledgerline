@@ -8,6 +8,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
 from app.models.bank_feed import BankTxnDirection
+from app.services.shared.iso4217_catalog import currency_alternation_regex
 
 DIRECTION_UNCERTAIN_IMPORT_MSG = (
     "Couldn't determine transaction direction from this PDF layout. "
@@ -25,6 +26,13 @@ SKIPPED_LINE_MSG = "Could not parse transaction line"
 # Leading date on a statement line (numeric + month-name variants).
 DATE_PREFIX_RE = re.compile(
     r"^(\d{4}-\d{2}-\d{2}"
+    r"|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}"
+    r"|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{2,4})",
+    re.IGNORECASE,
+)
+# Same patterns anywhere in a cell (PDF multi-line / junk-prefixed dates).
+DATE_TOKEN_RE = re.compile(
+    r"(\d{4}-\d{2}-\d{2}"
     r"|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}"
     r"|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{2,4})",
     re.IGNORECASE,
@@ -98,12 +106,28 @@ def parse_statement_date(raw: str) -> date:
     text = (raw or "").strip()
     if not text:
         raise ValueError("Date is required")
-    for fmt in _DATE_FORMATS:
-        try:
-            return datetime.strptime(text, fmt).date()
-        except ValueError:
+    # PDF cells often include newlines or leading dashes ("-\n18 Aug 2026").
+    text = re.sub(r"[\r\n]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"^[\-\–\—\|•·]+\s*", "", text).strip()
+
+    candidates = [text]
+    tokens = DATE_TOKEN_RE.findall(text)
+    for token in tokens:
+        candidates.append(token if isinstance(token, str) else token[0])
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        cand = (candidate or "").strip()
+        if not cand or cand in seen:
             continue
-    raise ValueError(f"Unrecognized date format: {text!r}")
+        seen.add(cand)
+        for fmt in _DATE_FORMATS:
+            try:
+                return datetime.strptime(cand, fmt).date()
+            except ValueError:
+                continue
+    raise ValueError(f"Unrecognized date format: {raw!r}")
 
 
 def parse_money_token(raw: str) -> tuple[Decimal, str | None]:
@@ -111,11 +135,25 @@ def parse_money_token(raw: str) -> tuple[Decimal, str | None]:
     text = (raw or "").strip()
     if not text:
         raise ValueError("Amount is required")
+    # Flatten PDF cell noise
+    text = re.sub(r"[\r\n]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
     paren_debit = text.startswith("(") and text.endswith(")")
     if paren_debit:
         text = text[1:-1].strip()
-    text = re.sub(r"^(?:Rs\.?|INR|[A-Z]{3})\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(
+        rf"^(?:Rs\.?|{currency_alternation_regex()})\s*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
     text = text.lstrip("$€£₹").replace(",", "").replace(" ", "")
+    # CR/DR suffixes sometimes trail the amount in a single cell
+    dir_suffix = None
+    suffix_m = re.search(r"(?i)(cr|dr|credit|debit)$", text)
+    if suffix_m:
+        dir_suffix = suffix_m.group(1)
+        text = text[: suffix_m.start()].strip()
     sign = 1
     if text.startswith("-"):
         sign = -1
@@ -131,6 +169,11 @@ def parse_money_token(raw: str) -> tuple[Decimal, str | None]:
         return value.copy_abs().quantize(Decimal("0.01")), BankTxnDirection.DEBIT.value
     if paren_debit:
         return value.quantize(Decimal("0.01")), BankTxnDirection.DEBIT.value
+    if dir_suffix:
+        try:
+            return value.quantize(Decimal("0.01")), parse_direction(dir_suffix)
+        except ValueError:
+            pass
     return value.quantize(Decimal("0.01")), None
 
 
@@ -148,9 +191,40 @@ def parse_optional_balance(raw: str | None) -> Decimal | None:
 
 def parse_direction(raw: str) -> str:
     text = (raw or "").strip().lower()
-    if text in {"in", "credit", "cr", "money_in", "deposit", "received"}:
+    text = re.sub(r"\s+", " ", text)
+    if text in {
+        "in",
+        "credit",
+        "cr",
+        "money_in",
+        "money in",
+        "deposit",
+        "deposits",
+        "received",
+        "receipt",
+        "receipts",
+        "inflow",
+        "inflows",
+        "paid in",
+        "credit amount",
+    }:
         return BankTxnDirection.CREDIT.value
-    if text in {"out", "debit", "dr", "money_out", "withdrawal", "payment", "paid"}:
+    if text in {
+        "out",
+        "debit",
+        "dr",
+        "money_out",
+        "money out",
+        "withdrawal",
+        "withdrawals",
+        "payment",
+        "payments",
+        "paid",
+        "paid out",
+        "outflow",
+        "outflows",
+        "debit amount",
+    }:
         return BankTxnDirection.DEBIT.value
     raise ValueError(f"Direction must be in/out (or credit/debit); got {raw!r}")
 
@@ -353,16 +427,22 @@ def finalize_parsed_rows(
     rows: list[ParsedBankCsvRow],
     *,
     prior_errors: list[CsvParseError] | None = None,
+    reject_on_balance_continuity: bool = True,
 ) -> tuple[list[ParsedBankCsvRow], list[CsvParseError]]:
-    """Apply balance-based direction refinement and reject failing rows."""
+    """Apply balance-based direction refinement and reject failing rows.
+
+    When ``reject_on_balance_continuity`` is False (typical for PDF table extracts
+    where debit/credit columns already supply direction), continuity mismatches are
+    reported as warnings but rows are kept — opening-balance gaps are common.
+    """
     refined = refine_row_directions(rows)
     direction_errors = validate_row_directions(refined)
     continuity_errors = validate_balance_continuity(refined)
-    reject_numbers = {
-        err.row_number
-        for err in (*direction_errors, *continuity_errors)
-        if err.row_number > 0
-    }
+    reject_numbers = {err.row_number for err in direction_errors if err.row_number > 0}
+    if reject_on_balance_continuity:
+        reject_numbers |= {
+            err.row_number for err in continuity_errors if err.row_number > 0
+        }
     accepted = [row for row in refined if row.row_number not in reject_numbers]
     errors = list(prior_errors or [])
     errors.extend(direction_errors)

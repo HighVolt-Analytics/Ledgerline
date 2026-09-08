@@ -1190,7 +1190,7 @@ function BudgetChart({
     return (
       <CfoChartEmpty
         height={CHART_HEIGHT.tall}
-        message="No department budgets configured for this period. Set up Parent GL + Sub-GL budgets under Team Expenses."
+        message="No department budgets configured for this period. Set up Parent GL + Sub-GL budgets under Settings → GL Budget."
       />
     );
   }

@@ -60,7 +60,7 @@ export const TENANT_MODULE_CATALOG: TenantModuleDef[] = [
   },
   {
     key: "ledger_link",
-    label: "Accounting",
+    label: "Ledger Sync",
     description: "Export to accounting ledger.",
     group: "Finance",
   },

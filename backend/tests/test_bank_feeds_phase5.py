@@ -65,7 +65,7 @@ async def test_import_auto_categorizes_and_reports_count(
 
     create = await client.post(
         "/api/bank-feeds/accounts",
-        json={"name": "Ops AUD", "currency": "AUD"},
+        json={"name": "Ops AUD", "currency": "AUD", "account_number": "12345678", "coa_account_name": "Bank Account"},
     )
     assert create.status_code == 201, create.text
     account_id = create.json()["data"]["id"]
@@ -101,7 +101,7 @@ async def test_match_clears_category_manual_override_and_categorize_run(
 
     create = await client.post(
         "/api/bank-feeds/accounts",
-        json={"name": "Ops AUD", "currency": "AUD"},
+        json={"name": "Ops AUD", "currency": "AUD", "account_number": "12345678", "coa_account_name": "Bank Account"},
     )
     account_id = create.json()["data"]["id"]
     upload = await client.post(

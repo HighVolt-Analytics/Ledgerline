@@ -279,4 +279,18 @@ describe("allDocumentsActionIssues", () => {
     });
     expect(result.all.some((i) => i.label === "Payment on hold")).toBe(true);
   });
+
+  it("surfaces duplicate conflict as primary notification", () => {
+    const result = allDocumentsActionIssues({
+      inv: baseInvoice({ document_heading: "INVOICE" }),
+      flag: "Duplicate Suspected",
+      cells: cells(),
+      payment: "—",
+      nature: "Transactional",
+      documentTypes,
+      conflictWith: "INV-100",
+    });
+    expect(result.primary?.label).toBe("Duplicate conflict");
+    expect(result.primary?.detail).toContain("INV-100");
+  });
 });

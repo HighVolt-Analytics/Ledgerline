@@ -1,26 +1,23 @@
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState, type FocusEvent, type PointerEvent } from "react";
 import {
+  ArrowLeftRight,
   BarChart3,
   ChevronRight,
+  ClipboardCheck,
   Coins,
   CreditCard,
-  FolderKanban,
   Link2,
   Pin,
   PinOff,
   Plug,
-  Receipt,
-  Search,
   Settings,
-  ShoppingCart,
-  TrendingUp,
   Upload,
   Users,
   Vault,
   Wallet,
 } from "lucide-react";
-import { GlobalSearchDialog } from "@/components/GlobalSearchBar";
+import { GlobalSearchBar } from "@/components/GlobalSearchBar";
 import { DashboardIcon } from "@/components/icons/DashboardIcon";
 import { Logo } from "@/components/Logo";
 import { NotificationBell } from "@/components/NotificationBell";
@@ -140,6 +137,14 @@ const UPLOAD_ITEM: NavItem = {
   iconTone: "sky",
 };
 
+const APPROVALS_ITEM: NavItem = {
+  to: "/approvals",
+  label: "Approvals",
+  icon: ClipboardCheck,
+  badge: "approvals",
+  iconTone: "rust",
+};
+
 const CONTACTS_ITEM: NavItem = {
   to: "/creations",
   label: "Contacts",
@@ -147,39 +152,21 @@ const CONTACTS_ITEM: NavItem = {
   iconTone: "rose",
 };
 
-const TOP_LEVEL_ITEMS: NavItem[] = [DASHBOARD_ITEM, UPLOAD_ITEM, CONTACTS_ITEM];
+const LEDGER_SYNC_ITEM: NavItem = {
+  to: "/ledger-link",
+  label: "Ledger Sync",
+  icon: Link2,
+  moduleKey: "ledger_link",
+  iconTone: "indigo",
+};
 
-const OPERATIONS_GROUPS: NavGroup[] = [
-  {
-    label: "",
-    nested: false,
-    items: [
-      { to: "/team-expenses", label: "Team Expenses", icon: Receipt, badge: "team_expenses", moduleKey: "team_expenses", iconTone: "rose" },
-      { to: "/expenses", label: "Expenses Management", icon: Coins, badge: "business_expenses", moduleKey: "expenses", iconTone: "amber" },
-      { to: "/purchases", label: "Purchase Management", icon: ShoppingCart, moduleKey: "purchase", iconTone: "blue" },
-      { to: "/sales", label: "Sales Management", icon: TrendingUp, badge: "sales", moduleKey: "sales", iconTone: "indigo" },
-    ],
-  },
-];
-
-const FINANCE_GROUPS: NavGroup[] = [
-  {
-    label: "Receivables",
-    nested: true,
-    items: [
-      { to: "/collections", label: "Collections", icon: Coins, badge: "collections", moduleKey: "sales", iconTone: "sky" },
-      { to: "/ledger-link", label: "Accounting", icon: Link2, moduleKey: "ledger_link", iconTone: "indigo" },
-    ],
-  },
-  {
-    label: "Treasury",
-    nested: true,
-    items: [
-      { to: "/payments", label: "Payments", icon: Wallet, badge: "payments", moduleKey: "payments", iconTone: "rust" },
-      { to: "/vault", label: "Vault", icon: Vault, moduleKey: "vault", iconTone: "violet" },
-    ],
-  },
-];
+const VAULT_ITEM: NavItem = {
+  to: "/vault",
+  label: "Vault",
+  icon: Vault,
+  moduleKey: "vault",
+  iconTone: "violet",
+};
 
 const REPORTS_ITEM: NavItem = {
   to: "/reports",
@@ -188,6 +175,40 @@ const REPORTS_ITEM: NavItem = {
   moduleKey: "reports",
   iconTone: "indigo",
 };
+
+const TOP_LEVEL_LEADING: NavItem[] = [DASHBOARD_ITEM, UPLOAD_ITEM, APPROVALS_ITEM];
+const TOP_LEVEL_AFTER_CASHFLOW: NavItem[] = [LEDGER_SYNC_ITEM, VAULT_ITEM, REPORTS_ITEM];
+const TOP_LEVEL_TRAILING: NavItem[] = [CONTACTS_ITEM];
+const TOP_LEVEL_ITEMS: NavItem[] = [
+  ...TOP_LEVEL_LEADING,
+  ...TOP_LEVEL_AFTER_CASHFLOW,
+  ...TOP_LEVEL_TRAILING,
+];
+
+const CASHFLOW_GROUPS: NavGroup[] = [
+  {
+    label: "",
+    nested: false,
+    items: [
+      {
+        to: "/payments",
+        label: "Payments",
+        icon: Wallet,
+        badge: "payments",
+        moduleKey: "payments",
+        iconTone: "rust",
+      },
+      {
+        to: "/collections",
+        label: "Collections",
+        icon: Coins,
+        badge: "collections",
+        moduleKey: "sales",
+        iconTone: "sky",
+      },
+    ],
+  },
+];
 
 const SETTINGS_GROUPS: NavGroup[] = [
   {
@@ -209,10 +230,15 @@ type PrimarySection = {
   groups: NavGroup[];
 };
 
-const MAIN_PRIMARY_SECTIONS: PrimarySection[] = [
-  { id: "operations", label: "Operations", icon: FolderKanban, groups: OPERATIONS_GROUPS, iconTone: "rust" },
-  { id: "finance", label: "Finance", icon: Wallet, groups: FINANCE_GROUPS, iconTone: "amber" },
-];
+const CASHFLOW_SECTION: PrimarySection = {
+  id: "cashflow",
+  label: "Cashflow",
+  icon: ArrowLeftRight,
+  groups: CASHFLOW_GROUPS,
+  iconTone: "sky",
+};
+
+const MAIN_PRIMARY_SECTIONS: PrimarySection[] = [CASHFLOW_SECTION];
 
 const SETTINGS_SECTION: PrimarySection = {
   id: "settings",
@@ -227,6 +253,7 @@ const ALL_SECTIONS: PrimarySection[] = [...MAIN_PRIMARY_SECTIONS, SETTINGS_SECTI
 const MOBILE_NAV: NavItem[] = [
   { to: "/", label: "Dashboard", icon: DashboardIcon, iconTone: "violet" },
   { to: "/upload", label: "Upload", icon: Upload, badge: "upload", iconTone: "sky" },
+  { to: "/approvals", label: "Approvals", icon: ClipboardCheck, badge: "approvals", iconTone: "rust" },
   { to: "/creations", label: "Contacts", icon: Users, iconTone: "rose" },
   { to: "/settings", label: "Settings", icon: Settings, iconTone: "muted" },
 ];
@@ -256,7 +283,6 @@ function pathMatchesItem(pathname: string, to: string, search = "") {
 function sectionForPath(pathname: string, search = ""): string {
   if (pathname === "/") return "";
   if (TOP_LEVEL_ITEMS.some((item) => pathMatchesItem(pathname, item.to, search))) return "";
-  if (pathMatchesItem(pathname, REPORTS_ITEM.to, search)) return "";
   let bestSection = "";
   let bestPathLen = -1;
   for (const section of ALL_SECTIONS) {
@@ -276,7 +302,6 @@ function isNavItemActive(pathname: string, to: string, search = ""): boolean {
   if (!pathMatchesItem(pathname, to, search)) return false;
   const allItems = [
     ...TOP_LEVEL_ITEMS,
-    REPORTS_ITEM,
     ...ALL_SECTIONS.flatMap((section) => section.groups.flatMap((group) => group.items)),
   ];
   for (const item of allItems) {
@@ -295,7 +320,6 @@ function navLinkEnd(to: string): boolean {
   if (to === "/") return true;
   const allItems = [
     ...TOP_LEVEL_ITEMS,
-    REPORTS_ITEM,
     ...ALL_SECTIONS.flatMap((section) => section.groups.flatMap((group) => group.items)),
   ];
   for (const item of allItems) {
@@ -360,7 +384,6 @@ export function Layout() {
   const [expandedSection, setExpandedSection] = useState<string | null>(() =>
     sectionForPath(pathname, search)
   );
-  const [searchOpen, setSearchOpen] = useState(false);
   const [sidebarPinned, setSidebarPinned] = useState(() => {
     try {
       return localStorage.getItem(SIDEBAR_PIN_STORAGE_KEY) === "true";
@@ -418,14 +441,11 @@ export function Layout() {
     [enabledModules, permissions]
   );
 
-  const visiblePrimarySections = useMemo(
-    () =>
-      MAIN_PRIMARY_SECTIONS.filter(
-        (section) => visibleGroupsForSection(section, canShowNavItem).length > 0
-      ),
+  const visibleCashflowSection = useMemo(() => {
+    const groups = visibleGroupsForSection(CASHFLOW_SECTION, canShowNavItem);
+    return groups.length > 0 ? CASHFLOW_SECTION : null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [enabledModules, permissions]
-  );
+  }, [enabledModules, permissions]);
 
   const settingsMenuItems = useMemo(
     () =>
@@ -466,13 +486,6 @@ export function Layout() {
           });
         }
       }
-    }
-    if (canShowNavItem(REPORTS_ITEM)) {
-      items.push({
-        ...REPORTS_ITEM,
-        icon: REPORTS_ITEM.icon as FlatNavItem["icon"],
-        group: "Reports",
-      });
     }
     return items;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -549,6 +562,85 @@ export function Layout() {
     </div>
   );
 
+  const renderTopLevelNavItem = (item: NavItem, iconOnly: boolean) => (
+    <NavLink
+      key={item.to}
+      to={item.to}
+      end={item.to === "/" ? true : navLinkEnd(item.to)}
+      onPointerEnter={() => prefetchRoute(item.to)}
+      aria-label={iconOnly ? item.label : undefined}
+      data-sidebar-tip={iconOnly ? item.label : undefined}
+      data-testid={navTestId(item.label)}
+      className={cn(
+        "primary-sidebar__topic",
+        item.to === "/" && "primary-sidebar__topic--dashboard",
+        iconOnly && "primary-sidebar__topic--icon-only",
+        isNavItemActive(pathname, item.to) && "primary-sidebar__topic--active"
+      )}
+    >
+      <SidebarIconTile tone={item.iconTone}>
+        <item.icon className="primary-sidebar__topic-icon" aria-hidden />
+      </SidebarIconTile>
+      {!iconOnly && (
+        <>
+          <span className="primary-sidebar__topic-label">{item.label}</span>
+          {badgeCount(item.badge, counts) > 0 ? (
+            <span className="primary-sidebar__nav-item-badge tnum">
+              {badgeCount(item.badge, counts)}
+            </span>
+          ) : null}
+        </>
+      )}
+      {iconOnly && badgeCount(item.badge, counts) > 0 ? (
+        <span
+          className="primary-sidebar__nav-item-dot"
+          aria-label={`${badgeCount(item.badge, counts)} pending`}
+        />
+      ) : null}
+    </NavLink>
+  );
+
+  const renderPrimarySection = (section: PrimarySection, iconOnly: boolean) => {
+    const { id, label, icon: Icon, iconTone, groups } = section;
+    return (
+      <div key={id} className="primary-sidebar__section">
+        <button
+          type="button"
+          className={cn(
+            "primary-sidebar__topic",
+            iconOnly && "primary-sidebar__topic--icon-only",
+            routeSection === id && "primary-sidebar__topic--active"
+          )}
+          onClick={iconOnly ? undefined : () => handleSectionTopicClick(id)}
+          aria-label={iconOnly ? label : undefined}
+          aria-current={!iconOnly && routeSection === id ? "true" : undefined}
+          aria-expanded={!iconOnly ? expandedSection === id : undefined}
+          data-sidebar-tip={iconOnly ? label : undefined}
+          data-testid={`nav-section-${id}`}
+        >
+          <SidebarIconTile tone={iconTone}>
+            <Icon className="primary-sidebar__topic-icon" />
+          </SidebarIconTile>
+          {!iconOnly && (
+            <>
+              <span className="primary-sidebar__topic-label truncate">{label}</span>
+              <ChevronRight
+                className={cn(
+                  "primary-sidebar__topic-chevron",
+                  expandedSection === id && "primary-sidebar__topic-chevron--open"
+                )}
+                aria-hidden
+              />
+            </>
+          )}
+        </button>
+        {!iconOnly &&
+          shouldShowSectionSubnav(id) &&
+          renderPrimarySubnav(visibleGroupsForSection(section, canShowNavItem), false)}
+      </div>
+    );
+  };
+
   const refreshCounts = () => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.navBadges() });
   };
@@ -597,131 +689,26 @@ export function Layout() {
       </div>
 
       <nav className="primary-sidebar__nav" aria-label="Main sections">
-        {TOP_LEVEL_ITEMS.filter(canShowNavItem).map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.to === "/" ? true : navLinkEnd(item.to)}
-            onPointerEnter={() => prefetchRoute(item.to)}
-            aria-label={iconOnly ? item.label : undefined}
-            data-sidebar-tip={iconOnly ? item.label : undefined}
-            data-testid={navTestId(item.label)}
-            className={cn(
-              "primary-sidebar__topic",
-              item.to === "/" && "primary-sidebar__topic--dashboard",
-              iconOnly && "primary-sidebar__topic--icon-only",
-              isNavItemActive(pathname, item.to) && "primary-sidebar__topic--active"
-            )}
-          >
-            <SidebarIconTile tone={item.iconTone}>
-              <item.icon className="primary-sidebar__topic-icon" aria-hidden />
-            </SidebarIconTile>
-            {!iconOnly && (
-              <>
-                <span className="primary-sidebar__topic-label">{item.label}</span>
-                {badgeCount(item.badge, counts) > 0 ? (
-                  <span className="primary-sidebar__nav-item-badge tnum">
-                    {badgeCount(item.badge, counts)}
-                  </span>
-                ) : null}
-              </>
-            )}
-            {iconOnly && badgeCount(item.badge, counts) > 0 ? (
-              <span
-                className="primary-sidebar__nav-item-dot"
-                aria-label={`${badgeCount(item.badge, counts)} pending`}
-              />
-            ) : null}
-          </NavLink>
-        ))}
-        {visiblePrimarySections.map(({ id, label, icon: Icon, iconTone, groups }) => (
-          <div key={id} className="primary-sidebar__section">
-            <button
-              type="button"
-              className={cn(
-                "primary-sidebar__topic",
-                iconOnly && "primary-sidebar__topic--icon-only",
-                routeSection === id && "primary-sidebar__topic--active"
-              )}
-              onClick={iconOnly ? undefined : () => handleSectionTopicClick(id)}
-              aria-label={iconOnly ? label : undefined}
-              aria-current={!iconOnly && routeSection === id ? "true" : undefined}
-              aria-expanded={!iconOnly ? expandedSection === id : undefined}
-              data-sidebar-tip={iconOnly ? label : undefined}
-              data-testid={`nav-section-${id}`}
-            >
-              <SidebarIconTile tone={iconTone}>
-                <Icon className="primary-sidebar__topic-icon" />
-              </SidebarIconTile>
-              {!iconOnly && (
-                <>
-                  <span className="primary-sidebar__topic-label truncate">{label}</span>
-                  <ChevronRight
-                    className={cn(
-                      "primary-sidebar__topic-chevron",
-                      expandedSection === id && "primary-sidebar__topic-chevron--open"
-                    )}
-                    aria-hidden
-                  />
-                </>
-              )}
-            </button>
-            {!iconOnly &&
-              shouldShowSectionSubnav(id) &&
-              renderPrimarySubnav(
-                visibleGroupsForSection({ id, label, icon: Icon, iconTone, groups }, canShowNavItem),
-                false
-              )}
-          </div>
-        ))}
-        {canShowNavItem(REPORTS_ITEM) && (
-          <NavLink
-            to={REPORTS_ITEM.to}
-            end={navLinkEnd(REPORTS_ITEM.to)}
-            aria-label={iconOnly ? REPORTS_ITEM.label : undefined}
-            data-sidebar-tip={iconOnly ? REPORTS_ITEM.label : undefined}
-            data-testid={navTestId(REPORTS_ITEM.label)}
-            className={cn(
-              "primary-sidebar__topic",
-              iconOnly && "primary-sidebar__topic--icon-only",
-              isNavItemActive(pathname, REPORTS_ITEM.to) && "primary-sidebar__topic--active"
-            )}
-          >
-            <SidebarIconTile tone={REPORTS_ITEM.iconTone}>
-              <REPORTS_ITEM.icon className="primary-sidebar__topic-icon" aria-hidden />
-            </SidebarIconTile>
-            {!iconOnly && (
-              <span className="primary-sidebar__topic-label">{REPORTS_ITEM.label}</span>
-            )}
-          </NavLink>
+        {TOP_LEVEL_LEADING.filter(canShowNavItem).map((item) =>
+          renderTopLevelNavItem(item, iconOnly)
+        )}
+        {visibleCashflowSection
+          ? renderPrimarySection(visibleCashflowSection, iconOnly)
+          : null}
+        {TOP_LEVEL_AFTER_CASHFLOW.filter(canShowNavItem).map((item) =>
+          renderTopLevelNavItem(item, iconOnly)
+        )}
+        {TOP_LEVEL_TRAILING.filter(canShowNavItem).map((item) =>
+          renderTopLevelNavItem(item, iconOnly)
         )}
       </nav>
 
       <div className="primary-sidebar__footer">
-        <button
-          type="button"
-          className={cn(
-            "primary-sidebar__topic",
-            searchOpen && "primary-sidebar__topic--active"
-          )}
-          data-testid="button-global-search"
-          data-sidebar-tip={iconOnly ? "Search" : undefined}
-          aria-label="Search"
-          aria-haspopup="dialog"
-          aria-expanded={searchOpen}
-          onClick={() => setSearchOpen(true)}
-        >
-          <SidebarIconTile tone="muted">
-            <Search className="primary-sidebar__topic-icon" />
-          </SidebarIconTile>
-          {!iconOnly && <span className="primary-sidebar__topic-label">Search</span>}
-        </button>
         <SettingsSidebarMenu
           collapsed={iconOnly}
           items={settingsMenuItems}
           isActive={routeSection === "settings"}
         />
-        <NotificationBell collapsed={iconOnly} />
         <ProfileSidebarMenu collapsed={iconOnly} />
       </div>
     </>
@@ -775,12 +762,6 @@ export function Layout() {
         )}
       </aside>
 
-      <GlobalSearchDialog
-        open={searchOpen}
-        onOpenChange={setSearchOpen}
-        navItems={searchableNavItems}
-      />
-
       <div className="app-shell__cards app-shell__cards--single">
       {/* Main workspace */}
       <div className="app-workspace">
@@ -793,6 +774,14 @@ export function Layout() {
             audited.
           </div>
         )}
+
+        <header className="app-workspace__header app-workspace__header--search">
+          <div className="app-workspace__header-slot" aria-hidden="true" />
+          <GlobalSearchBar navItems={searchableNavItems} />
+          <div className="app-workspace__header-end">
+            <NotificationBell variant="header" />
+          </div>
+        </header>
 
         <main className="app-workspace__main">
           <div className="app-workspace__scroll">

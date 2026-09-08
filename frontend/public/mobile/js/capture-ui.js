@@ -21,6 +21,13 @@
   var fillPages = []; // { blob, thumbUrl, name, kind: 'image'|'pdf' }
   var fillSubmitting = false;
   var fillLineItems = []; // { description, qty, unit_price, amount, tax_amount }
+  /** After photo from a configured Quick Action, show the details form before submit. */
+  var preferClaimDetailsForm = true;
+  var preferredDtCode = '';
+  var activeQaConfig = null;
+  var activeQaTitle = '';
+  var claimDetailsPhotoFile = null;
+  var claimDetailsPhotoUrl = '';
 
   function emptyLineItem() {
     return { description: '', qty: '1', unit_price: '', amount: '', tax_amount: '' };
@@ -393,6 +400,774 @@
     return 'acc';
   }
 
+  function expenseTypeOptions() {
+    var opts = [];
+    var tree = (deps.QLL && deps.QLL.me && deps.QLL.me.budgetTree) || [];
+    tree.forEach(function (node) {
+      opts.push({ value: node.label, label: node.label, sub: 'Parent' });
+      (node.children || []).forEach(function (c) {
+        opts.push({ value: c.label, label: c.label, sub: node.label });
+      });
+    });
+    if (!opts.length) {
+      opts = [
+        { value: 'Travel', label: 'Travel', sub: '' },
+        { value: 'Meals', label: 'Meals', sub: '' },
+        { value: 'Other', label: 'Other', sub: '' }
+      ];
+    }
+    return opts;
+  }
+
+  function normalizeMobileQaConfig(raw) {
+    var base = {
+      enabled: false,
+      allowWithDoc: true,
+      allowWithoutDoc: true,
+      photoRequired: 'optional',
+      fields: {
+        expenseType: { visible: true, required: true },
+        adjustAdvance: { visible: true, required: false },
+        amount: { visible: true, required: true },
+        spentFor: { visible: true, required: true },
+        remarks: { visible: true, required: false }
+      }
+    };
+    if (raw === true) {
+      base.enabled = true;
+      return base;
+    }
+    if (!raw || raw === false) return base;
+    if (typeof raw !== 'object') return base;
+    base.enabled = !!raw.enabled;
+    if (raw.allowWithDoc != null) base.allowWithDoc = !!raw.allowWithDoc;
+    else if (raw.allow_with_doc != null) base.allowWithDoc = !!raw.allow_with_doc;
+    if (raw.allowWithoutDoc != null) base.allowWithoutDoc = !!raw.allowWithoutDoc;
+    else if (raw.allow_without_doc != null) base.allowWithoutDoc = !!raw.allow_without_doc;
+    var photo = String(raw.photoRequired || raw.photo_required || base.photoRequired);
+    if (photo === 'compulsory' || photo === 'optional' || photo === 'none') {
+      base.photoRequired = photo;
+    }
+    var fieldsRaw = raw.fields || {};
+    function field(camel, snake, fallback) {
+      var src = fieldsRaw[camel] || fieldsRaw[snake] || {};
+      return {
+        visible: src.visible != null ? !!src.visible : fallback.visible,
+        required: src.required != null ? !!src.required : fallback.required
+      };
+    }
+    base.fields = {
+      expenseType: field('expenseType', 'expense_type', base.fields.expenseType),
+      adjustAdvance: field('adjustAdvance', 'adjust_advance', base.fields.adjustAdvance),
+      amount: field('amount', 'amount', base.fields.amount),
+      spentFor: field('spentFor', 'spent_for', base.fields.spentFor),
+      remarks: field('remarks', 'remarks', base.fields.remarks)
+    };
+    if (base.enabled && !base.allowWithDoc && !base.allowWithoutDoc) {
+      base.allowWithDoc = true;
+    }
+    return base;
+  }
+
+  function claimDetailsFormHtml(prefill, qaCfg, mode) {
+    prefill = prefill || {};
+    qaCfg = normalizeMobileQaConfig(qaCfg || { enabled: true });
+    mode = mode || 'with_doc';
+    var fields = qaCfg.fields;
+    var types = expenseTypeOptions();
+    var typeOpts = types
+      .map(function (t) {
+        var sel = String(prefill.expenseType || '') === t.value ? ' selected' : '';
+        return '<option value="' + esc(t.value) + '"' + sel + '>' + esc(t.label) +
+          (t.sub ? ' (' + esc(t.sub) + ')' : '') + '</option>';
+      })
+      .join('');
+    var spentRaw = String(prefill.spentFor || 'Myself');
+    var spentOther = String(prefill.spentForOther || '');
+    var spent = spentRaw === 'Myself' || spentRaw === 'Others' ? spentRaw : 'Others';
+    if (spent === 'Others' && !spentOther && spentRaw && spentRaw !== 'Others') {
+      spentOther = spentRaw;
+    }
+    var adj = !!prefill.adjustAdvance;
+    var amt = prefill.amount != null && prefill.amount !== '' ? String(prefill.amount) : '';
+    var remarks = String(prefill.remarks || '');
+    var html = '<div style="padding:4px 16px 8px">';
+    if (fields.expenseType.visible) {
+      html +=
+        '<label class="cap-fill-label" for="claimExpenseType">Expenses type' +
+        (fields.expenseType.required ? ' *' : '') +
+        '</label>' +
+        '<select id="claimExpenseType" class="cap-fill-input" style="appearance:auto">' +
+        '<option value="">Select…</option>' + typeOpts + '</select>';
+    }
+    if (fields.adjustAdvance.visible) {
+      html +=
+        '<label class="cap-fill-label" style="margin-top:14px">Adjust against advance' +
+        (fields.adjustAdvance.required ? ' *' : '') +
+        '</label>' +
+        '<div class="seg" id="claimAdjAdvance" role="group" style="margin:0 0 12px">' +
+        '<button type="button" data-adj="0"' + (!adj ? ' class="active"' : '') + '>No</button>' +
+        '<button type="button" data-adj="1"' + (adj ? ' class="active"' : '') + '>Yes</button></div>';
+    }
+    if (fields.amount.visible) {
+      html +=
+        '<label class="cap-fill-label" for="claimAmt">Amt' +
+        (fields.amount.required ? ' *' : '') +
+        '</label>' +
+        '<input id="claimAmt" class="cap-fill-input" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00" value="' +
+        esc(amt) +
+        '">';
+    }
+    if (fields.spentFor.visible) {
+      html +=
+        '<label class="cap-fill-label" style="margin-top:14px">Spent for' +
+        (fields.spentFor.required ? ' *' : '') +
+        '</label>' +
+        '<div class="seg" id="claimSpentFor" role="group" style="margin:0 0 12px">' +
+        ['Myself', 'Others']
+          .map(function (s) {
+            return (
+              '<button type="button" data-spent="' +
+              esc(s) +
+              '"' +
+              (spent === s ? ' class="active"' : '') +
+              '>' +
+              esc(s) +
+              '</button>'
+            );
+          })
+          .join('') +
+        '</div>' +
+        '<div id="claimSpentForOtherWrap" style="margin:0 0 12px' +
+        (spent === 'Others' ? '' : ';display:none') +
+        '">' +
+        '<label class="cap-fill-label" for="claimSpentForOther">Who' +
+        (fields.spentFor.required ? ' *' : '') +
+        '</label>' +
+        '<input id="claimSpentForOther" class="cap-fill-input" type="text" maxlength="80" placeholder="Enter name or details" value="' +
+        esc(spentOther) +
+        '">' +
+        '</div>';
+    }
+    if (qaCfg.photoRequired !== 'none' || mode === 'with_doc') {
+      var photoReq = mode === 'with_doc' || qaCfg.photoRequired === 'compulsory';
+      html +=
+        '<div class="claim-photo" id="claimPhotoBlock">' +
+        '<label class="cap-fill-label">Document photo' +
+        (photoReq ? ' *' : '') +
+        '</label>' +
+        '<p class="claim-photo-hint">' +
+        (mode === 'with_doc'
+          ? 'Required — take or choose a clear photo of the document.'
+          : photoReq
+            ? 'A receipt or supporting photo is required.'
+            : 'Optional — add a receipt photo if you have one.') +
+        '</p>' +
+        '<div class="claim-photo-card" id="claimPhotoCard">' +
+        '<div class="claim-photo-empty" id="claimPhotoEmpty">' +
+        '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h1.7l1.1-1.8h6.4L15.8 6h2.7A2.5 2.5 0 0 1 21 8.5v8A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5v-8Z"/><circle cx="12" cy="12.4" r="3.4"/></svg>' +
+        '<span>No picture yet</span>' +
+        '</div>' +
+        '<div class="claim-photo-preview" id="claimPhotoPreview" hidden>' +
+        '<img id="claimPhotoImg" alt="Selected picture">' +
+        '<button type="button" class="claim-photo-clear" id="claimPhotoClear" aria-label="Remove picture">×</button>' +
+        '<span class="claim-photo-name" id="claimPhotoName"></span>' +
+        '</div>' +
+        '</div>' +
+        '<div class="claim-photo-actions">' +
+        '<button type="button" class="btn sec sm" id="claimPhotoCamera">Take photo</button>' +
+        '<button type="button" class="btn sec sm" id="claimPhotoLibrary">Choose photo</button>' +
+        '</div>' +
+        '<input id="claimPhotoCam" type="file" accept="image/*" capture="environment" hidden>' +
+        '<input id="claimPhotoLib" type="file" accept="image/*" hidden>' +
+        '</div>';
+    }
+    if (fields.remarks.visible) {
+      html +=
+        '<label class="cap-fill-label" for="claimRemarks" style="margin-top:14px">Remarks' +
+        (fields.remarks.required ? ' *' : '') +
+        '</label>' +
+        '<textarea id="claimRemarks" class="cap-fill-input" rows="3" placeholder="Optional notes" style="min-height:72px;resize:vertical">' +
+        esc(remarks) +
+        '</textarea>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function readClaimDetailsForm() {
+    var expenseType = String(($('#claimExpenseType') && $('#claimExpenseType').value) || '').trim();
+    var amtEl = $('#claimAmt');
+    var amount = amtEl ? String(amtEl.value || '').trim() : '';
+    var adjBtn = $('#claimAdjAdvance button.active');
+    var adjustAdvance = !!(adjBtn && adjBtn.getAttribute('data-adj') === '1');
+    var spentBtn = $('#claimSpentFor button.active');
+    var spentChoice = spentBtn ? String(spentBtn.getAttribute('data-spent') || 'Myself') : 'Myself';
+    var spentOther = String(($('#claimSpentForOther') && $('#claimSpentForOther').value) || '').trim();
+    var spentFor =
+      spentChoice === 'Others' ? spentOther || 'Others' : spentChoice;
+    var remarks = String(($('#claimRemarks') && $('#claimRemarks').value) || '').trim();
+    return {
+      expenseType: expenseType,
+      amount: amount,
+      adjustAdvance: adjustAdvance,
+      spentFor: spentFor,
+      spentChoice: spentChoice,
+      spentForOther: spentOther,
+      remarks: remarks,
+      photoFile: claimDetailsPhotoFile || null
+    };
+  }
+
+  function validateClaimDetails(details, qaCfg, mode) {
+    qaCfg = normalizeMobileQaConfig(qaCfg || { enabled: true });
+    var fields = qaCfg.fields;
+    if (fields.expenseType.visible && fields.expenseType.required && !details.expenseType) {
+      return 'Select expenses type';
+    }
+    if (fields.amount.visible && fields.amount.required) {
+      var n = Number(details.amount);
+      if (!details.amount || !isFinite(n) || n <= 0) return 'Enter amount';
+    }
+    if (fields.spentFor.visible && fields.spentFor.required) {
+      if (!details.spentChoice) return 'Select spent for';
+      if (details.spentChoice === 'Others' && !details.spentForOther) {
+        return 'Enter who it was spent for';
+      }
+    }
+    if (fields.remarks.visible && fields.remarks.required && !details.remarks) {
+      return 'Enter remarks';
+    }
+    if (fields.adjustAdvance.visible && fields.adjustAdvance.required && details.adjustAdvance == null) {
+      return 'Select adjust against advance';
+    }
+    // Photo: with_doc always needs a document photo; without_doc follows config.
+    if (mode === 'with_doc' && !details.photoFile) {
+      return 'Add a document photo';
+    }
+    if (qaCfg.photoRequired === 'compulsory' && mode === 'without_doc' && !details.photoFile) {
+      return 'Add a picture';
+    }
+    return '';
+  }
+
+  function clearClaimDetailsPhoto() {
+    claimDetailsPhotoFile = null;
+    if (claimDetailsPhotoUrl) {
+      try {
+        URL.revokeObjectURL(claimDetailsPhotoUrl);
+      } catch (e) { /* ignore */ }
+      claimDetailsPhotoUrl = '';
+    }
+    var empty = $('#claimPhotoEmpty');
+    var preview = $('#claimPhotoPreview');
+    var img = $('#claimPhotoImg');
+    var nameEl = $('#claimPhotoName');
+    var cam = $('#claimPhotoCam');
+    var lib = $('#claimPhotoLib');
+    if (empty) empty.hidden = false;
+    if (preview) preview.hidden = true;
+    if (img) img.removeAttribute('src');
+    if (nameEl) nameEl.textContent = '';
+    if (cam) cam.value = '';
+    if (lib) lib.value = '';
+  }
+
+  function setClaimDetailsPhoto(file) {
+    if (!file) {
+      clearClaimDetailsPhoto();
+      return;
+    }
+    claimDetailsPhotoFile = file;
+    if (claimDetailsPhotoUrl) {
+      try {
+        URL.revokeObjectURL(claimDetailsPhotoUrl);
+      } catch (e2) { /* ignore */ }
+    }
+    claimDetailsPhotoUrl = URL.createObjectURL(file);
+    var empty = $('#claimPhotoEmpty');
+    var preview = $('#claimPhotoPreview');
+    var img = $('#claimPhotoImg');
+    var nameEl = $('#claimPhotoName');
+    if (empty) empty.hidden = true;
+    if (preview) preview.hidden = false;
+    if (img) img.src = claimDetailsPhotoUrl;
+    if (nameEl) nameEl.textContent = file.name || 'Photo';
+  }
+
+  function wireClaimDetailsForm(body, options) {
+    options = options || {};
+    clearClaimDetailsPhoto();
+    if (options.initialPhoto) {
+      setClaimDetailsPhoto(options.initialPhoto);
+    }
+    var adj = $('#claimAdjAdvance', body);
+    if (adj) {
+      adj.addEventListener('click', function (e) {
+        var b = e.target.closest('button[data-adj]');
+        if (!b) return;
+        $$('button[data-adj]', adj).forEach(function (x) {
+          x.classList.toggle('active', x === b);
+        });
+      });
+    }
+    var spent = $('#claimSpentFor', body);
+    var otherWrap = $('#claimSpentForOtherWrap', body);
+    var otherInput = $('#claimSpentForOther', body);
+    if (spent) {
+      spent.addEventListener('click', function (e) {
+        var b = e.target.closest('button[data-spent]');
+        if (!b) return;
+        $$('button[data-spent]', spent).forEach(function (x) {
+          x.classList.toggle('active', x === b);
+        });
+        var isOthers = b.getAttribute('data-spent') === 'Others';
+        if (otherWrap) otherWrap.style.display = isOthers ? '' : 'none';
+        if (isOthers && otherInput) {
+          setTimeout(function () {
+            otherInput.focus();
+          }, 0);
+        }
+      });
+    }
+    var camInput = $('#claimPhotoCam', body);
+    var libInput = $('#claimPhotoLib', body);
+    var camBtn = $('#claimPhotoCamera', body);
+    var libBtn = $('#claimPhotoLibrary', body);
+    var clearBtn = $('#claimPhotoClear', body);
+    if (camBtn && camInput) {
+      camBtn.addEventListener('click', function () {
+        camInput.click();
+      });
+    }
+    if (libBtn && libInput) {
+      libBtn.addEventListener('click', function () {
+        libInput.click();
+      });
+    }
+    function onPick(ev) {
+      var input = ev.target;
+      var file = input && input.files && input.files[0] ? input.files[0] : null;
+      if (!file) return;
+      if (file.type && file.type.indexOf('image/') !== 0) {
+        toast('Choose an image file');
+        input.value = '';
+        return;
+      }
+      setClaimDetailsPhoto(file);
+    }
+    if (camInput) camInput.addEventListener('change', onPick);
+    if (libInput) libInput.addEventListener('change', onPick);
+    if (clearBtn) {
+      clearBtn.addEventListener('click', function () {
+        clearClaimDetailsPhoto();
+      });
+    }
+  }
+
+  function claimFieldsToPatch(details) {
+    var remarksParts = [];
+    if (details.spentFor) remarksParts.push('Spent for: ' + details.spentFor);
+    if (details.adjustAdvance) remarksParts.push('Adjust against advance: Yes');
+    if (details.remarks) remarksParts.push(details.remarks);
+    var patch = {
+      account_name: details.expenseType || '',
+      category: details.expenseType || '',
+      total: details.amount || '',
+      document_heading: details.spentFor ? 'Spent for ' + details.spentFor : '',
+      billing_address: remarksParts.join('\n')
+    };
+    return LLCaptureApi.buildUpdatePayload(patch);
+  }
+
+  function claimFieldsToManualFields(details) {
+    return {
+      vendor: details.spentFor === 'Myself' ? 'Employee claim' : details.spentFor + ' claim',
+      total: details.amount || '0',
+      account_name: details.expenseType || '',
+      category: details.expenseType || '',
+      document_heading: details.spentFor ? 'Spent for ' + details.spentFor : '',
+      cost_centre: details.adjustAdvance ? 'Adjust against advance' : '',
+      billing_address: details.remarks || '',
+      line_items: [
+        {
+          description: details.expenseType || 'Expense claim',
+          qty: 1,
+          unit_price: details.amount || 0,
+          amount: details.amount || 0,
+          tax_amount: 0
+        }
+      ]
+    };
+  }
+
+  function tinyJpegBlob() {
+    // 1x1 JPEG — satisfies manual-capture file requirement for without-doc claims.
+    var bin = atob(
+      '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAn/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAGcP//EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAQUCf//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQMBAT8Bf//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQIBAT8Bf//Z'
+    );
+    var arr = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new Blob([arr], { type: 'image/jpeg' });
+  }
+
+  async function resolvePreferredDocumentTypeCode() {
+    await ensureDocumentTypes();
+    if (preferredDtCode) {
+      var pinnedCode = String(preferredDtCode).trim().toUpperCase();
+      if (quickActionCodes().length && !quickActionByCode[pinnedCode]) {
+        /* fall through to QA list */
+      } else {
+        var pinned = documentTypes.filter(function (dt) {
+          return String(dt.code || '').toUpperCase() === pinnedCode;
+        })[0];
+        if (pinned && pinned.code) return String(pinned.code).trim().toUpperCase();
+        if (quickActionByCode[pinnedCode]) return pinnedCode;
+      }
+    }
+    var qaVisible = visibleDocumentTypes();
+    if (qaVisible.length && qaVisible[0].code) {
+      return String(qaVisible[0].code).trim().toUpperCase();
+    }
+    var qaCodes = quickActionCodes();
+    if (qaCodes.length) return qaCodes[0];
+    var intentKind = String(teIntent || '').toLowerCase();
+    var byIntent = documentTypes.filter(function (dt) {
+      return String(dt.teamExpenseKind || '').toLowerCase() === intentKind;
+    })[0];
+    if (byIntent && byIntent.code) return String(byIntent.code).trim().toUpperCase();
+    var any = documentTypes[0];
+    if (any && any.code) return String(any.code).trim().toUpperCase();
+    throw new Error('No document type configured in Quick Actions');
+  }
+
+  function qaDetailsTitle() {
+    return String(activeQaTitle || '').trim() || 'Details';
+  }
+
+  function openClaimDetailsForm(options) {
+    options = options || {};
+    var mode = options.mode || 'with_doc';
+    var inv = options.invoice || null;
+    var prefill = options.prefill || {};
+    var initialPhoto = options.photoFile || null;
+    var qaCfg = normalizeMobileQaConfig(
+      options.qaConfig || activeQaConfig || { enabled: true }
+    );
+    activeQaConfig = qaCfg;
+    if (options.title) activeQaTitle = String(options.title || '').trim();
+    var heading = qaDetailsTitle();
+    if (inv) {
+      var ocrTotal = LLCaptureApi.readExtractionValue(inv, 'total');
+      if (!prefill.amount && ocrTotal) prefill.amount = String(ocrTotal).replace(/[^0-9.]/g, '');
+      if (!prefill.expenseType) {
+        prefill.expenseType =
+          LLCaptureApi.readExtractionValue(inv, 'account_name') ||
+          LLCaptureApi.readExtractionValue(inv, 'category') ||
+          '';
+      }
+    }
+    var hasAdvance =
+      deps.QLL &&
+      deps.QLL.me &&
+      deps.QLL.me.advance &&
+      (Number(deps.QLL.me.advance.outstanding) > 0 || Number(deps.QLL.me.advance.amount) > 0);
+
+    deps.openSheet({
+      tall: true,
+      title: heading,
+      sub:
+        mode === 'without_doc'
+          ? 'Without document · fill and submit'
+          : 'With document · complete details and submit',
+      body:
+        claimDetailsFormHtml(prefill, qaCfg, mode) +
+        (hasAdvance && qaCfg.fields.adjustAdvance.visible
+          ? '<p style="padding:0 16px 8px;font-size:12px;color:var(--ink-3);margin:0">You have an advance outstanding — choose Yes to adjust against it.</p>'
+          : ''),
+      foot:
+        '<button class="btn sm sec" data-close style="flex:0 0 96px">Close</button>' +
+        '<button class="btn" id="claimFormSubmit" style="flex:1">Submit</button>',
+      onMount: function (b, f) {
+        wireClaimDetailsForm(b, { initialPhoto: initialPhoto });
+        var btn = $('#claimFormSubmit', f);
+        if (!btn) return;
+        btn.addEventListener('click', function () {
+          void submitClaimDetailsForm({ mode: mode, invoice: inv, qaConfig: qaCfg });
+        });
+      }
+    });
+  }
+
+  async function submitManualCaptureFromForm(details) {
+    var dtCode = await resolvePreferredDocumentTypeCode();
+    var file = details.photoFile
+      ? details.photoFile
+      : new File([tinyJpegBlob()], 'claim-no-doc.jpg', { type: 'image/jpeg' });
+    if (details.photoFile && global.LLPreprocess && LLPreprocess.compressImage) {
+      try {
+        var prepared = await LLPreprocess.compressImage(details.photoFile);
+        if (prepared && prepared.blob) {
+          file = new File(
+            [prepared.blob],
+            (details.photoFile.name || 'document.jpg').replace(/\.\w+$/, '') + '.jpg',
+            { type: prepared.blob.type || 'image/jpeg' }
+          );
+        }
+      } catch (e) {
+        /* keep original file */
+      }
+    }
+    var created = await LLCaptureApi.manualCapture(
+      file,
+      dtCode,
+      claimFieldsToManualFields(details)
+    );
+    var after = created.invoice;
+    var status = String(after.status || '');
+    if (status === 'exception' || status === 'duplicate_skipped' || status === 'rejected') {
+      after = await LLCaptureApi.confirmProcess(after.id);
+    } else {
+      try {
+        after = await LLCaptureApi.confirmProcess(after.id);
+      } catch (e) {
+        /* already progressing */
+      }
+    }
+    return after;
+  }
+
+  async function submitClaimDetailsForm(cfg) {
+    var qaCfg = normalizeMobileQaConfig(cfg.qaConfig || activeQaConfig || { enabled: true });
+    var details = readClaimDetailsForm();
+    var errMsg = validateClaimDetails(details, qaCfg, cfg.mode);
+    if (errMsg) {
+      toast(errMsg);
+      return;
+    }
+    try {
+      toast('Submitting…');
+      var after;
+      var useManual =
+        cfg.mode === 'without_doc' || (cfg.mode === 'with_doc' && !(cfg.invoice && cfg.invoice.id));
+      if (useManual) {
+        after = await submitManualCaptureFromForm(details);
+      } else {
+        if (!cfg.invoice || !cfg.invoice.id) throw new Error('Missing captured claim');
+        var patch = claimFieldsToPatch(details);
+        if (Object.keys(patch).length) {
+          after = await LLCaptureApi.updateInvoice(cfg.invoice.id, patch);
+        } else {
+          after = await LLCaptureApi.getInvoice(cfg.invoice.id);
+        }
+        var st = String(after.status || '');
+        if (st === 'exception' || st === 'duplicate_skipped' || st === 'rejected' || st === 'pending' || st === 'approved') {
+          try {
+            after = await LLCaptureApi.confirmProcess(after.id);
+          } catch (e2) {
+            /* keep after */
+          }
+        }
+      }
+      LLCaptureApi.updatePending(after.id, {
+        status: 'submitted',
+        vendor: LLCaptureApi.fieldValue(after, 'vendor'),
+        total: details.amount,
+        label: after.document_ref || ('#' + after.id)
+      });
+      deps.closeSheet();
+      clearPages();
+      composedFile = null;
+      clearClaimDetailsPhoto();
+      toast('Submitted · ' + (after.document_ref || ('#' + after.id)));
+      if (deps.onPendingChange) deps.onPendingChange();
+      if (deps.showScreen) deps.showScreen('home');
+    } catch (err) {
+      toast((err && err.message) || 'Submit failed');
+    }
+  }
+
+  function applyQuickActionContext(opts) {
+    opts = opts || {};
+    preferredDtCode = String(opts.documentTypeCode || '').trim().toUpperCase();
+    if (preferredDtCode) captureRouteDtCode = preferredDtCode;
+    activeQaTitle = String(opts.title || '').trim();
+    activeQaConfig = normalizeMobileQaConfig(opts.qaConfig || { enabled: true });
+    preferClaimDetailsForm = opts.preferDetailsForm != null ? !!opts.preferDetailsForm : true;
+    setTeamExpenseIntent(opts.intent || 'expense_claim', { quiet: true, force: true });
+    syncIntentChrome(false);
+  }
+
+  /** Dedicated photo step for Quick Action "With document" (not the Capture tab). */
+  function openQuickActionPhotoSheet() {
+    var title = qaDetailsTitle();
+    deps.openSheet({
+      tall: false,
+      title: title,
+      sub: 'With document · take or choose a photo',
+      body:
+        '<div class="claim-photo" id="qaDocPhotoBlock" style="margin:0">' +
+        '<p class="claim-photo-hint" style="margin-top:0">Photograph the receipt or document. You will fill details on the next step.</p>' +
+        '<div class="claim-photo-card" id="qaDocPhotoCard">' +
+        '<div class="claim-photo-empty" id="qaDocPhotoEmpty">' +
+        '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h1.7l1.1-1.8h6.4L15.8 6h2.7A2.5 2.5 0 0 1 21 8.5v8A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5v-8Z"/><circle cx="12" cy="12.4" r="3.4"/></svg>' +
+        '<span>No document photo yet</span>' +
+        '</div>' +
+        '<div class="claim-photo-preview" id="qaDocPhotoPreview" hidden>' +
+        '<img id="qaDocPhotoImg" alt="Document photo">' +
+        '<button type="button" class="claim-photo-clear" id="qaDocPhotoClear" aria-label="Remove picture">×</button>' +
+        '<span class="claim-photo-name" id="qaDocPhotoName"></span>' +
+        '</div></div>' +
+        '<div class="claim-photo-actions">' +
+        '<button type="button" class="btn sec sm" id="qaDocPhotoCamera">Take photo</button>' +
+        '<button type="button" class="btn sec sm" id="qaDocPhotoLibrary">Choose photo</button>' +
+        '</div>' +
+        '<input id="qaDocPhotoCam" type="file" accept="image/*" capture="environment" hidden>' +
+        '<input id="qaDocPhotoLib" type="file" accept="image/*" hidden>' +
+        '</div>',
+      foot:
+        '<button class="btn sm sec" data-close style="flex:0 0 96px">Cancel</button>' +
+        '<button class="btn" id="qaDocPhotoContinue" style="flex:1" disabled>Continue</button>',
+      onMount: function (b, f) {
+        var picked = null;
+        var pickedUrl = '';
+        var empty = $('#qaDocPhotoEmpty', b);
+        var preview = $('#qaDocPhotoPreview', b);
+        var img = $('#qaDocPhotoImg', b);
+        var nameEl = $('#qaDocPhotoName', b);
+        var camInput = $('#qaDocPhotoCam', b);
+        var libInput = $('#qaDocPhotoLib', b);
+        var camBtn = $('#qaDocPhotoCamera', b);
+        var libBtn = $('#qaDocPhotoLibrary', b);
+        var clearBtn = $('#qaDocPhotoClear', b);
+        var contBtn = $('#qaDocPhotoContinue', f);
+
+        function syncContinue() {
+          if (contBtn) contBtn.disabled = !picked;
+        }
+
+        function clearPicked() {
+          picked = null;
+          if (pickedUrl) {
+            try {
+              URL.revokeObjectURL(pickedUrl);
+            } catch (e) { /* ignore */ }
+            pickedUrl = '';
+          }
+          if (empty) empty.hidden = false;
+          if (preview) preview.hidden = true;
+          if (img) img.removeAttribute('src');
+          if (nameEl) nameEl.textContent = '';
+          if (camInput) camInput.value = '';
+          if (libInput) libInput.value = '';
+          syncContinue();
+        }
+
+        function setPicked(file) {
+          picked = file;
+          if (pickedUrl) {
+            try {
+              URL.revokeObjectURL(pickedUrl);
+            } catch (e2) { /* ignore */ }
+          }
+          pickedUrl = URL.createObjectURL(file);
+          if (empty) empty.hidden = true;
+          if (preview) preview.hidden = false;
+          if (img) img.src = pickedUrl;
+          if (nameEl) nameEl.textContent = file.name || 'Photo';
+          syncContinue();
+        }
+
+        if (camBtn && camInput) {
+          camBtn.addEventListener('click', function () {
+            camInput.click();
+          });
+        }
+        if (libBtn && libInput) {
+          libBtn.addEventListener('click', function () {
+            libInput.click();
+          });
+        }
+        function onPick(ev) {
+          var input = ev.target;
+          var file = input && input.files && input.files[0] ? input.files[0] : null;
+          if (!file) return;
+          if (file.type && file.type.indexOf('image/') !== 0) {
+            toast('Choose an image file');
+            input.value = '';
+            return;
+          }
+          setPicked(file);
+        }
+        if (camInput) camInput.addEventListener('change', onPick);
+        if (libInput) libInput.addEventListener('change', onPick);
+        if (clearBtn) clearBtn.addEventListener('click', clearPicked);
+
+        if (contBtn) {
+          contBtn.addEventListener('click', function () {
+            if (!picked) {
+              toast('Add a document photo first');
+              return;
+            }
+            var file = picked;
+            deps.closeSheet();
+            setTimeout(function () {
+              openClaimDetailsForm({
+                mode: 'with_doc',
+                photoFile: file,
+                title: activeQaTitle,
+                qaConfig: activeQaConfig,
+                prefill: { spentFor: 'Myself' }
+              });
+            }, 40);
+          });
+        }
+        syncContinue();
+      }
+    });
+  }
+
+  /** Config-driven Quick Action: With document → photo sheet → details form (not Capture tab). */
+  function startQuickActionWithDoc(opts) {
+    opts = opts || {};
+    applyQuickActionContext(
+      Object.assign({}, opts, {
+        preferDetailsForm: opts.preferDetailsForm != null ? !!opts.preferDetailsForm : true
+      })
+    );
+    openQuickActionPhotoSheet();
+  }
+
+  /** Config-driven Quick Action: Without document → details form. */
+  function startQuickActionWithoutDoc(opts) {
+    applyQuickActionContext(Object.assign({}, opts || {}, { preferDetailsForm: true }));
+    openClaimDetailsForm({
+      mode: 'without_doc',
+      title: activeQaTitle,
+      prefill: { spentFor: 'Myself' },
+      qaConfig: activeQaConfig
+    });
+  }
+
+  // Back-compat aliases used by older callers / capture tab helpers.
+  function startClaimWithDoc(opts) {
+    startQuickActionWithDoc(opts);
+  }
+
+  function startClaimWithoutDoc(opts) {
+    startQuickActionWithoutDoc(opts);
+  }
+
+  function startAdvanceCapture(opts) {
+    opts = opts || {};
+    startQuickActionWithDoc(
+      Object.assign({}, opts, {
+        intent: opts.intent || 'advance_requisition',
+        preferDetailsForm: !!opts.qaConfig
+      })
+    );
+  }
+
   function openReviewSheet(inv, sourceLabel, options) {
     options = options || {};
     activeInvoice = inv;
@@ -656,12 +1431,19 @@
       });
       if (deps.onPendingChange) deps.onPendingChange();
       uploading = false;
-      // Keep draft pages until submit success so retry is possible if confirm fails later;
-      // clear composed for next capture after successful review open.
       if (deps.state && deps.state.screen === 'capture') {
-        openReviewSheet(settled, file.name || 'Capture');
+        if (preferClaimDetailsForm) {
+          openClaimDetailsForm({
+            mode: 'with_doc',
+            invoice: settled,
+            title: activeQaTitle,
+            sourceLabel: file.name || 'Capture'
+          });
+        } else {
+          openReviewSheet(settled, file.name || 'Capture');
+        }
       } else {
-        toast('Ready for review · open Capture or tap the activity row');
+        toast('Ready for review · open Capture or My items');
       }
     } catch (err) {
       uploading = false;
@@ -709,138 +1491,7 @@
           label: settled.document_ref || ('#' + settled.id)
         });
         if (deps.onPendingChange) deps.onPendingChange();
-      }).catch(function () { /* leave as processing / user retries via activity */ });
-    });
-  }
-
-  function prependActivityRows(demoHtml) {
-    // Demo activity removed — use refreshHomeActivity instead.
-    return demoHtml || '';
-  }
-
-  function invoiceActivityRow(inv) {
-    var tone = statusTone(inv.status);
-    var title = inv.vendor || inv.document_heading || inv.document_ref || ('Document #' + inv.id);
-    var amount = inv.total != null && inv.total !== '' ? money(inv.total) : '';
-    var meta = [
-      inv.document_ref || ('#' + inv.id),
-      amount,
-      inv.status,
-      relativeTime(inv.created_at || inv.updated_at)
-    ].filter(Boolean).join(' · ');
-    var dt = inv.document_type_code || 'DOC';
-    return '<button class="row" type="button" data-invoice-id="' + inv.id + '">' +
-      '<span class="tl-dot ' + tone + '"></span>' +
-      '<span class="main"><span class="t truncate" style="display:block">' + esc(title) + '</span>' +
-      '<span class="s truncate" style="display:block">' + esc(meta) + '</span></span>' +
-      '<span class="chip dt">' + esc(dt) + '</span>' + deps.IC.chev + '</button>';
-  }
-
-  function pendingActivityRows() {
-    return LLCaptureApi.readPending().map(function (p) {
-      var tone = p.status === 'processing' ? 'warn' : p.status === 'ready' ? 'acc' : 'pos';
-      var title =
-        p.status === 'processing'
-          ? 'Processing capture…'
-          : p.status === 'ready'
-            ? 'Ready for review'
-            : p.status === 'submitted'
-              ? 'Capture submitted'
-              : 'Capture';
-      var metaParts = [
-        p.label || ('#' + p.invoiceId),
-        p.vendor,
-        p.total ? money(p.total) : '',
-        p.status
-      ].filter(Boolean);
-      return '<button class="row" type="button" data-pending-inv="' + p.invoiceId + '">' +
-        '<span class="tl-dot ' + tone + '"></span>' +
-        '<span class="main"><span class="t truncate" style="display:block">' + esc(title) + '</span>' +
-        '<span class="s truncate" style="display:block">' + esc(metaParts.join(' · ')) + '</span></span>' +
-        '<span class="chip dt">CAP</span>' + deps.IC.chev + '</button>';
-    }).join('');
-  }
-
-  var _homeActivityTimer = null;
-  var _homeActivityInFlight = null;
-  var _homeActivityQueued = false;
-
-  async function _refreshHomeActivityNow() {
-    var host = $('#activityRows');
-    var countEl = $('#actCount');
-    if (!host) return;
-    host.innerHTML =
-      '<div class="empty" style="padding:20px;font-size:13px;color:var(--ink-3)">Loading your recent documents…</div>';
-    var pendingHtml = pendingActivityRows();
-    try {
-      // Only documents for this signed-in employee (not the whole tenant).
-      var rows = await LLCaptureApi.listMyInvoices({ pageSize: 20 });
-      var pendingIds = {};
-      LLCaptureApi.readPending().forEach(function (p) {
-        pendingIds[Number(p.invoiceId)] = 1;
-      });
-      var docsHtml = rows
-        .filter(function (inv) { return !pendingIds[Number(inv.id)]; })
-        .map(invoiceActivityRow)
-        .join('');
-      var html = pendingHtml + docsHtml;
-      if (!html) {
-        host.innerHTML =
-          '<div class="empty" style="padding:20px;font-size:13px;color:var(--ink-3)">No documents of yours yet. Capture one to get started.</div>';
-        if (countEl) countEl.textContent = '0 items';
-        return;
-      }
-      host.innerHTML = html;
-      if (countEl) {
-        var n = LLCaptureApi.readPending().length + rows.filter(function (inv) {
-          return !pendingIds[Number(inv.id)];
-        }).length;
-        countEl.textContent = n + ' item' + (n === 1 ? '' : 's');
-      }
-    } catch (err) {
-      host.innerHTML = pendingHtml ||
-        '<div class="empty" style="padding:20px;font-size:13px;color:var(--ink-3)">' +
-        esc(err.message || 'Could not load your recent documents') + '</div>';
-      if (countEl) countEl.textContent = LLCaptureApi.readPending().length + ' items';
-    }
-  }
-
-  /** Debounce + single-flight: Home show + pending updates were stacking 3–4 list GETs. */
-  function refreshHomeActivity() {
-    _homeActivityQueued = true;
-    if (_homeActivityTimer) clearTimeout(_homeActivityTimer);
-    _homeActivityTimer = setTimeout(function () {
-      _homeActivityTimer = null;
-      if (_homeActivityInFlight) return;
-      _homeActivityQueued = false;
-      _homeActivityInFlight = _refreshHomeActivityNow().finally(function () {
-        _homeActivityInFlight = null;
-        if (_homeActivityQueued) refreshHomeActivity();
-      });
-    }, 250);
-  }
-
-  function wireActivityClicks(root) {
-    (root || document).addEventListener('click', function (e) {
-      var pendingBtn = e.target.closest('[data-pending-inv]');
-      var docBtn = e.target.closest('[data-invoice-id]');
-      var btn = pendingBtn || docBtn;
-      if (!btn) return;
-      var id = Number(pendingBtn ? btn.getAttribute('data-pending-inv') : btn.getAttribute('data-invoice-id'));
-      if (!id) return;
-      toast('Opening…');
-      LLCaptureApi.getInvoice(id)
-        .then(function (inv) {
-          if (LLCaptureApi.isPipelineActive(inv.status)) {
-            toast('Still processing…');
-            deps.showScreen('home');
-            return;
-          }
-          openReviewSheet(inv, 'Recent activity', { fromHome: !pendingBtn });
-        })
-        .catch(function (err) {
-          toast(err.message || 'Could not load document');
-        });
+      }).catch(function () { /* leave as processing — user can open from My items */ });
     });
   }
 
@@ -872,10 +1523,220 @@
     }
   }
 
-  function syncIntentChrome() {
-    $$('#capIntent button').forEach(function (b) {
-      b.classList.toggle('active', b.dataset.intent === teIntent);
+  var captureRouteIntents = [];
+  /** Selected Quick Action document type for Capture scan. */
+  var captureRouteDtCode = '';
+  /** documentTypeCode (upper) → quick action item; drives Capture form list. */
+  var quickActionByCode = {};
+
+  function routeIntentFromKind(kind) {
+    var k = String(kind || '').trim().toLowerCase();
+    if (k === 'direct_payment') return 'expense_claim';
+    if (k === 'expense_claim' || k === 'advance_requisition' || k === 'vendor_invoice') return k;
+    return '';
+  }
+
+  function routeIntentLabel(intent, custom) {
+    var label = String(custom || '').trim();
+    if (label) return label;
+    if (intent === 'advance_requisition') return 'Advance';
+    if (intent === 'vendor_invoice') return 'Vendor';
+    return 'Claim';
+  }
+
+  function captureRouteIcon(kind) {
+    var k = String(kind || '').toLowerCase();
+    if (k === 'advance_requisition') {
+      return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.2"/><path d="M12 8v8M9.5 10.5h5M9.5 13.5h5"/></svg>';
+    }
+    if (k === 'vendor_invoice') {
+      return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7.2A2 2 0 0 1 6 5.2h3.3l1.9 2.2h7.8a2 2 0 0 1 2 2v8.4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>';
+    }
+    return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h8.5L19 7.5V21H6z"/><path d="M14 3v5h5M9 12.5h6M9 16h4"/></svg>';
+  }
+
+  var CAP_CHIP_CHECK =
+    '<svg class="chip-check" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.2 8.2l3.2 3.2 6.4-6.8"/></svg>';
+
+  function quickActionCodes() {
+    return Object.keys(quickActionByCode);
+  }
+
+  /** Document types allowed in Capture Fill — Quick Action forms only. */
+  function visibleDocumentTypes() {
+    var codes = quickActionCodes();
+    if (!codes.length) return [];
+    var byCode = {};
+    documentTypes.forEach(function (dt) {
+      var c = String((dt && dt.code) || '').trim().toUpperCase();
+      if (c) byCode[c] = dt;
     });
+    var rows = [];
+    codes.forEach(function (code) {
+      var qa = quickActionByCode[code];
+      if (!qa) return;
+      var intent = routeIntentFromKind(qa.teamExpenseKind || 'expense_claim');
+      if (captureRouteIntents.length && teIntent && intent && intent !== teIntent) {
+        return;
+      }
+      var dt = byCode[code];
+      if (dt) {
+        rows.push(dt);
+      } else {
+        rows.push({
+          code: code,
+          title: qa.label || qa.shortTitle || qa.title || code,
+          teamExpenseKind: qa.teamExpenseKind || '',
+          fields: []
+        });
+      }
+    });
+    return rows;
+  }
+
+  /** Rebuild Capture form chips + Fill list from Mobile Quick Action forms. */
+  function setCaptureRoutesFromQuickActions(items) {
+    var host = $('#capIntent');
+    quickActionByCode = {};
+    var routeItems = [];
+
+    (Array.isArray(items) ? items : []).forEach(function (item) {
+      if (!item || item.enabled === false) return;
+      var code = String(item.documentTypeCode || '').trim().toUpperCase();
+      if (!code) return;
+      quickActionByCode[code] = item;
+      var intent = routeIntentFromKind(item.teamExpenseKind || 'expense_claim');
+      if (!intent) intent = 'expense_claim';
+      routeItems.push({
+        code: code,
+        intent: intent,
+        kind: item.teamExpenseKind || intent,
+        label: routeIntentLabel(
+          intent,
+          item.label || item.shortTitle || item.title || code
+        )
+      });
+    });
+
+    var seenIntent = {};
+    captureRouteIntents = [];
+    routeItems.forEach(function (r) {
+      if (!seenIntent[r.intent]) {
+        seenIntent[r.intent] = true;
+        captureRouteIntents.push(r.intent);
+      }
+    });
+
+    if (host) {
+      host.innerHTML = '';
+      if (!routeItems.length) {
+        host.hidden = true;
+        captureRouteDtCode = '';
+        teIntent = 'expense_claim';
+      } else {
+        host.hidden = false;
+        if (
+          !captureRouteDtCode ||
+          !quickActionByCode[captureRouteDtCode]
+        ) {
+          captureRouteDtCode = routeItems[0].code;
+        }
+        var selected = quickActionByCode[captureRouteDtCode];
+        teIntent = routeIntentFromKind(
+          (selected && selected.teamExpenseKind) || routeItems[0].intent
+        ) || routeItems[0].intent;
+        preferredDtCode = captureRouteDtCode;
+
+        routeItems.forEach(function (r) {
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'fchip';
+          btn.setAttribute('data-intent', r.intent);
+          btn.setAttribute('data-dt', r.code);
+          btn.setAttribute('aria-pressed', 'false');
+          btn.setAttribute('aria-label', 'Capture as ' + r.label);
+          btn.innerHTML =
+            CAP_CHIP_CHECK +
+            captureRouteIcon(r.kind) +
+            '<span>' + esc(r.label) + '</span>';
+          host.appendChild(btn);
+        });
+      }
+    }
+
+    if (selectedDt) {
+      var selCode = String(selectedDt.code || '').trim().toUpperCase();
+      if (!quickActionByCode[selCode]) {
+        selectedDt = null;
+        fillFields = {};
+        fillLineItems = [];
+      }
+    }
+
+    syncIntentChrome(false);
+    syncModeChrome();
+    renderDtList();
+    syncFillSubmit();
+  }
+
+  function scrollChipIntoBar(host, chip) {
+    if (!host || !chip) return;
+    try {
+      var left = chip.offsetLeft - (host.clientWidth - chip.offsetWidth) / 2;
+      host.scrollTo({
+        left: Math.max(0, left),
+        behavior: 'smooth'
+      });
+    } catch (e) {
+      try {
+        host.scrollLeft = Math.max(
+          0,
+          chip.offsetLeft - (host.clientWidth - chip.offsetWidth) / 2
+        );
+      } catch (e2) { /* ignore */ }
+    }
+  }
+
+  function syncIntentChrome(scroll) {
+    var host = $('#capIntent');
+    $$('#capIntent .fchip').forEach(function (b) {
+      var dt = String(b.getAttribute('data-dt') || '').toUpperCase();
+      var on = captureRouteDtCode
+        ? dt === String(captureRouteDtCode).toUpperCase()
+        : b.dataset.intent === teIntent;
+      b.setAttribute('aria-pressed', String(on));
+      b.classList.toggle('active', on);
+      if (on && scroll) scrollChipIntoBar(host, b);
+    });
+  }
+
+  function selectCaptureRoute(dtCode, intent, options) {
+    var opts = options || {};
+    var code = String(dtCode || '').trim().toUpperCase();
+    var nextIntent = routeIntentFromKind(intent) || intent || 'expense_claim';
+    if (code && quickActionByCode[code]) {
+      captureRouteDtCode = code;
+      preferredDtCode = code;
+      nextIntent =
+        routeIntentFromKind(quickActionByCode[code].teamExpenseKind) || nextIntent;
+    }
+    setTeamExpenseIntent(nextIntent, {
+      quiet: !!opts.quiet,
+      force: true,
+      skipChrome: true
+    });
+    syncIntentChrome(opts.scroll !== false);
+    if (capturePath === 'fill') {
+      renderDtList();
+      syncFillSubmit();
+    }
+    if (!opts.quiet) {
+      var qa = quickActionByCode[captureRouteDtCode];
+      var label =
+        (qa && (qa.label || qa.shortTitle || qa.title)) ||
+        routeIntentLabel(teIntent);
+      toast('Capturing as ' + label);
+    }
   }
 
   function setTeamExpenseIntent(next, options) {
@@ -886,10 +1747,30 @@
       vendor_invoice: 1
     };
     if (!allowed[next]) return;
+    // Capture tab buttons are QA-driven; Quick Action flows may force any intent.
+    if (!opts.force && captureRouteIntents.length && captureRouteIntents.indexOf(next) < 0) {
+      return;
+    }
     var prev = teIntent;
     teIntent = next;
-    syncIntentChrome();
+    if (!opts.skipChrome) syncIntentChrome(false);
     syncModeChrome();
+    if (capturePath === 'fill') {
+      if (selectedDt) {
+        var selCode = String(selectedDt.code || '').trim().toUpperCase();
+        var qa = quickActionByCode[selCode];
+        var intent = routeIntentFromKind(
+          (qa && qa.teamExpenseKind) || selectedDt.teamExpenseKind || ''
+        );
+        if (intent && intent !== teIntent) {
+          selectedDt = null;
+          fillFields = {};
+          fillLineItems = [];
+        }
+      }
+      renderDtList();
+      syncFillSubmit();
+    }
     if (opts.quiet || prev === teIntent) return;
     toast(
       teIntent === 'advance_requisition'
@@ -943,21 +1824,35 @@
     var q = String(($('#capDtSearch') && $('#capDtSearch').value) || '')
       .trim()
       .toLowerCase();
-    var rows = documentTypes.filter(function (dt) {
+    var rows = visibleDocumentTypes().filter(function (dt) {
       if (!q) return true;
+      var code = String(dt.code || '').toUpperCase();
+      var qa = quickActionByCode[code];
+      var title = String(
+        (qa && (qa.label || qa.shortTitle || qa.title)) || dt.title || ''
+      ).toLowerCase();
       return (
-        dt.title.toLowerCase().indexOf(q) >= 0 ||
-        dt.code.toLowerCase().indexOf(q) >= 0
+        title.indexOf(q) >= 0 ||
+        String(dt.code || '').toLowerCase().indexOf(q) >= 0
       );
     });
+    if (!quickActionCodes().length) {
+      host.innerHTML =
+        '<div style="padding:14px;font-size:13px;color:var(--ink-3)">No Quick Action forms configured. Add forms in Settings → Mobile.</div>';
+      return;
+    }
     if (!rows.length) {
       host.innerHTML =
-        '<div style="padding:14px;font-size:13px;color:var(--ink-3)">No matching document types</div>';
+        '<div style="padding:14px;font-size:13px;color:var(--ink-3)">No Quick Action forms for this route</div>';
       return;
     }
     host.innerHTML = rows
       .map(function (dt) {
-        var on = selectedDt && selectedDt.code === dt.code;
+        var code = String(dt.code || '').toUpperCase();
+        var qa = quickActionByCode[code];
+        var title =
+          (qa && (qa.label || qa.shortTitle || qa.title)) || dt.title || code;
+        var on = selectedDt && String(selectedDt.code || '').toUpperCase() === code;
         return (
           '<button type="button" role="option" data-code="' +
           esc(dt.code) +
@@ -966,7 +1861,7 @@
           '" aria-selected="' +
           on +
           '">' +
-          esc(dt.title) +
+          esc(title) +
           '<span class="code">' +
           esc(dt.code) +
           '</span></button>'
@@ -1118,10 +2013,25 @@
   }
 
   function selectDocumentType(code) {
+    var want = String(code || '').trim().toUpperCase();
+    if (want && quickActionCodes().length && !quickActionByCode[want]) {
+      toast('Only Quick Action forms can be used here');
+      return;
+    }
     selectedDt =
       documentTypes.find(function (dt) {
-        return dt.code === code;
+        return String(dt.code || '').toUpperCase() === want;
       }) || null;
+    // Allow selecting a QA code even if full DT catalog row is missing.
+    if (!selectedDt && quickActionByCode[want]) {
+      var qaStub = quickActionByCode[want];
+      selectedDt = {
+        code: want,
+        title: qaStub.label || qaStub.shortTitle || qaStub.title || want,
+        teamExpenseKind: qaStub.teamExpenseKind || '',
+        fields: []
+      };
+    }
     fillFields = {};
     fillLineItems = [];
     var sel = $('#capDtSelected');
@@ -1136,9 +2046,12 @@
       syncFillSubmit();
       return;
     }
+    var qa = quickActionByCode[want];
+    var displayTitle =
+      (qa && (qa.label || qa.shortTitle || qa.title)) || selectedDt.title || want;
     if (sel) {
       sel.hidden = false;
-      sel.textContent = selectedDt.title + ' · ' + selectedDt.code;
+      sel.textContent = displayTitle + ' · ' + selectedDt.code;
     }
     var keys = LLCaptureApi.formKeysForDocumentType(selectedDt);
     if (!keys.length) {
@@ -1444,12 +2357,19 @@
     });
     setMode('invoice');
 
-    $$('#capIntent button').forEach(function (b) {
-      b.addEventListener('click', function () {
-        setTeamExpenseIntent(b.dataset.intent || 'expense_claim');
+    var intentHost = $('#capIntent');
+    if (intentHost) {
+      intentHost.addEventListener('click', function (e) {
+        var b = e.target.closest('.fchip[data-dt], button[data-intent]');
+        if (!b || !intentHost.contains(b)) return;
+        selectCaptureRoute(
+          b.getAttribute('data-dt') || '',
+          b.dataset.intent || 'expense_claim',
+          { scroll: true }
+        );
       });
-    });
-    setTeamExpenseIntent('expense_claim', { quiet: true });
+    }
+    setTeamExpenseIntent('expense_claim', { quiet: true, force: true });
 
     $$('#capPath button').forEach(function (b) {
       b.addEventListener('click', function () {
@@ -1525,7 +2445,6 @@
       void onLibraryFiles(fileInput.files);
     });
 
-    wireActivityClicks(document);
     resumePendingPolls();
   }
 
@@ -1558,10 +2477,15 @@
     onShowCapture: onShowCapture,
     onHideCapture: onHideCapture,
     discardDraft: discardDraft,
-    prependActivityRows: prependActivityRows,
-    refreshHomeActivity: refreshHomeActivity,
     resumePendingPolls: resumePendingPolls,
     setTeamExpenseIntent: setTeamExpenseIntent,
+    setCaptureRoutesFromQuickActions: setCaptureRoutesFromQuickActions,
+    startQuickActionWithDoc: startQuickActionWithDoc,
+    startQuickActionWithoutDoc: startQuickActionWithoutDoc,
+    startClaimWithDoc: startClaimWithDoc,
+    startClaimWithoutDoc: startClaimWithoutDoc,
+    startAdvanceCapture: startAdvanceCapture,
+    openClaimDetailsForm: openClaimDetailsForm,
     openReviewForId: function (id, options) {
       return LLCaptureApi.getInvoice(id).then(function (inv) {
         openReviewSheet(inv, (options && options.sourceLabel) || 'My items', {

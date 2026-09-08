@@ -34,11 +34,11 @@ async def _enable_bank_feeds(db_session: AsyncSession) -> None:
 async def _two_accounts_and_out_txn(client: AsyncClient) -> tuple[int, int, int]:
     acc_a = await client.post(
         "/api/bank-feeds/accounts",
-        json={"name": "Ops AUD", "currency": "AUD"},
+        json={"name": "Ops AUD", "currency": "AUD", "account_number": "12345678", "coa_account_name": "Bank Account"},
     )
     acc_b = await client.post(
         "/api/bank-feeds/accounts",
-        json={"name": "Savings AUD", "currency": "AUD"},
+        json={"name": "Savings AUD", "currency": "AUD", "account_number": "12345678", "coa_account_name": "Bank Account"},
     )
     assert acc_a.status_code == 201, acc_a.text
     assert acc_b.status_code == 201, acc_b.text

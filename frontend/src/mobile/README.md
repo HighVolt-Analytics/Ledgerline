@@ -6,7 +6,7 @@
 
 - **Profile / settings identity** from signed-in session
 - **Sign out** + **Switch organisation**
-- **Home → Recent activity** — live `GET /api/invoices` (demo rows removed). Tap a document to open **DT extraction fields** (same keys as desktop). Edits `PATCH` immediately (two-way with LedgerLink). Pending captures still appear at the top.
+- **Home** — My budget (GL parent / sub-ledger), advance outstanding, quick actions, **History** (recent claims & advances)
 
 ## Open
 

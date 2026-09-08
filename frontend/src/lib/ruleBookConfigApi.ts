@@ -251,6 +251,7 @@ export function mapVendor(raw: Record<string, unknown>): VendorMaster {
       accountNumber: bank.account_number ?? "",
       accountName: bank.account_name ?? "",
       bankName: bank.bank_name ?? "",
+      payId: bank.pay_id != null ? String(bank.pay_id) : undefined,
       swift: bank.swift,
       iban: bank.iban,
     },
@@ -336,6 +337,9 @@ export function vendorToApi(vendor: VendorMaster): Record<string, unknown> {
       account_number: vendor.bank.accountNumber,
       account_name: vendor.bank.accountName,
       bank_name: vendor.bank.bankName,
+      ...(vendor.bank.payId != null && vendor.bank.payId !== ""
+        ? { pay_id: vendor.bank.payId }
+        : {}),
       ...(vendor.bank.swift != null ? { swift: vendor.bank.swift } : {}),
       ...(vendor.bank.iban != null ? { iban: vendor.bank.iban } : {}),
     },
@@ -379,6 +383,7 @@ export function mapEmployee(raw: Record<string, unknown>): EmployeeMaster {
       accountNumber: bank.account_number ?? "",
       accountName: bank.account_name ?? "",
       bankName: bank.bank_name ?? "",
+      payId: bank.pay_id != null ? String(bank.pay_id) : undefined,
       swift: bank.swift,
       iban: bank.iban,
     },
@@ -423,6 +428,9 @@ export function employeeToApi(employee: EmployeeMaster): Record<string, unknown>
       account_number: employee.bank.accountNumber,
       account_name: employee.bank.accountName,
       bank_name: employee.bank.bankName,
+      ...(employee.bank.payId != null && employee.bank.payId !== ""
+        ? { pay_id: employee.bank.payId }
+        : {}),
       ...(employee.bank.swift != null ? { swift: employee.bank.swift } : {}),
       ...(employee.bank.iban != null ? { iban: employee.bank.iban } : {}),
     },

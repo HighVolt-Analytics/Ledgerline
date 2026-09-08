@@ -30,16 +30,19 @@ export function useBankFeedImports(
 
 export function useBankTransactions(
   accountId: number | null,
-  matchStatus: BankFeedQueueTab,
+  tab: BankFeedQueueTab,
   page = 1,
   enabled = true
 ) {
-  const reconcile = matchStatus === "reconcile";
   return useTenantQuery({
-    queryKey: queryKeys.bankFeedTransactions(accountId, matchStatus, page),
+    queryKey: queryKeys.bankFeedTransactions(accountId, tab, page),
     queryFn: () =>
       api.listBankTransactions(accountId!, {
-        ...(reconcile ? { reconcile: true } : { match_status: matchStatus }),
+        ...(tab === "pending"
+          ? { reconcile: true }
+          : tab === "reconciled"
+            ? { reconciled: true }
+            : {}),
         page,
         page_size: BANK_FEEDS_PAGE_SIZE,
       }),
@@ -97,11 +100,22 @@ export function useUnsettledSettlements(page = 1, pageSize = BANK_FEEDS_PAGE_SIZ
   });
 }
 
+export function usePendingBankAccounts(enabled = true) {
+  return useTenantQuery({
+    queryKey: queryKeys.bankFeedPendingAccounts(),
+    queryFn: () => api.listPendingBankAccounts({ fresh: true }),
+    enabled,
+  });
+}
+
 function useInvalidateBankFeeds() {
   const queryClient = useQueryClient();
   return async () => {
     await queryClient.invalidateQueries({
       queryKey: queryKeys.bankFeedAccounts().slice(0, 2),
+    });
+    await queryClient.invalidateQueries({
+      queryKey: queryKeys.bankFeedPendingAccounts().slice(0, 2),
     });
   };
 }
@@ -113,15 +127,65 @@ export function useBankFeedMutations() {
     mutationFn: (body: {
       name: string;
       currency: string;
+      account_number: string;
       account_mask?: string | null;
-      coa_account_name?: string | null;
+      coa_account_name: string;
     }) => api.createBankAccount(body),
+    onSuccess: () => invalidate(),
+  });
+
+  const updateAccount = useMutation({
+    mutationFn: ({
+      accountId,
+      body,
+    }: {
+      accountId: number;
+      body: {
+        name: string;
+        currency: string;
+        account_number: string;
+        account_mask?: string | null;
+        coa_account_name: string;
+      };
+    }) => api.updateBankAccount(accountId, body),
+    onSuccess: () => invalidate(),
+  });
+
+  const deleteAccount = useMutation({
+    mutationFn: (accountId: number) => api.deleteBankAccount(accountId),
     onSuccess: () => invalidate(),
   });
 
   const importStatement = useMutation({
     mutationFn: ({ accountId, file }: { accountId: number; file: File }) =>
       api.importBankFeedStatement(accountId, file),
+    onSuccess: () => invalidate(),
+  });
+
+  const importPendingStatement = useMutation({
+    mutationFn: (file: File) => api.importPendingBankStatement(file),
+    onSuccess: () => invalidate(),
+  });
+
+  const promotePendingAccount = useMutation({
+    mutationFn: ({
+      pendingId,
+      body,
+    }: {
+      pendingId: number;
+      body: {
+        name: string;
+        account_number: string;
+        currency: string;
+        coa_account_name: string;
+        bank_account_id?: number | null;
+      };
+    }) => api.promotePendingBankAccount(pendingId, body),
+    onSuccess: () => invalidate(),
+  });
+
+  const dismissPendingAccount = useMutation({
+    mutationFn: (pendingId: number) => api.dismissPendingBankAccount(pendingId),
     onSuccess: () => invalidate(),
   });
 
@@ -248,7 +312,12 @@ export function useBankFeedMutations() {
 
   return {
     createAccount,
+    updateAccount,
+    deleteAccount,
     importStatement,
+    importPendingStatement,
+    promotePendingAccount,
+    dismissPendingAccount,
     importCsv,
     runMatch,
     runCategorize,

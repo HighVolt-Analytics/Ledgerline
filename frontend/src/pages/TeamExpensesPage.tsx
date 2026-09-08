@@ -7,7 +7,6 @@ import { ListSearchInput } from "@/components/ListSearchInput";
 import { PageHeader } from "@/components/PageHeader";
 import { PageTabPanel, PageTabs } from "@/components/PageTabs";
 import { ClaimDetailPanel } from "@/components/team-expenses/ClaimDetailPanel";
-import { DepartmentBudgetsPanel } from "@/components/team-expenses/DepartmentBudgetsPanel";
 import { EmployeeAdvanceFloatPanel } from "@/components/team-expenses/EmployeeAdvanceFloatPanel";
 import { ChannelBadge, ExpenseStateBadge } from "@/components/team-expenses/ExpenseBadges";
 import { TeamExpenseChannelsStrip } from "@/components/team-expenses/TeamExpenseChannelsStrip";
@@ -78,13 +77,9 @@ export function TeamExpensesPage({ embedded = false }: { embedded?: boolean }) {
   const pageTabs = useMemo(
     () =>
       isAdvanceKind
-        ? [
-            { value: "advances", label: "Advances", testid: "tab-advances" },
-            { value: "budgets", label: "GL budgets", testid: "tab-budgets" },
-          ]
+        ? [{ value: "advances", label: "Advances", testid: "tab-advances" }]
         : [
             { value: "claims", label: "Claims", testid: "tab-claims" },
-            { value: "budgets", label: "GL budgets", testid: "tab-budgets" },
             { value: "categories", label: "Categories", testid: "tab-categories" },
           ],
     [isAdvanceKind]
@@ -528,10 +523,6 @@ export function TeamExpensesPage({ embedded = false }: { embedded?: boolean }) {
             </div>
           </div>
         )}
-      </PageTabPanel>
-
-      <PageTabPanel value="budgets" active={tab} className="mt-4">
-        <DepartmentBudgetsPanel currency={institutionCurrency} />
       </PageTabPanel>
 
       {!isAdvanceKind ? (

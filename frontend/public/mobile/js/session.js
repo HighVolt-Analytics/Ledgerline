@@ -223,7 +223,7 @@
   }
 
   async function listApprovals(pageSize) {
-    var size = pageSize || 50;
+    var size = pageSize || 100;
     return apiFetch('/api/approvals?page=1&page_size=' + size, {
       method: 'GET',
       headers: authHeaders()
@@ -241,6 +241,22 @@
     return apiFetch('/api/approvals/' + encodeURIComponent(id) + '/reject', {
       method: 'POST',
       headers: authHeaders({ 'Content-Type': 'application/json' })
+    });
+  }
+
+  async function escalateInvoice(id, note) {
+    return apiFetch('/api/approvals/' + encodeURIComponent(id) + '/escalate', {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ note: String(note || '').trim() })
+    });
+  }
+
+  async function fetchMyEmployeeMaster() {
+    return apiFetch('/api/employee-masters/me', {
+      method: 'GET',
+      headers: authHeaders(),
+      cache: 'no-store'
     });
   }
 
@@ -299,6 +315,8 @@
     listApprovals: listApprovals,
     approveInvoice: approveInvoice,
     rejectInvoice: rejectInvoice,
+    escalateInvoice: escalateInvoice,
+    fetchMyEmployeeMaster: fetchMyEmployeeMaster,
     logout: logout,
     switchTenant: switchTenant
   };

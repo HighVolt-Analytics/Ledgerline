@@ -14,17 +14,48 @@ from app.services.bank_feeds.currency_validation import validate_bank_account_cu
 class BankAccountCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     currency: str = Field(..., min_length=3, max_length=3)
+    account_number: str = Field(..., min_length=1, max_length=64)
     account_mask: str | None = Field(default=None, max_length=32)
-    coa_account_name: str | None = Field(
-        default=None,
+    coa_account_name: str = Field(
+        ...,
+        min_length=1,
         max_length=255,
-        description="Optional COA name; defaults to Rule Book bank account posting default.",
+        description="COA ledger name from Chart of Accounts.",
     )
 
     @field_validator("currency")
     @classmethod
     def currency_must_be_supported(cls, value: str) -> str:
         return validate_bank_account_currency(value)
+
+    @field_validator("account_number")
+    @classmethod
+    def account_number_must_be_present(cls, value: str) -> str:
+        cleaned = (value or "").strip()
+        if not cleaned:
+            raise ValueError("Account number is required")
+        return cleaned
+
+
+class BankAccountUpdate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    currency: str = Field(..., min_length=3, max_length=3)
+    account_number: str = Field(..., min_length=1, max_length=64)
+    account_mask: str | None = Field(default=None, max_length=32)
+    coa_account_name: str = Field(..., min_length=1, max_length=255)
+
+    @field_validator("currency")
+    @classmethod
+    def currency_must_be_supported(cls, value: str) -> str:
+        return validate_bank_account_currency(value)
+
+    @field_validator("account_number")
+    @classmethod
+    def account_number_must_be_present(cls, value: str) -> str:
+        cleaned = (value or "").strip()
+        if not cleaned:
+            raise ValueError("Account number is required")
+        return cleaned
 
 
 class BankAccountResponse(BaseModel):
@@ -33,6 +64,7 @@ class BankAccountResponse(BaseModel):
     id: int
     name: str
     currency: str
+    account_number: str | None = None
     account_mask: str | None = None
     coa_account_code: str
     coa_account_name: str
@@ -40,6 +72,65 @@ class BankAccountResponse(BaseModel):
     status: str
     created_at: datetime
     updated_at: datetime
+
+
+class PendingBankAccountResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    detected_name: str | None = None
+    detected_account_number: str | None = None
+    detected_currency: str | None = None
+    filename: str | None = None
+    file_sha256: str
+    source: str
+    extracted_count: int = 0
+    confidence: float = 0
+    parse_meta: dict[str, Any] | list | None = None
+    status: str
+    promoted_bank_account_id: int | None = None
+    created_at: datetime
+    resolved_at: datetime | None = None
+
+
+class PendingBankAccountPromote(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    account_number: str = Field(..., min_length=1, max_length=64)
+    currency: str = Field(..., min_length=3, max_length=3)
+    coa_account_name: str = Field(..., min_length=1, max_length=255)
+    bank_account_id: int | None = Field(
+        default=None,
+        description="Optional existing bank account to link/import into instead of creating.",
+    )
+
+    @field_validator("currency")
+    @classmethod
+    def currency_must_be_supported(cls, value: str) -> str:
+        return validate_bank_account_currency(value)
+
+    @field_validator("account_number")
+    @classmethod
+    def account_number_must_be_present(cls, value: str) -> str:
+        cleaned = (value or "").strip()
+        if not cleaned:
+            raise ValueError("Account number is required")
+        return cleaned
+
+
+class PendingBankPromoteResponse(BaseModel):
+    account: BankAccountResponse
+    import_result: BankFeedImportResponse | None = None
+    pending: PendingBankAccountResponse
+
+
+class UnassignedStatementIngestResponse(BaseModel):
+    """Result of uploading a statement without selecting a bank account."""
+
+    disposition: Literal["pending", "auto_imported"]
+    match_reason: str | None = None
+    pending: PendingBankAccountResponse | None = None
+    account: BankAccountResponse | None = None
+    import_result: BankFeedImportResponse | None = None
 
 
 class BankFeedImportResponse(BaseModel):

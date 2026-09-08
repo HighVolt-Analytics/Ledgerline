@@ -206,6 +206,30 @@ async def reject_invoice(
     )
 
 
+async def escalate_invoice(
+    session: AsyncSession,
+    inv: Invoice,
+    *,
+    note: str,
+    actor_name: str | None = None,
+    actor_email: str | None = None,
+) -> None:
+    """Record an escalation note while keeping the invoice in the approval queue."""
+    if inv.status not in _QUEUE_STATUSES:
+        raise ValueError(f"Invoice status '{inv.status.value}' cannot be escalated")
+    text = (note or "").strip()
+    if not text:
+        raise ValueError("Escalation note is required")
+    await log_event(
+        session,
+        "approval_escalated",
+        invoice_id=inv.id,
+        detail={"note": text[:2000], "status": inv.status.value},
+        actor_name=actor_name,
+        actor_email=actor_email,
+    )
+
+
 async def restore_rejected_invoice_file_if_needed(
     session: AsyncSession,
     inv: Invoice,

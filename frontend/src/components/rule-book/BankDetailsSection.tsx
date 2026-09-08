@@ -7,6 +7,7 @@ export type BankDetails = {
   accountNumber: string;
   accountName: string;
   bankName: string;
+  payId?: string;
   swift?: string;
   iban?: string;
 };
@@ -94,6 +95,15 @@ export function BankDetailsSection({
             readOnly={readOnly}
             className="h-8 text-xs"
             placeholder="Bank"
+          />
+        </FieldLabel>
+        <FieldLabel label="PayID">
+          <Input
+            value={bank.payId ?? ""}
+            onChange={(e) => setField("payId", e.target.value)}
+            readOnly={readOnly}
+            className="h-8 text-xs font-mono"
+            placeholder="email or mobile"
           />
         </FieldLabel>
         <FieldLabel label="SWIFT (intl)">

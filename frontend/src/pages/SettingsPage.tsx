@@ -5,9 +5,11 @@ import { api } from "@/api/client";
 import { RuleBookDocumentTypesSection } from "@/components/rule-book/RuleBookDocumentTypesSection";
 import { ApprovalPolicyPrivileges } from "@/components/settings/ApprovalPolicyPrivileges";
 import { ChartOfAccountsPanel } from "@/components/settings/ChartOfAccountsPanel";
+import { MobileQuickActionsPanel } from "@/components/settings/MobileQuickActionsPanel";
 import { TaxRatesPanel } from "@/components/settings/TaxRatesPanel";
 import { OrgAiBriefPanel } from "@/components/settings/OrgAiBriefPanel";
 import { TenantMembersSection } from "@/components/settings/TenantMembersSection";
+import { DepartmentBudgetsPanel } from "@/components/team-expenses/DepartmentBudgetsPanel";
 import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -22,6 +24,7 @@ import { cn } from "@/lib/cn";
 import { queryKeys } from "@/lib/queryClient";
 import { INDUSTRIES } from "@/lib/settingsData";
 import { SETTINGS_TABS, type SettingsTabId } from "@/lib/settingsTabs";
+import { normalizeCurrencyCode } from "@/lib/format";
 import { useSetupCatalogs } from "@/hooks/useSetupCatalogs";
 
 export function SettingsPage() {
@@ -442,8 +445,14 @@ export function SettingsPage() {
 
       {tab === "team" && <TenantMembersSection />}
       {tab === "policy" && <ApprovalPolicyPrivileges />}
+      {tab === "mobile" && <MobileQuickActionsPanel canEdit={canEditAdmin} />}
       {tab === "coa" && (
         <ChartOfAccountsPanel canEdit={canEditAdmin} onSaved={() => setCoaSaved(true)} />
+      )}
+      {tab === "gl-budget" && (
+        <DepartmentBudgetsPanel
+          currency={normalizeCurrencyCode(institution?.currency || currency) ?? ""}
+        />
       )}
       {tab === "tax-rates" && <TaxRatesPanel canEdit={canEditAdmin} />}
     </div>

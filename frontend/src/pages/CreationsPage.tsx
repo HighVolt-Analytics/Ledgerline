@@ -1,15 +1,17 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useSearchParams } from "react-router-dom";
-import { Building2, CircleUser, CloudDownload, Loader2 } from "lucide-react";
+import { Building2, CircleUser, CloudDownload, Landmark, Loader2 } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { PageTabPanel, PageTabs } from "@/components/PageTabs";
 import { Card } from "@/components/ui/card";
 import { PulledContactsPanel } from "@/components/contacts/PulledContactsPanel";
+import { BanksTab } from "@/components/rule-book/BanksTab";
 import { CustomersTab } from "@/components/rule-book/CustomersTab";
 import { EmployeesTab } from "@/components/rule-book/EmployeesTab";
 import { VendorsTab } from "@/components/rule-book/VendorsTab";
 import { useToast } from "@/context/ToastContext";
 import { useAuth } from "@/context/AuthContext";
+import { useModuleEnabled } from "@/hooks/useTenantModules";
 import {
   useRuleBookVendorDetection,
   useSaveRuleBookVendorDetection,
@@ -19,18 +21,30 @@ import {
   type VendorDetectionConfig,
 } from "@/lib/v4RuleBookTypes";
 
-const CREATIONS_TABS = [
+const BASE_CREATIONS_TABS = [
   { value: "vendors", label: "Vendors", testid: "tab-vendors", icon: Building2 },
   { value: "customers", label: "Customers", testid: "tab-customers", icon: Building2 },
   { value: "pulled", label: "Pulled", testid: "tab-pulled", icon: CloudDownload },
   { value: "employees", label: "Employees", testid: "tab-employees", icon: CircleUser },
 ] as const;
 
+const BANKS_TAB = {
+  value: "banks",
+  label: "Banks",
+  testid: "tab-banks",
+  icon: Landmark,
+} as const;
+
 const SAVE_DEBOUNCE_MS = 800;
 
 export function CreationsPage() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const bankFeedsEnabled = useModuleEnabled("bank_feeds");
+  const CREATIONS_TABS = useMemo(
+    () => (bankFeedsEnabled ? [...BASE_CREATIONS_TABS, BANKS_TAB] : [...BASE_CREATIONS_TABS]),
+    [bankFeedsEnabled]
+  );
   const [searchParams] = useSearchParams();
   const tabFromUrl = searchParams.get("tab");
   const customersSection = searchParams.get("customersSection");
@@ -74,8 +88,16 @@ export function CreationsPage() {
   useEffect(() => {
     if (tabFromUrl && CREATIONS_TABS.some((row) => row.value === tabFromUrl)) {
       setTab(tabFromUrl);
+    } else if (tabFromUrl === "banks" && !bankFeedsEnabled) {
+      setTab("vendors");
     }
-  }, [tabFromUrl]);
+  }, [tabFromUrl, CREATIONS_TABS, bankFeedsEnabled]);
+
+  useEffect(() => {
+    if (tab === "banks" && !bankFeedsEnabled) {
+      setTab("vendors");
+    }
+  }, [tab, bankFeedsEnabled]);
 
   useEffect(() => {
     if (blocked) {
@@ -227,14 +249,21 @@ export function CreationsPage() {
           />
         </PageTabPanel>
         <PageTabPanel value="customers" active={tab} className="mt-0">
-          <CustomersTab defaultSection={customersSection} />
+          <CustomersTab
+            defaultSection={mastersQ ? "masters" : customersSection}
+          />
         </PageTabPanel>
         <PageTabPanel value="pulled" active={tab} className="mt-0">
           <PulledContactsPanel canEdit={canEdit} />
         </PageTabPanel>
         <PageTabPanel value="employees" active={tab} className="mt-0">
-          <EmployeesTab />
+          <EmployeesTab initialSearchQuery={tab === "employees" ? mastersQ : null} />
         </PageTabPanel>
+        {bankFeedsEnabled ? (
+          <PageTabPanel value="banks" active={tab} className="mt-0">
+            <BanksTab canEdit={canEdit} />
+          </PageTabPanel>
+        ) : null}
       </div>
     </div>
   );

@@ -5,6 +5,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
 
+from app.schemas.institution_settings import MobileQuickActionsSettings
+
 
 class TenantMemberResponse(BaseModel):
     user_id: int
@@ -78,3 +80,6 @@ class PermissionsResponse(BaseModel):
     permissions: dict[str, bool]
     enabled_modules: dict[str, bool] = Field(default_factory=dict)
     can_reveal_bank: bool = False
+    mobile_quick_actions: MobileQuickActionsSettings = Field(
+        default_factory=MobileQuickActionsSettings
+    )

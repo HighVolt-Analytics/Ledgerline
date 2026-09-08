@@ -94,7 +94,6 @@ def resolved_counterparty_type(
 def _empty_classifier_root() -> dict[str, Any]:
     return {"type": "group", "operator": "AND", "children": []}
 
-
 class DocumentTypeSampleAnalysis(BaseModel):
     """Record that sample files were analyzed in the Rule Book editor (metadata only)."""
 

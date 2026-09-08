@@ -106,7 +106,7 @@ async def _import_unmatched_out(
 ) -> tuple[int, int]:
     acc = await client.post(
         "/api/bank-feeds/accounts",
-        json={"name": f"Concur {uuid.uuid4().hex[:6]}", "currency": "AUD"},
+        json={"name": f"Concur {uuid.uuid4().hex[:6]}", "currency": "AUD", "account_number": "12345678", "coa_account_name": "Bank Account"},
     )
     assert acc.status_code == 201, acc.text
     account_id = acc.json()["data"]["id"]

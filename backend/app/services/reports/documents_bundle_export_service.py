@@ -65,14 +65,12 @@ from app.services.vault.vault_paths import is_standard_vault_book, normalize_vau
 
 BundleCellFormat = Literal["excel", "plain"]
 
-_BUNDLE_EXPORT_STATUSES = frozenset({
-    InvoiceStatus.PROCESSED,
-    InvoiceStatus.EXCEPTION,
-    InvoiceStatus.VALIDATING,
-    InvoiceStatus.MAPPING,
-    InvoiceStatus.JOURNALING,
-    InvoiceStatus.RECONCILING,
-})
+# Include all active statuses (vaulted/exception/pipeline); skip terminal rejects.
+_BUNDLE_EXPORT_STATUSES = frozenset(
+    status
+    for status in InvoiceStatus
+    if status not in {InvoiceStatus.REJECTED, InvoiceStatus.DUPLICATE_SKIPPED}
+)
 
 _FIXED_COLUMNS = [
     "Timestamp",

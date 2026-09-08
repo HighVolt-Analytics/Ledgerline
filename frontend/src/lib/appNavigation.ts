@@ -1,15 +1,13 @@
 import type { LucideIcon } from "lucide-react";
 import {
   BarChart3,
+  ClipboardCheck,
   Coins,
   CreditCard,
   Gauge,
   Link2,
   Plug,
-  Receipt,
   Settings,
-  ShoppingCart,
-  TrendingUp,
   Upload,
   Users,
   Vault,
@@ -39,48 +37,19 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [{ to: "/upload", label: "Upload", icon: Upload, badge: "upload" }],
   },
   {
-    label: "Contacts",
-    items: [{ to: "/creations", label: "Contacts", icon: Users }],
+    label: "Approvals",
+    items: [{ to: "/approvals", label: "Approvals", icon: ClipboardCheck, badge: "approvals" }],
   },
   {
-    label: "Reports",
-    items: [{ to: "/reports", label: "Reports", icon: BarChart3, moduleKey: "reports" }],
-  },
-  {
-    label: "Operations",
+    label: "Cashflow",
     items: [
       {
-        to: "/team-expenses",
-        label: "Team Expenses",
-        icon: Receipt,
-        badge: "team_expenses",
-        moduleKey: "team_expenses",
+        to: "/payments",
+        label: "Payments",
+        icon: Wallet,
+        badge: "payments",
+        moduleKey: "payments",
       },
-      {
-        to: "/expenses",
-        label: "Expenses Management",
-        icon: Coins,
-        badge: "business_expenses",
-        moduleKey: "expenses",
-      },
-      {
-        to: "/purchases",
-        label: "Purchase Management",
-        icon: ShoppingCart,
-        moduleKey: "purchase",
-      },
-      {
-        to: "/sales",
-        label: "Sales Management",
-        icon: TrendingUp,
-        badge: "sales",
-        moduleKey: "sales",
-      },
-    ],
-  },
-  {
-    label: "Finance",
-    items: [
       {
         to: "/collections",
         label: "Collections",
@@ -88,10 +57,23 @@ export const NAV_GROUPS: NavGroup[] = [
         badge: "collections",
         moduleKey: "sales",
       },
-      { to: "/ledger-link", label: "Accounting", icon: Link2, moduleKey: "ledger_link" },
-      { to: "/payments", label: "Payments", icon: Wallet, badge: "payments", moduleKey: "payments" },
-      { to: "/vault", label: "Vault", icon: Vault, moduleKey: "vault" },
     ],
+  },
+  {
+    label: "Ledger Sync",
+    items: [{ to: "/ledger-link", label: "Ledger Sync", icon: Link2, moduleKey: "ledger_link" }],
+  },
+  {
+    label: "Vault",
+    items: [{ to: "/vault", label: "Vault", icon: Vault, moduleKey: "vault" }],
+  },
+  {
+    label: "Reports",
+    items: [{ to: "/reports", label: "Reports", icon: BarChart3, moduleKey: "reports" }],
+  },
+  {
+    label: "Contacts",
+    items: [{ to: "/creations", label: "Contacts", icon: Users }],
   },
   {
     label: "Admin",
@@ -106,6 +88,7 @@ export const NAV_GROUPS: NavGroup[] = [
 export const MOBILE_NAV: NavItem[] = [
   { to: "/", label: "Dashboard", icon: Gauge },
   { to: "/upload", label: "Upload", icon: Upload, badge: "upload" },
+  { to: "/approvals", label: "Approvals", icon: ClipboardCheck, badge: "approvals" },
   { to: "/creations", label: "Contacts", icon: Users },
   { to: "/settings", label: "Settings", icon: Settings },
 ];

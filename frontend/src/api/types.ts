@@ -27,6 +27,7 @@ export interface UserPermissions {
   permissions: Record<ApprovalActionKey, boolean>;
   enabled_modules: Record<string, boolean>;
   can_reveal_bank?: boolean;
+  mobile_quick_actions?: import("@/lib/mobileQuickActions").MobileQuickActionsSettings;
 }
 
 export interface TenantMember {
@@ -148,6 +149,29 @@ export interface Tenant {
   is_current: boolean;
 }
 
+export type MobileQuickActionKey = "claim" | "advance" | "approvals";
+export type MobileQuickActionsPlan = "full" | "claims_advance" | "claims_only";
+export type MobileQuickActionExtraTarget =
+  | "capture"
+  | "items"
+  | "files"
+  | "profile"
+  | "approvals";
+
+export type {
+  MobileQuickActionFieldConfig,
+  MobileQuickActionFieldsConfig,
+  MobileQuickActionItem,
+  MobileQuickActionPhotoMode,
+  MobileQuickActionsSettings,
+} from "@/lib/mobileQuickActions";
+
+export interface MobileQuickActionExtra {
+  id: string;
+  label: string;
+  target: MobileQuickActionExtraTarget;
+}
+
 export interface InstitutionSettings {
   name: string;
   country: string;
@@ -166,6 +190,8 @@ export interface InstitutionSettings {
   labor_rate_per_hour?: number;
   /** True when the tenant has invoices (currency change is an accounting event). */
   has_ledger_activity?: boolean;
+  /** Mobile home Quick Actions (selected document types + form setup). */
+  mobile_quick_actions?: import("@/lib/mobileQuickActions").MobileQuickActionsSettings;
 }
 
 export interface OrgAiBrief {
@@ -3349,6 +3375,7 @@ export interface BankAccount {
   id: number;
   name: string;
   currency: string;
+  account_number: string | null;
   account_mask: string | null;
   coa_account_code: string;
   coa_account_name: string;
@@ -3356,6 +3383,37 @@ export interface BankAccount {
   status: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface PendingBankAccount {
+  id: number;
+  detected_name: string | null;
+  detected_account_number: string | null;
+  detected_currency: string | null;
+  filename: string | null;
+  file_sha256: string;
+  source: string;
+  extracted_count: number;
+  confidence: number;
+  parse_meta: Record<string, unknown> | unknown[] | null;
+  status: string;
+  promoted_bank_account_id: number | null;
+  created_at: string;
+  resolved_at: string | null;
+}
+
+export interface PendingBankPromoteResult {
+  account: BankAccount;
+  import_result: BankFeedImport | null;
+  pending: PendingBankAccount;
+}
+
+export interface UnassignedStatementIngestResult {
+  disposition: "pending" | "auto_imported";
+  match_reason?: string | null;
+  pending?: PendingBankAccount | null;
+  account?: BankAccount | null;
+  import_result?: BankFeedImport | null;
 }
 
 export interface BankFeedImport {
@@ -3471,7 +3529,7 @@ export interface BankMatchRunResult {
   items: BankMatchRunItem[];
 }
 
-export type BankFeedQueueTab = "reconcile" | "matched" | "posted" | "excluded" | "unsettled";
+export type BankFeedQueueTab = "pending" | "reconciled" | "statement";
 
 export interface UnsettledSettlement {
   entity_type: "payment" | "collection";

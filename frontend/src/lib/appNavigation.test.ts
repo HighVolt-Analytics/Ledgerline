@@ -6,8 +6,9 @@ describe("appNavigation", () => {
     const flat = flattenNavItems(NAV_GROUPS);
     expect(flat.some((row) => row.label === "Dashboard" && row.group === "Dashboard")).toBe(true);
     expect(flat.some((row) => row.to === "/upload" && row.group === "Upload")).toBe(true);
+    expect(flat.some((row) => row.to === "/approvals" && row.group === "Approvals")).toBe(true);
     expect(flat.some((row) => row.to === "/creations" && row.group === "Contacts")).toBe(true);
-    expect(flat.some((row) => row.to === "/approvals")).toBe(false);
+    expect(flat.some((row) => row.to === "/ledger-link" && row.label === "Ledger Sync")).toBe(true);
     expect(flat.some((row) => row.to === "/rules")).toBe(false);
   });
 

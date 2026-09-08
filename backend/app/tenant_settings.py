@@ -279,6 +279,115 @@ def country_locale_suggestion(country_code: str) -> str:
     return DEFAULT_LOCALE
 
 
+class InvalidMobileQuickActionsError(ValueError):
+    """Raised when mobile quick-actions payload is invalid."""
+
+
+def _default_mobile_qa_fields() -> dict[str, Any]:
+    return {
+        "expenseType": {"visible": True, "required": True},
+        "adjustAdvance": {"visible": True, "required": False},
+        "amount": {"visible": True, "required": True},
+        "spentFor": {"visible": True, "required": True},
+        "remarks": {"visible": True, "required": False},
+    }
+
+
+def default_mobile_quick_actions() -> dict[str, Any]:
+    return {"items": []}
+
+
+def _normalize_mobile_qa_field(raw: Any, fallback: dict[str, bool]) -> dict[str, bool]:
+    if not isinstance(raw, dict):
+        return dict(fallback)
+    return {
+        "visible": bool(raw["visible"]) if "visible" in raw else fallback["visible"],
+        "required": bool(raw["required"]) if "required" in raw else fallback["required"],
+    }
+
+
+def _normalize_mobile_qa_item(raw: Any, *, index: int) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    code = str(raw.get("documentTypeCode") or raw.get("document_type_code") or "").strip().upper()
+    if not code:
+        return None
+    allow_with = raw.get("allowWithDoc", raw.get("allow_with_doc", True))
+    allow_without = raw.get("allowWithoutDoc", raw.get("allow_without_doc", True))
+    if not allow_with and not allow_without:
+        allow_with = True
+    photo = str(raw.get("photoRequired") or raw.get("photo_required") or "optional").strip().lower()
+    if photo not in {"compulsory", "optional", "none"}:
+        photo = "optional"
+    defaults = _default_mobile_qa_fields()
+    fields_raw = raw.get("fields") if isinstance(raw.get("fields"), dict) else {}
+    fields = {
+        "expenseType": _normalize_mobile_qa_field(
+            fields_raw.get("expenseType") or fields_raw.get("expense_type"),
+            defaults["expenseType"],
+        ),
+        "adjustAdvance": _normalize_mobile_qa_field(
+            fields_raw.get("adjustAdvance") or fields_raw.get("adjust_advance"),
+            defaults["adjustAdvance"],
+        ),
+        "amount": _normalize_mobile_qa_field(fields_raw.get("amount"), defaults["amount"]),
+        "spentFor": _normalize_mobile_qa_field(
+            fields_raw.get("spentFor") or fields_raw.get("spent_for"),
+            defaults["spentFor"],
+        ),
+        "remarks": _normalize_mobile_qa_field(fields_raw.get("remarks"), defaults["remarks"]),
+    }
+    eid = str(raw.get("id") or "").strip() or f"mqa_{index + 1}"
+    label = str(raw.get("label") or "").strip()[:48]
+    return {
+        "id": eid[:40],
+        "documentTypeCode": code[:16],
+        "label": label,
+        "enabled": bool(raw.get("enabled", True)),
+        "allowWithDoc": bool(allow_with),
+        "allowWithoutDoc": bool(allow_without),
+        "photoRequired": photo,
+        "fields": fields,
+    }
+
+
+def normalize_mobile_quick_actions(raw: Any) -> dict[str, Any]:
+    """Normalize stored or inbound mobile quick-actions config.
+
+    Canonical shape: ``{ "items": [ { documentTypeCode, allowWithDoc, ... } ] }``.
+    Legacy plan/actions/extras or DT-flag shapes are ignored (empty plan).
+    """
+    if not isinstance(raw, dict):
+        return default_mobile_quick_actions()
+
+    items_raw = raw.get("items")
+    if not isinstance(items_raw, list):
+        # Legacy shapes (plan/actions/extras) → empty; tenants re-add via Settings → Mobile.
+        return default_mobile_quick_actions()
+
+    out: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    seen_codes: set[str] = set()
+    for idx, row in enumerate(items_raw):
+        item = _normalize_mobile_qa_item(row, index=idx)
+        if not item:
+            continue
+        if item["id"] in seen_ids or item["documentTypeCode"] in seen_codes:
+            continue
+        seen_ids.add(item["id"])
+        seen_codes.add(item["documentTypeCode"])
+        out.append(item)
+        if len(out) >= 12:
+            break
+    return {"items": out}
+
+
+def tenant_mobile_quick_actions(tenant: Tenant | None) -> dict[str, Any]:
+    settings = _settings(tenant)
+    try:
+        return normalize_mobile_quick_actions(settings.get("mobile_quick_actions"))
+    except InvalidMobileQuickActionsError:
+        return default_mobile_quick_actions()
 def merge_institution_settings(
     current: dict[str, Any] | None,
     *,
@@ -288,6 +397,7 @@ def merge_institution_settings(
     custom_bundle_field_key: str | None = None,
     currency: str | None = None,
     labor_rate_per_hour: float | int | None = None,
+    mobile_quick_actions: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Apply institution profile updates to settings_json.
 
@@ -324,6 +434,8 @@ def merge_institution_settings(
             out.pop("labor_rate_per_hour", None)
         else:
             out["labor_rate_per_hour"] = rate
+    if mobile_quick_actions is not None:
+        out["mobile_quick_actions"] = normalize_mobile_quick_actions(mobile_quick_actions)
 
     return out
 

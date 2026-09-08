@@ -17,9 +17,9 @@ import {
   ledgerExistsInCoa,
   mergeCoaOptionsWithSavedValue,
 } from "@/lib/coaAccountOptions";
+import type { EmployeeAdvanceSettlementRow } from "@/api/types";
 import type { EmployeeMaster } from "@/lib/v4RuleBookTypes";
-import { fmtAud } from "@/lib/v4MockData";
-import { normalizeCurrencyCode } from "@/lib/format";
+import { money, normalizeCurrencyCode, toNumber } from "@/lib/format";
 import { BankDetailsSection } from "./BankDetailsSection";
 import { FieldLabel } from "./FieldLabel";
 
@@ -37,11 +37,14 @@ export function EmployeeDetailPanel({
   onChange,
   masked,
   onToggleMask,
+  advanceFloat = null,
 }: {
   emp: EmployeeMaster;
   onChange: (patch: Partial<EmployeeMaster>) => void;
   masked: boolean;
   onToggleMask?: () => void;
+  /** Same settlement row as Team Expenses → Advances (took / used / outstanding / …). */
+  advanceFloat?: EmployeeAdvanceSettlementRow | null;
 }) {
   const [rulesOpen, setRulesOpen] = useState(false);
   const { data: institution } = useInstitutionSettings();
@@ -55,6 +58,13 @@ export function EmployeeDetailPanel({
     includeEmpty: true,
     emptyLabel: "— Select account —",
   });
+
+  const fmtAdvance = (value: number | string | null | undefined) =>
+    money(toNumber(value), booksCurrency);
+
+  const outstanding = advanceFloat
+    ? toNumber(advanceFloat.advance_ledger_balance)
+    : toNumber(emp.advanceBalance);
 
   const teamDefaultAdvanceParent =
     teamExpensePosting?.defaultAdvanceParentLedger?.trim() ?? "";
@@ -245,7 +255,7 @@ export function EmployeeDetailPanel({
           </FieldLabel>
           <FieldLabel label="Net advance outstanding">
             <Input
-              value={fmtAud(emp.advanceBalance ?? 0, booksCurrency)}
+              value={fmtAdvance(outstanding)}
               readOnly
               disabled
               className="h-8 text-xs tnum"
@@ -256,6 +266,8 @@ export function EmployeeDetailPanel({
         <p className="text-[11px] text-muted-foreground mt-1.5">
           Pick any ledger from Settings → Chart of accounts (defaults to Rules → Team expense
           posting). Advance requisitions post to this employee&apos;s sub-ledger under that parent.
+          Use <span className="font-medium text-foreground">Advance details</span> on the employee
+          list for took / used / outstanding / available.
         </p>
       </div>
 
@@ -269,7 +281,7 @@ export function EmployeeDetailPanel({
 
       <p className="text-[11px] text-muted-foreground px-1">
         Budgets are set by GL account on{" "}
-        <span className="font-medium text-foreground">Team Expenses → GL budgets</span>
+        <span className="font-medium text-foreground">Settings → GL Budget</span>
         , not per employee.
       </p>
 

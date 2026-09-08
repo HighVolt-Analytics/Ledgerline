@@ -11,6 +11,7 @@ from app.models.bank_feed import (
     BankTransaction,
     BankTransactionMatch,
     BankTransactionNote,
+    PendingBankAccount,
 )
 from app.models.classification_learning import ClassificationLearningEvent, InvoiceOcrArtifact
 from app.models.collection import Collection
@@ -107,6 +108,8 @@ __all__ = [
     "BankFeedImport",
     "BankTransaction",
     "BankTransactionMatch",
+    "BankTransactionNote",
+    "PendingBankAccount",
     "ClassificationLearningEvent",
     "Collection",
     "CustomerMasterRecord",

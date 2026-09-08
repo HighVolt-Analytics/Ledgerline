@@ -96,6 +96,7 @@
             account_number: get("bank_account_number"),
             account_name: get("bank_account_name"),
             bank_name: get("bank_bank_name"),
+            pay_id: get("bank_pay_id"),
           },
         };
       }
@@ -117,6 +118,7 @@
           account_number: get("bank_account_number"),
           account_name: get("bank_account_name"),
           bank_name: get("bank_bank_name"),
+          pay_id: get("bank_pay_id"),
         },
       };
     }
@@ -145,6 +147,7 @@
           ${field("Account number", "bank_account_number", bank.account_number)}
           ${field("Account name", "bank_account_name", bank.account_name)}
           ${field("Bank name", "bank_bank_name", bank.bank_name)}
+          ${field("PayID", "bank_pay_id", bank.pay_id)}
         </div></section>
       `;
     }

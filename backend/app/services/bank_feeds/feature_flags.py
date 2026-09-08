@@ -1,14 +1,14 @@
-"""Bank feeds feature gates (unsigned / pending design review).
+"""Bank feeds feature gates.
 
-Transfer was scoped out of Phase 6 until cross-account verification is designed.
-Keep disabled in production until explicitly enabled after review.
+Inter-account Transfer is enabled by default (Xero-style Match / Create / Transfer / Discuss).
+Set BANK_FEEDS_TRANSFER_ENABLED=0 to disable.
 """
 
 from __future__ import annotations
 
 import os
 
-_DEFAULT_TRANSFER_ENABLED = False
+_DEFAULT_TRANSFER_ENABLED = True
 
 
 def bank_feeds_transfer_enabled() -> bool:

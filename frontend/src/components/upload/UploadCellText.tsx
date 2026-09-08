@@ -37,8 +37,8 @@ export function UploadCellClip({
   );
 }
 
-export const UPLOAD_DETAILED_TABLE_WIDTH_REM = 152;
-export const UPLOAD_DETAILED_TABLE_WIDTH_WITH_SOURCE_REM = 159.5;
+export const UPLOAD_DETAILED_TABLE_WIDTH_REM = 128.5;
+export const UPLOAD_DETAILED_TABLE_WIDTH_WITH_SOURCE_REM = 136;
 
 export function UploadDetailedColGroup({ showSource }: { showSource: boolean }) {
   return (
@@ -49,19 +49,17 @@ export function UploadDetailedColGroup({ showSource }: { showSource: boolean }) 
       <col style={{ width: "9.5rem" }} />
       <col style={{ width: "9.5rem" }} />
       <col style={{ width: "8rem" }} />
-      <col style={{ width: "8rem" }} />
       <col style={{ width: "11rem" }} />
       <col style={{ width: "7.5rem" }} />
       <col style={{ width: "7rem" }} />
       <col style={{ width: "10.5rem" }} />
       <col style={{ width: "9.5rem" }} />
-      <col style={{ width: "8rem" }} />
-      <col style={{ width: "8rem" }} />
+      <col style={{ width: "7.5rem" }} />
       <col style={{ width: "7.5rem" }} />
       <col style={{ width: "8rem" }} />
       <col style={{ width: "7.5rem" }} />
-      <col style={{ width: "8.5rem" }} />
-      <col style={{ width: "10rem" }} />
+      <col style={{ width: "10.5rem" }} />
+      <col style={{ width: "2.5rem" }} />
     </colgroup>
   );
 }

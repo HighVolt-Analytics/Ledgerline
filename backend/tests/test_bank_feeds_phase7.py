@@ -116,7 +116,7 @@ async def _received_collection(
 async def _bank_account_and_txn(client: AsyncClient) -> tuple[int, int]:
     acc = await client.post(
         "/api/bank-feeds/accounts",
-        json={"name": "Ops AUD", "currency": "AUD"},
+        json={"name": "Ops AUD", "currency": "AUD", "account_number": "12345678", "coa_account_name": "Bank Account"},
     )
     assert acc.status_code == 201, acc.text
     account_id = acc.json()["data"]["id"]

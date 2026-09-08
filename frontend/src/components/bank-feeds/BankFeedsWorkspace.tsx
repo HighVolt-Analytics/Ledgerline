@@ -1,125 +1,42 @@
-import { useEffect, useMemo, useState } from "react";
-import { Landmark, Play, Plus, Tags, Undo2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Landmark, Play, Tags } from "lucide-react";
 import { Link } from "react-router-dom";
-import type { BankFeedQueueTab, BankTransaction } from "@/api/types";
+import type { BankFeedQueueTab } from "@/api/types";
 import { BankFeedImportSection } from "@/components/bank-feeds/BankFeedImportSection";
-import { BankFeedArchiveStatementCard } from "@/components/bank-feeds/BankFeedStatementCard";
 import { BankFeedReconcileRow } from "@/components/bank-feeds/BankFeedReconcileRow";
+import { BankFeedStatementLinesTable } from "@/components/bank-feeds/BankFeedStatementLinesTable";
 import { EmptyState } from "@/components/EmptyState";
 import { PageTabPanel, PageTabs } from "@/components/PageTabs";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
-import { Select } from "@/components/ui/select";
 import { TableSkeleton } from "@/components/skeleton/PageSkeletons";
-import { CURRENCIES } from "@/data/orgSetup";
 import {
   useBankAccounts,
+  useBankFeedImports,
   useBankFeedMutations,
-  useBankTransaction,
   useBankTransactions,
-  useUnsettledSettlements,
   BANK_FEEDS_PAGE_SIZE,
 } from "@/hooks/useBankFeeds";
 import { usePermissions } from "@/hooks/usePermissions";
 import { ApiError } from "@/api/client";
 import { BANK_FEEDS_TRANSFER_ENABLED } from "@/lib/bankFeedFeatures";
-import {
-  formatMatchEntityLabel,
-  formatMatchMethodLabel,
-} from "@/lib/bankFeedCopy";
-import { money } from "@/lib/format";
 
-const TABS: { value: BankFeedQueueTab; label: string; testid: string }[] = [
-  { value: "reconcile", label: "Reconcile", testid: "tab-bf-reconcile" },
-  { value: "unsettled", label: "Unsettled", testid: "tab-bf-unsettled" },
-  { value: "matched", label: "Matched", testid: "tab-bf-matched" },
-  { value: "posted", label: "Posted", testid: "tab-bf-posted" },
-  { value: "excluded", label: "Excluded", testid: "tab-bf-excluded" },
+const TAB_DEFS: { value: BankFeedQueueTab; label: string; testid: string }[] = [
+  { value: "pending", label: "Reconciliation Pending", testid: "tab-bf-pending" },
+  { value: "reconciled", label: "Reconciled", testid: "tab-bf-reconciled" },
+  { value: "statement", label: "Bank Statement", testid: "tab-bf-statement" },
 ];
 
-function PostedArchiveRow({
-  summary,
-  canPost,
-  busy,
-  onReverse,
-}: {
-  summary: BankTransaction;
-  canPost: boolean;
-  busy: boolean;
-  onReverse: (transactionId: number) => Promise<void>;
-}) {
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const detailQ = useBankTransaction(summary.id, true);
-  const txn = detailQ.data ?? summary;
-
-  return (
-    <>
-      <BankFeedArchiveStatementCard
-        txn={txn}
-        summary={
-          txn.posted_journal_batch_id ? (
-            <span>
-              Journal batch #{txn.posted_journal_batch_id}
-              {txn.category_coa ? ` · ${txn.category_coa}` : ""}
-            </span>
-          ) : null
-        }
-        actions={
-          canPost ? (
-            <Button
-              size="sm"
-              variant="outline"
-              className="border-destructive/40 text-destructive"
-              disabled={busy}
-              onClick={() => setConfirmOpen(true)}
-              data-testid={`bf-reverse-${txn.id}`}
-            >
-              <Undo2 className="h-4 w-4 mr-1" /> Reverse this entry
-            </Button>
-          ) : null
-        }
-      />
-      <ConfirmDialog
-        open={confirmOpen}
-        title="Reverse this entry?"
-        description="A reversing journal will be posted as of today. The bank line returns to Unmatched."
-        confirmLabel="Reverse this entry"
-        destructive
-        busy={busy}
-        onCancel={() => setConfirmOpen(false)}
-        onConfirm={() => {
-          setConfirmOpen(false);
-          void onReverse(txn.id);
-        }}
-      />
-    </>
-  );
-}
-
-function MatchedArchiveRow({ summary }: { summary: BankTransaction }) {
-  const detailQ = useBankTransaction(summary.id, true);
-  const txn = detailQ.data ?? summary;
-  const active = (txn.matches ?? []).filter((m) => m.unmatched_at == null);
-
-  return (
-    <BankFeedArchiveStatementCard
-      txn={txn}
-      summary={
-        active.length > 0 ? (
-          <ul className="space-y-1">
-            {active.map((m) => (
-              <li key={m.id}>
-                {formatMatchEntityLabel(m)} · {formatMatchMethodLabel(m.match_method)} ·{" "}
-                {money(m.allocated_amount, txn.currency)}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          "Matched"
-        )
-      }
-    />
-  );
+function formatImportedAt(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 export function BankFeedsWorkspace({
@@ -135,22 +52,12 @@ export function BankFeedsWorkspace({
   const accountsQ = useBankAccounts();
   const accounts = accountsQ.data ?? [];
   const [accountId, setAccountId] = useState<number | null>(initialAccountId);
-  const [tab, setTab] = useState<BankFeedQueueTab>(initialTab ?? "reconcile");
+  const [tab, setTab] = useState<BankFeedQueueTab>(initialTab ?? "pending");
   const [page, setPage] = useState(1);
+  const [importsPage, setImportsPage] = useState(1);
   const [banner, setBanner] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [newAccountName, setNewAccountName] = useState("");
-  const [newAccountCurrency, setNewAccountCurrency] = useState("AUD");
-
-  const currencyOptions = useMemo(
-    () =>
-      CURRENCIES.map((c) => ({
-        value: c.code,
-        label: `${c.code} — ${c.name}`,
-      })),
-    []
-  );
+  const [reverseId, setReverseId] = useState<number | null>(null);
 
   const mutations = useBankFeedMutations();
 
@@ -166,23 +73,39 @@ export function BankFeedsWorkspace({
 
   useEffect(() => {
     setPage(1);
+    setImportsPage(1);
   }, [accountId, tab]);
 
   useEffect(() => {
     if (initialTab) setTab(initialTab);
   }, [initialTab]);
 
-  const txnsQ = useBankTransactions(
+  const txnsQ = useBankTransactions(accountId, tab, page, true);
+  const pendingCountQ = useBankTransactions(
     accountId,
-    tab === "unsettled" ? "reconcile" : tab,
-    page,
-    tab !== "unsettled"
+    "pending",
+    1,
+    accountId != null && tab !== "pending"
   );
-  const unsettledQ = useUnsettledSettlements(page, BANK_FEEDS_PAGE_SIZE, tab === "unsettled");
+  const importsQ = useBankFeedImports(
+    accountId,
+    importsPage,
+    BANK_FEEDS_PAGE_SIZE,
+    tab === "statement"
+  );
   const items = txnsQ.data?.data.items ?? [];
-  const meta = tab === "unsettled" ? unsettledQ.data?.meta : txnsQ.data?.meta;
-  const unsettledItems = unsettledQ.data?.data.items ?? [];
-  const unsettledGrace = unsettledQ.data?.data.grace_days ?? 7;
+  const meta = txnsQ.data?.meta;
+  const pendingTotal =
+    tab === "pending"
+      ? (meta?.total ?? null)
+      : (pendingCountQ.data?.meta?.total ?? null);
+  const tabs = TAB_DEFS.map((t) =>
+    t.value === "pending" && pendingTotal != null && pendingTotal > 0
+      ? { ...t, label: `Reconciliation Pending (${pendingTotal})` }
+      : t
+  );
+  const imports = importsQ.data?.data.items ?? [];
+  const importsMeta = importsQ.data?.meta;
 
   const busy =
     mutations.runMatch.isPending ||
@@ -195,7 +118,6 @@ export function BankFeedsWorkspace({
     mutations.transfer.isPending ||
     mutations.createNote.isPending ||
     mutations.reverseCreate.isPending ||
-    mutations.createAccount.isPending ||
     mutations.importStatement.isPending;
 
   const flash = (msg: string) => {
@@ -211,27 +133,6 @@ export function BankFeedsWorkspace({
           ? err.message
           : "Request failed";
     setError(msg);
-  };
-
-  const onCreateAccount = async () => {
-    const name = newAccountName.trim();
-    if (!name) {
-      setError("Account name is required");
-      return;
-    }
-    try {
-      const row = await mutations.createAccount.mutateAsync({
-        name,
-        currency: newAccountCurrency,
-      });
-      setAccountId(row.id);
-      setCreateOpen(false);
-      setNewAccountName("");
-      setNewAccountCurrency(accounts[0]?.currency || "AUD");
-      flash(`Created account “${row.name}”`);
-    } catch (err) {
-      fail(err);
-    }
   };
 
   const onRunMatch = async () => {
@@ -261,27 +162,33 @@ export function BankFeedsWorkspace({
     }
   };
 
+  const onConfirmReverse = async () => {
+    if (reverseId == null) return;
+    try {
+      await mutations.reverseCreate.mutateAsync(reverseId);
+      flash("Journal reversed — line returned to Reconciliation Pending");
+      setReverseId(null);
+    } catch (err) {
+      fail(err);
+    }
+  };
+
+  const emptyHint =
+    tab === "pending"
+      ? "Import a statement, then match or categorize lines here."
+      : tab === "reconciled"
+        ? "Matched and posted bank lines appear here after you reconcile them."
+        : "Upload a statement to see its lines and import history.";
+
   return (
     <div className="space-y-6" data-testid="bank-feeds-workspace">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground max-w-2xl">
-          Import bank statements (PDF or CSV) and reconcile lines here — match payments, post journals
+          Import bank statements (PDF or CSV) and reconcile lines here — match payments, post
+          journals
           {BANK_FEEDS_TRANSFER_ENABLED ? ", or transfer between accounts" : ""}.
         </p>
         <div className="flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={!canPost || busy}
-            onClick={() => {
-              setError(null);
-              setNewAccountCurrency(accounts[0]?.currency || "AUD");
-              setCreateOpen((open) => !open);
-            }}
-            data-testid="bf-create-account"
-          >
-            <Plus className="h-4 w-4 mr-1" /> Account
-          </Button>
           <Button
             size="sm"
             disabled={!canPost || busy || accountId == null}
@@ -313,55 +220,6 @@ export function BankFeedsWorkspace({
         </p>
       )}
 
-      {createOpen && canPost ? (
-        <form
-          className="flex flex-wrap items-end gap-3 rounded-md border border-border bg-muted/20 p-3"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void onCreateAccount();
-          }}
-          data-testid="bf-create-account-form"
-        >
-          <label className="flex min-w-[12rem] flex-col gap-1 text-xs">
-            <span className="font-medium text-muted-foreground">Account name</span>
-            <input
-              type="text"
-              value={newAccountName}
-              onChange={(e) => setNewAccountName(e.target.value)}
-              className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-              placeholder="Operating account"
-              data-testid="bf-create-account-name"
-            />
-          </label>
-          <label className="flex min-w-[14rem] flex-col gap-1 text-xs">
-            <span className="font-medium text-muted-foreground">Currency</span>
-            <Select
-              value={newAccountCurrency}
-              onValueChange={setNewAccountCurrency}
-              options={currencyOptions}
-              searchable
-              size="sm"
-              className="w-full"
-              data-testid="bf-create-account-currency"
-            />
-          </label>
-          <div className="flex gap-2">
-            <Button type="submit" size="sm" disabled={busy || !newAccountName.trim()}>
-              Create account
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={busy}
-              onClick={() => setCreateOpen(false)}
-            >
-              Cancel
-            </Button>
-          </div>
-        </form>
-      ) : null}
-
       <div className="flex flex-wrap items-center gap-3">
         <Landmark className="h-4 w-4 text-muted-foreground" />
         <select
@@ -380,6 +238,13 @@ export function BankFeedsWorkspace({
             </option>
           ))}
         </select>
+        <Link
+          to="/creations?tab=banks&banksSection=list"
+          className="text-xs text-muted-foreground underline hover:text-foreground"
+          data-testid="bf-manage-accounts-link"
+        >
+          Manage accounts
+        </Link>
         {!canPost && (
           <span className="text-xs text-muted-foreground">
             View only — Post privilege required to reconcile.
@@ -392,100 +257,143 @@ export function BankFeedsWorkspace({
         canPost={canPost}
         onImportSuccess={(message) => {
           flash(message);
-          setTab("reconcile");
+          setTab("pending");
         }}
       />
 
       <PageTabs
-        tabs={TABS}
+        tabs={tabs}
         value={tab}
         onChange={(v) => setTab(v as BankFeedQueueTab)}
         data-testid="bf-tabs"
       />
 
-      <PageTabPanel value={tab} active={tab}>
-        {tab === "unsettled" ? (
-          unsettledQ.isLoading ? (
-            <TableSkeleton rows={6} />
-          ) : unsettledItems.length === 0 ? (
-            <EmptyState
-              title="No unsettled cash"
-              hint={`Paid payments and received collections with no verified bank match after ${unsettledGrace} day(s) appear here.`}
-            />
-          ) : (
-            <div className="overflow-x-auto rounded-sm border border-[#d8dee4] dark:border-border">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/40 text-left text-xs text-muted-foreground">
-                  <tr>
-                    <th className="px-3 py-2 font-medium">Type</th>
-                    <th className="px-3 py-2 font-medium">Party</th>
-                    <th className="px-3 py-2 font-medium">Invoice</th>
-                    <th className="px-3 py-2 font-medium text-right">Amount</th>
-                    <th className="px-3 py-2 font-medium">Settled</th>
-                    <th className="px-3 py-2 font-medium text-right">Days</th>
-                    <th className="px-3 py-2 font-medium">Bank match</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {unsettledItems.map((row) => (
-                    <tr
-                      key={`${row.entity_type}-${row.entity_id}`}
-                      className="border-t border-border/60"
-                      data-testid={`bf-unsettled-${row.entity_type}-${row.entity_id}`}
-                    >
-                      <td className="px-3 py-2 capitalize">{row.entity_type}</td>
-                      <td className="px-3 py-2">{row.party_name ?? "—"}</td>
-                      <td className="px-3 py-2">
-                        {row.invoice_no ? (
-                          <Link
-                            to={`/invoices/${row.invoice_id}`}
-                            className="text-primary hover:underline"
-                          >
-                            {row.invoice_no}
-                          </Link>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-right tabular-nums">
-                        {money(row.amount, row.currency)}
-                      </td>
-                      <td className="px-3 py-2 tabular-nums">{row.settled_date}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">
-                        {row.days_since_settled}
-                      </td>
-                      <td className="px-3 py-2 text-xs text-muted-foreground">
-                        {row.has_suggested_bank_match ? (
-                          <span>Suggested only · {money(row.allocated_bank_amount, row.currency)} allocated</span>
-                        ) : row.allocated_bank_amount > 0 ? (
-                          <span>Partial · {money(row.allocated_bank_amount, row.currency)} of {row.gross_amount != null ? money(row.gross_amount, row.currency) : "—"}</span>
-                        ) : (
-                          "None"
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )
-        ) : accountsQ.isLoading || (accountId != null && txnsQ.isLoading) ? (
+      <PageTabPanel value={tab} active={tab} className="space-y-4">
+        {accountsQ.isLoading || (accountId != null && txnsQ.isLoading) ? (
           <TableSkeleton rows={6} />
         ) : accountId == null ? (
           <EmptyState
-            title="Create a bank account"
-            hint="Use Account above, then import a CSV or PDF in Import statements."
-          />
-        ) : items.length === 0 ? (
-          <EmptyState
-            title={`No ${tab} transactions`}
-            hint={
-              tab === "reconcile"
-                ? "Import a statement or run match to populate the reconcile queue."
-                : "Nothing in this archive yet."
+            title="No bank account selected"
+            hint="Add or manage accounts in Contacts → Banks, then import a statement here."
+            action={
+              <Link
+                to="/creations?tab=banks&banksSection=list"
+                className="text-sm underline"
+                data-testid="bf-manage-banks-link"
+              >
+                Open Contacts → Banks
+              </Link>
             }
           />
-        ) : tab === "reconcile" ? (
+        ) : tab === "statement" ? (
+          <>
+            <div className="space-y-2" data-testid="bf-uploaded-statements">
+              <div className="flex items-baseline justify-between gap-2">
+                <h3 className="text-sm font-semibold">Uploaded statements</h3>
+                {importsMeta?.total != null ? (
+                  <span className="text-xs text-muted-foreground">
+                    {importsMeta.total} upload{importsMeta.total === 1 ? "" : "s"}
+                  </span>
+                ) : null}
+              </div>
+              {importsQ.isLoading ? (
+                <TableSkeleton rows={3} />
+              ) : imports.length === 0 ? (
+                <p className="text-sm text-muted-foreground rounded-md border border-dashed border-border px-3 py-4">
+                  No statements uploaded for this account yet.
+                </p>
+              ) : (
+                <div className="overflow-x-auto rounded-sm border border-[#d8dee4] dark:border-border">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/40 text-left text-xs text-muted-foreground">
+                      <tr>
+                        <th className="px-3 py-2 font-medium">File</th>
+                        <th className="px-3 py-2 font-medium">Imported</th>
+                        <th className="px-3 py-2 font-medium">Source</th>
+                        <th className="px-3 py-2 font-medium text-right">Accepted</th>
+                        <th className="px-3 py-2 font-medium text-right">Duplicates</th>
+                        <th className="px-3 py-2 font-medium text-right">Errors</th>
+                        <th className="px-3 py-2 font-medium">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {imports.map((imp) => (
+                        <tr
+                          key={imp.id}
+                          className="border-t border-border/60"
+                          data-testid={`bf-import-row-${imp.id}`}
+                        >
+                          <td className="px-3 py-2 font-medium">
+                            {imp.filename || `Import #${imp.id}`}
+                          </td>
+                          <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">
+                            {formatImportedAt(imp.imported_at)}
+                          </td>
+                          <td className="px-3 py-2 capitalize text-muted-foreground">
+                            {imp.source}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums">
+                            {imp.accepted_count}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                            {imp.duplicate_count}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                            {imp.error_count}
+                          </td>
+                          <td className="px-3 py-2 capitalize">{imp.status}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {importsMeta && (importsMeta.pages ?? 1) > 1 ? (
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>
+                    Uploads page {importsMeta.page} of {importsMeta.pages}
+                  </span>
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={importsPage <= 1 || busy}
+                      onClick={() => setImportsPage((p) => Math.max(1, p - 1))}
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={importsPage >= (importsMeta.pages ?? 1) || busy}
+                      onClick={() => setImportsPage((p) => p + 1)}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="space-y-2">
+              <h3 className="text-sm font-semibold">Statement lines</h3>
+              {items.length === 0 ? (
+                <EmptyState title="No statement lines" hint={emptyHint} />
+              ) : (
+                <BankFeedStatementLinesTable items={items} variant="statement" />
+              )}
+            </div>
+          </>
+        ) : items.length === 0 ? (
+          <EmptyState
+            title={
+              tab === "pending"
+                ? "Nothing pending reconciliation"
+                : "No reconciled transactions"
+            }
+            hint={emptyHint}
+          />
+        ) : tab === "pending" ? (
           <div className="overflow-x-auto rounded-sm border border-[#d8dee4] dark:border-border">
             {items.map((txn) => (
               <BankFeedReconcileRow
@@ -511,7 +419,10 @@ export function BankFeedsWorkspace({
                   flash("Transfer posted");
                 }}
                 onExclude={async (transactionId) => {
-                  await mutations.exclude.mutateAsync({ transactionId, reason: "Excluded" });
+                  await mutations.exclude.mutateAsync({
+                    transactionId,
+                    reason: "Excluded",
+                  });
                   flash("Transaction excluded");
                 }}
                 onPostNote={async (transactionId, body) => {
@@ -521,32 +432,16 @@ export function BankFeedsWorkspace({
             ))}
           </div>
         ) : (
-          <div className="space-y-3">
-            {items.map((txn) =>
-              tab === "posted" ? (
-                <PostedArchiveRow
-                  key={txn.id}
-                  summary={txn}
-                  canPost={canPost}
-                  busy={busy}
-                  onReverse={async (transactionId) => {
-                    await mutations.reverseCreate.mutateAsync(transactionId);
-                    flash("Journal reversed");
-                  }}
-                />
-              ) : tab === "matched" ? (
-                <MatchedArchiveRow key={txn.id} summary={txn} />
-              ) : (
-                <BankFeedArchiveStatementCard
-                  key={txn.id}
-                  txn={txn}
-                  summary="Excluded from reconcile"
-                />
-              )
-            )}
-          </div>
+          <BankFeedStatementLinesTable
+            items={items}
+            variant="reconciled"
+            canPost={canPost}
+            busy={busy}
+            onReverse={(id) => setReverseId(id)}
+          />
         )}
-        {meta && (meta.pages ?? 1) > 1 && (
+
+        {tab !== "statement" && meta && (meta.pages ?? 1) > 1 ? (
           <div className="flex items-center justify-between px-1 py-2 text-xs text-muted-foreground">
             <span>
               Page {meta.page} of {meta.pages} · {meta.total} total
@@ -570,8 +465,45 @@ export function BankFeedsWorkspace({
               </Button>
             </div>
           </div>
-        )}
+        ) : null}
+
+        {tab === "statement" && meta && (meta.pages ?? 1) > 1 ? (
+          <div className="flex items-center justify-between px-1 py-2 text-xs text-muted-foreground">
+            <span>
+              Lines page {meta.page} of {meta.pages} · {meta.total} total
+            </span>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={page <= 1 || busy}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                Previous
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={page >= (meta.pages ?? 1) || busy}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        ) : null}
       </PageTabPanel>
+
+      <ConfirmDialog
+        open={reverseId != null}
+        title="Reverse this entry?"
+        description="A reversing journal will be posted as of today. The bank line returns to Reconciliation Pending."
+        confirmLabel="Reverse this entry"
+        destructive
+        busy={mutations.reverseCreate.isPending}
+        onCancel={() => setReverseId(null)}
+        onConfirm={() => void onConfirmReverse()}
+      />
     </div>
   );
 }

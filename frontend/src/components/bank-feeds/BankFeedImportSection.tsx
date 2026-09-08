@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { ChevronDown, ChevronUp, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -60,11 +61,11 @@ export function BankFeedImportSection({
   const importsQ = useBankFeedImports(accountId, 1, RECENT_IMPORTS_LIMIT, accountId != null);
   const imports = importsQ.data?.data.items ?? [];
   const totalImports = importsQ.data?.meta?.total ?? imports.length;
-  const busy = mutations.importStatement.isPending;
+  const busy =
+    mutations.importStatement.isPending || mutations.importPendingStatement.isPending;
   const latestImport = imports[0];
 
   const onImport = async (file: File) => {
-    if (accountId == null) return;
     if (!isBankStatementFile(file)) {
       setImportBanner(null);
       setImportErrors([]);
@@ -75,6 +76,29 @@ export function BankFeedImportSection({
     setImportBanner(null);
     setImportError(null);
     try {
+      if (accountId == null) {
+        const result = await mutations.importPendingStatement.mutateAsync(file);
+        let message: string;
+        if (result.disposition === "auto_imported" && result.account) {
+          const accepted = result.import_result?.accepted_count;
+          message =
+            `Matched account “${result.account.name}”` +
+            (accepted != null ? ` · ${accepted} row(s) imported` : "");
+          setImportBanner(message);
+          setImportErrors([]);
+          setExpanded(true);
+          onImportSuccess?.(message);
+          return;
+        }
+        message =
+          "Queued for bank registration — complete it under Contacts → Banks → Pending.";
+        setImportBanner(message);
+        setImportErrors([]);
+        setExpanded(true);
+        onImportSuccess?.(message);
+        return;
+      }
+
       const result = await mutations.importStatement.mutateAsync({ accountId, file });
       const rowErrors = parseBankImportErrorReport(result.error_report);
       setImportErrors(rowErrors);
@@ -128,14 +152,14 @@ export function BankFeedImportSection({
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragDepth(0);
-    if (!canPost || busy || accountId == null) return;
+    if (!canPost || busy) return;
     const file = e.dataTransfer.files?.[0];
     if (file) void onImport(file);
   };
 
   const recentSummary =
     accountId == null
-      ? null
+      ? "No account selected — uploads go to Pending registration"
       : importsQ.isLoading
         ? "Loading…"
         : latestImport
@@ -176,14 +200,21 @@ export function BankFeedImportSection({
               role={importError ? "alert" : "status"}
             >
               {importError || importBanner}
+              {!importError && accountId == null && importBanner?.includes("Queued") ? (
+                <>
+                  {" "}
+                  <Link to="/creations?tab=banks" className="underline">
+                    Open Banks
+                  </Link>
+                </>
+              ) : null}
             </p>
           )}
 
           <div
             className={cn(
               "rounded-md border-2 border-dashed px-4 py-4 text-center transition-colors",
-              dragDepth > 0 && "border-[#008abf] bg-[#008abf]/5",
-              accountId == null && "opacity-60"
+              dragDepth > 0 && "border-[#008abf] bg-[#008abf]/5"
             )}
             onDragEnter={(e) => {
               e.preventDefault();
@@ -200,20 +231,22 @@ export function BankFeedImportSection({
             <Upload className="mx-auto mb-1.5 h-6 w-6 text-muted-foreground" />
             <p className="text-sm font-medium">
               {accountId == null
-                ? "Select or create a bank account first"
+                ? "Drop a statement to queue Pending registration"
                 : BANK_FEED_IMPORT_DROP_LABEL}
             </p>
             <p
               className="mt-0.5 text-xs text-muted-foreground"
               data-testid="bf-import-formats"
             >
-              {BANK_FEED_IMPORT_FORMAT_HINT}
+              {accountId == null
+                ? "No bank selected — register under Contacts → Banks after upload."
+                : BANK_FEED_IMPORT_FORMAT_HINT}
             </p>
             <Button
               className="mt-2"
               size="sm"
               variant="outline"
-              disabled={!canPost || busy || accountId == null}
+              disabled={!canPost || busy}
               onClick={() => fileRef.current?.click()}
               data-testid="bf-import-browse"
             >

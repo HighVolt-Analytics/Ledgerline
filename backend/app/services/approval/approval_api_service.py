@@ -30,6 +30,7 @@ from app.services.approval.approval_service import (
     _assert_invoice_ready_for_approval,
     approve_invoice_for_reprocess,
     confirm_invoice_for_process,
+    escalate_invoice,
     permanently_delete_invoice,
     reject_invoice,
     request_approval,
@@ -634,6 +635,25 @@ async def reject_invoice_action(
     inv.approval_chain = None
     actor_name, actor_email = await actor_from_context(db, ctx)
     await reject_invoice(db, inv, actor_name=actor_name, actor_email=actor_email)
+    return await response_for_invoice(db, inv, tenant_id=ctx.tenant_id)
+
+
+async def escalate_invoice_action(
+    db: AsyncSession,
+    ctx: AuthContext,
+    *,
+    invoice_id: int,
+    note: str,
+) -> InvoiceResponse:
+    inv = await get_invoice_for_tenant(db, invoice_id, ctx.tenant_id)
+    actor_name, actor_email = await actor_from_context(db, ctx)
+    await escalate_invoice(
+        db,
+        inv,
+        note=note,
+        actor_name=actor_name,
+        actor_email=actor_email,
+    )
     return await response_for_invoice(db, inv, tenant_id=ctx.tenant_id)
 
 

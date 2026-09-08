@@ -94,7 +94,7 @@ async def test_auto_match_payment_exact(
 
     acc = await client.post(
         "/api/bank-feeds/accounts",
-        json={"name": "Ops", "currency": "AUD"},
+        json={"name": "Ops", "currency": "AUD", "account_number": "12345678", "coa_account_name": "Bank Account"},
     )
     account_id = acc.json()["data"]["id"]
     csv = b"""Date,Description,Amount,Direction,Balance,Reference
@@ -154,7 +154,7 @@ async def test_tie_break_demotes_to_suggested(
 
     acc = await client.post(
         "/api/bank-feeds/accounts",
-        json={"name": "Ops", "currency": "AUD"},
+        json={"name": "Ops", "currency": "AUD", "account_number": "12345678", "coa_account_name": "Bank Account"},
     )
     account_id = acc.json()["data"]["id"]
     # Narration hits neither invoice uniquely; amount+date exact for both
@@ -204,7 +204,7 @@ async def test_collection_fx_hard_gate(
 
     acc = await client.post(
         "/api/bank-feeds/accounts",
-        json={"name": "AUD Bank", "currency": "AUD"},
+        json={"name": "AUD Bank", "currency": "AUD", "account_number": "12345678", "coa_account_name": "Bank Account"},
     )
     account_id = acc.json()["data"]["id"]
     csv = b"""Date,Description,Amount,Direction,Balance,Reference
@@ -250,7 +250,7 @@ async def test_remaining_amount_after_partial_manual(
 
     acc = await client.post(
         "/api/bank-feeds/accounts",
-        json={"name": "Ops", "currency": "AUD"},
+        json={"name": "Ops", "currency": "AUD", "account_number": "12345678", "coa_account_name": "Bank Account"},
     )
     account_id = acc.json()["data"]["id"]
     csv = b"""Date,Description,Amount,Direction,Balance,Reference
@@ -313,7 +313,7 @@ async def test_confirm_unmatch_exclude(
 
     acc = await client.post(
         "/api/bank-feeds/accounts",
-        json={"name": "Ops", "currency": "AUD"},
+        json={"name": "Ops", "currency": "AUD", "account_number": "12345678", "coa_account_name": "Bank Account"},
     )
     account_id = acc.json()["data"]["id"]
     # Date off by 3 days → suggested band (not auto)

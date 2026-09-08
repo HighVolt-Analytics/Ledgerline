@@ -1228,8 +1228,106 @@ async def _ingest_single_email(
         )
         return
 
-    attachments = filter_invoice_attachments(email)
+    # Bank feeds: divert PDF/CSV bank statements — auto-import if account known, else Pending.
+    from app.services.tenant.tenant_module_service import is_module_enabled
+    from app.tenant_ids import parse_tenant_id
+
+    tenant_uuid = parse_tenant_id(tenant_id)
+    diverted_filenames: set[str] = set()
+    if tenant_uuid is not None and await is_module_enabled(session, tenant_uuid, "bank_feeds"):
+        from app.services.bank_feeds import pending_account_service
+
+        for att in list(email.attachments):
+            name = (att.filename or "").lower()
+            is_pdf = name.endswith(".pdf") or (att.data or b"").startswith(b"%PDF")
+            is_csv = name.endswith(".csv")
+            if not is_pdf and not is_csv:
+                continue
+            try:
+                divert = await pending_account_service.try_divert_email_attachment_to_pending(
+                    session,
+                    tenant_id=tenant_uuid,
+                    content=att.data or b"",
+                    filename=att.filename,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "email_bank_statement_divert_failed",
+                    message_id=email.message_id,
+                    attachment=att.filename,
+                    error=str(exc)[:300],
+                )
+                continue
+            if divert is None:
+                continue
+            diverted_filenames.add(att.filename or "")
+            result.ingested_count += 1
+            if divert.disposition == "auto_imported" and divert.account is not None:
+                await log_event(
+                    session,
+                    "bank_statement_auto_imported",
+                    tenant_id=tenant_uuid,
+                    detail={
+                        "bank_account_id": divert.account.id,
+                        "filename": att.filename,
+                        "source": "email",
+                        "message_id": email.message_id,
+                        "match_reason": divert.match_reason,
+                        "import_id": (
+                            divert.import_result.import_row.id if divert.import_result else None
+                        ),
+                        "accepted_count": (
+                            divert.import_result.import_row.accepted_count
+                            if divert.import_result
+                            else None
+                        ),
+                    },
+                )
+                logger.info(
+                    "email_bank_statement_auto_imported",
+                    message_id=email.message_id,
+                    attachment=att.filename,
+                    bank_account_id=divert.account.id,
+                    match_reason=divert.match_reason,
+                )
+            elif divert.pending is not None:
+                await log_event(
+                    session,
+                    "pending_bank_account_queued",
+                    tenant_id=tenant_uuid,
+                    detail={
+                        "pending_bank_account_id": divert.pending.id,
+                        "filename": divert.pending.filename,
+                        "file_sha256": divert.pending.file_sha256,
+                        "source": "email",
+                        "message_id": email.message_id,
+                        "extracted_count": divert.pending.extracted_count,
+                        "match_reason": divert.match_reason,
+                    },
+                )
+                logger.info(
+                    "email_bank_statement_diverted",
+                    message_id=email.message_id,
+                    attachment=att.filename,
+                    pending_bank_account_id=divert.pending.id,
+                    match_reason=divert.match_reason,
+                )
+
+    attachments = [
+        att
+        for att in filter_invoice_attachments(email)
+        if (att.filename or "") not in diverted_filenames
+    ]
     if not attachments:
+        if diverted_filenames:
+            _maybe_finish_email_message(
+                email,
+                mark_processed=mark_processed,
+                mark_processed_only_if_ingested=mark_processed_only_if_ingested,
+                ingested_before=ingested_before,
+                ingested_after=result.ingested_count,
+            )
+            return
         raw_names = [att.filename for att in email.attachments]
         logger.info(
             "email_ingest_skipped",

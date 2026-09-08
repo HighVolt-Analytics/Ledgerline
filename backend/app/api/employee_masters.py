@@ -38,6 +38,8 @@ from app.services.master_data.employee_import_service import (
 from app.services.master_data.master_data_service import (
     create_employee_master,
     delete_employee_master,
+    employee_record_to_schema,
+    get_employee_master_by_email,
     list_employee_masters,
     update_employee_master,
 )
@@ -174,6 +176,24 @@ async def list_employee_master_records(
     reveal = await _resolve_reveal(db, ctx, reveal_bank=reveal_bank, scope="employee_masters")
     rows = await list_employee_masters(db, ctx.tenant_id)
     return ApiEnvelope(data=[_public_employee(row, reveal=reveal) for row in rows])
+
+
+@router.get("/me", response_model=ApiEnvelope[EmployeeMasterResponse | None])
+async def get_my_employee_master_record(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[EmployeeMasterResponse | None]:
+    """Signed-in user's employee master (matched by email), with own bank details visible."""
+    email = (ctx.email or "").strip()
+    if not email and ctx.user is not None:
+        email = (ctx.user.email or "").strip()
+    if not email:
+        return ApiEnvelope(data=None)
+    row = await get_employee_master_by_email(db, ctx.tenant_id, email)
+    if row is None:
+        return ApiEnvelope(data=None)
+    schema = employee_record_to_schema(row)
+    return ApiEnvelope(data=_public_employee(schema, reveal=True))
 
 
 @router.post("", response_model=ApiEnvelope[EmployeeMasterResponse], status_code=201)

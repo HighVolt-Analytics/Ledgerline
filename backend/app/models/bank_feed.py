@@ -12,6 +12,7 @@ from sqlalchemy import (
     JSON,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -94,6 +95,7 @@ class BankAccount(Base):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    account_number: Mapped[str | None] = mapped_column(String(64))
     account_mask: Mapped[str | None] = mapped_column(String(32))
     coa_account_code: Mapped[str] = mapped_column(String(64), nullable=False)
     coa_account_name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -113,6 +115,43 @@ class BankAccount(Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+
+class PendingBankAccount(Base):
+    """Bank statement uploaded without a registered account — awaiting registration."""
+
+    __tablename__ = "pending_bank_accounts"
+    __table_args__ = (
+        Index("ix_pending_bank_accounts_tenant_id", "tenant_id"),
+        Index(
+            "ix_pending_bank_accounts_file_sha256",
+            "tenant_id",
+            "file_sha256",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    detected_name: Mapped[str | None] = mapped_column(String(255))
+    detected_account_number: Mapped[str | None] = mapped_column(String(64))
+    detected_currency: Mapped[str | None] = mapped_column(String(3))
+    filename: Mapped[str | None] = mapped_column(String(512))
+    file_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    stored_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    extracted_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    parse_meta: Mapped[dict[str, Any] | list | None] = mapped_column(JsonType)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
+    promoted_bank_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("bank_accounts.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class BankFeedImport(Base):

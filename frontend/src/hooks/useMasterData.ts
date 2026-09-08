@@ -224,6 +224,7 @@ export function useCreateEmployeeMaster() {
         rows ? [created, ...rows] : [created]
       );
       void queryClient.invalidateQueries({ queryKey: queryKeys.employeeMasters(true) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.teAdvanceSettlement() });
     },
   });
 }
@@ -240,6 +241,7 @@ export function useUpdateEmployeeMaster() {
         rows?.map((row) => (row.id === updated.id ? updated : row))
       );
       void queryClient.invalidateQueries({ queryKey: queryKeys.employeeMasters(true) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.teAdvanceSettlement() });
     },
   });
 }
@@ -255,6 +257,7 @@ export function useDeleteEmployeeMaster() {
       queryClient.setQueryData<EmployeeMaster[]>(queryKeys.employeeMasters(true), (rows) =>
         rows?.filter((row) => row.id !== id)
       );
+      void queryClient.invalidateQueries({ queryKey: queryKeys.teAdvanceSettlement() });
     },
   });
 }
