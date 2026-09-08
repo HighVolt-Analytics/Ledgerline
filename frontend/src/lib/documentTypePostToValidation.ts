@@ -1,6 +1,5 @@
 import type { ChartOfAccountRow } from "@/api/types";
 import {
-  isControlLedgerAccountName,
   ledgerExistsInCoa,
   ledgerHasSubLedgerCatalog,
   subLedgerExistsInCoa,
@@ -29,7 +28,6 @@ export function hasValidPostTo(
   if (!documentTypeRequiresPostTo(docType)) return true;
   const ledger = docType.postTo?.ledger?.trim() ?? "";
   if (!ledger) return false;
-  if (isControlLedgerAccountName(ledger)) return false;
   return ledgerExistsInCoa(ledger, accounts);
 }
 
@@ -48,14 +46,6 @@ export function postToConfigWarnings(
         "Post to ledger is required for transactional types — pick an account from your chart of accounts.",
     });
     return warnings;
-  }
-
-  if (isControlLedgerAccountName(ledger)) {
-    warnings.push({
-      id: "post-to-control-account",
-      message:
-        "Post to cannot be a control account (AP/AR/bank/cash/suspense) — pick an expense or revenue ledger.",
-    });
   }
 
   if (!ledgerExistsInCoa(ledger, accounts)) {

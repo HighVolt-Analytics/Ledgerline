@@ -99,14 +99,13 @@ def has_valid_document_type_post_to(
     *,
     posting_defaults: PostingDefaults | None = None,
 ) -> bool:
+    _ = posting_defaults
     if definition is None:
         return False
     if not document_type_requires_post_to(definition):
         return True
     ledger = (definition.post_to.ledger or "").strip()
     if not ledger:
-        return False
-    if is_control_post_to_ledger(ledger, posting_defaults=posting_defaults):
         return False
     return ledger_exists_in_coa(ledger, accounts)
 
@@ -161,11 +160,6 @@ def ensure_transactional_post_to_or_raise(
     if not ledger:
         raise DocumentTypePostToMissingError(
             f"Document type {code} has no Post to ledger — configure it in Rule Book → Document types."
-        )
-    if is_control_post_to_ledger(ledger, posting_defaults=config.posting_defaults):
-        raise DocumentTypePostToControlAccountError(
-            f"Document type {code} Post to ledger {ledger!r} is a control account "
-            "(AP/AR/bank/cash/suspense) — pick an expense or revenue ledger instead."
         )
     if not ledger_exists_in_coa(ledger, config.chart_of_accounts):
         raise DocumentTypePostToMissingError(

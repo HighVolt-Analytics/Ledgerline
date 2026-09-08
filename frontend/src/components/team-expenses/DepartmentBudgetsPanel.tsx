@@ -62,8 +62,6 @@ export function DepartmentBudgetsPanel({ currency }: { currency: string }) {
     allAccounts,
     isLoading: coaLoading,
   } = useCoaAccountOptions({
-    // Same catalogue as Team Expenses rules Parent GL (not Expense-only).
-    // Budgets must be creatable for any wallet rules can post to.
     includeEmpty: true,
     emptyLabel: "— Select parent GL —",
   });
