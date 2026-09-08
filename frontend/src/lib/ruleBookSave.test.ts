@@ -16,6 +16,7 @@ function sampleType(code: string, requiredFields: string[]): DocumentTypeDefinit
     recognitionSignals: [],
     llmPrompt: "",
     routeTarget: "Purchase Management",
+    counterpartyType: "vendor",
     enabled: true,
     classifier: {
       enabled: false,

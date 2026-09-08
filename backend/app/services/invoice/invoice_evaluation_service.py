@@ -287,9 +287,15 @@ def evaluate_invoice_routing(
         document_types=config.document_types,
     )
     route_for_counterparty = (route_override or route_target or "").strip()
-    is_sales_route = route_for_counterparty == ROUTE_SALES
+    from app.schemas.document_type import resolved_counterparty_type
 
-    if is_sales_route:
+    counterparty_kind = resolved_counterparty_type(
+        dt_definition,
+        route_target=route_for_counterparty or route_target,
+    )
+    is_customer_side = counterparty_kind == "customer"
+
+    if is_customer_side:
         masters = customer_masters or []
         customer_match = detect_customer(
             doc,
@@ -340,11 +346,11 @@ def evaluate_invoice_routing(
     elif purchase or sales or expense or team or (
         "perspective:sales" in matched_rule_ids
     ) or (
-        is_sales_route
+        is_customer_side
         and customer_match.customer
         and customer_match.customer.default_ledger.strip()
     ) or (
-        not is_sales_route
+        not is_customer_side
         and vendor_match.vendor
         and vendor_match.vendor.default_ledger.strip()
     ) or (known_master and known_master.default_ledger.strip()):
@@ -366,7 +372,7 @@ def evaluate_invoice_routing(
     ):
         evaluation_status = EVAL_AUTO_CODED
 
-    if is_sales_route:
+    if is_customer_side:
         if known_master and f"customer:{known_master.id}" not in matched_rule_ids:
             matched_rule_ids.append(f"customer:{known_master.id}")
     elif known_master and f"vendor:{known_master.id}" not in matched_rule_ids:
@@ -627,7 +633,20 @@ async def apply_invoice_evaluation(
 
     if enqueue_pending and invoice.evaluation_status == EVAL_PENDING_VENDOR:
         route = (invoice.route_target or "").strip()
-        if route == ROUTE_SALES:
+        from app.schemas.document_type import resolved_counterparty_type
+        from app.services.master_data.vendor_registration_policy import (
+            resolve_document_type_definition as resolve_dt_for_pending,
+        )
+
+        pending_definition = resolve_dt_for_pending(
+            invoice.document_type_code,
+            document_types=config.document_types if config is not None else None,
+        )
+        pending_kind = resolved_counterparty_type(
+            pending_definition,
+            route_target=route,
+        )
+        if pending_kind == "customer":
             await _maybe_enqueue_pending_customer(session, invoice, result, config=config)
         else:
             await _maybe_enqueue_pending_vendor(session, invoice, result, config=config)

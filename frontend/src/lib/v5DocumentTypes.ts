@@ -63,6 +63,21 @@ export function emptyDocumentTypePostTo(): DocumentTypePostTo {
 
 export type RecognitionMode = "signals" | "prompt";
 
+export type CounterpartyType = "vendor" | "customer";
+
+export function defaultCounterpartyTypeForRoute(routeTarget?: string | null): CounterpartyType {
+  return (routeTarget || "").trim() === "Sales Management" ? "customer" : "vendor";
+}
+
+export function normalizeCounterpartyType(
+  value: unknown,
+  routeTarget?: string | null
+): CounterpartyType {
+  const token = String(value ?? "").trim().toLowerCase();
+  if (token === "vendor" || token === "customer") return token;
+  return defaultCounterpartyTypeForRoute(routeTarget);
+}
+
 /** Empty means auto: expense claim unless a catalogue DT pins advance requisition. */
 export type DocumentTypeTeamExpenseKind =
   | ""
@@ -78,6 +93,8 @@ export type V5DocumentType = {
   recognitionSignals: string[];
   llmPrompt: string;
   routeTarget: string;
+  /** Extracted name is a QBO Vendor or Customer. */
+  counterpartyType: CounterpartyType;
   enabled: boolean;
   classifier: DocumentTypeClassifier;
   requiredFields: string[];
@@ -153,6 +170,7 @@ export function createBlankDocumentType(existing: DocumentTypeDefinition[]): Doc
     recognitionSignals: [],
     llmPrompt: "",
     routeTarget: "Vault",
+    counterpartyType: defaultCounterpartyTypeForRoute("Vault"),
     enabled: false,
     classifier: {
       ...emptyDocumentClassifier(),

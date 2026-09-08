@@ -1,6 +1,7 @@
 /** Playbook profile catalogue — align with backend playbook_profile_catalog.py */
 
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
+import { defaultCounterpartyTypeForRoute } from "@/lib/v5DocumentTypes";
 import {
   bundleMandatoryMatchesSuggested,
   normalizeDtCodeList,
@@ -619,6 +620,7 @@ export function applyRoutePlaybookDefaults(
   const withRoute: DocumentTypeDefinition = {
     ...draft,
     routeTarget: nextRoute,
+    counterpartyType: defaultCounterpartyTypeForRoute(nextRoute),
     // Claim kind is meaningless off the Team Expenses route; leaving it set would
     // silently reapply if the type is routed back later.
     teamExpenseKind: nextRoute === "Team Expenses" ? draft.teamExpenseKind : "",

@@ -82,6 +82,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
     from app.models.credit_ledger import CreditLedgerEntry
     from app.models.qbo_account import QboAccount  # noqa: F401
     from app.models.qbo_contact import QboContact  # noqa: F401
+    from app.models.qbo_currency import QboCurrency  # noqa: F401
     from app.models.qbo_tax_code import QboTaxCode  # noqa: F401
 
     CreditLedgerEntry.__table__.c.azure_cost_breakdown_json.type = JSON()

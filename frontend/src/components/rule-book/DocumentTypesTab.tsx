@@ -688,6 +688,9 @@ function DocumentTypeDetailDialog({
             <DetailFact label="Class">{docType.klass}</DetailFact>
             <DetailFact label="Posting">{docType.posting}</DetailFact>
             <DetailFact label="Workspace">{docType.routeTarget}</DetailFact>
+            <DetailFact label="Counterparty type">
+              {docType.counterpartyType === "customer" ? "Customer" : "Vendor"}
+            </DetailFact>
           </dl>
         </div>
 
@@ -937,6 +940,25 @@ function DocumentTypeEditDialog({
                       {klass}
                     </option>
                   ))}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <FieldLabel htmlFor="dt-counterparty-type">Counterparty type</FieldLabel>
+                <select
+                  id="dt-counterparty-type"
+                  value={draft.counterpartyType}
+                  onChange={(e) =>
+                    onChange(
+                      applyDraftChange(draft, {
+                        counterpartyType: e.target.value as DocumentTypeDefinition["counterpartyType"],
+                      })
+                    )
+                  }
+                  className={selectClass}
+                  data-testid="dt-counterparty-type"
+                >
+                  <option value="vendor">Vendor</option>
+                  <option value="customer">Customer</option>
                 </select>
               </div>
               <div className="space-y-1.5">

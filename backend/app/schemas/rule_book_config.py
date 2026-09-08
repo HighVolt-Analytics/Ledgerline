@@ -933,6 +933,29 @@ def _backfill_document_type_klass(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+def _backfill_document_type_counterparty_type(data: dict[str, Any]) -> dict[str, Any]:
+    """Fill vendor/customer on older catalogue rows from workspace route."""
+    from app.schemas.document_type import default_counterparty_type_for_route
+
+    types = data.get("document_types")
+    if not isinstance(types, list):
+        return data
+
+    merged: list[Any] = []
+    for row in types:
+        if not isinstance(row, dict):
+            merged.append(row)
+            continue
+        existing = str(row.get("counterparty_type") or row.get("counterpartyType") or "").strip().lower()
+        if existing in {"vendor", "customer"}:
+            merged.append({**row, "counterparty_type": existing})
+            continue
+        route = str(row.get("route_target") or row.get("routeTarget") or "")
+        merged.append({**row, "counterparty_type": default_counterparty_type_for_route(route)})
+    data["document_types"] = merged
+    return data
+
+
 def _sync_match_policy_with_playbook(data: dict[str, Any]) -> dict[str, Any]:
     """Align match/approval policies with playbook preset when clearly stale or cross-route."""
     from app.services.classification.playbook_profile_catalog import preset_for_profile
@@ -1587,6 +1610,7 @@ def validate_rule_book_config_payload(data: dict[str, Any]) -> RuleBookConfigPay
         data = _backfill_category_rule_priorities(data)
         data = _backfill_document_types(data)
         data = _backfill_document_type_klass(data)
+        data = _backfill_document_type_counterparty_type(data)
         data = _merge_document_type_classifiers(data)
         data = _merge_document_type_fields(data)
         from app.services.classification.document_type_recognition_migration import (

@@ -11,7 +11,7 @@ import type {
   DocumentTypeClassifier,
   DocumentTypeDefinition,
 } from "@/lib/v5DocumentTypes";
-import { createBlankDocumentType, emptyDocumentTypePostTo, nextOrgDocumentTypeCode } from "@/lib/v5DocumentTypes";
+import { createBlankDocumentType, defaultCounterpartyTypeForRoute, emptyDocumentTypePostTo, nextOrgDocumentTypeCode } from "@/lib/v5DocumentTypes";
 import type { DocumentTypeClass } from "@/lib/documentTypeKlass";
 import type { PurchaseBundleRole, SalesBundleRole } from "@/lib/documentBundleConfig";
 import { routeTargetForDocumentTypeCode } from "@/lib/documentTypeRouteTargets";
@@ -326,6 +326,7 @@ export function documentTypeFromTemplate(
     klass: template.klass,
     posting: template.posting,
     routeTarget: template.routeTarget,
+    counterpartyType: defaultCounterpartyTypeForRoute(template.routeTarget),
     playbookProfile: template.playbookProfile,
     matchPolicy: { mode: preset.matchMode },
     approvalPolicy: { mode: preset.approvalMode },

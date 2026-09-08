@@ -321,6 +321,21 @@ def resolve_counterparty_from_invoice_context(
         route_target=invoice.route_target,
         perspective=perspective,
     )
+    if config is not None:
+        from app.schemas.document_type import resolved_counterparty_type
+        from app.services.master_data.vendor_registration_policy import (
+            resolve_document_type_definition,
+        )
+
+        definition = resolve_document_type_definition(
+            invoice.document_type_code,
+            document_types=config.document_types,
+        )
+        if definition is not None:
+            side = resolved_counterparty_type(
+                definition,
+                route_target=invoice.route_target,
+            )
     generic = (invoice.vendor or (parsed.vendor if parsed else None) or "").strip() or None
     document_text = (
         (parsed.document_text if parsed else None)

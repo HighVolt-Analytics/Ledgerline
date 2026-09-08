@@ -391,3 +391,86 @@ async def create_vendor(
     return await create_contact(
         db, tenant_id=tenant_id, display_name=display_name, entity_type=ENTITY_VENDOR
     )
+
+
+async def create_customer(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    display_name: str,
+) -> dict[str, Any]:
+    return await create_contact(
+        db, tenant_id=tenant_id, display_name=display_name, entity_type=ENTITY_CUSTOMER
+    )
+
+
+async def ensure_invoice_qbo_contact(
+    db: AsyncSession,
+    invoice: Any,
+) -> dict[str, Any] | None:
+    """Match or create a QBO Vendor/Customer from the extracted invoice name.
+
+    Entity type comes from the document type Counterparty type field (vendor vs
+    customer). No-op when QuickBooks is disconnected or the name is blank.
+    Never raises — processing must continue.
+    """
+    legal_name = (getattr(invoice, "vendor", None) or "").strip()
+    if not legal_name:
+        return None
+    tenant_id = invoice.tenant_id
+    try:
+        await require_qbo_ready(db, tenant_id)
+    except Exception:
+        return None
+
+    entity_type = ENTITY_VENDOR
+    try:
+        from app.schemas.document_type import resolved_counterparty_type
+        from app.services.master_data.vendor_registration_policy import (
+            resolve_document_type_definition,
+        )
+        from app.services.rule_book.rule_book_mapper import load_classification_config
+
+        config = await load_classification_config(db, tenant_id)
+        definition = resolve_document_type_definition(
+            getattr(invoice, "document_type_code", None),
+            document_types=config.document_types,
+        )
+        entity_type = resolved_counterparty_type(
+            definition,
+            route_target=getattr(invoice, "route_target", None),
+        )
+    except Exception:
+        logger.warning(
+            "qbo_invoice_contact_type_resolve_failed",
+            invoice_id=getattr(invoice, "id", None),
+            tenant_id=str(tenant_id),
+            exc_info=True,
+        )
+
+    try:
+        return await create_contact(
+            db,
+            tenant_id=tenant_id,
+            display_name=legal_name,
+            entity_type=entity_type,
+            email=getattr(invoice, "email_sender", None),
+            tax_identifier=getattr(invoice, "abn", None),
+        )
+    except (QboApiError, ValueError) as exc:
+        logger.warning(
+            "qbo_invoice_contact_ensure_failed",
+            invoice_id=getattr(invoice, "id", None),
+            tenant_id=str(tenant_id),
+            entity_type=entity_type,
+            error=str(exc),
+        )
+        return None
+    except Exception as exc:
+        logger.warning(
+            "qbo_invoice_contact_ensure_failed",
+            invoice_id=getattr(invoice, "id", None),
+            tenant_id=str(tenant_id),
+            error=str(exc),
+        )
+        return None

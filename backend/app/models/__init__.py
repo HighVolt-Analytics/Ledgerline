@@ -85,6 +85,7 @@ from app.models.xero_account import XeroAccount
 from app.models.qbo_account import QboAccount
 from app.models.qbo_tax_code import QboTaxCode
 from app.models.qbo_contact import QboContact
+from app.models.qbo_currency import QboCurrency
 from app.models.xero_contact import XeroContact
 from app.models.xero_currency import XeroCurrency
 from app.models.xero_organisation_profile import XeroOrganisationProfile
@@ -171,6 +172,7 @@ __all__ = [
     "XeroAccount",
     "QboAccount",
     "QboContact",
+    "QboCurrency",
     "QboTaxCode",
     "XeroContact",
     "XeroCurrency",

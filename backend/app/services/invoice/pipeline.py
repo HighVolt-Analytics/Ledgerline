@@ -219,6 +219,17 @@ def _finalize_vendor_counterparty(
         route_target=invoice.route_target,
         perspective=fields.get("perspective") or fields.get("llm_perspective"),
     )
+    from app.schemas.document_type import resolved_counterparty_type
+    from app.services.master_data.vendor_registration_policy import (
+        resolve_document_type_definition,
+    )
+
+    definition = resolve_document_type_definition(
+        invoice.document_type_code,
+        document_types=getattr(config, "document_types", None),
+    )
+    if definition is not None:
+        side = resolved_counterparty_type(definition, route_target=invoice.route_target)
     if side != "vendor" or not invoice.vendor:
         return
 
@@ -658,9 +669,24 @@ async def _ensure_xero_supplier_contact(session: AsyncSession, invoice: Invoice)
         )
 
 
-async def _finalize_xero_after_process(session: AsyncSession, invoice: Invoice) -> None:
-    """Match/create Xero contact in this txn; queue DRAFT export for after commit."""
+async def _ensure_qbo_contact(session: AsyncSession, invoice: Invoice) -> None:
+    """Match/create a QuickBooks Vendor or Customer from the extracted name."""
+    try:
+        from app.integrations.qbo.contacts import ensure_invoice_qbo_contact
+
+        await ensure_invoice_qbo_contact(session, invoice)
+    except Exception:
+        logger.warning(
+            "qbo_invoice_contact_ensure_failed",
+            invoice_id=invoice.id,
+            exc_info=True,
+        )
+
+
+async def _finalize_accounting_contacts_after_process(session: AsyncSession, invoice: Invoice) -> None:
+    """Match/create Xero and QBO contacts in this txn; queue Xero DRAFT export after commit."""
     await _ensure_xero_supplier_contact(session, invoice)
+    await _ensure_qbo_contact(session, invoice)
     try:
         from app.integrations.xero.auto_push import schedule_xero_auto_push
 
@@ -2270,7 +2296,7 @@ async def resume_invoice_posting_pipeline(
     await _safe_auto_learn(session, invoice)
     if await _stop_if_not_processed_for_publish(session, invoice):
         return
-    await _finalize_xero_after_process(session, invoice)
+    await _finalize_accounting_contacts_after_process(session, invoice)
     await log_event(
         session,
         "invoice_processed",
@@ -4724,7 +4750,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     await _safe_auto_learn(session, invoice)
     if await _stop_if_not_processed_for_publish(session, invoice):
         return
-    await _finalize_xero_after_process(session, invoice)
+    await _finalize_accounting_contacts_after_process(session, invoice)
     await log_event(
         session,
         "invoice_processed",

@@ -2,7 +2,7 @@
 
 Handshake (Connect → Intuit login → sandbox company) is done. This note covers **what we send today for Xero**, **what QuickBooks Online (QBO) actually requires**, **whether current environment variables and OAuth scopes are enough**, and **how we will implement bill export without changing field extraction**.
 
-**Shipped in this stage:** a tenant can have only **one** of Xero or QuickBooks connected (connecting one disconnects the other). Pulled contacts loads **QBO vendors and customers** when QuickBooks is connected; **Add contact** creates a Vendor or Customer in QBO (`DisplayName` + type required). Settings → Tax lists **QBO TaxCode** rows (sync + create via TaxService). Settings → Chart of accounts shows **local** and **QuickBooks** tables with push/pull/sync; sub-ledgers write as QBO subaccounts (`ParentRef`). Bill export is not in this stage.
+**Shipped in this stage:** a tenant can have only **one** of Xero or QuickBooks connected (connecting one disconnects the other). Pulled contacts loads **QBO vendors and customers** when QuickBooks is connected; **Add contact** creates a Vendor or Customer in QBO (`DisplayName` + type required). Settings → Tax lists **QBO TaxCode** rows (sync + create via TaxService). Settings → Chart of accounts shows **local** and **QuickBooks** tables with push/pull/sync; sub-ledgers write as QBO subaccounts (`ParentRef`). Company currencies are cached on connect (`qbo_currencies`); a missing ISO is created in QBO only when Multicurrency is already on. Bill export is not in this stage.
 
 LedgerLink already extracts AP bills into Postgres. Xero export only **forwards those fields**. QBO must do the same: no second extraction pipeline, no Settings mapping grid.
 
@@ -42,7 +42,9 @@ Fields we already store and that Xero uses (same source for QBO):
 
 Xero contact rule (important): we do **not** require the supplier to exist in Xero before export. We search (mapping → ABN → exact name → email). If none and `vendor` is non-empty, we **create** a supplier Contact. If the name is missing, export is blocked (`contact_not_mapped`). Ambiguous name matches are blocked for human review.
 
-GL and tax rates are **not** auto-created. Currency is sent as ISO; we try to enable it on the Xero org when the plan allows.
+QBO has **no unclassified Contact**. Vendor and Customer are separate objects (`DisplayName` unique across Vendor, Customer, and Employee). Document types now have **Counterparty type** (Vendor or Customer). After a document is processed, we write that extracted name into QBO as the matching object (create if missing). An AP **Bill** still only accepts `VendorRef`. Settings → Add contact still asks Vendor vs Customer for manual creates.
+
+GL and tax rates are **not** auto-created. Currency is sent as ISO. On QBO we POST `CompanyCurrency` when the code is missing **and** `Preferences.CurrencyPrefs.MultiCurrencyEnabled` is already true. Multicurrency **cannot** be turned on through the API; if the document ISO ≠ home currency and the toggle is off, we block (409) and tell the user to enable it in QuickBooks (Settings → Account and settings → Advanced).
 
 ---
 
@@ -92,7 +94,7 @@ Token crypto uses the existing JWT/app secret, same pattern as Xero. Refresh tok
 | `AccountCode` (string code) | **Account.Id** | QBO posts by internal Id. `AcctNum` / `FullyQualifiedName` are for matching our codes/names after sync. |
 | `TaxType` `INPUT` / `EXEMPTINPUT` | **TaxCodeRef** (line) + `GlobalTaxCalculation` | Cannot copy Xero codes. Must use tax codes that exist **in that company**. US companies often use `TAX` / `NON`; AU/UK/global companies require a real purchase TaxCode on **every** line. |
 | Tracking categories | **Class** (line) / **Department** (whole bill) | Same as Xero tracking: **not in Phase 1**. |
-| CurrencyCode | **CurrencyRef.value** (ISO) | Company must have multicurrency (or home currency must match). |
+| CurrencyCode | **CurrencyRef.value** (ISO) | Home currency always OK. Foreign ISO: Multicurrency must already be on in QBO UI; we then POST `CompanyCurrency` `{ "Code": "EUR" }` if missing. |
 | InvoiceNumber | **DocNumber** | QBO max length **21**. Truncate or hash if our invoice number is longer. |
 | Attachment | **POST …/upload** (Attachable) | After Bill `Id` exists. Multipart metadata + file. Accounting scope is enough. |
 
@@ -118,7 +120,7 @@ Hard API requirements:
 Strongly required in practice (region / company settings):
 
 5. **Tax (global / AU / UK):** every purchase line needs **`TaxCodeRef`**. Intuit: tax cannot be turned on via API; `Preferences.TaxPrefs.UsingSalesTax` must already be true in the company. US companies often put tax at transaction level; do not assume one tax strategy for sandbox vs AU production.
-6. **Currency:** if `invoices.currency` ≠ company home currency, multicurrency must be on and that ISO must exist. Same rule as Xero: **do not silently substitute AUD/USD**.
+6. **Currency:** if `invoices.currency` ≠ company home currency, Multicurrency must already be on in the QBO company (API cannot enable it). We then add the ISO via `POST companycurrency` if it is not already listed. Same rule as Xero: **do not silently substitute AUD/USD**.
 7. **`TxnDate` / `DueDate`:** not always strictly required (QBO may default today); we still send extracted dates when present.
 
 Vendor create (when we auto-create):
@@ -226,14 +228,14 @@ Add `backend/app/integrations/qbo/` (oauth/tokens/store/client). `require_qbo_re
 
 ### Phase 2 — sync (read-only into our DB)
 
-Pull and cache: Account (with parent/subaccount), Vendor, TaxCode, Currency (if multicurrency). Integrations UI can later show synced lists like Xero (no mapping grid). Tenant isolation by `realmId`.
+Pull and cache: Account (with parent/subaccount), Vendor, TaxCode, CompanyCurrency. On connect we sync listed currencies plus home currency. Missing foreign ISO is **created** with `POST /companycurrency` only when Multicurrency is already enabled in the QBO UI. Integrations UI can later show synced lists like Xero (no mapping grid). Tenant isolation by `realmId`.
 
 ### Phase 3 — resolve + validate
 
 Vendor: stored mapping → TaxIdentifier (ABN) → exact DisplayName → email; else create Vendor when `vendor` is set.  
 Account: parent + sub-ledger → Account Id.  
 Tax: GST → TaxCode Id.  
-Currency: ISO vs company.  
+Currency: ISO vs company; `ensure_qbo_currency` (wired at Bill export later).  
 Sales documents: skip.
 
 ### Phase 4 — export Bill + PDF

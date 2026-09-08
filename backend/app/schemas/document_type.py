@@ -67,6 +67,28 @@ TEAM_EXPENSE_KIND_CHOICES = frozenset(
 )
 RecognitionMode = Literal["signals", "prompt"]
 CounterpartySource = Literal["letterhead", "consignee", "applicant", "bill_to"]
+CounterpartyType = Literal["vendor", "customer"]
+COUNTERPARTY_TYPE_CHOICES = frozenset({"vendor", "customer"})
+
+
+def default_counterparty_type_for_route(route_target: str | None) -> CounterpartyType:
+    route = (route_target or "").strip()
+    if route == "Sales Management":
+        return "customer"
+    return "vendor"
+
+
+def resolved_counterparty_type(
+    definition: DocumentTypeDefinition | None,
+    *,
+    route_target: str | None = None,
+) -> CounterpartyType:
+    if definition is not None:
+        token = (definition.counterparty_type or "").strip().lower()
+        if token in COUNTERPARTY_TYPE_CHOICES:
+            return token  # type: ignore[return-value]
+        route_target = route_target or definition.route_target
+    return default_counterparty_type_for_route(route_target)
 
 
 def _empty_classifier_root() -> dict[str, Any]:
@@ -115,6 +137,11 @@ class DocumentTypeDefinition(BaseModel):
     route_target: DocumentTypeRouteTarget = Field(
         default="Vault",
         alias="routeTarget",
+    )
+    counterparty_type: CounterpartyType = Field(
+        default="vendor",
+        alias="counterpartyType",
+        description="QBO/Xero party kind for the extracted name: vendor or customer.",
     )
     enabled: bool = True
     classifier: DocumentTypeClassifier = Field(default_factory=DocumentTypeClassifier)
@@ -181,6 +208,22 @@ class DocumentTypeDefinition(BaseModel):
     post_to: DocumentTypePostTo = Field(default_factory=DocumentTypePostTo, alias="postTo")
 
     model_config = {"populate_by_name": True}
+
+    @model_validator(mode="before")
+    @classmethod
+    def _inject_counterparty_type(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        existing = data.get("counterparty_type", data.get("counterpartyType"))
+        token = str(existing or "").strip().lower()
+        if token in COUNTERPARTY_TYPE_CHOICES:
+            patched = dict(data)
+            patched["counterparty_type"] = token
+            return patched
+        route = data.get("route_target", data.get("routeTarget"))
+        patched = dict(data)
+        patched["counterparty_type"] = default_counterparty_type_for_route(str(route or ""))
+        return patched
 
     @field_validator("klass", mode="before")
     @classmethod
@@ -280,6 +323,17 @@ class DocumentTypeDefinition(BaseModel):
         if token in {"letterhead", "consignee", "applicant", "bill_to"}:
             return token
         return "letterhead"
+
+    @field_validator("counterparty_type", mode="before")
+    @classmethod
+    def _normalize_counterparty_type(cls, value: Any, info) -> str:
+        token = str(value or "").strip().lower()
+        if token in COUNTERPARTY_TYPE_CHOICES:
+            return token
+        route = ""
+        if info.data:
+            route = str(info.data.get("route_target") or "")
+        return default_counterparty_type_for_route(route)
 
     @field_validator("playbook_profile", mode="before")
     @classmethod

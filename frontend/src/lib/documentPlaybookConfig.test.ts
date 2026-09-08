@@ -261,6 +261,7 @@ describe("applyRoutePlaybookDefaults", () => {
     expect(next.routeTarget).toBe("Sales Management");
     expect(next.playbookProfile).toBe("ar_goods");
     expect(next.matchPolicy.mode).toBe("three_way_so_dn");
+    expect(next.counterpartyType).toBe("customer");
   });
 
   it("resets playbook when switching to purchase with sales match mode", () => {

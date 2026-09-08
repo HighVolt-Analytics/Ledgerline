@@ -719,6 +719,17 @@ async def _exchange_quickbooks_code(
             tenant_id=str(tenant_id),
             error=str(exc),
         )
+    try:
+        from app.integrations.qbo.currencies import sync_currencies_from_qbo
+
+        async with db.begin_nested():
+            await sync_currencies_from_qbo(db, tenant_id)
+    except Exception as exc:
+        logger.warning(
+            "qbo_currencies_initial_sync_failed",
+            tenant_id=str(tenant_id),
+            error=str(exc),
+        )
     return row
 
 

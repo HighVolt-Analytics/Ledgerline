@@ -18,7 +18,7 @@ import {
   ROUTE_TARGETS,
   TEAM_EXPENSE_KINDS,
 } from "@/lib/v4RuleBookTypes";
-import { emptyDocumentClassifier, emptyDocumentTypePostTo, type DocumentTypeDefinition, type DocumentTypePostTo, type DocumentTypeSampleAnalysis, type DocumentTypeTeamExpenseKind } from "@/lib/v5DocumentTypes";
+import { emptyDocumentClassifier, emptyDocumentTypePostTo, normalizeCounterpartyType, type DocumentTypeDefinition, type DocumentTypePostTo, type DocumentTypeSampleAnalysis, type DocumentTypeTeamExpenseKind } from "@/lib/v5DocumentTypes";
 import {
   derivePostingFromKlassAndProfile,
   normalizeDocumentTypeIdentity,
@@ -621,6 +621,10 @@ function mapDocumentType(raw: Record<string, unknown>): DocumentTypeDefinition {
           ""
       ),
       routeTarget: String(raw.route_target ?? raw.routeTarget ?? ROUTE_TARGETS[3]),
+      counterpartyType: normalizeCounterpartyType(
+        raw.counterparty_type ?? raw.counterpartyType,
+        String(raw.route_target ?? raw.routeTarget ?? ROUTE_TARGETS[3])
+      ),
       enabled: raw.enabled !== false,
       classifier: mapClassifier(raw.classifier as Record<string, unknown> | undefined),
       requiredFields,
@@ -687,6 +691,7 @@ function documentTypeToApi(
     recognition_signals: reconciled.recognitionSignals,
     llm_prompt: reconciled.llmPrompt,
     route_target: reconciled.routeTarget,
+    counterparty_type: reconciled.counterpartyType,
     enabled: reconciled.enabled,
     classifier: {
       enabled: reconciled.classifier.enabled,
