@@ -16,6 +16,7 @@ from app.schemas.rule_book_config import RuleBookConfigPayload, validate_rule_bo
 from app.services.rule_book.rule_book_config_repository import (
     ensure_default_config,
     fetch_config_dict,
+    upgrade_tenant_coa_if_needed,
     upsert_config,
 )
 from app.services.rule_book.rule_book_ingest_stats import strip_email_capture_volatile_stats
@@ -94,6 +95,23 @@ async def load_rule_book_config_dict(
 
     stored = await fetch_config_dict(session, tid)
     if stored is not None:
+        team = stored.get("team_expense_posting") if isinstance(stored, dict) else None
+        advance = ""
+        if isinstance(team, dict):
+            advance = str(team.get("default_advance_parent_ledger") or "").strip()
+        coa = stored.get("chart_of_accounts") if isinstance(stored, dict) else None
+        has_staff = False
+        if isinstance(coa, list):
+            for entry in coa:
+                name = ""
+                if isinstance(entry, dict):
+                    name = str(entry.get("name") or "")
+                if name.strip().lower().rstrip(".,;:") == "staff advance":
+                    has_staff = True
+                    break
+        if not advance or not has_staff:
+            await upgrade_tenant_coa_if_needed(session, tid)
+            stored = await fetch_config_dict(session, tid) or stored
         fixed = validate_rule_book_config_payload(stored).model_dump()
         ensured = ensure_email_capture_rules_in_dict(fixed)
         if ensured != stored:

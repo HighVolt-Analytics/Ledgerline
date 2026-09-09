@@ -41,7 +41,7 @@ async def test_mutate_requires_post_privilege(
     monkeypatch.setattr(
         privilege_service,
         "user_has_privilege",
-        lambda ctx, action: False if action == "Post" else True,
+        lambda ctx, action: False if action in ("Post", "Approve", "Reject") else True,
     )
 
     listed = await client.get("/api/bank-feeds/accounts")
@@ -52,7 +52,7 @@ async def test_mutate_requires_post_privilege(
         json={"name": "No Post", "currency": "AUD", "account_number": "12345678", "coa_account_name": "Bank Account"},
     )
     assert create.status_code == 403
-    assert "Post" in create.json()["detail"]
+    assert "Approve" in create.json()["detail"]
 
     # Confirm path also gated (404 vs 403 — privilege checked before lookup)
     confirm = await client.post("/api/bank-feeds/matches/1/confirm")

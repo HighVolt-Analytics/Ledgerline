@@ -63,6 +63,8 @@ from app.services.invoice.vision_posting_continue import (
 from app.services.purchase.team_expense_approval import assert_team_expense_approvable
 from app.services.tenant.tenant_org_context import org_context_from_config
 from app.services.approval.approval_quorum_service import (
+    empty_chain,
+    escalate_approval_chain,
     module_for_route_target,
     progress_from_chain,
     record_approval,
@@ -521,6 +523,7 @@ async def approve_invoice_action(
         user_id=int(ctx.user_id),
         role=ctx.role or "",
         name=actor_name or actor_email or f"User {ctx.user_id}",
+        amount=inv.total,
     )
     progress = progress_from_chain(inv.approval_chain)
     if progress is None or not progress.quorum_met:
@@ -647,6 +650,20 @@ async def escalate_invoice_action(
 ) -> InvoiceResponse:
     inv = await get_invoice_for_tenant(db, invoice_id, ctx.tenant_id)
     actor_name, actor_email = await actor_from_context(db, ctx)
+    require_actor_in_pool(ctx)
+    module_key = module_for_route_target(inv.route_target)
+    if not inv.approval_chain:
+        inv.approval_chain = empty_chain(
+            tenant_id=ctx.tenant_id,
+            module_key=module_key,
+            amount=inv.total,
+        )
+    inv.approval_chain = escalate_approval_chain(
+        inv.approval_chain,
+        note=note,
+        actor_role=ctx.role or "",
+        actor_name=actor_name or actor_email,
+    )
     await escalate_invoice(
         db,
         inv,

@@ -1608,6 +1608,15 @@ export const api = {
     bustGetCacheByPrefix("/api/invoices");
     return request<Invoice>(`/api/approvals/${id}/approve`, { method: "POST" });
   },
+  escalateApproval: (id: number, note: string) => {
+    bustGetCacheByPrefix("/api/approvals");
+    bustGetCacheByPrefix("/api/invoices");
+    return request<Invoice>(`/api/approvals/${id}/escalate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ note }),
+    });
+  },
   reject: (id: number) => {
     bustGetCacheByPrefix("/api/approvals");
     bustGetCacheByPrefix("/api/invoices");

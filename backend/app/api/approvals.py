@@ -115,7 +115,7 @@ async def reject_invoice_route(
     Sets status to rejected and moves the stored file to
     rejected/{org}/{vendor}/{year}/{month}/ in blob storage.
     """
-    require_privilege(ctx, "Reject")
+    require_privilege(ctx, "Approve")
     try:
         response = await reject_invoice_action(db, ctx, invoice_id=invoice_id)
     except LookupError as exc:
@@ -139,6 +139,8 @@ async def escalate_invoice_route(
         response = await escalate_invoice_action(
             db, ctx, invoice_id=invoice_id, note=body.note
         )
+    except ApprovalQuorumForbiddenError as exc:
+        raise HTTPException(403, str(exc)) from exc
     except LookupError as exc:
         raise http_not_found(exc) from exc
     except ValueError as exc:
@@ -170,7 +172,7 @@ async def permanently_delete_invoice_route(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> None:
     """Permanently delete a rejected or duplicate-skipped invoice and its stored file."""
-    require_privilege(ctx, "Reject")
+    require_privilege(ctx, "Approve")
     try:
         await permanently_delete_invoice_action(db, ctx, invoice_id=invoice_id)
     except LookupError as exc:

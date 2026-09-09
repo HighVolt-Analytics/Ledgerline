@@ -182,7 +182,8 @@ async def _assert_execution_preconditions(
         role = str(actor.get("role") or "").strip().lower()
         if role and role not in PAYMENT_EXECUTION_ROLES:
             raise PaymentExecutionUnauthorizedError(
-                "Payment execution requires Tenant Admin or Approver role"
+                "Payment execution requires Admin, Manager, Department Head, "
+                "Finance Manager, CFO, or Director role"
             )
 
     return tenant

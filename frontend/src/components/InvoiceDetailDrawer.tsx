@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback, typ
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import {
+  ArrowUpRight,
   Check,
   Clock,
   FileText,
@@ -1883,6 +1884,34 @@ export function InvoiceDetailDrawer({
     }
   }
 
+  async function handleEscalate() {
+    if (!inv || inv.status !== "exception") return;
+    const note = window.prompt(
+      "Escalate to the next higher role. Note for the next approver:",
+      "Unable to approve — escalate to higher role"
+    );
+    if (note == null) return;
+    const trimmed = note.trim();
+    if (!trimmed) {
+      alert("Escalation note is required");
+      return;
+    }
+    const targetId = inv.id;
+    setActionBusy(true);
+    try {
+      await api.escalateApproval(targetId, trimmed);
+      onUpdated?.();
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 403) {
+        alert(e.message || "Your role cannot escalate this approval.");
+      } else {
+        alert(e instanceof Error ? e.message : "Escalate failed");
+      }
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
   async function handleRequestApproval() {
     if (!inv || !canRequestInfo(inv.status)) return;
     const targetId = inv.id;
@@ -2802,6 +2831,18 @@ export function InvoiceDetailDrawer({
                         )}
                       </Button>
                     )}
+                    {inv.status === "exception" && canRejectClaim(inv.status) && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        data-testid="button-escalate"
+                        disabled={actionBusy}
+                        onClick={() => void handleEscalate()}
+                      >
+                        <ArrowUpRight className="h-4 w-4 mr-1" />
+                        Escalate
+                      </Button>
+                    )}
                   </div>
                 </>
               ) : isClaimRoute ? (
@@ -2998,6 +3039,18 @@ export function InvoiceDetailDrawer({
                       >
                         <Check className="h-4 w-4 mr-1" />
                         Approve
+                      </Button>
+                    )}
+                    {inv.status === "exception" && canRejectClaim(inv.status) && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        data-testid="button-escalate-footer"
+                        disabled={actionBusy}
+                        onClick={() => void handleEscalate()}
+                      >
+                        <ArrowUpRight className="h-4 w-4 mr-1" />
+                        Escalate
                       </Button>
                     )}
                     {invoiceCanPublishToLedger(inv) && (

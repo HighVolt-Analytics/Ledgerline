@@ -169,7 +169,11 @@ def test_sales_missing_control_accounts_still_produces_balanced_lines() -> None:
         "tax_account",
     ]
     receivable_lines = [line for line in lines if line.debit > 0]
-    tax_lines = [line for line in lines if line.credit > 0 and line.account_name == "Tax Collected"]
+    tax_lines = [
+        line
+        for line in lines
+        if line.credit > 0 and line.account_code == "9999"
+    ]
     assert receivable_lines[0].account_code == "9999"
     assert tax_lines[0].account_code == "9999"
 

@@ -1616,6 +1616,12 @@ def derive_resolution_hint(
                     "Rule Book → Posting → Team expense posting — select the "
                     "settlement ledger from the chart of accounts, then reprocess"
                 )
+            if roles:
+                labels = ", ".join(sorted(roles))
+                return (
+                    "Rule Book → Posting — select the missing control ledger "
+                    f"({labels}) from the chart of accounts, then reprocess"
+                )
         if best.event == "pipeline_error" and isinstance(detail, dict):
             _, fix = _pipeline_error_messages(detail)
             return fix

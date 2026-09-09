@@ -1,18 +1,19 @@
+/** Canonical privilege-matrix helpers for Policy & privileges. */
+
 export const APPROVAL_ROLES = [
+  "Employee",
+  "Manager",
+  "Department Head",
+  "Finance Manager",
+  "CFO",
+  "Director",
   "Admin",
-  "Functional manager",
-  "Functional supervisor",
-  "Finance head",
-  "Bookkeeper",
-  "Auditor",
-  "User",
 ] as const;
+
 export const APPROVAL_ACTIONS = [
   "View",
   "Comment",
   "Approve",
-  "Reject",
-  "Post",
   "Edit Policy",
   "Manage Users",
 ] as const;
@@ -20,132 +21,58 @@ export const APPROVAL_ACTIONS = [
 export type ApprovalRole = (typeof APPROVAL_ROLES)[number];
 export type ApprovalAction = (typeof APPROVAL_ACTIONS)[number];
 
-export type ApprovalQuorumMode = "one_way" | "two_way" | "three_way";
-
-export const APPROVAL_MODULE_ROLES = [
+/** Roles assignable in the amount approval matrix (not Employee). */
+export const APPROVAL_MATRIX_ASSIGNABLE_ROLES = [
+  "Manager",
+  "Department Head",
+  "Finance Manager",
+  "CFO",
+  "Director",
   "Admin",
-  "Functional manager",
-  "Functional supervisor",
-  "Finance head",
 ] as const;
 
-export type ApprovalModuleRole = (typeof APPROVAL_MODULE_ROLES)[number];
+export type ApprovalMatrixAssignableRole = (typeof APPROVAL_MATRIX_ASSIGNABLE_ROLES)[number];
 
-export const APPROVAL_MATRIX_MODULES = [
-  "team_expenses",
-  "expenses",
-  "purchase",
-  "sales",
-] as const;
+/** Legacy privilege columns folded into Approve. */
+export const APPROVE_ACTION_ALIASES = ["Approve", "Reject", "Post", "Publish"] as const;
 
-export type ApprovalMatrixModule = (typeof APPROVAL_MATRIX_MODULES)[number];
-
-export const APPROVAL_MATRIX_MODULE_LABELS: Record<ApprovalMatrixModule, string> = {
-  team_expenses: "Team Expenses",
-  expenses: "Expenses Management",
-  purchase: "Purchase Management",
-  sales: "Sales Management",
+/** Map legacy privilege role labels onto the current set. */
+export const LEGACY_APPROVAL_ROLE_LABELS: Record<string, ApprovalRole> = {
+  Approver: "Manager",
+  Viewer: "Employee",
+  User: "Employee",
+  "Functional manager": "Manager",
+  "Functional supervisor": "Department Head",
+  "Finance head": "Finance Manager",
+  Bookkeeper: "CFO",
+  Auditor: "Director",
 };
 
-export const APPROVAL_QUORUM_MODE_OPTIONS: {
-  value: ApprovalQuorumMode;
-  label: string;
-}[] = [
-  { value: "one_way", label: "1-way (any 1 of 4)" },
-  { value: "two_way", label: "2-way (any 2 of 4)" },
-  { value: "three_way", label: "3-way (any 3 of 4)" },
-];
+/** Per-role approval amount ceiling. Placeholder — not enforced yet. null = unset. */
+export type ApprovalLimitsByRole = Record<ApprovalRole, number | null>;
 
-export type PolicyRule = { id: string; condition: string; approver: string };
-
-export type ApprovalMatrixConfig = {
-  by_module: Record<ApprovalMatrixModule, ApprovalQuorumMode>;
-  approver_roles_by_module: Record<
-    ApprovalMatrixModule,
-    Record<ApprovalModuleRole, boolean>
-  >;
+export type AmountApprovalTierRow = {
+  id: string;
+  min_amount: number;
+  max_amount: number | null;
+  approval_1: ApprovalMatrixAssignableRole | null;
+  approval_2: ApprovalMatrixAssignableRole | null;
+  /** Payment approval */
+  approval_3: ApprovalMatrixAssignableRole | null;
 };
 
 export type LocalApprovalPolicy = {
   locked: boolean;
-  rules: PolicyRule[];
   matrix: Record<ApprovalRole, Record<ApprovalAction, boolean>>;
-  approval_matrix: ApprovalMatrixConfig;
-};
-
-export const DEFAULT_APPROVAL_RULES: PolicyRule[] = [
-  { id: "ap1", condition: "Invoices > 5,000", approver: "CFO approval" },
-  { id: "ap2", condition: "Marketing Expense invoices", approver: "Marketing Lead" },
-  { id: "ap3", condition: "Suspense-routed invoices", approver: "Finance Controller" },
-  { id: "ap4", condition: "New vendor (first invoice)", approver: "Bookkeeper review" },
-];
-
-export const DEFAULT_APPROVAL_MATRIX_BY_MODULE: Record<
-  ApprovalMatrixModule,
-  ApprovalQuorumMode
-> = {
-  team_expenses: "one_way",
-  expenses: "one_way",
-  purchase: "two_way",
-  sales: "one_way",
-};
-
-export const DEFAULT_APPROVER_ROLES_BY_MODULE: Record<
-  ApprovalMatrixModule,
-  Record<ApprovalModuleRole, boolean>
-> = {
-  team_expenses: {
-    Admin: true,
-    "Functional manager": false,
-    "Functional supervisor": false,
-    "Finance head": false,
-  },
-  expenses: {
-    Admin: true,
-    "Functional manager": false,
-    "Functional supervisor": false,
-    "Finance head": false,
-  },
-  purchase: {
-    Admin: true,
-    "Functional manager": true,
-    "Functional supervisor": false,
-    "Finance head": false,
-  },
-  sales: {
-    Admin: true,
-    "Functional manager": false,
-    "Functional supervisor": false,
-    "Finance head": false,
-  },
+  /** Placeholder per-role ceilings; editable only when Approve is on. */
+  approval_limits: ApprovalLimitsByRole;
+  amount_approval_tiers: AmountApprovalTierRow[];
 };
 
 const LEADERSHIP: Record<ApprovalAction, boolean> = {
   View: true,
   Comment: true,
   Approve: true,
-  Reject: true,
-  Post: true,
-  "Edit Policy": false,
-  "Manage Users": false,
-};
-
-const SUPERVISOR: Record<ApprovalAction, boolean> = {
-  View: true,
-  Comment: true,
-  Approve: true,
-  Reject: true,
-  Post: false,
-  "Edit Policy": false,
-  "Manage Users": false,
-};
-
-const READ_COMMENT: Record<ApprovalAction, boolean> = {
-  View: true,
-  Comment: true,
-  Approve: false,
-  Reject: false,
-  Post: false,
   "Edit Policy": false,
   "Manage Users": false,
 };
@@ -154,8 +81,6 @@ const VIEW_ONLY: Record<ApprovalAction, boolean> = {
   View: true,
   Comment: false,
   Approve: false,
-  Reject: false,
-  Post: false,
   "Edit Policy": false,
   "Manage Users": false,
 };
@@ -164,59 +89,123 @@ export const DEFAULT_APPROVAL_MATRIX: Record<
   ApprovalRole,
   Record<ApprovalAction, boolean>
 > = {
+  Employee: { ...VIEW_ONLY },
+  Manager: { ...LEADERSHIP },
+  "Department Head": { ...LEADERSHIP },
+  "Finance Manager": { ...LEADERSHIP },
+  CFO: { ...LEADERSHIP },
+  Director: { ...LEADERSHIP },
   Admin: Object.fromEntries(APPROVAL_ACTIONS.map((a) => [a, true])) as Record<
     ApprovalAction,
     boolean
   >,
-  "Functional manager": { ...LEADERSHIP },
-  "Functional supervisor": { ...SUPERVISOR },
-  "Finance head": { ...LEADERSHIP },
-  Bookkeeper: { ...READ_COMMENT },
-  Auditor: { ...READ_COMMENT },
-  User: { ...VIEW_ONLY },
 };
 
-export function normalizeApprovalMatrixConfig(
-  raw: Partial<ApprovalMatrixConfig> | null | undefined
-): ApprovalMatrixConfig {
-  const by_module = { ...DEFAULT_APPROVAL_MATRIX_BY_MODULE };
-  const approver_roles_by_module = Object.fromEntries(
-    APPROVAL_MATRIX_MODULES.map((module) => [
-      module,
-      { ...DEFAULT_APPROVER_ROLES_BY_MODULE[module] },
-    ])
-  ) as Record<ApprovalMatrixModule, Record<ApprovalModuleRole, boolean>>;
-  const source: Partial<Record<ApprovalMatrixModule, ApprovalQuorumMode>> =
-    raw?.by_module ?? {};
-  for (const key of APPROVAL_MATRIX_MODULES) {
-    const val = source[key];
-    if (val === "one_way" || val === "two_way" || val === "three_way") {
-      by_module[key] = val;
-    }
+export const DEFAULT_APPROVAL_LIMITS: ApprovalLimitsByRole = Object.fromEntries(
+  APPROVAL_ROLES.map((role) => [role, null])
+) as ApprovalLimitsByRole;
 
-    const moduleRoles = raw?.approver_roles_by_module?.[key];
-    if (moduleRoles) {
-      for (const role of APPROVAL_MODULE_ROLES) {
-        if (typeof moduleRoles[role] === "boolean") {
-          approver_roles_by_module[key][role] = moduleRoles[role];
-        }
-      }
-    }
+export const DEFAULT_AMOUNT_APPROVAL_TIERS: AmountApprovalTierRow[] = [
+  {
+    id: "tier-0-5k",
+    min_amount: 0,
+    max_amount: 5000,
+    approval_1: "Manager",
+    approval_2: null,
+    approval_3: null,
+  },
+  {
+    id: "tier-5k-20k",
+    min_amount: 5001,
+    max_amount: 20000,
+    approval_1: "Manager",
+    approval_2: "Department Head",
+    approval_3: null,
+  },
+  {
+    id: "tier-20k-50k",
+    min_amount: 20001,
+    max_amount: 50000,
+    approval_1: "Department Head",
+    approval_2: "Finance Manager",
+    approval_3: null,
+  },
+  {
+    id: "tier-50k-250k",
+    min_amount: 50001,
+    max_amount: 250000,
+    approval_1: "Department Head",
+    approval_2: "Finance Manager",
+    approval_3: "CFO",
+  },
+  {
+    id: "tier-250k-plus",
+    min_amount: 250001,
+    max_amount: null,
+    approval_1: "Finance Manager",
+    approval_2: "CFO",
+    approval_3: "Director",
+  },
+];
 
-    const enabledCount = APPROVAL_MODULE_ROLES.reduce(
-      (acc, role) => acc + (approver_roles_by_module[key][role] ? 1 : 0),
-      0
-    );
-    if (enabledCount <= 0) {
-      approver_roles_by_module[key].Admin = true;
-      by_module[key] = "one_way";
-    } else if (enabledCount === 1) {
-      by_module[key] = "one_way";
-    } else if (enabledCount === 2) {
-      by_module[key] = "two_way";
-    } else {
-      by_module[key] = "three_way";
+function normalizeMatrixRole(raw: unknown): ApprovalMatrixAssignableRole | null {
+  if (raw == null || raw === "" || raw === "—") return null;
+  const text = String(raw).trim();
+  const mapped = LEGACY_APPROVAL_ROLE_LABELS[text] ?? text;
+  return (APPROVAL_MATRIX_ASSIGNABLE_ROLES as readonly string[]).includes(mapped)
+    ? (mapped as ApprovalMatrixAssignableRole)
+    : null;
+}
+
+export function normalizeApprovalLimits(
+  raw: Partial<Record<string, number | null | string>> | null | undefined,
+  roleRemap: Record<string, ApprovalRole> = LEGACY_APPROVAL_ROLE_LABELS
+): ApprovalLimitsByRole {
+  const out: ApprovalLimitsByRole = { ...DEFAULT_APPROVAL_LIMITS };
+  if (!raw || typeof raw !== "object") return out;
+  for (const [key, value] of Object.entries(raw)) {
+    const role =
+      roleRemap[key] ??
+      (APPROVAL_ROLES.includes(key as ApprovalRole) ? (key as ApprovalRole) : null);
+    if (!role) continue;
+    if (value === null || value === undefined || value === "") {
+      out[role] = null;
+      continue;
     }
+    const num = typeof value === "number" ? value : Number(String(value).replace(/,/g, ""));
+    out[role] = Number.isFinite(num) && num >= 0 ? num : null;
   }
-  return { by_module, approver_roles_by_module };
+  return out;
+}
+
+export function normalizeAmountApprovalTiers(raw: unknown): AmountApprovalTierRow[] {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return DEFAULT_AMOUNT_APPROVAL_TIERS.map((t) => ({ ...t }));
+  }
+  const out: AmountApprovalTierRow[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const row = raw[i];
+    if (!row || typeof row !== "object") continue;
+    const r = row as Record<string, unknown>;
+    const min = Number(r.min_amount);
+    const maxRaw = r.max_amount;
+    const max =
+      maxRaw === null || maxRaw === undefined || maxRaw === "" ? null : Number(maxRaw);
+    out.push({
+      id: String(r.id || `tier-${i}`),
+      min_amount: Number.isFinite(min) && min >= 0 ? min : 0,
+      max_amount: max != null && Number.isFinite(max) && max >= 0 ? max : null,
+      approval_1: normalizeMatrixRole(r.approval_1),
+      approval_2: normalizeMatrixRole(r.approval_2),
+      approval_3: normalizeMatrixRole(r.approval_3),
+    });
+  }
+  return out.length ? out : DEFAULT_AMOUNT_APPROVAL_TIERS.map((t) => ({ ...t }));
+}
+
+export function formatAmountTierLabel(row: AmountApprovalTierRow): string {
+  const fmt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  if (row.max_amount == null) return `>${fmt(Math.max(0, row.min_amount - 1))}`;
+  if (row.min_amount <= 0) return `$0–$${fmt(row.max_amount)}`;
+  return `$${fmt(row.min_amount)}–$${fmt(row.max_amount)}`;
 }

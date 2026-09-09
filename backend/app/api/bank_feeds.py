@@ -223,7 +223,7 @@ async def create_account(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[BankAccountResponse]:
-    require_privilege(ctx, "Post")
+    require_privilege(ctx, "Approve")
     try:
         currency = validate_bank_account_currency(body.currency)
     except UnsupportedBankCurrencyError as exc:
@@ -266,7 +266,7 @@ async def update_account(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[BankAccountResponse]:
-    require_privilege(ctx, "Post")
+    require_privilege(ctx, "Approve")
     try:
         currency = validate_bank_account_currency(body.currency)
     except UnsupportedBankCurrencyError as exc:
@@ -312,7 +312,7 @@ async def delete_account(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[BankAccountResponse]:
     """Archive (soft-delete) a bank account so it no longer appears in active lists."""
-    require_privilege(ctx, "Post")
+    require_privilege(ctx, "Approve")
     row = await account_service.archive_bank_account(
         db, tenant_id=ctx.tenant_id, account_id=account_id
     )
@@ -345,7 +345,7 @@ async def upload_pending_statement_import(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[UnassignedStatementIngestResponse]:
     """Ingest a statement with no bank selected: auto-import if account number matches, else Pending."""
-    require_privilege(ctx, "Post")
+    require_privilege(ctx, "Approve")
     raw = await file.read()
     if not raw:
         raise HTTPException(400, "Uploaded file is empty")
@@ -455,7 +455,7 @@ async def promote_pending_account(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[PendingBankPromoteResponse]:
-    require_privilege(ctx, "Post")
+    require_privilege(ctx, "Approve")
     try:
         currency = validate_bank_account_currency(body.currency)
     except UnsupportedBankCurrencyError as exc:
@@ -523,7 +523,7 @@ async def dismiss_pending_account(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> Response:
-    require_privilege(ctx, "Post")
+    require_privilege(ctx, "Approve")
     row = await pending_account_service.dismiss_pending_bank_account(
         db, tenant_id=ctx.tenant_id, pending_id=pending_id
     )
@@ -554,7 +554,7 @@ async def upload_statement_import(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[BankFeedImportResponse]:
-    require_privilege(ctx, "Post")
+    require_privilege(ctx, "Approve")
     account = await account_service.get_bank_account(
         db, tenant_id=ctx.tenant_id, account_id=account_id
     )
@@ -778,7 +778,7 @@ async def run_account_match(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[MatchRunResponse]:
-    require_privilege(ctx, "Post")
+    require_privilege(ctx, "Approve")
     account = await account_service.get_bank_account(
         db, tenant_id=ctx.tenant_id, account_id=account_id
     )
@@ -820,7 +820,7 @@ async def run_account_categorize(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[CategorizeRunResponse]:
-    require_privilege(ctx, "Post")
+    require_privilege(ctx, "Approve")
     account = await account_service.get_bank_account(
         db, tenant_id=ctx.tenant_id, account_id=account_id
     )
@@ -865,7 +865,7 @@ async def set_transaction_category(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[BankTransactionResponse]:
-    require_privilege(ctx, "Post")
+    require_privilege(ctx, "Approve")
     txn = await transaction_service.get_transaction(
         db, tenant_id=ctx.tenant_id, transaction_id=transaction_id
     )
@@ -908,7 +908,7 @@ async def create_manual_match(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[BankTransactionMatchResponse]:
-    require_privilege(ctx, "Post")
+    require_privilege(ctx, "Approve")
     txn = await transaction_service.get_transaction(
         db, tenant_id=ctx.tenant_id, transaction_id=transaction_id
     )
@@ -958,7 +958,7 @@ async def confirm_match(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[BankTransactionMatchResponse]:
-    require_privilege(ctx, "Post")
+    require_privilege(ctx, "Approve")
     match = await match_service.get_match(
         db, tenant_id=ctx.tenant_id, match_id=match_id
     )
@@ -1000,7 +1000,7 @@ async def unmatch(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[BankTransactionMatchResponse]:
-    require_privilege(ctx, "Post")
+    require_privilege(ctx, "Approve")
     match = await match_service.get_match(
         db, tenant_id=ctx.tenant_id, match_id=match_id
     )
@@ -1043,7 +1043,7 @@ async def exclude_transaction(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[BankTransactionResponse]:
-    require_privilege(ctx, "Post")
+    require_privilege(ctx, "Approve")
     txn = await transaction_service.get_transaction(
         db, tenant_id=ctx.tenant_id, transaction_id=transaction_id
     )
@@ -1090,7 +1090,7 @@ async def create_from_bank_line(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[BankTransactionResponse]:
-    require_privilege(ctx, "Post")
+    require_privilege(ctx, "Approve")
     txn = await transaction_service.get_transaction(
         db, tenant_id=ctx.tenant_id, transaction_id=transaction_id
     )
@@ -1155,7 +1155,7 @@ async def transfer_bank_line(
             403,
             "Bank transfer is not enabled — pending cross-account verification design",
         )
-    require_privilege(ctx, "Post")
+    require_privilege(ctx, "Approve")
     txn = await transaction_service.get_transaction(
         db, tenant_id=ctx.tenant_id, transaction_id=transaction_id
     )
@@ -1236,7 +1236,7 @@ async def create_transaction_note(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[BankTransactionNoteResponse]:
-    require_privilege(ctx, "Post")
+    require_privilege(ctx, "Approve")
     txn = await transaction_service.get_transaction(
         db, tenant_id=ctx.tenant_id, transaction_id=transaction_id
     )
@@ -1280,7 +1280,7 @@ async def reverse_bank_create(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[BankTransactionResponse]:
-    require_privilege(ctx, "Post")
+    require_privilege(ctx, "Approve")
     txn = await transaction_service.get_transaction(
         db, tenant_id=ctx.tenant_id, transaction_id=transaction_id
     )

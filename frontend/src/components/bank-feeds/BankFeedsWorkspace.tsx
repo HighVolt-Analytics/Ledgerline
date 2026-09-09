@@ -47,7 +47,7 @@ export function BankFeedsWorkspace({
   initialTab?: BankFeedQueueTab | null;
 }) {
   const { permissions } = usePermissions();
-  const canPost = permissions?.permissions.Post === true;
+  const canPost = permissions?.permissions.Approve === true;
 
   const accountsQ = useBankAccounts();
   const accounts = accountsQ.data ?? [];

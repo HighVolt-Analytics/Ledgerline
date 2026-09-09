@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, Pencil, RefreshCw, Send, Trash2, X } from "lucide-react";
+import { ArrowUpRight, Check, Pencil, RefreshCw, Send, Trash2, X } from "lucide-react";
 import { api, ApiError, clearGetCache } from "@/api/client";
 import type { ApiEnvelope, Invoice } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
@@ -88,7 +88,7 @@ export function ApprovalsPage() {
   const { data: documentTypes = [] } = useRuleBookDocumentTypes(!loading);
   const [error, setError] = useState<string | null>(null);
   const { permissions } = usePermissions();
-  const canReject = !permissions || permissions.permissions.Reject === true;
+  const canReject = !permissions || permissions.permissions.Approve === true;
   const [toast, setToast] = useState<string | null>(null);
   const [drawerInvoice, setDrawerInvoice] = useState<Invoice | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -329,6 +329,34 @@ export function ApprovalsPage() {
         next.delete(id);
         return next;
       });
+      setBusyId(null);
+    }
+  };
+
+  const escalateInvoice = async (id: number) => {
+    if (!canReject) {
+      setToast("Your role cannot escalate approvals");
+      return;
+    }
+    const note = window.prompt(
+      "Escalate to the next higher role. Note for the next approver:",
+      "Unable to approve — escalate to higher role"
+    );
+    if (note == null) return;
+    const trimmed = note.trim();
+    if (!trimmed) {
+      setToast("Escalation note is required");
+      return;
+    }
+    setBusyId(id);
+    try {
+      const updated = await api.escalateApproval(id, trimmed);
+      await load({ fresh: true });
+      const nextLabel = approvalChainProgressLabel(updated.approval_chain);
+      setToast(nextLabel ? `Escalated — ${nextLabel}` : "Escalated to the next higher role");
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : "Escalate failed");
+    } finally {
       setBusyId(null);
     }
   };
@@ -818,6 +846,21 @@ export function ApprovalsPage() {
                           disabled={busyId === inv.id}
                           onClick={() => void approveInvoice(inv.id)}
                           testId={`approve-${inv.id}`}
+                        />
+                      )}
+                      {col.key === "pending" && inv.status === "exception" && (
+                        <ActionChip
+                          tone="edit"
+                          icon={ArrowUpRight}
+                          label={busyId === inv.id ? "…" : "Escalate"}
+                          disabled={busyId === inv.id || !canReject}
+                          title={
+                            canReject
+                              ? "Escalate the current approval step to the next higher role"
+                              : "Your role cannot escalate approvals"
+                          }
+                          onClick={() => void escalateInvoice(inv.id)}
+                          testId={`escalate-${inv.id}`}
                         />
                       )}
                       {col.key === "pending" && inv.status === "exception" && (

@@ -1380,7 +1380,7 @@ async def publish_invoice(
         publish_invoice_to_ledger,
     )
 
-    require_privilege(ctx, "Post")
+    require_privilege(ctx, "Approve")
     inv = await _get_invoice_for_tenant(db, invoice_id, ctx.tenant_id)
     if inv.status != InvoiceStatus.PROCESSED:
         raise HTTPException(

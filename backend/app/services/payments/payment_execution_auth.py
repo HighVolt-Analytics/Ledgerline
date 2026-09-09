@@ -10,18 +10,21 @@ from app.tenant_roles import TenantRole
 PAYMENT_EXECUTION_ROLES = frozenset(
     {
         TenantRole.ADMIN.value,
-        TenantRole.FUNCTIONAL_MANAGER.value,
-        TenantRole.FUNCTIONAL_SUPERVISOR.value,
-        TenantRole.FINANCE_HEAD.value,
+        TenantRole.MANAGER.value,
+        TenantRole.DEPARTMENT_HEAD.value,
+        TenantRole.FINANCE_MANAGER.value,
+        TenantRole.CFO.value,
+        TenantRole.DIRECTOR.value,
         UserRole.ADMIN.value,
         UserRole.MEMBER.value,
         # Legacy membership slugs still accepted until migration completes
-        "admin",
         "approver",
         "member",
         "functional_manager",
         "functional_supervisor",
         "finance_head",
+        "bookkeeper",
+        "auditor",
     }
 )
 
@@ -40,6 +43,6 @@ def actor_can_execute_manual_payment(ctx: AuthContext) -> bool:
 def require_payment_execution_role(ctx: AuthContext) -> None:
     if not actor_can_execute_manual_payment(ctx):
         raise PaymentExecutionUnauthorizedError(
-            "Payment execution requires Tenant Admin, Finance head, "
-            "Functional manager, or Functional supervisor role"
+            "Payment execution requires Admin, Manager, Department Head, "
+            "Finance Manager, CFO, or Director role"
         )

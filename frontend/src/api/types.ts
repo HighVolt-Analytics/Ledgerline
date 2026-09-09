@@ -16,15 +16,15 @@ export type ApprovalActionKey =
   | "View"
   | "Comment"
   | "Approve"
-  | "Reject"
-  | "Post"
   | "Edit Policy"
   | "Manage Users";
 
 export interface UserPermissions {
   role: string;
   matrix_role: string;
-  permissions: Record<ApprovalActionKey, boolean>;
+  /** Canonical privileges; Reject/Post may still appear as Approve aliases from the API. */
+  permissions: Record<ApprovalActionKey, boolean> &
+    Partial<Record<"Reject" | "Post", boolean>>;
   enabled_modules: Record<string, boolean>;
   can_reveal_bank?: boolean;
   mobile_quick_actions?: import("@/lib/mobileQuickActions").MobileQuickActionsSettings;
@@ -487,11 +487,27 @@ export interface ApprovalChainEntry {
   at: string;
 }
 
+export interface ApprovalChainStep {
+  index: number;
+  key: string;
+  role: string;
+  kind: "document" | "payment" | string;
+  status: "pending" | "approved" | "rejected" | string;
+  escalated_to_role?: string | null;
+  user_id?: number | null;
+  name?: string | null;
+  at?: string | null;
+}
+
 export interface ApprovalChain {
   module?: string;
-  mode?: "one_way" | "two_way" | "three_way";
+  mode?: "one_way" | "two_way" | "three_way" | "amount_tier";
   required?: number;
   approvals?: ApprovalChainEntry[];
+  steps?: ApprovalChainStep[];
+  amount?: number | null;
+  tier_id?: string | null;
+  current_step_role?: string | null;
 }
 
 export interface Invoice {
@@ -2904,19 +2920,22 @@ export interface RuleBookChangelogEntry {
   created_at: string;
 }
 
-export interface PolicyRule {
+export interface AmountApprovalTierRowApi {
   id: string;
-  condition: string;
-  approver: string;
+  min_amount: number;
+  max_amount: number | null;
+  approval_1: string | null;
+  approval_2: string | null;
+  approval_3: string | null;
 }
 
 export interface ApprovalPolicy {
   locked: boolean;
-  rules: PolicyRule[];
   matrix: Record<string, Record<string, boolean>>;
-  approval_matrix?: {
-    by_module: Record<string, "one_way" | "two_way" | "three_way">;
-  };
+  /** Placeholder per-role ceilings; null = unset. Not enforced yet. */
+  approval_limits?: Record<string, number | null>;
+  /** Amount-tier approval matrix (role sequence by amount band). */
+  amount_approval_tiers?: AmountApprovalTierRowApi[];
 }
 
 export type MatrixCellState = "done" | "pending" | "fail" | "skipped";

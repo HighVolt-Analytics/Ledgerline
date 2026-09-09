@@ -1,49 +1,33 @@
-"""Approval policy schemas (org-scoped privilege matrix + routing rules)."""
+"""Approval policy schemas (privilege matrix + amount-tier approval matrix)."""
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-ApprovalQuorumMode = Literal["one_way", "two_way", "three_way"]
-
-APPROVAL_MATRIX_MODULES: tuple[str, ...] = (
-    "team_expenses",
-    "expenses",
-    "purchase",
-    "sales",
-)
-
-_DEFAULT_BY_MODULE: dict[str, ApprovalQuorumMode] = {
-    "team_expenses": "one_way",
-    "expenses": "one_way",
-    "purchase": "two_way",
-    "sales": "one_way",
-}
+ApprovalQuorumMode = Literal["one_way", "two_way", "three_way", "amount_tier"]
 
 
-def _default_approval_matrix() -> "ApprovalMatrixConfig":
-    return ApprovalMatrixConfig(by_module=dict(_DEFAULT_BY_MODULE))
+class AmountApprovalTierRow(BaseModel):
+    model_config = ConfigDict(extra="ignore")
 
-
-class PolicyRule(BaseModel):
     id: str = Field(..., min_length=1, max_length=64)
-    condition: str = Field(..., min_length=1, max_length=500)
-    approver: str = Field(..., min_length=1, max_length=255)
-
-
-class ApprovalMatrixConfig(BaseModel):
-    """Per-module quorum: how many distinct pool approvers are required."""
-
-    by_module: dict[str, ApprovalQuorumMode] = Field(
-        default_factory=lambda: dict(_DEFAULT_BY_MODULE)
-    )
+    min_amount: float = Field(ge=0)
+    max_amount: float | None = Field(default=None, ge=0)
+    approval_1: str | None = None
+    approval_2: str | None = None
+    approval_3: str | None = None  # Payment approval
 
 
 class ApprovalPolicyPayload(BaseModel):
+    """Privilege matrix, per-role limits, and amount-tier approval matrix."""
+
+    model_config = ConfigDict(extra="ignore")
+
     locked: bool = False
-    rules: list[PolicyRule] = Field(default_factory=list)
     matrix: dict[str, dict[str, bool]] = Field(default_factory=dict)
-    approval_matrix: ApprovalMatrixConfig = Field(default_factory=_default_approval_matrix)
+    # Placeholder per-role amount ceilings (UI); amount tiers drive runtime.
+    approval_limits: dict[str, float | None] = Field(default_factory=dict)
+    amount_approval_tiers: list[AmountApprovalTierRow] = Field(default_factory=list)
 
 
 class ApprovalPolicyUnlock(BaseModel):

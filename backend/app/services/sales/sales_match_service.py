@@ -1022,6 +1022,11 @@ async def approve_sales_variance(
     if ctx is not None:
         require_actor_in_pool(ctx)
         actor_name, actor_email = await actor_from_context(db, ctx)
+        variance_amount = None
+        if so.invoice_id:
+            linked = await db.get(Invoice, so.invoice_id)
+            if linked is not None and linked.total is not None:
+                variance_amount = linked.total
         so.variance_approval_chain = record_approval(
             so.variance_approval_chain,
             tenant_id=tenant_id,
@@ -1029,6 +1034,7 @@ async def approve_sales_variance(
             user_id=int(ctx.user_id),
             role=ctx.role or "",
             name=actor_name or actor_email or f"User {ctx.user_id}",
+            amount=variance_amount,
         )
         progress = progress_from_chain(so.variance_approval_chain)
         if progress is None or not progress.quorum_met:

@@ -39,6 +39,11 @@ class MappingDetail:
     match_reason: str
 
 
+def _coa_name_key(name: str) -> str:
+    """Normalize COA labels for matching (case, outer space, trailing punctuation)."""
+    return (name or "").strip().lower().rstrip(".,;:")
+
+
 def category_resolved_in_coa(
     category: str,
     config: RuleBookConfigPayload | None = None,
@@ -50,9 +55,9 @@ def category_resolved_in_coa(
     for entry in config.chart_of_accounts:
         if entry.name == cleaned:
             return True
-    lowered = cleaned.lower()
+    key = _coa_name_key(cleaned)
     for entry in config.chart_of_accounts:
-        if entry.name.lower() == lowered:
+        if _coa_name_key(entry.name) == key:
             return True
     return False
 
@@ -93,9 +98,9 @@ def _find_in_chart(
     for entry in config.chart_of_accounts:
         if entry.name == cleaned:
             return AccountMapping(entry.code, entry.name, expense_category=entry.name)
-    lowered = cleaned.lower()
+    key = _coa_name_key(cleaned)
     for entry in config.chart_of_accounts:
-        if entry.name.lower() == lowered:
+        if _coa_name_key(entry.name) == key:
             return AccountMapping(entry.code, entry.name, expense_category=entry.name)
     return None
 

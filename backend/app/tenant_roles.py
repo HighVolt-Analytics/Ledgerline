@@ -6,69 +6,85 @@ import enum
 
 from app.models.user import SUPER_ADMIN_ROLE, UserRole
 
+# Approve covers approve + reject + post (single privilege-matrix column).
 APPROVAL_ACTIONS: tuple[str, ...] = (
     "View",
     "Comment",
     "Approve",
-    "Reject",
-    "Post",
     "Edit Policy",
     "Manage Users",
 )
 
+# Legacy matrix / require_privilege action names that map onto Approve.
+APPROVE_ALIASES: frozenset[str] = frozenset({"Approve", "Reject", "Post", "Publish"})
+
 # Display labels used as privilege-matrix row keys (must stay in sync with frontend).
+# Order: lowest privilege → highest (Admin last).
 APPROVAL_ROLES: tuple[str, ...] = (
+    "Employee",
+    "Manager",
+    "Department Head",
+    "Finance Manager",
+    "CFO",
+    "Director",
     "Admin",
-    "Functional manager",
-    "Functional supervisor",
-    "Finance head",
-    "Bookkeeper",
-    "Auditor",
-    "User",
 )
 
 
 class TenantRole(str, enum.Enum):
+    EMPLOYEE = "employee"
+    MANAGER = "manager"
+    DEPARTMENT_HEAD = "department_head"
+    FINANCE_MANAGER = "finance_manager"
+    CFO = "cfo"
+    DIRECTOR = "director"
     ADMIN = "admin"
-    FUNCTIONAL_MANAGER = "functional_manager"
-    FUNCTIONAL_SUPERVISOR = "functional_supervisor"
-    FINANCE_HEAD = "finance_head"
-    BOOKKEEPER = "bookkeeper"
-    AUDITOR = "auditor"
-    USER = "user"
 
 
 # Finance roles that may request unmasked account / BSB / IBAN over the API.
 BANK_REVEAL_ROLES: frozenset[str] = frozenset(
     {
         TenantRole.ADMIN.value,
-        TenantRole.FINANCE_HEAD.value,
-        TenantRole.BOOKKEEPER.value,
+        TenantRole.FINANCE_MANAGER.value,
+        TenantRole.CFO.value,
+        TenantRole.DIRECTOR.value,
         UserRole.ADMIN.value,
     }
 )
 
 
 _MATRIX_ROW_BY_SLUG: dict[str, str] = {
+    TenantRole.EMPLOYEE.value: "Employee",
+    TenantRole.MANAGER.value: "Manager",
+    TenantRole.DEPARTMENT_HEAD.value: "Department Head",
+    TenantRole.FINANCE_MANAGER.value: "Finance Manager",
+    TenantRole.CFO.value: "CFO",
+    TenantRole.DIRECTOR.value: "Director",
     TenantRole.ADMIN.value: "Admin",
-    TenantRole.FUNCTIONAL_MANAGER.value: "Functional manager",
-    TenantRole.FUNCTIONAL_SUPERVISOR.value: "Functional supervisor",
-    TenantRole.FINANCE_HEAD.value: "Finance head",
-    TenantRole.BOOKKEEPER.value: "Bookkeeper",
-    TenantRole.AUDITOR.value: "Auditor",
-    TenantRole.USER.value: "User",
-    # Legacy aliases (pre-privilege-matrix expansion)
-    UserRole.MEMBER.value: "Functional manager",
-    "member": "Functional manager",
-    "approver": "Functional manager",
-    "viewer": "User",
+    # Legacy aliases (pre org-role rename)
+    "user": "Employee",
+    "functional_manager": "Manager",
+    "functional_supervisor": "Department Head",
+    "finance_head": "Finance Manager",
+    "bookkeeper": "CFO",
+    "auditor": "Director",
+    UserRole.MEMBER.value: "Manager",
+    "member": "Manager",
+    "approver": "Manager",
+    "viewer": "Employee",
 }
 
 _LEGACY_ALIASES: dict[str, TenantRole] = {
-    UserRole.MEMBER.value: TenantRole.FUNCTIONAL_MANAGER,
-    "member": TenantRole.FUNCTIONAL_MANAGER,
-    "approver": TenantRole.FUNCTIONAL_MANAGER,
-    "viewer": TenantRole.USER,
+    "user": TenantRole.EMPLOYEE,
+    "functional_manager": TenantRole.MANAGER,
+    "functional_supervisor": TenantRole.DEPARTMENT_HEAD,
+    "finance_head": TenantRole.FINANCE_MANAGER,
+    "bookkeeper": TenantRole.CFO,
+    "auditor": TenantRole.DIRECTOR,
+    UserRole.MEMBER.value: TenantRole.MANAGER,
+    "member": TenantRole.MANAGER,
+    "approver": TenantRole.MANAGER,
+    "viewer": TenantRole.EMPLOYEE,
 }
 
 
@@ -90,7 +106,7 @@ def matrix_row_for_role(raw: str) -> str:
     slug = raw.strip().lower()
     if slug in _MATRIX_ROW_BY_SLUG:
         return _MATRIX_ROW_BY_SLUG[slug]
-    return "User"
+    return "Employee"
 
 
 def format_tenant_role_label(raw: str) -> str:

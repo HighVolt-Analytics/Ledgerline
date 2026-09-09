@@ -105,7 +105,7 @@ async def test_authorized_approver_creates_instruction(
             "user_id": 1,
             "name": "Ops",
             "email": "ops@example.com",
-            "role": "functional_manager",
+            "role": "manager",
         },
     )
 
@@ -122,12 +122,12 @@ async def test_unauthorized_role_blocked(
     _enable_manual_execution(monkeypatch)
     payment = await _scheduled_payment(db_session, suffix="unauth")
 
-    with pytest.raises(PaymentExecutionUnauthorizedError, match="Tenant Admin or Approver"):
+    with pytest.raises(PaymentExecutionUnauthorizedError, match="Payment execution requires Admin"):
         await create_payment_execution_instruction(
             db_session,
             TESTING_TENANT_UUID,
             payment.id,
-            actor={"user_id": 2, "name": "User", "email": "v@example.com", "role": "user"},
+            actor={"user_id": 2, "name": "User", "email": "v@example.com", "role": "employee"},
         )
 
 

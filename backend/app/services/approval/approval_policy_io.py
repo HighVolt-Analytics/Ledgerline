@@ -1,4 +1,4 @@
-"""Org-scoped approval policy JSON store."""
+"""Org-scoped approval policy JSON store (privilege matrix + limits)."""
 
 from __future__ import annotations
 
@@ -9,49 +9,18 @@ import uuid
 from typing import Any
 
 from app.config import get_settings
-from app.schemas.approval_policy import (
-    APPROVAL_MATRIX_MODULES,
-    ApprovalMatrixConfig,
-    ApprovalPolicyPayload,
-    ApprovalQuorumMode,
-    PolicyRule,
+from app.schemas.approval_policy import ApprovalPolicyPayload, AmountApprovalTierRow
+from app.services.approval.amount_tier_approval import (
+    DEFAULT_AMOUNT_APPROVAL_TIERS,
+    normalize_amount_approval_tiers,
 )
 from app.services.tenant.tenant_storage_paths import tenant_local_dir
 from app.tenant_roles import APPROVAL_ACTIONS, APPROVAL_ROLES
-
-_DEFAULT_RULES: list[dict[str, str]] = [
-    {"id": "ap1", "condition": "Invoices > 5,000", "approver": "CFO approval"},
-    {"id": "ap2", "condition": "Marketing Expense invoices", "approver": "Marketing Lead"},
-    {"id": "ap3", "condition": "Suspense-routed invoices", "approver": "Finance Controller"},
-    {"id": "ap4", "condition": "New vendor (first invoice)", "approver": "Bookkeeper review"},
-]
 
 _LEADERSHIP_PERMS: dict[str, bool] = {
     "View": True,
     "Comment": True,
     "Approve": True,
-    "Reject": True,
-    "Post": True,
-    "Edit Policy": False,
-    "Manage Users": False,
-}
-
-_SUPERVISOR_PERMS: dict[str, bool] = {
-    "View": True,
-    "Comment": True,
-    "Approve": True,
-    "Reject": True,
-    "Post": False,
-    "Edit Policy": False,
-    "Manage Users": False,
-}
-
-_READ_COMMENT_PERMS: dict[str, bool] = {
-    "View": True,
-    "Comment": True,
-    "Approve": False,
-    "Reject": False,
-    "Post": False,
     "Edit Policy": False,
     "Manage Users": False,
 }
@@ -60,36 +29,57 @@ _VIEW_ONLY_PERMS: dict[str, bool] = {
     "View": True,
     "Comment": False,
     "Approve": False,
-    "Reject": False,
-    "Post": False,
     "Edit Policy": False,
     "Manage Users": False,
 }
 
 _DEFAULT_MATRIX: dict[str, dict[str, bool]] = {
+    "Employee": dict(_VIEW_ONLY_PERMS),
+    "Manager": dict(_LEADERSHIP_PERMS),
+    "Department Head": dict(_LEADERSHIP_PERMS),
+    "Finance Manager": dict(_LEADERSHIP_PERMS),
+    "CFO": dict(_LEADERSHIP_PERMS),
+    "Director": dict(_LEADERSHIP_PERMS),
     "Admin": {action: True for action in APPROVAL_ACTIONS},
-    "Functional manager": dict(_LEADERSHIP_PERMS),
-    "Functional supervisor": dict(_SUPERVISOR_PERMS),
-    "Finance head": dict(_LEADERSHIP_PERMS),
-    "Bookkeeper": dict(_READ_COMMENT_PERMS),
-    "Auditor": dict(_READ_COMMENT_PERMS),
-    "User": dict(_VIEW_ONLY_PERMS),
 }
 
-_DEFAULT_APPROVAL_MATRIX_BY_MODULE: dict[str, ApprovalQuorumMode] = {
-    "team_expenses": "one_way",
-    "expenses": "one_way",
-    "purchase": "two_way",
-    "sales": "one_way",
-}
-
-_VALID_MODES: frozenset[str] = frozenset({"one_way", "two_way", "three_way"})
+_DEFAULT_APPROVAL_LIMITS: dict[str, float | None] = {role: None for role in APPROVAL_ROLES}
 
 # Legacy matrix row labels → current labels
 _LEGACY_MATRIX_ROWS: dict[str, str] = {
-    "Approver": "Functional manager",
-    "Viewer": "User",
+    "Approver": "Manager",
+    "Viewer": "Employee",
+    "User": "Employee",
+    "Functional manager": "Manager",
+    "Functional supervisor": "Department Head",
+    "Finance head": "Finance Manager",
+    "Bookkeeper": "CFO",
+    "Auditor": "Director",
 }
+
+
+def _normalize_approval_limits(raw: Any) -> dict[str, float | None]:
+    """Ensure every role has a limit entry; coerce numeric values; ignore unknown roles."""
+    out: dict[str, float | None] = dict(_DEFAULT_APPROVAL_LIMITS)
+    if not isinstance(raw, dict):
+        return out
+    for role_key, value in raw.items():
+        label = _LEGACY_MATRIX_ROWS.get(str(role_key), str(role_key))
+        if label not in APPROVAL_ROLES:
+            continue
+        if value is None or value == "":
+            out[label] = None
+            continue
+        try:
+            num = float(value)
+        except (TypeError, ValueError):
+            out[label] = None
+            continue
+        if num != num or num < 0:  # NaN or negative
+            out[label] = None
+        else:
+            out[label] = num
+    return out
 
 
 def _legacy_policy_path() -> Path:
@@ -101,13 +91,23 @@ def _policy_path(tenant_id: uuid.UUID | int) -> Path:
 
 
 def _normalize_role_row(perms: dict[str, Any]) -> dict[str, bool]:
-    """Normalize a single role row (Publish → Post, coerce bools)."""
-    row = dict(perms)
-    if "Publish" in row:
-        if "Post" not in row:
-            row["Post"] = row["Publish"]
-        del row["Publish"]
-    return {str(k): bool(v) for k, v in row.items()}
+    """Fold Reject/Post/Publish into Approve; keep only known action keys present."""
+    row = {str(k): bool(v) for k, v in dict(perms).items()}
+    had_approve_family = any(k in row for k in ("Approve", "Reject", "Post", "Publish"))
+    can_approve = bool(
+        row.pop("Approve", False)
+        or row.pop("Reject", False)
+        or row.pop("Post", False)
+        or row.pop("Publish", False)
+    )
+    out: dict[str, bool] = {
+        action: bool(row[action])
+        for action in APPROVAL_ACTIONS
+        if action != "Approve" and action in row
+    }
+    if had_approve_family:
+        out["Approve"] = can_approve
+    return out
 
 
 def _normalize_policy_matrix(matrix: dict[str, Any]) -> dict[str, dict[str, bool]]:
@@ -128,32 +128,12 @@ def _normalize_policy_matrix(matrix: dict[str, Any]) -> dict[str, dict[str, bool
     return out
 
 
-def _normalize_approval_matrix(raw: Any) -> ApprovalMatrixConfig:
-    by_module: dict[str, ApprovalQuorumMode] = dict(_DEFAULT_APPROVAL_MATRIX_BY_MODULE)
-    source: dict[str, Any] = {}
-    if isinstance(raw, ApprovalMatrixConfig):
-        source = dict(raw.by_module or {})
-    elif isinstance(raw, dict):
-        nested = raw.get("by_module")
-        if isinstance(nested, dict):
-            source = nested
-        else:
-            source = {k: v for k, v in raw.items() if k in APPROVAL_MATRIX_MODULES}
-    for key in APPROVAL_MATRIX_MODULES:
-        val = source.get(key)
-        if isinstance(val, str) and val.strip().lower() in _VALID_MODES:
-            by_module[key] = val.strip().lower()  # type: ignore[assignment]
-    return ApprovalMatrixConfig(by_module=by_module)
-
-
 def default_policy_dict() -> dict[str, Any]:
     return {
         "locked": False,
-        "rules": deepcopy(_DEFAULT_RULES),
         "matrix": deepcopy(_DEFAULT_MATRIX),
-        "approval_matrix": {
-            "by_module": deepcopy(_DEFAULT_APPROVAL_MATRIX_BY_MODULE),
-        },
+        "approval_limits": dict(_DEFAULT_APPROVAL_LIMITS),
+        "amount_approval_tiers": deepcopy(DEFAULT_AMOUNT_APPROVAL_TIERS),
     }
 
 
@@ -178,8 +158,15 @@ def _read_tenant_policy(path: Path) -> dict[str, Any] | None:
 def _save_tenant_policy(tenant_id: uuid.UUID | int, payload: dict[str, Any]) -> None:
     path = _policy_path(tenant_id)
     path.parent.mkdir(parents=True, exist_ok=True)
+    cleaned = {
+        "locked": bool(payload.get("locked", False)),
+        "matrix": payload.get("matrix") or {},
+        "approval_limits": payload.get("approval_limits") or {},
+        "amount_approval_tiers": payload.get("amount_approval_tiers")
+        or deepcopy(DEFAULT_AMOUNT_APPROVAL_TIERS),
+    }
     with path.open("w", encoding="utf-8") as fh:
-        json.dump(payload, fh, indent=2)
+        json.dump(cleaned, fh, indent=2)
         fh.write("\n")
 
 
@@ -192,12 +179,18 @@ def _migrate_from_legacy(tenant_id: uuid.UUID | int) -> dict[str, Any]:
 
 
 def _normalize_raw_policy(raw: dict[str, Any]) -> dict[str, Any]:
-    if isinstance(raw.get("matrix"), dict):
-        raw["matrix"] = _normalize_policy_matrix(raw["matrix"])
-    else:
-        raw["matrix"] = deepcopy(_DEFAULT_MATRIX)
-    raw["approval_matrix"] = _normalize_approval_matrix(raw.get("approval_matrix")).model_dump()
-    return raw
+    return {
+        "locked": bool(raw.get("locked", False)),
+        "matrix": (
+            _normalize_policy_matrix(raw["matrix"])
+            if isinstance(raw.get("matrix"), dict)
+            else deepcopy(_DEFAULT_MATRIX)
+        ),
+        "approval_limits": _normalize_approval_limits(raw.get("approval_limits")),
+        "amount_approval_tiers": normalize_amount_approval_tiers(
+            raw.get("amount_approval_tiers")
+        ),
+    }
 
 
 def load_policy_for_tenant(tenant_id: uuid.UUID | int) -> ApprovalPolicyPayload:
@@ -214,7 +207,10 @@ def save_policy_for_tenant(
 ) -> ApprovalPolicyPayload:
     data = payload.model_dump()
     data["matrix"] = _normalize_policy_matrix(data.get("matrix") or {})
-    data["approval_matrix"] = _normalize_approval_matrix(data.get("approval_matrix")).model_dump()
+    data["approval_limits"] = _normalize_approval_limits(data.get("approval_limits"))
+    data["amount_approval_tiers"] = normalize_amount_approval_tiers(
+        data.get("amount_approval_tiers")
+    )
     _save_tenant_policy(tenant_id, data)
     return ApprovalPolicyPayload.model_validate(data)
 
@@ -248,12 +244,10 @@ def remove_policy_for_tenant(tenant_id: uuid.UUID | int) -> None:
 
 
 def validate_policy_payload(raw: dict[str, Any]) -> ApprovalPolicyPayload:
-    rules = [PolicyRule.model_validate(r) for r in raw.get("rules") or []]
-    matrix = _normalize_policy_matrix(raw.get("matrix") or _DEFAULT_MATRIX)
-    approval_matrix = _normalize_approval_matrix(raw.get("approval_matrix"))
+    tiers = normalize_amount_approval_tiers(raw.get("amount_approval_tiers"))
     return ApprovalPolicyPayload(
         locked=bool(raw.get("locked", False)),
-        rules=rules,
-        matrix=matrix,
-        approval_matrix=approval_matrix,
+        matrix=_normalize_policy_matrix(raw.get("matrix") or _DEFAULT_MATRIX),
+        approval_limits=_normalize_approval_limits(raw.get("approval_limits")),
+        amount_approval_tiers=[AmountApprovalTierRow.model_validate(t) for t in tiers],
     )

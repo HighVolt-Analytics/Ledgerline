@@ -561,7 +561,7 @@ const EMPLOYEE_MASTERS: EmployeeMaster[] = [
   {
     id: "em-4",
     name: "Sofia Lopez",
-    role: "Bookkeeper",
+    role: "CFO",
     email: "sofia@acme-hospitality.com.au",
     whatsappNumber: "+61 445 789 012",
     bank: {

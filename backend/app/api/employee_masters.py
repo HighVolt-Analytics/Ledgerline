@@ -338,7 +338,7 @@ async def invite_employee_to_mobile(
         tenant_id=ctx.tenant_id,
         email=email,
         full_name=(employee.name or "").strip() or email.split("@")[0],
-        role=TenantRole.USER.value,
+        role=TenantRole.EMPLOYEE.value,
         invited_by_user_id=ctx.user_id,
         accept_return_to="/m",
     )
@@ -352,7 +352,7 @@ async def invite_employee_to_mobile(
         delivery = await send_tenant_invite_email(
             to_email=created.email,
             tenant_name=tenant.name,
-            role=TenantRole.USER.value,
+            role=TenantRole.EMPLOYEE.value,
             accept_url=created.accept_url,
             for_mobile=True,
         )
@@ -373,7 +373,7 @@ async def invite_employee_to_mobile(
             "master_id": master_id,
             "invite_id": created.invite_id,
             "email": created.email,
-            "role": TenantRole.USER.value,
+            "role": TenantRole.EMPLOYEE.value,
             "already_member": created.already_member,
         },
         actor_name=actor_name,

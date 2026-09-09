@@ -21,12 +21,7 @@ export function canAccessNavPath(
   if (!permissions) return true;
   if (path === "/rules") return permissions.permissions["Edit Policy"] === true;
   if (path === "/integrations") return permissions.permissions["Manage Users"] === true;
-  if (path === "/upload") {
-    return (
-      permissions.permissions.Comment === true ||
-      permissions.permissions.Approve === true ||
-      permissions.permissions.Post === true
-    );
-  }
+  // Upload is core document intake (employees upload claims). Gate on View only —
+  // requiring Comment/Approve hid the nav item after permissions loaded (flash then gone).
   return permissions.permissions.View !== false;
 }

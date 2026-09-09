@@ -23,7 +23,7 @@ async def ensure_membership(
     *,
     user_id: int,
     tenant_id: uuid.UUID,
-    role: str = "functional_manager",
+    role: str = "manager",
     default_tenant: bool = False,
 ) -> None:
     existing = (

@@ -167,6 +167,22 @@ async def approve_payment(
                 "Segregation of duties: you approved this invoice, so you cannot "
                 "also approve its payment. Ask another approver to release it."
             )
+        # Amount-tier payment approval (Approval 3) when configured
+        if invoice is not None:
+            from app.services.approval.amount_tier_approval import (
+                AmountTierApprovalError,
+                require_payment_approver_role,
+            )
+            from app.services.approval.approval_policy_io import load_policy_for_tenant
+
+            policy = load_policy_for_tenant(tenant_id)
+            tiers = [t.model_dump() for t in policy.amount_approval_tiers]
+            try:
+                require_payment_approver_role(
+                    tiers, invoice.total, str(actor.get("role") or "")
+                )
+            except AmountTierApprovalError as exc:
+                raise ValueError(str(exc)) from exc
 
     row.status = PaymentStatus.SCHEDULED
     row.scheduled_date = date.today()

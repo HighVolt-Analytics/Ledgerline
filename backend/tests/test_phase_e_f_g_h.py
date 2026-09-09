@@ -486,7 +486,7 @@ async def test_approval_policy_put_writes_audit(
     get_settings.cache_clear()
 
     body = (await client.get("/api/approval-policy")).json()["data"]
-    body["rules"][0]["condition"] = "Invoices > 10,000"
+    body["matrix"]["Manager"]["Comment"] = False
     res = await client.put("/api/approval-policy", json=body)
     assert res.status_code == 200
 
@@ -540,7 +540,7 @@ async def test_member_cannot_publish_without_privilege(
             headers={"Authorization": f"Bearer {admin_token}"},
         )
     ).json()["data"]
-    policy["matrix"]["Functional manager"]["Post"] = False
+    policy["matrix"]["Manager"]["Approve"] = False
     await client.put(
         "/api/approval-policy",
         json=policy,
@@ -561,7 +561,7 @@ async def test_member_cannot_publish_without_privilege(
         db_session,
         user_id=user.id,
         tenant_id=TESTING_TENANT_UUID,
-        role="functional_manager",
+        role="manager",
     )
     inv = Invoice(
         tenant_id=TESTING_TENANT_UUID,
@@ -577,7 +577,7 @@ async def test_member_cannot_publish_without_privilege(
         tenant_id=TESTING_TENANT_UUID,
         tenant_slug="testing",
         email=user.email,
-        role="functional_manager",
+        role="manager",
     )
     res = await client.post(
         f"/api/invoices/{inv.id}/publish",

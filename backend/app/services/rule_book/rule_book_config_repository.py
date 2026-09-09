@@ -104,31 +104,83 @@ async def ensure_default_config(
     return deepcopy(config)
 
 
+def _find_staff_advance_coa_name(entries: list[Any]) -> str | None:
+    """Return the exact COA account name for Staff Advance when present."""
+    target = (STAFF_ADVANCE_ACCOUNT or "").strip().lower().rstrip(".,;:")
+    for entry in entries:
+        name = getattr(entry, "name", None)
+        if name is None and isinstance(entry, dict):
+            name = entry.get("name")
+        text = str(name or "").strip()
+        if text and text.lower().rstrip(".,;:") == target:
+            return text
+    return None
+
+
+def ensure_team_advance_parent_in_config(data: dict[str, Any]) -> dict[str, Any]:
+    """Bind empty advance parent to Staff Advance when that ledger exists in COA.
+
+    Also normalizes a trailing-punctuation COA label (``Staff Advance.``) back to
+    the canonical starter name when safe.
+    """
+    out = deepcopy(data)
+    coa = list(out.get("chart_of_accounts") or [])
+    renamed = False
+    for entry in coa:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name") or "").strip()
+        if name.rstrip(".,;:") == STAFF_ADVANCE_ACCOUNT and name != STAFF_ADVANCE_ACCOUNT:
+            entry["name"] = STAFF_ADVANCE_ACCOUNT
+            renamed = True
+    if renamed:
+        out["chart_of_accounts"] = coa
+
+    team = dict(out.get("team_expense_posting") or {})
+    current = str(team.get("default_advance_parent_ledger") or "").strip()
+    staff_name = _find_staff_advance_coa_name(coa)
+    if staff_name and (
+        not current
+        or current.rstrip(".,;:") == STAFF_ADVANCE_ACCOUNT
+    ):
+        if current != staff_name:
+            team["default_advance_parent_ledger"] = staff_name
+            out["team_expense_posting"] = team
+    return out
+
+
 async def upgrade_tenant_coa_if_needed(
     session: AsyncSession,
     tenant_id: uuid.UUID,
 ) -> bool:
-    """Merge missing starter control accounts when COA cannot support journaling. Idempotent."""
+    """Merge missing starter control accounts and bind empty team advance parent.
+
+    Idempotent. Still merges thin COAs that cannot journal; also ensures Staff Advance
+    exists and ``team_expense_posting.default_advance_parent_ledger`` is bound when empty.
+    """
     raw = await fetch_config_dict(session, tenant_id)
     if raw is None:
         return False
 
     config = validate_rule_book_config_payload(raw)
-    if coa_functional_for_journaling(config):
-        return False
-
     country = await _resolve_country_for_tenant(session, tenant_id)
-    merged_entries = merge_missing_starter_accounts(
-        list(config.chart_of_accounts),
-        country,
-        posting_defaults=config.posting_defaults,
-    )
-    if len(merged_entries) == len(config.chart_of_accounts):
-        return False
+    merged_entries = list(config.chart_of_accounts)
+    if not coa_functional_for_journaling(config) or _find_staff_advance_coa_name(
+        merged_entries
+    ) is None:
+        merged_entries = merge_missing_starter_accounts(
+            merged_entries,
+            country,
+            posting_defaults=config.posting_defaults,
+        )
 
     data = deepcopy(raw)
     data["chart_of_accounts"] = [entry.model_dump() for entry in merged_entries]
-    await upsert_config(session, tenant_id, validate_rule_book_config_payload(data).model_dump())
+    data = ensure_team_advance_parent_in_config(data)
+    validated = validate_rule_book_config_payload(data).model_dump()
+    if validated == validate_rule_book_config_payload(raw).model_dump():
+        return False
+    await upsert_config(session, tenant_id, validated)
     return True
 
 

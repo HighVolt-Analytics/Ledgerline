@@ -87,7 +87,7 @@ async def test_admin_lists_and_invites_member(
         json={
             "email": f"new-hire@{INVITE_DOMAIN}",
             "full_name": "New Hire",
-            "role": "bookkeeper",
+            "role": "cfo",
         },
     )
     assert invited.status_code == 200, invited.text
@@ -123,7 +123,7 @@ async def test_admin_revokes_pending_invite(
         json={
             "email": f"revoke-me@{INVITE_DOMAIN}",
             "full_name": "Revoke Me",
-            "role": "user",
+            "role": "employee",
         },
     )
     assert invited.status_code == 200, invited.text
@@ -154,10 +154,10 @@ async def test_user_cannot_invite(
     viewer = await _seed_user(
         db_session,
         email="viewer-members@test.com",
-        role="user",
+        role="employee",
         full_name="User Role",
     )
-    headers = _headers(_token_for(viewer, role="user"))
+    headers = _headers(_token_for(viewer, role="employee"))
 
     res = await client.post(
         "/api/tenants/current/members/invite",
@@ -165,7 +165,7 @@ async def test_user_cannot_invite(
         json={
             "email": f"blocked@{INVITE_DOMAIN}",
             "full_name": "Blocked",
-            "role": "user",
+            "role": "employee",
         },
     )
     assert res.status_code == 403
@@ -192,7 +192,7 @@ async def test_last_admin_cannot_be_demoted(
 
     res = await client.patch(
         f"/api/tenants/current/members/{admin_id}",
-        json={"role": "user"},
+        json={"role": "employee"},
     )
     assert res.status_code == 400
 
@@ -222,7 +222,7 @@ async def test_invite_accept_creates_auth_and_membership(
         json={
             "email": f"accept-me@{INVITE_DOMAIN}",
             "full_name": "Accept Me",
-            "role": "auditor",
+            "role": "director",
         },
     )
     assert invited.status_code == 200, invited.text
@@ -232,7 +232,7 @@ async def test_invite_accept_creates_auth_and_membership(
     preview = await client.get(f"/api/auth/invite/preview?token={token}")
     assert preview.status_code == 200
     assert preview.json()["data"]["email"] == f"accept-me@{INVITE_DOMAIN}"
-    assert preview.json()["data"]["role"] == "auditor"
+    assert preview.json()["data"]["role"] == "director"
 
     accepted = await client.post(
         "/api/auth/invite/accept",
@@ -248,7 +248,7 @@ async def test_invite_accept_creates_auth_and_membership(
     listed = await client.get("/api/tenants/current/members", headers=headers)
     members = listed.json()["data"]["members"]
     assert any(
-        m["email"] == f"accept-me@{INVITE_DOMAIN}" and m["role"] == "auditor" for m in members
+        m["email"] == f"accept-me@{INVITE_DOMAIN}" and m["role"] == "director" for m in members
     )
 
     get_settings.cache_clear()
@@ -298,7 +298,7 @@ async def test_invite_preview_uses_platform_lookup_session(
         json={
             "email": f"lookup-preview@{INVITE_DOMAIN}",
             "full_name": "Lookup Preview",
-            "role": "user",
+            "role": "employee",
         },
     )
     assert invited.status_code == 200, invited.text
@@ -328,16 +328,16 @@ async def test_permissions_endpoint_returns_matrix(
     user = await _seed_user(
         db_session,
         email="perms-user@test.com",
-        role="bookkeeper",
-        full_name="Bookkeeper",
+        role="employee",
+        full_name="Employee",
     )
-    headers = _headers(_token_for(user, role="bookkeeper"))
+    headers = _headers(_token_for(user, role="employee"))
 
     res = await client.get("/api/auth/me/permissions", headers=headers)
     assert res.status_code == 200
     data = res.json()["data"]
-    assert data["role"] == "bookkeeper"
-    assert data["matrix_role"] == "Bookkeeper"
+    assert data["role"] == "employee"
+    assert data["matrix_role"] == "Employee"
     assert data["permissions"]["View"] is True
     assert data["permissions"]["Approve"] is False
 
