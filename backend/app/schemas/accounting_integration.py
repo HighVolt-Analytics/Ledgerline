@@ -79,6 +79,12 @@ class XeroSelectConnectionResponse(BaseModel):
     provider_tenant_id: str | None = None
 
 
+class XeroReplayPendingResponse(BaseModel):
+    attempted: int = 0
+    succeeded: int = 0
+    skipped_not_connected: int = 0
+
+
 from app.schemas.xero_master_data import (  # noqa: E402
     XeroSyncContactsResponse,
     XeroSyncSettingsResponse,

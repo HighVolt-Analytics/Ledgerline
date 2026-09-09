@@ -83,6 +83,59 @@ These are enough. Do not add `QBO_*` aliases.
 
 Token crypto uses the existing JWT/app secret, same pattern as Xero. Refresh tokens are stored on `accounting_integrations` (`provider_tenant_id` = Intuit `realmId`).
 
+### Local vs staging URLs (copy format, never commit secrets)
+
+Connect is shown only when the **API process** has `QUICKBOOKS_ENABLED` not false **and** non-empty `QUICKBOOKS_CLIENT_ID` + `QUICKBOOKS_CLIENT_SECRET`. That flag is server-wide. Staging pods do **not** read `backend/.env` from a laptop.
+
+Register **each** Redirect URI in the Intuit developer app (Development for sandbox). The string must match `QUICKBOOKS_REDIRECT_URI` exactly (scheme, host, path, no trailing slash unless Intuit has one).
+
+| Variable | Local (`backend/.env`) | Staging AKS |
+|---|---|---|
+| `QUICKBOOKS_ENABLED` | `true` | `true` (ConfigMap) |
+| `QUICKBOOKS_CLIENT_ID` | Intuit Client ID | **app-secrets** (same Intuit app or a staging app) |
+| `QUICKBOOKS_CLIENT_SECRET` | Intuit Client Secret | **app-secrets** |
+| `QUICKBOOKS_REDIRECT_URI` | `http://localhost:8001/api/integrations/quickbooks/callback` | `https://staging.highvolt.tech/ledgerlink/api/integrations/quickbooks/callback` |
+| `QUICKBOOKS_ENVIRONMENT` | `sandbox` | `sandbox` until production Intuit app |
+| `QUICKBOOKS_OAUTH_FRONTEND_RETURN_URL` | `http://localhost:5173/integrations` | `https://staging.highvolt.tech/ledgerlink/integrations` |
+| `QUICKBOOKS_OAUTH_SCOPES` | omit (default accounting) | omit |
+| `ACCOUNTING_OAUTH_FRONTEND_RETURN_URL` | optional; same as frontend return | `https://staging.highvolt.tech/ledgerlink/integrations` |
+
+`backend/.env.example` has the local names. After OAuth, the API redirects to the frontend return URL with `?quickbooks=connected`.
+
+### AKS / staging apply (namespace `quantum-ledgerlink`)
+
+API and worker load env from ConfigMap `ledgerlink-config` **and** Secret `app-secrets` (`k8s/ledgerlink-api-deployment.yaml` `envFrom`). Put **non-secret** QBO keys on the ConfigMap; put Client ID/Secret only on `app-secrets`.
+
+Filled examples: `k8s/ledgerlink-config.example.yaml` and `k8s/ledgerlink-config.preview.example.yaml`.
+
+```bash
+# 1) Merge non-secret keys into the live ConfigMap (or kubectl apply -f after filling hosts).
+kubectl -n quantum-ledgerlink patch configmap ledgerlink-config --type merge -p "{\"data\":{
+  \"QUICKBOOKS_ENABLED\":\"true\",
+  \"QUICKBOOKS_ENVIRONMENT\":\"sandbox\",
+  \"QUICKBOOKS_REDIRECT_URI\":\"https://staging.highvolt.tech/ledgerlink/api/integrations/quickbooks/callback\",
+  \"QUICKBOOKS_OAUTH_FRONTEND_RETURN_URL\":\"https://staging.highvolt.tech/ledgerlink/integrations\",
+  \"ACCOUNTING_OAUTH_FRONTEND_RETURN_URL\":\"https://staging.highvolt.tech/ledgerlink/integrations\"
+}}"
+
+# 2) Add secrets without replacing the rest of app-secrets:
+kubectl -n quantum-ledgerlink get secret app-secrets -o yaml > /tmp/app-secrets.yaml
+# Edit: add stringData QUICKBOOKS_CLIENT_ID and QUICKBOOKS_CLIENT_SECRET (do not commit that file).
+kubectl -n quantum-ledgerlink apply -f /tmp/app-secrets.yaml
+shred -u /tmp/app-secrets.yaml   # or delete the file
+
+# 3) Recreate pods so they pick up new env:
+kubectl -n quantum-ledgerlink rollout restart deployment/ledgerlink-api deployment/ledgerlink-worker
+
+# 4) Confirm (values must be present; do not paste secrets into tickets):
+kubectl -n quantum-ledgerlink exec deploy/ledgerlink-api -- printenv QUICKBOOKS_ENABLED QUICKBOOKS_REDIRECT_URI QUICKBOOKS_OAUTH_FRONTEND_RETURN_URL
+kubectl -n quantum-ledgerlink exec deploy/ledgerlink-api -- sh -c 'test -n "$QUICKBOOKS_CLIENT_ID" && test -n "$QUICKBOOKS_CLIENT_SECRET" && echo qbo_secrets_present'
+```
+
+If Connect is still missing: user must be **admin**, and `/api/settings` (or integrations status) must report `quickbooks_configured: true`. Empty Client ID/Secret on the pod is the usual cause.
+
+**Do not** commit `backend/.env` or real Client ID/Secret.
+
 ---
 
 ## 3. QBO vs Xero: objects we will post

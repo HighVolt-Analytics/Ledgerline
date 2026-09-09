@@ -252,53 +252,44 @@ export function OnboardingChecklistWidget() {
           type="button"
           onClick={() => setExpanded(true)}
           className="onboarding-get-started-surface onboarding-checklist-trigger"
+          aria-label={
+            nextRequired ? `Get set up: ${nextRequired.label}` : "Get set up"
+          }
+          title={
+            nextRequired ? `Get set up — ${nextRequired.label}` : "Get set up"
+          }
         >
-          <div className="onboarding-checklist-trigger__row">
-            <svg
-              width={18}
-              height={18}
-              viewBox={`0 0 ${ringSize} ${ringSize}`}
-              aria-hidden
-              className="shrink-0"
-            >
-              <circle
-                cx={ringSize / 2}
-                cy={ringSize / 2}
-                r={r}
-                fill="none"
-                stroke="hsl(var(--muted-foreground) / 0.25)"
-                strokeWidth={ringStroke}
-              />
-              <circle
-                cx={ringSize / 2}
-                cy={ringSize / 2}
-                r={r}
-                fill="none"
-                stroke="hsl(var(--nav-accent))"
-                strokeWidth={ringStroke}
-                strokeLinecap="round"
-                strokeDasharray={`${dash} ${c - dash}`}
-                transform={`rotate(-90 ${ringSize / 2} ${ringSize / 2})`}
-              />
-            </svg>
-            <span className="flex-1 text-left text-sm font-semibold tracking-tight">
-              Get set up
-            </span>
-            <span
-              aria-hidden
-              className="onboarding-get-started-surface__muted"
-              style={{ fontSize: 16, lineHeight: 1 }}
-              title="Expand"
-            >
-              ⌃
-            </span>
-          </div>
-
-          {nextRequired && (
-            <div className="onboarding-get-started-surface__muted text-left text-xs leading-snug">
-              {nextRequired.label}
-            </div>
-          )}
+          <svg
+            width={22}
+            height={22}
+            viewBox={`0 0 ${ringSize} ${ringSize}`}
+            aria-hidden
+            className="shrink-0"
+          >
+            <circle
+              cx={ringSize / 2}
+              cy={ringSize / 2}
+              r={r}
+              fill="none"
+              stroke="hsl(var(--muted-foreground) / 0.25)"
+              strokeWidth={ringStroke}
+            />
+            <circle
+              cx={ringSize / 2}
+              cy={ringSize / 2}
+              r={r}
+              fill="none"
+              stroke="hsl(var(--nav-accent))"
+              strokeWidth={ringStroke}
+              strokeLinecap="round"
+              strokeDasharray={`${dash} ${c - dash}`}
+              transform={`rotate(-90 ${ringSize / 2} ${ringSize / 2})`}
+            />
+          </svg>
+          <span className="sr-only">
+            Get set up
+            {nextRequired ? `: ${nextRequired.label}` : ""}
+          </span>
         </button>
       )}
     </div>

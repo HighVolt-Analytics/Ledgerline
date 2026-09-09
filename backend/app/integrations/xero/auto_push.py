@@ -5,19 +5,32 @@ never raise into invoice processing.
 
 Must be awaited after commit. Fire-and-forget create_task is dropped when the
 Celery worker's asyncio.run() loop closes, which left Acc sync Pending forever.
+
+When Xero was disconnected, processed AP bills stay Acc sync Pending. Connecting
+(or selecting the organisation) replays those invoices in id order.
 """
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Any
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.accounting_export_ledger import (
+    STATUS_SUCCESS,
+    AccountingExportLedger,
+    PROVIDER_XERO,
+)
 from app.models.invoice import Invoice, InvoiceStatus
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 _INFO_KEY = "ledgerlink_xero_auto_push"
+_replay_locks: dict[str, asyncio.Lock] = {}
 
 
 def _ap_invoice_eligible(invoice: Any) -> bool:
@@ -124,3 +137,91 @@ async def run_scheduled_xero_auto_push(tenant_id: uuid.UUID, invoice_id: int) ->
             exc_info=True,
         )
         return None
+
+
+async def list_pending_xero_auto_push_invoice_ids(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> list[int]:
+    """Processed AP invoices for this tenant with no successful Xero export."""
+    success_exists = (
+        select(AccountingExportLedger.id)
+        .where(
+            AccountingExportLedger.tenant_id == tenant_id,
+            AccountingExportLedger.provider == PROVIDER_XERO,
+            AccountingExportLedger.source_invoice_id == Invoice.id,
+            AccountingExportLedger.status == STATUS_SUCCESS,
+        )
+        .exists()
+    )
+    stmt = (
+        select(Invoice)
+        .where(
+            Invoice.tenant_id == tenant_id,
+            Invoice.status == InvoiceStatus.PROCESSED,
+            ~success_exists,
+        )
+        .order_by(Invoice.id.asc())
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    return [int(inv.id) for inv in rows if _ap_invoice_eligible(inv)]
+
+
+async def replay_pending_xero_exports(tenant_id: uuid.UUID) -> dict[str, int]:
+    """Push Acc-sync-pending processed AP bills now that this tenant's Xero org is ready.
+
+    Never raises. Skips when Xero is not connected. Sequential per tenant so a
+    connect callback and Integrations page cannot POST the same bill twice at once.
+    """
+    from app.database import db_session_with_rls
+    from app.integrations.xero.store import require_xero_ready
+
+    key = str(tenant_id)
+    lock = _replay_locks.setdefault(key, asyncio.Lock())
+    async with lock:
+        attempted = 0
+        succeeded = 0
+        try:
+            async with db_session_with_rls(tenant_id) as db:
+                try:
+                    await require_xero_ready(db, tenant_id)
+                except Exception:
+                    logger.info(
+                        "xero_pending_replay_skipped_not_connected",
+                        tenant_id=key,
+                    )
+                    return {
+                        "attempted": 0,
+                        "succeeded": 0,
+                        "skipped_not_connected": 1,
+                    }
+                invoice_ids = await list_pending_xero_auto_push_invoice_ids(db, tenant_id)
+            for invoice_id in invoice_ids:
+                attempted += 1
+                result = await run_scheduled_xero_auto_push(tenant_id, invoice_id)
+                if result is not None:
+                    succeeded += 1
+            logger.info(
+                "xero_pending_replay_done",
+                tenant_id=key,
+                attempted=attempted,
+                succeeded=succeeded,
+            )
+            return {
+                "attempted": attempted,
+                "succeeded": succeeded,
+                "skipped_not_connected": 0,
+            }
+        except Exception:
+            logger.warning(
+                "xero_pending_replay_failed",
+                tenant_id=key,
+                attempted=attempted,
+                succeeded=succeeded,
+                exc_info=True,
+            )
+            return {
+                "attempted": attempted,
+                "succeeded": succeeded,
+                "skipped_not_connected": 0,
+            }

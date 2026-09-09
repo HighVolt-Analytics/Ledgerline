@@ -30,6 +30,11 @@ data:
   # Slug for legacy env-mailbox bootstrap only â€” not used for API tenant impersonation.
   DEFAULT_TENANT_SLUG: "qa-sandbox"
   DEFAULT_TENANT_NAME: "LedgerLink QA Sandbox"
+  ACCOUNTING_OAUTH_FRONTEND_RETURN_URL: "https://staging.highvolt.tech/ledgerlink/integrations"
+  QUICKBOOKS_ENABLED: "true"
+  QUICKBOOKS_ENVIRONMENT: "sandbox"
+  QUICKBOOKS_REDIRECT_URI: "https://staging.highvolt.tech/ledgerlink/api/integrations/quickbooks/callback"
+  QUICKBOOKS_OAUTH_FRONTEND_RETURN_URL: "https://staging.highvolt.tech/ledgerlink/integrations"
   STRIPE_MODE: "sandbox"
   STRIPE_RETURN_URL: "https://staging.highvolt.tech/ledgerlink/payments"
   STRIPE_REFRESH_URL: "https://staging.highvolt.tech/ledgerlink/payments"
@@ -76,7 +81,7 @@ data:
   # XERO_REDIRECT_URI must match the Xero app callback exactly (token exchange uses this value).
   # XERO_REDIRECT_URI=https://staging.highvolt.tech/ledgerlink/api/integrations/xero/callback
   # app-secrets XERO_CLIENT_SECRET must be a quoted string if it starts with '-'
-  # QUICKBOOKS_REDIRECT_URI=https://staging.highvolt.tech/ledgerlink/api/integrations/quickbooks/callback
-  # ACCOUNTING_OAUTH_FRONTEND_RETURN_URL=https://staging.highvolt.tech/ledgerlink/integrations
-  # app-secrets: XERO_CLIENT_ID, XERO_CLIENT_SECRET, XERO_WEBHOOK_KEY, QUICKBOOKS_CLIENT_ID, QUICKBOOKS_CLIENT_SECRET
+  # app-secrets: XERO_CLIENT_ID, XERO_CLIENT_SECRET, XERO_WEBHOOK_KEY,
+  # QUICKBOOKS_CLIENT_ID, QUICKBOOKS_CLIENT_SECRET
+  # (non-secret QUICKBOOKS_* keys live in this ConfigMap data block above)
 

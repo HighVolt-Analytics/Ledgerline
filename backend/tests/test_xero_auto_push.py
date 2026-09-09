@@ -141,3 +141,76 @@ async def test_flush_awaits_queued_export(monkeypatch: pytest.MonkeyPatch) -> No
     await flush_scheduled_xero_auto_push(session)
     assert ran == [(TESTING_TENANT_UUID, 7)]
     assert not session.info.get(_INFO_KEY)
+
+
+@pytest.mark.asyncio
+async def test_list_pending_keeps_ap_skips_sales() -> None:
+    from app.integrations.xero.auto_push import list_pending_xero_auto_push_invoice_ids
+
+    invoices = [
+        _invoice(id=1, route_target="Purchase"),
+        _invoice(id=2, route_target=ROUTE_SALES),
+        _invoice(id=3, route_target=ROUTE_VAULT),
+    ]
+    db = AsyncMock()
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = invoices
+    db.execute = AsyncMock(return_value=result)
+    ids = await list_pending_xero_auto_push_invoice_ids(db, TESTING_TENANT_UUID)
+    assert ids == [1]
+
+
+@pytest.mark.asyncio
+async def test_replay_skips_when_xero_not_connected(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.integrations.xero.auto_push import replay_pending_xero_exports
+
+    db = AsyncMock()
+
+    class _Ctx:
+        async def __aenter__(self):
+            return db
+
+        async def __aexit__(self, *args):
+            return False
+
+    monkeypatch.setattr("app.database.db_session_with_rls", lambda _tid: _Ctx())
+    monkeypatch.setattr(
+        "app.integrations.xero.store.require_xero_ready",
+        AsyncMock(side_effect=RuntimeError("not connected")),
+    )
+    result = await replay_pending_xero_exports(TESTING_TENANT_UUID)
+    assert result == {"attempted": 0, "succeeded": 0, "skipped_not_connected": 1}
+
+
+@pytest.mark.asyncio
+async def test_replay_pushes_pending_invoices_in_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.integrations.xero.auto_push import replay_pending_xero_exports
+
+    db = AsyncMock()
+
+    class _Ctx:
+        async def __aenter__(self):
+            return db
+
+        async def __aexit__(self, *args):
+            return False
+
+    ran: list[int] = []
+
+    async def _run(_tenant_id, invoice_id):
+        ran.append(invoice_id)
+        return {"skipped": False}
+
+    monkeypatch.setattr("app.database.db_session_with_rls", lambda _tid: _Ctx())
+    monkeypatch.setattr(
+        "app.integrations.xero.store.require_xero_ready",
+        AsyncMock(return_value=(object(), "org-1")),
+    )
+    monkeypatch.setattr(
+        "app.integrations.xero.auto_push.list_pending_xero_auto_push_invoice_ids",
+        AsyncMock(return_value=[4, 9]),
+    )
+    monkeypatch.setattr("app.integrations.xero.auto_push.run_scheduled_xero_auto_push", _run)
+    result = await replay_pending_xero_exports(TESTING_TENANT_UUID)
+    assert ran == [4, 9]
+    assert result == {"attempted": 2, "succeeded": 2, "skipped_not_connected": 0}

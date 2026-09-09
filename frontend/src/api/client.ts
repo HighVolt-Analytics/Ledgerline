@@ -1102,6 +1102,15 @@ export const api = {
       method: "POST",
     });
   },
+  replayPendingXeroExports: () => {
+    bustGetCache("/api/integrations/status");
+    bustGetCacheByPrefix("/api/integrations/xero");
+    return request<{
+      attempted: number;
+      succeeded: number;
+      skipped_not_connected: number;
+    }>("/api/integrations/xero/replay-pending", { method: "POST" });
+  },
   disconnectAccountingIntegration: (provider: "xero" | "quickbooks_online") => {
     bustGetCache("/api/integrations/status");
     bustGetCacheByPrefix("/api/integrations/xero");

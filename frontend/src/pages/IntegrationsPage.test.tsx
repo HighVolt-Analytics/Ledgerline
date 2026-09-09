@@ -167,6 +167,11 @@ vi.mock("@/api/client", () => ({
       instructions: "Grant consent",
     }),
     connectXero: vi.fn(),
+    replayPendingXeroExports: vi.fn().mockResolvedValue({
+      attempted: 0,
+      succeeded: 0,
+      skipped_not_connected: 0,
+    }),
     disconnectAccountingIntegration: vi.fn(),
   },
 }));

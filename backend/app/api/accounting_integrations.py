@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +23,7 @@ from app.schemas.accounting_integration import (
     XeroInvoiceStatusResponse,
     XeroPushInvoiceResponse,
     XeroReadinessResponse,
+    XeroReplayPendingResponse,
     XeroSelectConnectionRequest,
     XeroSelectConnectionResponse,
     XeroSyncContactsResponse,
@@ -69,6 +70,13 @@ logger = get_logger(__name__)
 
 router = APIRouter(prefix="/integrations", tags=["accounting-integrations"])
 oauth_public_router = APIRouter(prefix="/integrations", tags=["accounting-integrations-public"])
+
+
+def _queue_xero_pending_replay(background_tasks: BackgroundTasks, tenant_id: uuid.UUID) -> None:
+    """After redirect/response: push processed AP bills that never reached Xero."""
+    from app.integrations.xero.auto_push import replay_pending_xero_exports
+
+    background_tasks.add_task(replay_pending_xero_exports, tenant_id)
 
 _OAUTH_ERRORS = {
     "not_configured": "Accounting integration credentials are not configured on the server.",
@@ -216,6 +224,7 @@ async def xero_connections(
 @router.post("/xero/connections/select", response_model=ApiEnvelope[XeroSelectConnectionResponse])
 async def xero_select_connection(
     body: XeroSelectConnectionRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_admin),
 ) -> ApiEnvelope[XeroSelectConnectionResponse]:
@@ -228,6 +237,8 @@ async def xero_select_connection(
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     await db.commit()
+    if row.status == AccountingIntegrationStatus.CONNECTED.value:
+        _queue_xero_pending_replay(background_tasks, ctx.tenant_id)
     return ApiEnvelope(
         data=XeroSelectConnectionResponse(
             status=row.status,
@@ -235,6 +246,16 @@ async def xero_select_connection(
             provider_tenant_id=row.provider_tenant_id,
         )
     )
+
+
+@router.post("/xero/replay-pending", response_model=ApiEnvelope[XeroReplayPendingResponse])
+async def xero_replay_pending(
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[XeroReplayPendingResponse]:
+    from app.integrations.xero.auto_push import replay_pending_xero_exports
+
+    counts = await replay_pending_xero_exports(ctx.tenant_id)
+    return ApiEnvelope(data=XeroReplayPendingResponse.model_validate(counts))
 
 
 @router.post("/xero/sync/settings", response_model=ApiEnvelope[XeroSyncSettingsResponse])
@@ -383,6 +404,7 @@ async def accounting_disconnect(
 
 @oauth_public_router.get("/xero/callback")
 async def xero_oauth_callback(
+    background_tasks: BackgroundTasks,
     code: str | None = None,
     state: str | None = None,
     error: str | None = None,
@@ -449,6 +471,8 @@ async def xero_oauth_callback(
         else:
             company = (row.display_name or "Xero")[:80]
             redirect_params = {query_key: "connected", "company": company}
+            if row.status == AccountingIntegrationStatus.CONNECTED.value:
+                _queue_xero_pending_replay(background_tasks, tenant_id)
         url = _append_query(return_base, redirect_params)
         return RedirectResponse(url=url, status_code=302)
     except Exception as exc:

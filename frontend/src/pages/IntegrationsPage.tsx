@@ -266,6 +266,7 @@ export function IntegrationsPage() {
     syncXeroContacts,
     verifyXeroConnection,
   } = useAccountingIntegrations(Boolean(s));
+  const xeroPendingReplayStarted = useRef(false);
   const { data: stripeAccount, isLoading: stripeAccountLoading } = useStripeAccount(Boolean(s));
   const { data: stripeReadiness, isLoading: stripeReadinessLoading } = useStripeReadiness(Boolean(s));
   const [vbConnections, setVbConnections] = useState<ViberConnection[]>([]);
@@ -301,6 +302,7 @@ export function IntegrationsPage() {
     setAdminConsentNote(null);
     setShowXeroOrgPicker(false);
     setXeroSyncBusy(null);
+    xeroPendingReplayStarted.current = false;
   });
 
   const loadMailboxes = useCallback((fresh = false) => {
@@ -553,6 +555,19 @@ export function IntegrationsPage() {
     searchParams.delete("reason");
     setSearchParams(searchParams, { replace: true });
   }, [searchParams, setSearchParams, toast, reloadAccountingAll]);
+
+  useEffect(() => {
+    if (!xeroReadiness?.ready) {
+      xeroPendingReplayStarted.current = false;
+      return;
+    }
+    if (xeroPendingReplayStarted.current) return;
+    xeroPendingReplayStarted.current = true;
+    void api.replayPendingXeroExports().then(
+      () => undefined,
+      () => undefined,
+    );
+  }, [xeroReadiness?.ready]);
 
   useEffect(() => {
     const quickbooks = searchParams.get("quickbooks");

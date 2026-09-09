@@ -27,6 +27,11 @@ data:
   AZURE_WEBAPP_URL: "https://ledgerlink.highvolt.tech"
   GRAPH_OAUTH_REDIRECT_URI: "https://ledgerlink.highvolt.tech/api/mailboxes/oauth/callback"
   GRAPH_OAUTH_FRONTEND_RETURN_URL: "https://ledgerlink.highvolt.tech/integrations"
+  ACCOUNTING_OAUTH_FRONTEND_RETURN_URL: "https://ledgerlink.highvolt.tech/integrations"
+  QUICKBOOKS_ENABLED: "true"
+  QUICKBOOKS_ENVIRONMENT: "production"
+  QUICKBOOKS_REDIRECT_URI: "https://ledgerlink.highvolt.tech/api/integrations/quickbooks/callback"
+  QUICKBOOKS_OAUTH_FRONTEND_RETURN_URL: "https://ledgerlink.highvolt.tech/integrations"
   # Dashboard login/signup OAuth (must match Entra / Google console redirect URIs)
   FRONTEND_URL: "https://ledgerlink.highvolt.tech"
   MICROSOFT_OAUTH_REDIRECT_URI: "https://ledgerlink.highvolt.tech/api/auth/oauth/microsoft/callback"

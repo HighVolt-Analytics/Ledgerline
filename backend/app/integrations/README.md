@@ -34,7 +34,7 @@ app/integrations/
     export.py           # ACCPAY DRAFT export + ledger evidence
     accpay.py           # Xero bill payload
     attachments.py      # PDF attach
-    auto_push.py        # after processed AP bill commits
+    auto_push.py        # after processed AP bill commits; replay pending on Xero connect
     push.py             # thin wrap for /invoices/{id}/push
     master_data.py      # list cached Xero rows
     organisation_isolation.py
@@ -60,6 +60,6 @@ QBO so far: OAuth + exclusive connection + Pulled contacts (Vendor and Customer 
 
 ## Xero runtime path
 
-Connect OAuth → select organisation → **Sync settings** / **Sync contacts** → process AP bill → auto-push ACCPAY Draft → export queue / export evidence for failures.
+Connect OAuth → select organisation → **pending processed AP bills auto-push** (Acc sync Pending → Xero DRAFT) → **Sync settings** / **Sync contacts** → process further AP bills → auto-push ACCPAY Draft → export queue / export evidence for failures.
 
 Do not add a second copy under `app/services/integration/<provider>/`. That pattern was removed.
