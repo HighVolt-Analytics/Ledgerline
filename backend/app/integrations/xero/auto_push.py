@@ -34,11 +34,16 @@ _replay_locks: dict[str, asyncio.Lock] = {}
 
 
 def _ap_invoice_eligible(invoice: Any) -> bool:
+    from app.services.classification.document_type_playbook_profile_service import (
+        gl_posting_applicable_for_invoice,
+    )
     from app.services.invoice.invoice_evaluation_service import ROUTE_SALES, ROUTE_VAULT
 
     if getattr(invoice, "id", None) is None:
         return False
     if invoice.status != InvoiceStatus.PROCESSED:
+        return False
+    if not gl_posting_applicable_for_invoice(invoice):
         return False
     route = (getattr(invoice, "route_target", None) or "").strip()
     return route not in {ROUTE_SALES, ROUTE_VAULT}
@@ -67,10 +72,17 @@ def take_scheduled_xero_auto_push(session: Any) -> list[tuple[str, int]]:
 
 
 async def flush_scheduled_xero_auto_push(session: Any) -> None:
-    """Run queued exports after a successful commit. Safe to call when empty."""
+    """Run queued exports after a successful commit. Safe to call when empty.
+
+    Also drains other Acc-sync-pending processed AP bills for the same tenant so
+    older documents are forwarded to Xero without running the invoice pipeline again.
+    """
     jobs = take_scheduled_xero_auto_push(session)
+    tenant_keys = {tenant_key for tenant_key, _invoice_id in jobs}
     for tenant_key, invoice_id in jobs:
         await run_scheduled_xero_auto_push(uuid.UUID(tenant_key), invoice_id)
+    for tenant_key in tenant_keys:
+        await replay_pending_xero_exports(uuid.UUID(tenant_key))
 
 
 async def run_scheduled_xero_auto_push(tenant_id: uuid.UUID, invoice_id: int) -> dict[str, Any] | None:
@@ -225,3 +237,92 @@ async def replay_pending_xero_exports(tenant_id: uuid.UUID) -> dict[str, int]:
                 "succeeded": succeeded,
                 "skipped_not_connected": 0,
             }
+
+
+async def list_connected_xero_tenant_ids() -> list[uuid.UUID]:
+    from app.database import async_session_factory
+    from app.models.accounting_integration import (
+        AccountingIntegration,
+        AccountingIntegrationStatus,
+        AccountingProvider,
+    )
+
+    async with async_session_factory() as db:
+        rows = (
+            await db.execute(
+                select(AccountingIntegration.tenant_id)
+                .where(
+                    AccountingIntegration.provider == AccountingProvider.XERO.value,
+                    AccountingIntegration.status == AccountingIntegrationStatus.CONNECTED.value,
+                )
+                .distinct()
+            )
+        ).all()
+    return [row[0] for row in rows]
+
+
+async def replay_pending_xero_for_connected_tenants() -> dict[str, int]:
+    """Export Acc-sync-pending processed AP bills for every connected Xero tenant.
+
+    Does not re-run extraction, GL journal, or change invoice status.
+    """
+    tenants = 0
+    attempted = 0
+    succeeded = 0
+    try:
+        tenant_ids = await list_connected_xero_tenant_ids()
+    except Exception:
+        logger.warning("xero_pending_replay_list_tenants_failed", exc_info=True)
+        return {"tenants": 0, "attempted": 0, "succeeded": 0}
+    for tenant_id in tenant_ids:
+        tenants += 1
+        result = await replay_pending_xero_exports(tenant_id)
+        attempted += int(result.get("attempted") or 0)
+        succeeded += int(result.get("succeeded") or 0)
+    if tenants:
+        logger.info(
+            "xero_pending_replay_connected_tenants_done",
+            tenants=tenants,
+            attempted=attempted,
+            succeeded=succeeded,
+        )
+    return {"tenants": tenants, "attempted": attempted, "succeeded": succeeded}
+
+
+_PENDING_REPLAY_POLL_SECONDS = 120
+_pending_replay_task: asyncio.Task[Any] | None = None
+
+
+async def _pending_replay_loop() -> None:
+    await asyncio.sleep(8)
+    while True:
+        try:
+            await replay_pending_xero_for_connected_tenants()
+        except Exception:
+            logger.warning("xero_pending_replay_loop_failed", exc_info=True)
+        await asyncio.sleep(_PENDING_REPLAY_POLL_SECONDS)
+
+
+def start_xero_pending_export_replay() -> asyncio.Task[Any] | None:
+    global _pending_replay_task
+    if _pending_replay_task is not None and not _pending_replay_task.done():
+        return _pending_replay_task
+    _pending_replay_task = asyncio.create_task(
+        _pending_replay_loop(),
+        name="xero-pending-export-replay",
+    )
+    logger.info("xero_pending_export_replay_started")
+    return _pending_replay_task
+
+
+async def stop_xero_pending_export_replay() -> None:
+    global _pending_replay_task
+    if _pending_replay_task is None:
+        return
+    _pending_replay_task.cancel()
+    try:
+        await _pending_replay_task
+    except asyncio.CancelledError:
+        pass
+    _pending_replay_task = None
+    logger.info("xero_pending_export_replay_stopped")

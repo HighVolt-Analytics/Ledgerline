@@ -136,10 +136,13 @@ async def test_flush_awaits_queued_export(monkeypatch: pytest.MonkeyPatch) -> No
         return {"skipped": False}
 
     monkeypatch.setattr("app.integrations.xero.auto_push.run_scheduled_xero_auto_push", _run)
+    replay = AsyncMock(return_value={"attempted": 0, "succeeded": 0, "skipped_not_connected": 0})
+    monkeypatch.setattr("app.integrations.xero.auto_push.replay_pending_xero_exports", replay)
     session = SimpleNamespace(info={})
     schedule_xero_auto_push(session, _invoice())
     await flush_scheduled_xero_auto_push(session)
     assert ran == [(TESTING_TENANT_UUID, 7)]
+    replay.assert_awaited_once_with(TESTING_TENANT_UUID)
     assert not session.info.get(_INFO_KEY)
 
 
@@ -214,3 +217,26 @@ async def test_replay_pushes_pending_invoices_in_order(monkeypatch: pytest.Monke
     result = await replay_pending_xero_exports(TESTING_TENANT_UUID)
     assert ran == [4, 9]
     assert result == {"attempted": 2, "succeeded": 2, "skipped_not_connected": 0}
+
+
+def test_schedule_skips_po_and_grn() -> None:
+    session = SimpleNamespace(info={})
+    schedule_xero_auto_push(session, _invoice(purchase_document_type="po"))
+    schedule_xero_auto_push(session, _invoice(purchase_document_type="grn"))
+    assert not session.info.get(_INFO_KEY)
+
+
+@pytest.mark.asyncio
+async def test_replay_connected_tenants_does_not_touch_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.integrations.xero.auto_push import replay_pending_xero_for_connected_tenants
+
+    monkeypatch.setattr(
+        "app.integrations.xero.auto_push.list_connected_xero_tenant_ids",
+        AsyncMock(return_value=[TESTING_TENANT_UUID]),
+    )
+    replay = AsyncMock(return_value={"attempted": 2, "succeeded": 2, "skipped_not_connected": 0})
+    monkeypatch.setattr("app.integrations.xero.auto_push.replay_pending_xero_exports", replay)
+    result = await replay_pending_xero_for_connected_tenants()
+    assert result == {"tenants": 1, "attempted": 2, "succeeded": 2}
+    replay.assert_awaited_once_with(TESTING_TENANT_UUID)
+

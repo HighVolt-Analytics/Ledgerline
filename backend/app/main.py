@@ -80,6 +80,10 @@ from app.integrations.xero.background_sync import (
     start_xero_background_sync,
     stop_xero_background_sync,
 )
+from app.integrations.xero.auto_push import (
+    start_xero_pending_export_replay,
+    stop_xero_pending_export_replay,
+)
 from app.services.rule_book.rule_book_save_buffer import flush_all_rule_book_save_buffers
 from app.services.integration.accounting_integration_service import XeroNotReadyError
 from app.integrations.xero.mapping import XeroMappingValidationError
@@ -165,11 +169,13 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     start_inline_mailbox_poller()
     start_inline_slack_poller()
     start_xero_background_sync()
+    start_xero_pending_export_replay()
     yield
     await flush_all_rule_book_save_buffers()
     await stop_inline_mailbox_poller()
     await stop_inline_slack_poller()
     await stop_xero_background_sync()
+    await stop_xero_pending_export_replay()
     logger.info("app_stopped")
 
 

@@ -60,6 +60,6 @@ QBO so far: OAuth + exclusive connection + Pulled contacts (Vendor and Customer 
 
 ## Xero runtime path
 
-Connect OAuth → select organisation → **pending processed AP bills auto-push** (Acc sync Pending → Xero DRAFT) → **Sync settings** / **Sync contacts** → process further AP bills → auto-push ACCPAY Draft → export queue / export evidence for failures.
+Connect OAuth → select organisation → **pending processed AP bills auto-push** (Acc sync Pending → Xero DRAFT; LedgerLink journals are not rewritten) → **Sync settings** / **Sync contacts** → process further AP bills → auto-push ACCPAY Draft → export queue / export evidence for failures.
 
 Do not add a second copy under `app/services/integration/<provider>/`. That pattern was removed.

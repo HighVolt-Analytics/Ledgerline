@@ -6,7 +6,7 @@ Handshake (Connect → Intuit login → sandbox company) is done. This note cove
 
 LedgerLink already extracts AP bills into Postgres. Xero export only **forwards those fields**. QBO must do the same: no second extraction pipeline, no Settings mapping grid.
 
-Package layout for the code (when we build it) stays under `backend/app/integrations/qbo/`, matching `backend/app/integrations/README.md`. This file is the product/API plan.
+Package layout for the code (when we build it) stays under `backend/app/integrations/qbo/`, matching `backend/app/integrations/README.md`. This file is the product/API plan. **AKS operators who only need QuickBooks Connect on staging should read §2 (environment variables + kubectl). Section 10 is product rules, not cluster steps.**
 
 Official references:
 
@@ -22,6 +22,8 @@ Official references:
 ## 1. What is already true in LedgerLink
 
 Invoice processing does **not** depend on Xero or QBO. A bill can reach `processed` with extracted fields even when accounting is disconnected.
+
+**Acc sync Pending vs re-processing:** already-`processed` AP bills keep their LedgerLink journal. Connecting Xero (or a connected org after deploy) only **exports** those rows to Xero. It does not re-extract, re-approve, or post a second local journal. New uploads still run the normal pipeline once, then auto-push to Xero if connected.
 
 Fields we already store and that Xero uses (same source for QBO):
 
@@ -343,3 +345,4 @@ Illustrative only; Ids come from **that** sandbox after sync.
 - **Sub-ledgers are supported** in QBO as subaccounts; we post to the child Account Id.
 - **QBO bills are not drafts**; treat that as a product difference from Xero ACCPAY DRAFT, not as a missing API field we can set.
 - **Tracking / Class** stays deferred. **Sales invoices** stay out of scope.
+- **AKS Connect:** apply §2 ConfigMap + `app-secrets` Client ID/Secret, then restart API/worker. You do not implement §10 on the cluster.
