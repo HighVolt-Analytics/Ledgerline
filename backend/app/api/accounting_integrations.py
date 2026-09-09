@@ -50,6 +50,7 @@ from app.services.integration.accounting_integration_service import (
     provider_label,
     quickbooks_configured,
     record_integration_error,
+    sync_qbo_masters_after_connect,
     validate_oauth_state_replay,
 )
 from app.integrations.xero.client import XeroApiError
@@ -324,6 +325,19 @@ async def quickbooks_connect(
         user_id=ctx.user_id or 0,
     )
     return ApiEnvelope(data=AccountingConnectResponse(connect_url=url))
+
+
+@router.post("/quickbooks/sync", response_model=ApiEnvelope[dict[str, bool]])
+async def quickbooks_sync_masters(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[dict[str, bool]]:
+    """Pull QBO masters after connect. Does not run inside the OAuth callback."""
+    if not quickbooks_configured():
+        raise HTTPException(503, _OAUTH_ERRORS["not_configured"])
+    await sync_qbo_masters_after_connect(db, ctx.tenant_id)
+    await db.commit()
+    return ApiEnvelope(data={"synced": True})
 
 
 @router.post(

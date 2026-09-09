@@ -686,6 +686,11 @@ async def _exchange_quickbooks_code(
         tenant_id=tenant_id,
         keep_provider=AccountingProvider.QUICKBOOKS_ONLINE.value,
     )
+    return row
+
+
+async def sync_qbo_masters_after_connect(db: AsyncSession, tenant_id: uuid.UUID) -> None:
+    """Pull contacts, tax, accounts, and currencies. Safe to call after OAuth redirect."""
     try:
         from app.integrations.qbo.contacts import sync_contacts as sync_qbo_contacts
 
@@ -730,7 +735,6 @@ async def _exchange_quickbooks_code(
             tenant_id=str(tenant_id),
             error=str(exc),
         )
-    return row
 
 
 async def complete_oauth_callback(

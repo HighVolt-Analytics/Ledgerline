@@ -565,6 +565,10 @@ export function IntegrationsPage() {
         description: company ? `${company} is linked to this tenant.` : undefined,
       });
       void reloadAccounting(true);
+      void api.syncQuickBooksMasters().then(
+        () => void reloadAccounting(true),
+        () => undefined,
+      );
     } else if (quickbooks === "error") {
       const msg =
         ACCOUNTING_OAUTH_ERRORS[reason ?? ""] ?? reason ?? "QuickBooks connection failed";

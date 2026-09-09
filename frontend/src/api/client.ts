@@ -1095,6 +1095,13 @@ export const api = {
     request<{ connect_url: string }>("/api/integrations/xero/connect"),
   connectQuickBooks: () =>
     request<{ connect_url: string }>("/api/integrations/quickbooks/connect"),
+  syncQuickBooksMasters: () => {
+    bustGetCache("/api/integrations/status");
+    bustGetCacheByPrefix("/api/integrations/quickbooks");
+    return request<{ synced: boolean }>("/api/integrations/quickbooks/sync", {
+      method: "POST",
+    });
+  },
   disconnectAccountingIntegration: (provider: "xero" | "quickbooks_online") => {
     bustGetCache("/api/integrations/status");
     bustGetCacheByPrefix("/api/integrations/xero");

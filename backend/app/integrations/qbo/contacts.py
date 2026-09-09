@@ -28,6 +28,7 @@ logger = get_logger(__name__)
 _SYNC_ACTIVE = "active"
 _SYNC_INACTIVE = "inactive"
 _PAGE_SIZE = 1000
+_MAX_PAGES = 50
 
 
 def _as_list(value: Any) -> list[dict[str, Any]]:
@@ -52,6 +53,77 @@ def _nested_str(payload: dict[str, Any], *keys: str) -> str | None:
 
 def _normalize_name(name: str) -> str:
     return re.sub(r"\s+", " ", (name or "").strip().lower())[:255]
+
+
+def _normalize_tax(tax_id: str | None) -> str:
+    return re.sub(r"[^0-9A-Za-z]", "", (tax_id or "").strip()).upper()
+
+
+def _normalize_email(email: str | None) -> str:
+    return (email or "").strip().lower()
+
+
+def _reuse_payload(row: QboContact, *, entity_type: str, reason: str) -> dict[str, Any]:
+    return {
+        "created": False,
+        "reused": True,
+        "contact_id": row.qbo_entity_id,
+        "name": row.name,
+        "entity_type": entity_type,
+        "reason": reason,
+    }
+
+
+async def _active_contacts(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    realm_id: str,
+    entity_type: str,
+) -> list[QboContact]:
+    return (
+        await db.execute(
+            select(QboContact).where(
+                QboContact.tenant_id == tenant_id,
+                QboContact.realm_id == realm_id,
+                QboContact.entity_type == entity_type,
+                QboContact.sync_status == _SYNC_ACTIVE,
+            )
+        )
+    ).scalars().all()
+
+
+def resolve_cached_qbo_contact(
+    rows: list[QboContact],
+    *,
+    display_name: str,
+    tax_identifier: str | None = None,
+    email: str | None = None,
+) -> tuple[QboContact | None, str]:
+    """Match ABN → exact DisplayName → email. Ambiguous matches raise."""
+    tax_norm = _normalize_tax(tax_identifier)
+    if tax_norm:
+        tax_hits = [row for row in rows if _normalize_tax(row.tax_number) == tax_norm]
+        if len(tax_hits) == 1:
+            return tax_hits[0], "tax_id"
+        if len(tax_hits) > 1:
+            raise ValueError("ambiguous_vendor_match")
+    wanted = _normalize_name(display_name)
+    name_hits = [row for row in rows if _normalize_name(row.name or "") == wanted]
+    if len(name_hits) == 1:
+        return name_hits[0], "name"
+    if len(name_hits) > 1:
+        raise ValueError("ambiguous_vendor_match")
+    email_norm = _normalize_email(email)
+    if email_norm:
+        email_hits = [
+            row for row in rows if _normalize_email(row.email_address) == email_norm
+        ]
+        if len(email_hits) == 1:
+            return email_hits[0], "email"
+        if len(email_hits) > 1:
+            raise ValueError("ambiguous_vendor_match")
+    return None, ""
 
 
 def _fields_from_entity(entity: dict[str, Any], *, entity_type: str) -> dict[str, Any]:
@@ -89,6 +161,8 @@ async def _query_all(
         if len(batch) < _PAGE_SIZE:
             break
         start += _PAGE_SIZE
+        if start > _PAGE_SIZE * _MAX_PAGES:
+            break
     return rows
 
 
@@ -306,28 +380,17 @@ async def create_contact(
     if kind not in {ENTITY_VENDOR, ENTITY_CUSTOMER}:
         raise ValueError("type_required")
     integration, realm_id = await require_qbo_ready(db, tenant_id)
-    wanted = _normalize_name(legal_name)
-    existing = (
-        await db.execute(
-            select(QboContact).where(
-                QboContact.tenant_id == tenant_id,
-                QboContact.realm_id == realm_id,
-                QboContact.entity_type == kind,
-                QboContact.sync_status == _SYNC_ACTIVE,
-            )
-        )
-    ).scalars().all()
-    matches = [row for row in existing if _normalize_name(row.name or "") == wanted]
-    if len(matches) == 1:
-        return {
-            "created": False,
-            "reused": True,
-            "contact_id": matches[0].qbo_entity_id,
-            "name": matches[0].name,
-            "entity_type": kind,
-        }
-    if len(matches) > 1:
-        raise ValueError("ambiguous_vendor_match")
+    existing = await _active_contacts(
+        db, tenant_id=tenant_id, realm_id=realm_id, entity_type=kind
+    )
+    matched, reason = resolve_cached_qbo_contact(
+        existing,
+        display_name=legal_name,
+        tax_identifier=tax_identifier,
+        email=email,
+    )
+    if matched is not None:
+        return _reuse_payload(matched, entity_type=kind, reason=reason)
 
     body: dict[str, Any] = {"DisplayName": legal_name}
     if company_name and company_name.strip():

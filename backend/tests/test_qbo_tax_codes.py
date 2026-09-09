@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -114,3 +116,86 @@ async def test_sync_tax_codes_persists_purchase_and_sales_codes(
     ).scalar_one()
     assert row.purchase_rate is not None
     assert float(row.purchase_rate) == 10
+
+
+def _tax_row(**kwargs) -> SimpleNamespace:
+    return SimpleNamespace(
+        active=kwargs.get("active", True),
+        sync_status=kwargs.get("sync_status", "active"),
+        purchase_rate=kwargs.get("purchase_rate"),
+        name=kwargs.get("name"),
+        qbo_tax_code_id=kwargs.get("qbo_tax_code_id", "11"),
+    )
+
+
+def test_invoice_gst_percent_uses_rate_then_zero_amount() -> None:
+    from app.integrations.qbo.tax_codes import invoice_gst_percent
+
+    assert invoice_gst_percent(SimpleNamespace(gst_rate=Decimal("20"), gst=Decimal("10"))) == Decimal(
+        "20.00"
+    )
+    assert invoice_gst_percent(SimpleNamespace(gst_rate=None, gst=Decimal("0"))) == Decimal("0.00")
+    assert invoice_gst_percent(SimpleNamespace(gst_rate=None, gst=Decimal("15"))) is None
+
+
+def test_default_purchase_tax_code_name() -> None:
+    from app.integrations.qbo.tax_codes import default_purchase_tax_code_name
+
+    assert default_purchase_tax_code_name(Decimal("20")) == "GST 20%"
+    assert default_purchase_tax_code_name(Decimal("0")) == "GST free 0%"
+    assert default_purchase_tax_code_name(Decimal("10.50")) == "GST 10.5%"
+
+
+def test_match_purchase_tax_code_prefers_gst_purchase_and_never_renames() -> None:
+    from app.integrations.qbo.tax_codes import match_purchase_tax_code
+
+    rows = [
+        _tax_row(qbo_tax_code_id="1", name="Other 10", purchase_rate=Decimal("10")),
+        _tax_row(qbo_tax_code_id="11", name="GST on Purchases", purchase_rate=Decimal("10")),
+        _tax_row(qbo_tax_code_id="2", name="GST on Sales", purchase_rate=None),
+    ]
+    hit = match_purchase_tax_code(rows, Decimal("10"))
+    assert hit is not None
+    assert hit.qbo_tax_code_id == "11"
+    assert match_purchase_tax_code(rows, Decimal("20")) is None
+
+
+@pytest.mark.asyncio
+async def test_ensure_invoice_tax_reuses_then_creates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.integrations.qbo.tax_codes import ensure_invoice_qbo_tax_code
+
+    existing = _tax_row(qbo_tax_code_id="11", name="GST on Purchases", purchase_rate=Decimal("10"))
+    created = _tax_row(qbo_tax_code_id="99", name="GST 20%", purchase_rate=Decimal("20"))
+    monkeypatch.setattr(
+        "app.integrations.qbo.tax_codes.require_qbo_ready",
+        AsyncMock(return_value=(MagicMock(), "934145000")),
+    )
+    monkeypatch.setattr(
+        "app.integrations.qbo.tax_codes._list_cached_tax_codes",
+        AsyncMock(return_value=[existing]),
+    )
+    create = AsyncMock(return_value=created)
+    monkeypatch.setattr("app.integrations.qbo.tax_codes.create_tax_code_in_qbo", create)
+
+    reused = await ensure_invoice_qbo_tax_code(
+        AsyncMock(),
+        SimpleNamespace(id=1, tenant_id=TESTING_TENANT_UUID, gst_rate=Decimal("10")),
+    )
+    assert reused is not None
+    assert reused["created"] is False
+    assert reused["tax_code_id"] == "11"
+    create.assert_not_awaited()
+
+    made = await ensure_invoice_qbo_tax_code(
+        AsyncMock(),
+        SimpleNamespace(id=2, tenant_id=TESTING_TENANT_UUID, gst_rate=Decimal("20")),
+    )
+    assert made is not None
+    assert made["created"] is True
+    assert made["name"] == "GST 20%"
+    create.assert_awaited_once()
+    assert create.await_args.kwargs["display_name"] == "GST 20%"
+    assert create.await_args.kwargs["report_type"] == "PURCHASES"
+

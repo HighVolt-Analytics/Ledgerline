@@ -29,6 +29,7 @@ logger = get_logger(__name__)
 _SYNC_ACTIVE = "active"
 _SYNC_INACTIVE = "inactive"
 _PAGE_SIZE = 1000
+_MAX_PAGES = 50
 _NAME_MAX = 100
 
 
@@ -116,6 +117,8 @@ async def _query_all(client: QboApiClient, entity_name: str) -> list[dict[str, A
         if len(batch) < _PAGE_SIZE:
             break
         start += _PAGE_SIZE
+        if start > _PAGE_SIZE * _MAX_PAGES:
+            break
     return rows
 
 
@@ -189,23 +192,91 @@ async def upsert_account_from_qbo_payload(
     return existing
 
 
+async def list_cached_qbo_accounts(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    realm_id: str,
+) -> list[QboAccount]:
+    return list(
+        (
+            await db.execute(
+                select(QboAccount)
+                .where(
+                    QboAccount.tenant_id == tenant_id,
+                    QboAccount.realm_id == realm_id,
+                )
+                .order_by(QboAccount.acct_num.asc().nulls_last(), QboAccount.name.asc())
+            )
+        ).scalars().all()
+    )
+
+
 async def list_active_qbo_accounts(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     realm_id: str,
 ) -> list[QboAccount]:
-    rows = (
-        await db.execute(
-            select(QboAccount)
-            .where(
-                QboAccount.tenant_id == tenant_id,
-                QboAccount.realm_id == realm_id,
-                QboAccount.sync_status == _SYNC_ACTIVE,
-            )
-            .order_by(QboAccount.acct_num.asc().nulls_last(), QboAccount.name.asc())
-        )
-    ).scalars().all()
-    return [row for row in rows if row.active]
+    return [
+        row
+        for row in await list_cached_qbo_accounts(db, tenant_id, realm_id)
+        if row.active and (row.sync_status or "") == _SYNC_ACTIVE
+    ]
+
+
+def _name_key(value: str | None) -> str:
+    return (value or "").strip().casefold()
+
+
+def is_qbo_duplicate_name_error(message: str) -> bool:
+    text = (message or "").casefold()
+    return "duplicate" in text and "name" in text
+
+
+def find_reusable_qbo_account(
+    rows: list[QboAccount],
+    *,
+    name: str,
+    code: str | None = None,
+    parent_id: str | None = None,
+) -> tuple[QboAccount | None, QboAccount | None]:
+    """Return (reuse_row, name_conflict_row).
+
+    QBO account names are unique in the company, including subaccounts and inactive rows.
+    A new local code can still collide with an existing Name.
+    """
+    code_key = (code or "").strip().upper()
+    if code_key and not code_key.startswith("Q-"):
+        for row in rows:
+            if (row.acct_num or "").strip().upper() == code_key:
+                return row, None
+    wanted = _name_key(name)
+    if not wanted:
+        return None, None
+    named = [row for row in rows if _name_key(row.name) == wanted]
+    if not named:
+        return None, None
+    parent = (parent_id or "").strip()
+    if parent:
+        for row in named:
+            if (row.parent_ref or "").strip() == parent:
+                return row, None
+        return None, named[0]
+    for row in named:
+        if is_top_level_qbo_account(row):
+            return row, None
+    return None, named[0]
+
+
+def _duplicate_name_message(name: str, existing: QboAccount | None) -> str:
+    where = (existing.fully_qualified_name or existing.name or name).strip() if existing else name
+    status = ""
+    if existing is not None and not existing.active:
+        status = " (inactive)"
+    return (
+        f"QuickBooks already has an account named {name.strip()!r} as {where!r}{status}. "
+        "Names must be unique in the company, including subaccounts. "
+        "Use a different name, or sync/pull that QuickBooks account instead of creating a new one."
+    )
 
 
 async def get_qbo_account(
@@ -225,12 +296,12 @@ async def get_qbo_account(
     ).scalar_one_or_none()
 
 
-def children_of(parent_id: str, rows: list[QboAccount]) -> list[QboAccount]:
+def children_of(parent_id: str, rows: list[QboAccount], *, active_only: bool = True) -> list[QboAccount]:
     wanted = parent_id.strip()
     return [
         row
         for row in rows
-        if (row.parent_ref or "").strip() == wanted and row.active
+        if (row.parent_ref or "").strip() == wanted and (row.active if active_only else True)
     ]
 
 
@@ -350,6 +421,24 @@ async def create_account_in_qbo(
     parent_id: str | None = None,
 ) -> QboAccount:
     integration, realm_id = await require_qbo_ready(db, tenant_id)
+    cached = await list_cached_qbo_accounts(db, tenant_id, realm_id)
+    reuse, conflict = find_reusable_qbo_account(
+        cached, name=name, code=code, parent_id=parent_id
+    )
+    if reuse is not None:
+        if is_system_qbo_account(reuse):
+            raise QboAccountWriteError(_duplicate_name_message(name, reuse), status_code=409)
+        return await update_account_in_qbo(
+            db,
+            tenant_id,
+            reuse.qbo_account_id,
+            code=code,
+            name=name,
+            account_type=account_type,
+        )
+    if conflict is not None:
+        raise QboAccountWriteError(_duplicate_name_message(name, conflict), status_code=409)
+
     client = QboApiClient(db=db, tenant_id=tenant_id, realm_id=realm_id)
     body = _create_body(
         name=name,
@@ -360,6 +449,33 @@ async def create_account_in_qbo(
     try:
         payload = await client.post_entity("account", body)
     except QboApiError as exc:
+        if is_qbo_duplicate_name_error(exc.message):
+            try:
+                await sync_accounts_from_qbo(db, tenant_id)
+            except Exception:
+                pass
+            cached = await list_cached_qbo_accounts(db, tenant_id, realm_id)
+            reuse, conflict = find_reusable_qbo_account(
+                cached, name=name, code=code, parent_id=parent_id
+            )
+            if reuse is not None:
+                if is_system_qbo_account(reuse):
+                    raise QboAccountWriteError(
+                        _duplicate_name_message(name, reuse),
+                        status_code=409,
+                    ) from exc
+                return await update_account_in_qbo(
+                    db,
+                    tenant_id,
+                    reuse.qbo_account_id,
+                    code=code,
+                    name=name,
+                    account_type=account_type,
+                )
+            raise QboAccountWriteError(
+                _duplicate_name_message(name, conflict),
+                status_code=409,
+            ) from exc
         raise QboAccountWriteError(
             exc.message or "QuickBooks rejected the account",
             status_code=exc.status_code or 502,
@@ -405,6 +521,8 @@ async def update_account_in_qbo(
         "sparse": True,
         "Name": _name_ok(name),
     }
+    if not existing.active:
+        body["Active"] = True
     acct_num = _acct_num_for_api(code)
     if acct_num:
         body["AcctNum"] = acct_num

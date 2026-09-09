@@ -42,9 +42,9 @@ Fields we already store and that Xero uses (same source for QBO):
 
 Xero contact rule (important): we do **not** require the supplier to exist in Xero before export. We search (mapping → ABN → exact name → email). If none and `vendor` is non-empty, we **create** a supplier Contact. If the name is missing, export is blocked (`contact_not_mapped`). Ambiguous name matches are blocked for human review.
 
-QBO has **no unclassified Contact**. Vendor and Customer are separate objects (`DisplayName` unique across Vendor, Customer, and Employee). Document types now have **Counterparty type** (Vendor or Customer). After a document is processed, we write that extracted name into QBO as the matching object (create if missing). An AP **Bill** still only accepts `VendorRef`. Settings → Add contact still asks Vendor vs Customer for manual creates.
+QBO has **no unclassified Contact**. Vendor and Customer are separate objects (`DisplayName` unique across Vendor, Customer, and Employee). Document types have **Counterparty type** (Vendor or Customer). After `processed`, if QuickBooks is connected we **search then create** that party (ABN → exact DisplayName → email), **ensure** `invoices.currency`, **match or create** a purchase TaxCode from `gst_rate`, and **resolve Bill GL lines** (allotted sub-ledgers vs parent remainder) via `ensure_qbo_export_masters`. Bill POST is the next stage. An AP **Bill** still only accepts `VendorRef`. Settings → Add contact still asks Vendor vs Customer for manual creates.
 
-GL and tax rates are **not** auto-created. Currency is sent as ISO. On QBO we POST `CompanyCurrency` when the code is missing **and** `Preferences.CurrencyPrefs.MultiCurrencyEnabled` is already true. Multicurrency **cannot** be turned on through the API; if the document ISO ≠ home currency and the toggle is off, we block (409) and tell the user to enable it in QuickBooks (Settings → Account and settings → Advanced).
+Currency is sent as ISO. On QBO we POST `CompanyCurrency` when the code is missing **and** `Preferences.CurrencyPrefs.MultiCurrencyEnabled` is already true. Multicurrency **cannot** be turned on through the API; if the document ISO ≠ home currency and the toggle is off, we block (409) and tell the user to enable it in QuickBooks (Settings → Account and settings → Advanced). Purchase tax: reuse the existing TaxCode whose `purchase_rate` matches the invoice %; **never rename** GST 10% (or any other code). Unmatched % (including 0% and 20%) is created via TaxService as `GST 20%` / `GST free 0%`. GL accounts are still **not** auto-created.
 
 ---
 
@@ -139,7 +139,7 @@ Mirror Xero `validate_invoice_for_xero_export`, QBO-named:
 | `vendor_not_mapped` | No DisplayName to match or create |
 | `ambiguous_vendor_match` | More than one Vendor on exact name/ABN (human review) |
 | `account_not_mapped` | No GL / sub-ledger that matches a synced QBO Account Id |
-| `tax_code_not_mapped` | Global tax company and we cannot resolve a purchase TaxCode from GST amount/rate |
+| `tax_code_not_mapped` | Global tax company, GST % missing, or TaxAgency missing so a new code could not be created |
 | `currency_missing` / `currency_not_supported` | Same policy as Xero |
 | `qbo_not_ready` | Not connected, missing `realmId`, or token refresh failed |
 
@@ -162,9 +162,9 @@ LedgerLink already assigns **parent ledger + optional sub-ledger** on `line_item
 QBO model:
 
 - Chart of accounts is a **tree**. Child accounts have `ParentRef` and `FullyQualifiedName` like `Operating Expenses:Software`.
-- A Bill line has **one** `AccountRef` — the account you debit. If the user picked a sub-ledger, that must be the **child** account Id.
-- If sub-ledger is **None** (explicit), post to the **parent** account Id, same as Xero posting to parent code.
-- If the QBO company has **no** subaccounts under that parent, posting to the parent is valid; we must not invent child accounts.
+- A Bill line has **one** `AccountRef`. Allotted `line_items.sub_ledger` values post to that **child** Account Id.
+- Unallotted lines (blank or unmatched sub-ledger) are **summed** onto the **parent** Post-to account. Those amounts are not also posted to a subaccount.
+- Processing does not stop when a line has no sub-ledger. Do not invent child accounts.
 
 Implementation rule (same as Xero “codes must exist”):
 
@@ -183,12 +183,12 @@ Xero AU AP uses system tax types `INPUT` / `EXEMPTINPUT`. QBO tax codes are **co
 Plan:
 
 1. Sync `TaxCode` (and rates) after connect.
-2. Detect locale from `CompanyInfo.Country` / tax preferences.
-3. Map extracted GST:
-   - GST amount or rate **zero** → purchase tax code that is GST-free / out of scope / 0% (query by rate, not by Xero name).
-   - Non-zero GST → purchase tax code whose purchase rate matches `gst_rate` (e.g. 10% AU).
-4. If several codes match, prefer Active + purchase-applicable; if still ambiguous, block (`tax_code_not_mapped`) rather than guess.
-5. Send `GlobalTaxCalculation`: `TaxExclusive` to match how we treat Xero `LineAmountTypes=Exclusive`, unless we later prove inclusive invoices need `TaxInclusive` (Intuit is picky: inclusive amounts often need exclusive line amounts plus tax detail).
+2. Map extracted GST on process (before Bill POST):
+   - GST amount or rate **zero** → reuse a purchase code at 0%, else **create** `GST free 0%`.
+   - Non-zero `gst_rate` → reuse a purchase code at that %, else **create** `GST {rate}%` (example: 20% → `GST 20%`).
+3. Existing QBO tax names are **never renamed**. If several purchase codes share the same %, prefer GST / purchase names, then use that Id.
+4. Create needs a TaxAgency in the QBO company (API cannot turn sales tax on). Failure is logged; processing still completes.
+5. Send `GlobalTaxCalculation`: `TaxExclusive` on Bill POST (later) to match Xero `LineAmountTypes=Exclusive`.
 
 US sandbox companies may only need `NON` / `TAX`. AU production will fail if we omit `TaxCodeRef`. Branch on company prefs, not on `QUICKBOOKS_ENVIRONMENT`.
 
@@ -233,7 +233,7 @@ Pull and cache: Account (with parent/subaccount), Vendor, TaxCode, CompanyCurren
 ### Phase 3 — resolve + validate
 
 Vendor: stored mapping → TaxIdentifier (ABN) → exact DisplayName → email; else create Vendor when `vendor` is set.  
-Account: parent + sub-ledger → Account Id.  
+Account: allotted line sub-ledgers → child Account Id; unallotted line totals → parent Post-to Id (`resolve_invoice_qbo_gl_lines`).  
 Tax: GST → TaxCode Id.  
 Currency: ISO vs company; `ensure_qbo_currency` (wired at Bill export later).  
 Sales documents: skip.
@@ -277,7 +277,7 @@ Illustrative only; Ids come from **that** sandbox after sync.
 }
 ```
 
-`AccountRef` `80` is the **subaccount** Id when `line_items.sub_ledger` resolved; otherwise the parent expense account Id.
+`AccountRef` is the **subaccount** Id for allotted lines; unallotted amounts share one parent Account Id.
 
 ---
 
@@ -286,7 +286,7 @@ Illustrative only; Ids come from **that** sandbox after sync.
 - **Env vars you have are enough** for handshake and for later accounting API calls. No extra Intuit secrets.
 - **Scope `com.intuit.quickbooks.accounting` is enough** for vendors, COA, tax, bills, attachments. Do not add Payments.
 - **Our DB does not store QBO-mandatory Ids** until we sync. Extraction fields stay as they are; export **resolves** them to Vendor Id, Account Id, TaxCode Id.
-- **Vendor need not pre-exist** if we have a legal name (we create it). **GL and tax codes must already exist** in QBO.
+- **Vendor need not pre-exist** if we have a legal name (we create it). **Unmatched purchase tax % is created** (`GST 20%` style). **GL accounts must already exist** in QBO.
 - **Sub-ledgers are supported** in QBO as subaccounts; we post to the child Account Id.
 - **QBO bills are not drafts**; treat that as a product difference from Xero ACCPAY DRAFT, not as a missing API field we can set.
 - **Tracking / Class** stays deferred. **Sales invoices** stay out of scope.

@@ -20,6 +20,7 @@ from app.integrations.qbo.accounts import (
     is_system_qbo_account,
     is_top_level_qbo_account,
     list_active_qbo_accounts,
+    list_cached_qbo_accounts,
     local_code_for_qbo,
     sub_ledgers_from_children,
     sync_accounts_from_qbo,
@@ -666,8 +667,8 @@ async def _ensure_qbo_subaccounts(
     sub_ledgers: list[SubLedgerEntry],
     account_type: str,
 ) -> None:
-    rows = await list_active_qbo_accounts(session, tenant_id, realm_id)
-    remaining = children_of(parent.qbo_account_id, rows)
+    rows = await list_cached_qbo_accounts(session, tenant_id, realm_id)
+    remaining = children_of(parent.qbo_account_id, rows, active_only=False)
     for sub in sub_ledgers:
         code_key = _code_key(sub.code)
         name_key = sub.name.strip().lower()
@@ -702,7 +703,7 @@ async def _ensure_qbo_subaccounts(
             parent_id=parent.qbo_account_id,
         )
     for leftover in remaining:
-        if is_system_qbo_account(leftover):
+        if is_system_qbo_account(leftover) or not leftover.active:
             continue
         await inactivate_account_in_qbo(session, tenant_id, leftover.qbo_account_id)
 

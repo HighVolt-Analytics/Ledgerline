@@ -669,24 +669,24 @@ async def _ensure_xero_supplier_contact(session: AsyncSession, invoice: Invoice)
         )
 
 
-async def _ensure_qbo_contact(session: AsyncSession, invoice: Invoice) -> None:
-    """Match/create a QuickBooks Vendor or Customer from the extracted name."""
+async def _ensure_qbo_export_masters(session: AsyncSession, invoice: Invoice) -> None:
+    """Match/create QuickBooks Vendor or Customer, currency, tax, and GL line split."""
     try:
-        from app.integrations.qbo.contacts import ensure_invoice_qbo_contact
+        from app.integrations.qbo.export_masters import ensure_qbo_export_masters
 
-        await ensure_invoice_qbo_contact(session, invoice)
+        await ensure_qbo_export_masters(session, invoice)
     except Exception:
         logger.warning(
-            "qbo_invoice_contact_ensure_failed",
+            "qbo_export_masters_ensure_failed",
             invoice_id=invoice.id,
             exc_info=True,
         )
 
 
 async def _finalize_accounting_contacts_after_process(session: AsyncSession, invoice: Invoice) -> None:
-    """Match/create Xero and QBO contacts in this txn; queue Xero DRAFT export after commit."""
+    """Match/create Xero and QBO contacts, QBO currency/tax/GL in this txn; queue Xero DRAFT after commit."""
     await _ensure_xero_supplier_contact(session, invoice)
-    await _ensure_qbo_contact(session, invoice)
+    await _ensure_qbo_export_masters(session, invoice)
     try:
         from app.integrations.xero.auto_push import schedule_xero_auto_push
 
@@ -726,9 +726,19 @@ async def _hold_for_missing_line_sub_ledgers(
     *,
     bypass_review_gates: bool,
 ) -> bool:
-    """Hold posting when parent has a sub-ledger catalogue and any line is blank."""
+    """Hold posting when parent has a sub-ledger catalogue and any line is blank.
+
+    QuickBooks is excluded: unallotted lines are summed onto the parent GL.
+    """
     if bypass_review_gates or should_skip(invoice, "line_gl_mapping"):
         return False
+    try:
+        from app.integrations.qbo.store import require_qbo_ready
+
+        await require_qbo_ready(session, invoice.tenant_id)
+        return False
+    except Exception:
+        pass
     from app.services.invoice.line_item_gl_service import (
         line_sub_ledger_review_required,
         missing_line_sub_ledger_indexes,

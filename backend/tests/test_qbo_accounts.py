@@ -105,3 +105,51 @@ async def test_sync_accounts_nests_subaccounts(
     ).scalar_one()
     assert stored.parent_ref == "80"
     assert stored.sub_account is True
+
+
+def test_find_reusable_qbo_account_matches_name_even_when_code_is_new() -> None:
+    from types import SimpleNamespace
+
+    from app.integrations.qbo.accounts import find_reusable_qbo_account
+
+    parent = SimpleNamespace(
+        qbo_account_id="80",
+        name="Office Expenses",
+        acct_num="6100",
+        fully_qualified_name="Office Expenses",
+        parent_ref=None,
+        sub_account=False,
+        active=True,
+    )
+    child = SimpleNamespace(
+        qbo_account_id="81",
+        name="Software",
+        acct_num="6101",
+        fully_qualified_name="Office Expenses:Software",
+        parent_ref="80",
+        sub_account=True,
+        active=True,
+    )
+    reuse, conflict = find_reusable_qbo_account(
+        [parent, child],
+        name="Office Expenses",
+        code="9999",
+    )
+    assert reuse is parent
+    assert conflict is None
+
+    reuse, conflict = find_reusable_qbo_account(
+        [parent, child],
+        name="Software",
+        code="8888",
+    )
+    assert reuse is None
+    assert conflict is child
+
+    reuse, conflict = find_reusable_qbo_account(
+        [parent, child],
+        name="Software",
+        code="8888",
+        parent_id="80",
+    )
+    assert reuse is child

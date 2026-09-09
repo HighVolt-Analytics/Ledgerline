@@ -8,7 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.integrations.qbo.client import QboApiError
 from app.integrations.qbo.store import QboNotReadyError, require_qbo_ready
-from app.integrations.qbo.tax_codes import create_tax_code_in_qbo, list_synced_tax_codes, sync_tax_codes_from_qbo
+from app.integrations.qbo.tax_codes import (
+    create_tax_code_in_qbo,
+    list_synced_tax_codes,
+    sync_tax_codes_from_qbo,
+    QboTaxCodeWriteError,
+)
 from app.integrations.xero.client import XeroApiError
 from app.integrations.xero.store import require_xero_ready
 from app.integrations.xero.tax_rates import (
@@ -159,7 +164,7 @@ async def create_tax_rate(
                 report_type=body.tax_type,
                 components=body.components,
             )
-        except QboApiError as exc:
+        except (QboApiError, QboTaxCodeWriteError) as exc:
             raise XeroTaxRateWriteError(
                 exc.message or "QuickBooks rejected the tax code",
                 status_code=exc.status_code or 502,
