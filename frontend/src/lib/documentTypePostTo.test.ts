@@ -4,11 +4,9 @@ import type { ChartOfAccountRow } from "@/api/types";
 import {
   coaAccountsToSelectOptions,
   defaultExpensePostingLedger,
-  filterCoaAccountsForDocumentTypePostTo,
   filterCoaAccountsForExpenseDefaultLedger,
   filterCoaAccountsForLedgerPurpose,
   filterCoaAccountsForPostingRole,
-  isControlLedgerAccountName,
   mergeCoaOptionsWithSavedValue,
   resolveCoaAccountName,
 } from "@/lib/coaAccountOptions";
@@ -84,13 +82,17 @@ describe("coaAccountOptions", () => {
     expect(names).toEqual(["Operating Expenses"]);
   });
 
-  it("excludes control accounts from document-type Post To picker", () => {
-    expect(isControlLedgerAccountName("Accounts Payable")).toBe(true);
-    const names = filterCoaAccountsForDocumentTypePostTo(starterCoa, "po_goods").map(
-      (row) => row.name
-    );
-    expect(names).toEqual(["Operating Expenses"]);
-    expect(names).not.toContain("Accounts Payable");
+  it("document-type Post To picker uses the full local chart of accounts", () => {
+    const names = coaAccountsToSelectOptions(starterCoa).map((row) => row.value);
+    expect(names).toEqual([
+      "Bank Account",
+      "Accounts Receivable",
+      "GST Paid",
+      "Accounts Payable",
+      "Sales Revenue",
+      "Operating Expenses",
+      "Suspense Account",
+    ]);
   });
 
   it("resolves default expense posting ledger from starter COA", () => {
@@ -148,6 +150,19 @@ describe("documentTypePostToValidation", () => {
         accounts
       ).some((row) => row.id === "post-to-required")
     ).toBe(true);
+  });
+
+  it("allows any local chart-of-accounts ledger including control accounts", () => {
+    const docType = {
+      posting: "Yes",
+      postTo: { ...emptyDocumentTypePostTo(), ledger: "Accounts Payable" },
+    };
+    expect(hasValidPostTo(docType, starterCoa)).toBe(true);
+    expect(
+      postToConfigWarnings({ ...docType, code: "DT-1" } as never, starterCoa).some(
+        (row) => row.id === "post-to-control-account"
+      )
+    ).toBe(false);
   });
 
   it("warns when sub-ledger is not in catalog for ledger with sub-ledgers", () => {

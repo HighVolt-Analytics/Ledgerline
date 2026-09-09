@@ -1672,7 +1672,6 @@ def _validate_transactional_document_type_post_to(payload: RuleBookConfigPayload
     from app.services.classification.document_type_post_to_service import (
         document_type_requires_post_to,
         has_valid_document_type_post_to,
-        is_control_post_to_ledger,
     )
 
     messages: list[str] = []
@@ -1692,11 +1691,6 @@ def _validate_transactional_document_type_post_to(payload: RuleBookConfigPayload
         if not ledger:
             messages.append(
                 f"{code}: Post to ledger is required for transactional document types."
-            )
-        elif is_control_post_to_ledger(ledger, posting_defaults=payload.posting_defaults):
-            messages.append(
-                f"{code}: Post to ledger {ledger!r} cannot be a control account "
-                "(AP/AR/bank/cash/suspense) — use an expense or revenue ledger."
             )
         else:
             messages.append(

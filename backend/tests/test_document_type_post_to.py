@@ -119,43 +119,47 @@ def test_validate_rule_book_config_for_save_rejects_missing_post_to() -> None:
         )
 
 
-def test_validate_rule_book_rejects_control_account_post_to() -> None:
-    import pytest
-
-    from app.schemas.rule_book_config import RuleBookPostToValidationError, validate_rule_book_config_for_save
+def test_validate_rule_book_allows_control_account_post_to() -> None:
+    from app.schemas.rule_book_config import validate_rule_book_config_for_save
     from app.services.classification.document_type_post_to_service import (
+        has_valid_document_type_post_to,
         is_control_post_to_ledger,
     )
 
     assert is_control_post_to_ledger("Accounts Payable") is True
 
-    with pytest.raises(RuleBookPostToValidationError, match="control account"):
-        validate_rule_book_config_for_save(
-            {
-                "schema_version": 1,
-                "chart_of_accounts": [
-                    {"code": "2000", "name": "Accounts Payable", "type": "Liability"},
-                    {"code": "6100", "name": "Operating Expenses", "type": "Expense"},
-                ],
-                "posting_defaults": {"payable_account": "Accounts Payable"},
-                "document_types": [
-                    {
-                        "code": "DT-AP",
-                        "title": "PO goods",
-                        "shortTitle": "PO goods",
-                        "klass": "Transactional",
-                        "posting": "Yes",
-                        "playbookProfile": "po_goods",
-                        "recognition_mode": "signals",
-                        "recognition_signals": ["heading_invoice"],
-                        "llm_prompt": "",
-                        "routeTarget": "Purchase Management",
-                        "enabled": True,
-                        "postTo": {"ledger": "Accounts Payable"},
-                    }
-                ],
-            }
-        )
+    payload = validate_rule_book_config_for_save(
+        {
+            "schema_version": 1,
+            "chart_of_accounts": [
+                {"code": "2000", "name": "Accounts Payable", "type": "Liability"},
+                {"code": "6100", "name": "Operating Expenses", "type": "Expense"},
+            ],
+            "posting_defaults": {"payable_account": "Accounts Payable"},
+            "document_types": [
+                {
+                    "code": "DT-AP",
+                    "title": "PO goods",
+                    "shortTitle": "PO goods",
+                    "klass": "Transactional",
+                    "posting": "Yes",
+                    "playbookProfile": "po_goods",
+                    "recognition_mode": "signals",
+                    "recognition_signals": ["heading_invoice"],
+                    "llm_prompt": "",
+                    "routeTarget": "Purchase Management",
+                    "enabled": True,
+                    "postTo": {"ledger": "Accounts Payable"},
+                }
+            ],
+        }
+    )
+    assert payload.document_types[0].post_to.ledger == "Accounts Payable"
+    assert has_valid_document_type_post_to(
+        payload.document_types[0],
+        payload.chart_of_accounts,
+        posting_defaults=payload.posting_defaults,
+    )
 
 
 def test_validate_rule_book_rejects_commercial_with_bundle_role() -> None:
