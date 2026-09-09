@@ -38,7 +38,6 @@ import type {
 } from "@/api/types";
 import {
   cfoAxisCompact,
-  cfoCompact,
   cfoMoney,
   cfoN0,
   cfoN1,
@@ -410,7 +409,7 @@ function CfoKpiTile({ label, value, foot, meter }: KpiTileDef) {
   return (
     <Card className="kpi-card kpi-card--elevated p-4 min-w-0">
       <p className="kpi-card__label">{label}</p>
-      <p className="kpi-card__value tnum">{value}</p>
+      <div className="kpi-card__value tnum">{value}</div>
       {foot ? <div className="kpi-card__foot">{foot}</div> : null}
       {meter ? (
         <div className="kpi-card__meter-wrap">
@@ -485,9 +484,47 @@ function kpiMeterWidth(pct: number): number {
   return Math.min(100, Math.max(0, pct));
 }
 
-function derivePct(part: number, whole: number): number | null {
-  if (whole <= 0) return null;
-  return kpiMeterWidth((part / whole) * 100);
+function currencyLabel(code: string): string {
+  const normalized = (code ?? "").trim().toUpperCase();
+  return normalized || "—";
+}
+
+function MultiCurrencyValue({
+  rows,
+}: {
+  rows: { currency: string; amount: number }[];
+}) {
+  if (rows.length === 0) {
+    return <span className="tnum">0</span>;
+  }
+
+  const sorted = [...rows].sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+  const [primary, ...rest] = sorted;
+  // Keep card height stable: show at most 2 secondary chips; remainder as "+N"
+  const visibleRest = rest.slice(0, 2);
+  const hiddenCount = rest.length - visibleRest.length;
+
+  return (
+    <div className="kpi-card__ccy" aria-label="Amounts by currency">
+      <span className="kpi-card__ccy-primary">
+        <span className="kpi-card__ccy-primary-code">{currencyLabel(primary.currency)}</span>
+        <span className="kpi-card__ccy-primary-amt tnum">{cfoN0(primary.amount)}</span>
+      </span>
+      {rest.length > 0 ? (
+        <ul className="kpi-card__ccy-rest">
+          {visibleRest.map((row) => (
+            <li key={row.currency} className="kpi-card__ccy-chip">
+              <span>{currencyLabel(row.currency)}</span>
+              <strong className="tnum">{cfoN0(row.amount)}</strong>
+            </li>
+          ))}
+          {hiddenCount > 0 ? (
+            <li className="kpi-card__ccy-more">+{hiddenCount} more</li>
+          ) : null}
+        </ul>
+      ) : null}
+    </div>
+  );
 }
 
 function PrimaryKpis({ period }: { period: DashboardPeriod }) {
@@ -509,121 +546,77 @@ function PrimaryKpis({ period }: { period: DashboardPeriod }) {
   }
 
   const k = data.kpis;
+  const mapCcy = (rows: { currency: string; amount: string }[] | undefined) =>
+    (rows ?? []).map((row) => ({
+      currency: row.currency,
+      amount: parseApiAmount(row.amount),
+    }));
+
   const K = {
-    apOutstanding: parseApiAmount(k.ap_outstanding),
-    approvedNotPaid: parseApiAmount(k.approved_not_paid),
-    due7: parseApiAmount(k.due_next_7_days),
-    due14: parseApiAmount(k.due_next_14_days),
-    due30: parseApiAmount(k.due_next_30_days),
+    apOutstanding: mapCcy(k.ap_outstanding_by_currency),
+    approvedNotPaid: mapCcy(k.approved_not_paid_by_currency),
+    due7: mapCcy(k.due_next_7_days_by_currency),
     overdue: parseApiAmount(k.overdue),
-    overduePct: k.overdue_pct != null ? parseApiAmount(k.overdue_pct) : null,
-    overdueThreshold: parseApiAmount(k.overdue_threshold_pct) || 10,
+    overdue130: parseApiAmount(k.overdue_1_30),
+    overdue3160: parseApiAmount(k.overdue_31_60),
+    overdue6190: parseApiAmount(k.overdue_61_90),
+    overdue90: parseApiAmount(k.overdue_90_plus),
     utilisation:
       k.budget_utilisation_pct != null ? parseApiAmount(k.budget_utilisation_pct) : null,
-    actualYTD: parseApiAmount(k.budget_actual),
-    budgetYTD: parseApiAmount(k.budget_allocated),
-    budgetCommitted: parseApiAmount(k.budget_committed),
     advancesOutstanding: parseApiAmount(k.advances_outstanding),
-    advancesOverdue: parseApiAmount(k.advances_overdue),
-    advancesOverdueEmployees: k.advances_overdue_employees,
     openExceptions: k.open_exceptions_count,
-    exceptionAtRisk: parseApiAmount(k.open_exceptions_at_risk),
     claimsPending: k.claims_pending_count,
-    claimsPendingValue: parseApiAmount(k.claims_pending_value),
     toReviewCount: k.documents_to_review_count,
-    toReviewValue: parseApiAmount(k.documents_to_review_value),
-    processingCount: k.documents_processing_count,
-    processingValue: parseApiAmount(k.documents_processing_value),
     paymentsQueueCount: k.payments_queue_count,
-    paymentsQueueValue: parseApiAmount(k.payments_queue_value),
   };
-
-  const pipelineCount = K.toReviewCount + K.processingCount;
-  const pipelineValue = K.toReviewValue + K.processingValue;
 
   const currency = data.meta.currency ?? "AUD";
   const cur = (v: number) => (
     <>
-      <span className="text-muted-foreground text-base font-medium mr-0.5">{currency === "AUD" ? "A$" : `${currency} `}</span>
+      <span className="text-muted-foreground text-base font-medium mr-0.5">
+        {currencyLabel(currency)}
+      </span>
       {cfoN0(v)}
     </>
   );
 
-  const overduePct =
-    K.overduePct ?? derivePct(K.overdue, K.apOutstanding);
-  const utilisation =
-    K.utilisation ?? derivePct(K.actualYTD, K.budgetYTD);
-  const overdueMeterPct =
-    overduePct != null && K.overdueThreshold > 0
-      ? kpiMeterWidth((overduePct / K.overdueThreshold) * 100)
-      : null;
-
   const tiles: KpiTileDef[] = [
     {
       label: "AP outstanding",
-      value: cur(K.apOutstanding),
-      foot: (
-        <>
-          Netted ledger balance · Aged Payables report
-        </>
-      ),
+      value: <MultiCurrencyValue rows={K.apOutstanding} />,
+      foot: <>Invoice Register · unpaid · native currencies</>,
     },
     {
       label: "Due next 7 days",
-      value: cur(K.due7),
-      foot: (
-        <>
-          14 d <span className="tnum">{cfoN0(K.due14)}</span> · 30 d{" "}
-          <span className="tnum">{cfoN0(K.due30)}</span>
-        </>
-      ),
+      value: <MultiCurrencyValue rows={K.due7} />,
+      foot: <>Due from today through +7 days</>,
     },
     {
       label: "Overdue",
       value: cur(K.overdue),
-      foot:
-        overduePct != null ? (
-          <>
-            <span className="text-destructive font-medium tnum">{cfoPct(overduePct)}</span> of AP ·
-            threshold {cfoPct(K.overdueThreshold)}
-          </>
-        ) : (
-          <>Threshold {cfoPct(K.overdueThreshold)}</>
-        ),
-      meter:
-        overdueMeterPct != null
-          ? { pct: overdueMeterPct, tone: "neg" }
-          : undefined,
+      foot: (
+        <>
+          1–30 <span className="tnum">{cfoN0(K.overdue130)}</span> · 31–60{" "}
+          <span className="tnum">{cfoN0(K.overdue3160)}</span> · 61–90{" "}
+          <span className="tnum">{cfoN0(K.overdue6190)}</span> · 90+{" "}
+          <span className="tnum">{cfoN0(K.overdue90)}</span>
+        </>
+      ),
     },
     {
       label: "Approved · awaiting payment",
-      value: cur(K.approvedNotPaid),
-      foot: (
-        <>
-          AP outstanding <span className="tnum">{cfoN0(K.apOutstanding)}</span> · ready for Payments
-        </>
-      ),
+      value: <MultiCurrencyValue rows={K.approvedNotPaid} />,
+      foot: <>Uploads Summary · Approved + Payment Auth Awaiting Payment</>,
     },
     {
       label: "Documents in pipeline",
       value: (
         <>
-          {cfoN0(pipelineCount)}
+          {cfoN0(K.toReviewCount)}
           <span className="text-base font-medium text-muted-foreground ml-1">docs</span>
         </>
       ),
-      foot: (
-        <>
-          To Review <span className="tnum">{cfoN0(K.toReviewCount)}</span> · Processing{" "}
-          <span className="tnum">{cfoN0(K.processingCount)}</span>
-          {pipelineValue > 0 ? (
-            <>
-              {" "}
-              · <span className="tnum">{cfoN0(pipelineValue)}</span> value
-            </>
-          ) : null}
-        </>
-      ),
+      foot: <>To Review only</>,
     },
     {
       label: "Payments queue",
@@ -633,28 +626,16 @@ function PrimaryKpis({ period }: { period: DashboardPeriod }) {
           <span className="text-base font-medium text-muted-foreground ml-1">payments</span>
         </>
       ),
-      foot: (
-        <>
-          <span className="tnum">{cfoN0(K.paymentsQueueValue)}</span> queued for release
-        </>
-      ),
+      foot: <>Same filter · count</>,
     },
     {
       label: "Budget utilisation",
-      value: utilisation != null ? cfoPct(utilisation) : "—",
-      foot: (
-        <>
-          Actual <span className="tnum">{cfoCompact(K.actualYTD)}</span> of{" "}
-          <span className="tnum">{cfoCompact(K.budgetYTD)}</span>
-          {K.budgetCommitted > 0 ? (
-            <>
-              {" "}
-              · committed <span className="tnum">{cfoCompact(K.budgetCommitted)}</span>
-            </>
-          ) : null}
-        </>
-      ),
-      meter: utilisation != null ? { pct: kpiMeterWidth(utilisation), tone: "warn" } : undefined,
+      value: K.utilisation != null ? cfoPct(K.utilisation) : "—",
+      foot: <>Average of % Utilise</>,
+      meter:
+        K.utilisation != null
+          ? { pct: kpiMeterWidth(K.utilisation), tone: "warn" }
+          : undefined,
     },
     {
       label: "Open exceptions",
@@ -664,11 +645,7 @@ function PrimaryKpis({ period }: { period: DashboardPeriod }) {
           <span className="text-base font-medium text-muted-foreground ml-1">flags</span>
         </>
       ),
-      foot: (
-        <>
-          Control Centre · <span className="tnum">{cfoN0(K.exceptionAtRisk)}</span> at risk
-        </>
-      ),
+      foot: <>Invoice Exception report</>,
     },
     {
       label: "Expense claims pending",
@@ -678,21 +655,12 @@ function PrimaryKpis({ period }: { period: DashboardPeriod }) {
           <span className="text-base font-medium text-muted-foreground ml-1">claims</span>
         </>
       ),
-      foot: (
-        <>
-          Team expenses · <span className="tnum">{cfoN0(K.claimsPendingValue)}</span> awaiting sign-off
-        </>
-      ),
+      foot: <>Status / Reason ≠ Approved</>,
     },
     {
       label: "Employee advances",
       value: cur(K.advancesOutstanding),
-      foot: (
-        <>
-          <span className="text-destructive font-medium tnum">{cfoN0(K.advancesOverdue)}</span>{" "}
-          overdue · {K.advancesOverdueEmployees} employees
-        </>
-      ),
+      foot: <>Advance Aging · all age buckets</>,
     },
   ];
 
@@ -2322,32 +2290,12 @@ export function DashboardView({
   tenantName?: string;
   period: DashboardPeriod;
 }) {
-  const { data: liquidity } = usePositionLiquidity(period);
-  const { data: efficiency } = useEfficiencyAutomation(period);
-
-  const positionHint = useMemo(() => {
-    const meta = liquidity?.meta;
-    if (!meta) return undefined;
-    const env = meta.environment_label ?? tenantName;
-    return `All figures ${meta.currency}, consolidated, ${meta.period_label}${env ? ` · ${env}` : ""}`;
-  }, [liquidity?.meta, tenantName]);
-
-  const efficiencyHint = useMemo(() => {
-    const meta = efficiency?.meta;
-    if (!meta) return undefined;
-    const env = meta.environment_label ?? tenantName;
-    return `Process Efficiency · ${meta.period_label}${env ? ` · ${env}` : ""}`;
-  }, [efficiency?.meta, tenantName]);
-
   return (
     <div data-testid="dashboard-view">
-      <SectionHead
-        title="Position & liquidity"
-        hint={positionHint}
-      />
+      <SectionHead title="Position & liquidity" />
       <PrimaryKpis period={period} />
 
-      <SectionHead title="Efficiency & automation value" hint={efficiencyHint} />
+      <SectionHead title="Efficiency & automation value" />
       <SecondaryKpis period={period} />
 
       <CashLiabilityOutlookSection tenantName={tenantName} period={period} />

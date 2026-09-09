@@ -79,21 +79,17 @@ def _threshold_alerts(
     lk = liquidity.kpis
     ek = efficiency.kpis
 
-    if (
-        lk.overdue_pct is not None
-        and lk.ap_outstanding > _ZERO
-        and lk.overdue_threshold_pct is not None
-        and lk.overdue_pct > lk.overdue_threshold_pct
-    ):
+    if lk.overdue > _ZERO:
         rows.append(
             CfoAlertRow(
                 severity="med",
-                title=f"Overdue AP at {lk.overdue_pct}%",
+                title="Overdue AP outstanding",
                 detail=(
-                    f"{_money(lk.overdue)} overdue of {_money(lk.ap_outstanding)} "
-                    f"{currency} AP outstanding"
+                    f"{_money(lk.overdue)} {currency} in Aged Payables past-due buckets "
+                    f"(1–30 {_money(lk.overdue_1_30)} · 31–60 {_money(lk.overdue_31_60)} · "
+                    f"61–90 {_money(lk.overdue_61_90)} · 90+ {_money(lk.overdue_90_plus)})"
                 ),
-                meta=f"Threshold: {lk.overdue_threshold_pct}%",
+                meta="Source: Aged Payables",
                 module="Invoice-to-Pay",
                 source="threshold",
             )
@@ -123,10 +119,9 @@ def _threshold_alerts(
                 severity="med",
                 title="Claims pending approval",
                 detail=(
-                    f"{lk.claims_pending_count} claim(s) · "
-                    f"{_money(lk.claims_pending_value)} {currency} awaiting sign-off"
+                    f"{lk.claims_pending_count} claim(s) with Status/Reason != Approved"
                 ),
-                meta="Team expense approval queue",
+                meta="Expense Claim Status report",
                 module="Expenses",
                 source="threshold",
             )
@@ -268,15 +263,17 @@ async def build_cfo_alerts_dashboard(
     alerts = _sort_alerts(alerts)
 
     notes = [
-        f"All amounts {base}, consolidated.",
+        f"All amounts {base}, consolidated (except Position & Liquidity register tiles, "
+        "which report native per-currency totals).",
         "Row-level alerts reuse Control Centre report definitions (overdue AP, advances >60d, "
         "budget forecast overrun, policy exceptions, invoice exceptions, missing receipts).",
-        "Threshold breaches add covenant-style KPI alerts: overdue AP %, touchless target, "
-        "claims pending approval, sync dead-letter queue, and departments where actual > budget.",
+        "Threshold breaches add KPI alerts: overdue Aged Payables balance, touchless target, "
+        "claims with Status/Reason != Approved, sync dead-letter queue, and departments "
+        "where actual > budget.",
         "Bank-change vendor flags come from invoice document detection (same as Vendor "
         "Concentration risk panel); omitted from Control Centre until a dedicated register exists.",
-        f"Overdue AP threshold {liquidity.kpis.overdue_threshold_pct}% and touchless target "
-        f"{efficiency.kpis.touchless_target_pct}% are platform constants (not yet tenant-configurable).",
+        f"Touchless target {efficiency.kpis.touchless_target_pct}% is a platform constant "
+        "(not yet tenant-configurable).",
     ]
     coverage_gaps = [
         "insurance_expiry: not evaluated — no register wired.",

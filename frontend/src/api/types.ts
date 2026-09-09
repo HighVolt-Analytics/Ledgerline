@@ -1170,36 +1170,30 @@ export interface PositionLiquidityMeta {
   notes: string[];
 }
 
+export interface PositionLiquidityCurrencyAmount {
+  currency: string;
+  amount: string;
+}
+
 export interface PositionLiquidityKpis {
-  ap_outstanding: string;
-  approved_not_paid: string;
-  due_next_7_days: string;
-  due_next_14_days: string;
-  due_next_30_days: string;
+  ap_outstanding_by_currency: PositionLiquidityCurrencyAmount[];
+  approved_not_paid_by_currency: PositionLiquidityCurrencyAmount[];
+  due_next_7_days_by_currency: PositionLiquidityCurrencyAmount[];
   overdue: string;
-  overdue_pct: string | null;
-  overdue_threshold_pct: string;
+  overdue_1_30: string;
+  overdue_31_60: string;
+  overdue_61_90: string;
+  overdue_90_plus: string;
   dpo_days: string | null;
   dpo_prior_year_days: string | null;
   on_time_payment_rate_pct: string | null;
   discount_capture_rate_pct: string | null;
   budget_utilisation_pct: string | null;
-  budget_actual: string;
-  budget_allocated: string;
-  budget_committed: string;
   advances_outstanding: string;
-  advances_overdue: string;
-  advances_overdue_employees: number;
   open_exceptions_count: number;
-  open_exceptions_at_risk: string;
   claims_pending_count: number;
-  claims_pending_value: string;
   documents_to_review_count: number;
-  documents_to_review_value: string;
-  documents_processing_count: number;
-  documents_processing_value: string;
   payments_queue_count: number;
-  payments_queue_value: string;
   vendor_top10_concentration_pct: string | null;
   vendor_non_po_spend_pct: string | null;
 }

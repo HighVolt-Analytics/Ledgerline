@@ -91,16 +91,19 @@ Connect is shown only when the **API process** has `QUICKBOOKS_ENABLED` not fals
 
 Register **each** Redirect URI in the Intuit developer app (Development for sandbox). The string must match `QUICKBOOKS_REDIRECT_URI` exactly (scheme, host, path, no trailing slash unless Intuit has one).
 
+For staging, this must be a public URL Intuit can reach (not `localhost`). Whatever you set in AKS as `QUICKBOOKS_REDIRECT_URI` is the one you must register in Intuit.
+`PUBLIC_API_BASE_URL` and `PUBLIC_APP_URL` are defined in `ledgerlink-config` (see `k8s/ledgerlink-config.example.yaml`).
+
 | Variable | Local (`backend/.env`) | Staging AKS |
 |---|---|---|
 | `QUICKBOOKS_ENABLED` | `true` | `true` (ConfigMap) |
 | `QUICKBOOKS_CLIENT_ID` | Intuit Client ID | **app-secrets** (same Intuit app or a staging app) |
 | `QUICKBOOKS_CLIENT_SECRET` | Intuit Client Secret | **app-secrets** |
-| `QUICKBOOKS_REDIRECT_URI` | `http://localhost:8001/api/integrations/quickbooks/callback` | `https://staging.highvolt.tech/ledgerlink/api/integrations/quickbooks/callback` |
+| `QUICKBOOKS_REDIRECT_URI` | `http://localhost:8001/api/integrations/quickbooks/callback` | `${PUBLIC_API_BASE_URL}/integrations/quickbooks/callback` |
 | `QUICKBOOKS_ENVIRONMENT` | `sandbox` | `sandbox` until production Intuit app |
-| `QUICKBOOKS_OAUTH_FRONTEND_RETURN_URL` | `http://localhost:5173/integrations` | `https://staging.highvolt.tech/ledgerlink/integrations` |
+| `QUICKBOOKS_OAUTH_FRONTEND_RETURN_URL` | `http://localhost:5173/integrations` | `${PUBLIC_APP_URL}/integrations` |
 | `QUICKBOOKS_OAUTH_SCOPES` | omit (default accounting) | omit |
-| `ACCOUNTING_OAUTH_FRONTEND_RETURN_URL` | optional; same as frontend return | `https://staging.highvolt.tech/ledgerlink/integrations` |
+| `ACCOUNTING_OAUTH_FRONTEND_RETURN_URL` | optional; same as frontend return | `${PUBLIC_APP_URL}/integrations` |
 
 `backend/.env.example` has the local names. After OAuth, the API redirects to the frontend return URL with `?quickbooks=connected`.
 
@@ -115,9 +118,9 @@ Filled examples: `k8s/ledgerlink-config.example.yaml` and `k8s/ledgerlink-config
 kubectl -n quantum-ledgerlink patch configmap ledgerlink-config --type merge -p "{\"data\":{
   \"QUICKBOOKS_ENABLED\":\"true\",
   \"QUICKBOOKS_ENVIRONMENT\":\"sandbox\",
-  \"QUICKBOOKS_REDIRECT_URI\":\"https://staging.highvolt.tech/ledgerlink/api/integrations/quickbooks/callback\",
-  \"QUICKBOOKS_OAUTH_FRONTEND_RETURN_URL\":\"https://staging.highvolt.tech/ledgerlink/integrations\",
-  \"ACCOUNTING_OAUTH_FRONTEND_RETURN_URL\":\"https://staging.highvolt.tech/ledgerlink/integrations\"
+  \"QUICKBOOKS_REDIRECT_URI\":\"<PUBLIC_API_BASE_URL>/integrations/quickbooks/callback\",
+  \"QUICKBOOKS_OAUTH_FRONTEND_RETURN_URL\":\"<PUBLIC_APP_URL>/integrations\",
+  \"ACCOUNTING_OAUTH_FRONTEND_RETURN_URL\":\"<PUBLIC_APP_URL>/integrations\"
 }}"
 
 # 2) Add secrets without replacing the rest of app-secrets:
@@ -130,8 +133,9 @@ shred -u /tmp/app-secrets.yaml   # or delete the file
 kubectl -n quantum-ledgerlink rollout restart deployment/ledgerlink-api deployment/ledgerlink-worker
 
 # 4) Confirm (values must be present; do not paste secrets into tickets):
-kubectl -n quantum-ledgerlink exec deploy/ledgerlink-api -- printenv QUICKBOOKS_ENABLED QUICKBOOKS_REDIRECT_URI QUICKBOOKS_OAUTH_FRONTEND_RETURN_URL
-kubectl -n quantum-ledgerlink exec deploy/ledgerlink-api -- sh -c 'test -n "$QUICKBOOKS_CLIENT_ID" && test -n "$QUICKBOOKS_CLIENT_SECRET" && echo qbo_secrets_present'
+API_POD=$(kubectl -n quantum-ledgerlink get pods -l app=ledgerlink-api -o jsonpath='{.items[0].metadata.name}')
+kubectl -n quantum-ledgerlink exec "$API_POD" -- printenv QUICKBOOKS_ENABLED QUICKBOOKS_REDIRECT_URI QUICKBOOKS_OAUTH_FRONTEND_RETURN_URL
+kubectl -n quantum-ledgerlink exec "$API_POD" -- sh -c 'test -n "$QUICKBOOKS_CLIENT_ID" && test -n "$QUICKBOOKS_CLIENT_SECRET" && echo qbo_secrets_present'
 ```
 
 If Connect is still missing: user must be **admin**, and `/api/settings` (or integrations status) must report `quickbooks_configured: true`. Empty Client ID/Secret on the pod is the usual cause.
@@ -345,4 +349,3 @@ Illustrative only; Ids come from **that** sandbox after sync.
 - **Sub-ledgers are supported** in QBO as subaccounts; we post to the child Account Id.
 - **QBO bills are not drafts**; treat that as a product difference from Xero ACCPAY DRAFT, not as a missing API field we can set.
 - **Tracking / Class** stays deferred. **Sales invoices** stay out of scope.
-- **AKS Connect:** apply §2 ConfigMap + `app-secrets` Client ID/Secret, then restart API/worker. You do not implement §10 on the cluster.

@@ -42,6 +42,74 @@
   line-height: 1.15;
   letter-spacing: -0.01em;
   color: hsl(var(--foreground));
+  min-width: 0;
+}
+
+/* Multi-currency: keep KPI cards the same footprint as single-value tiles */
+.kpi-card__ccy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+  max-height: 2.85rem;
+  overflow: hidden;
+}
+
+.kpi-card__ccy-primary {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  white-space: nowrap;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kpi-card__ccy-primary-code {
+  flex-shrink: 0;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: hsl(var(--muted-foreground));
+}
+
+.kpi-card__ccy-primary-amt {
+  font-size: inherit;
+  font-weight: 600;
+}
+
+.kpi-card__ccy-rest {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.55rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+  max-height: 1.15rem;
+  overflow: hidden;
+}
+
+.kpi-card__ccy-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.2rem;
+  white-space: nowrap;
+  font-size: 0.6875rem;
+  line-height: 1.15;
+  color: hsl(var(--muted-foreground));
+}
+
+.kpi-card__ccy-chip strong {
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+.kpi-card__ccy-more {
+  font-size: 0.6875rem;
+  line-height: 1.15;
+  color: hsl(var(--muted-foreground));
+  white-space: nowrap;
 }
 
 .kpi-card__foot {

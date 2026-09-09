@@ -1,7 +1,16 @@
-"""Position & Liquidity dashboard — reuses audited report definitions.
+"""Position & Liquidity dashboard — report-sourced KPIs (no FX rollup for register tiles).
 
-Each KPI is derived from the same query/report as its detail page so dashboard
-figures reconcile with drill-down reports for the same period.
+Tile sources (do not reconcile AP Outstanding with Overdue — different reports by design):
+  1. AP Outstanding — Invoice Register unpaid (Payment Date empty), per-currency SUM(Total)
+  2. Due next 7 days — same unpaid set, due in [as_of, as_of+7], per-currency SUM(Total)
+  3. Overdue — Aged Payables buckets 1–30 / 31–60 / 61–90 / 90+ (Balance Due)
+  4. Approved · awaiting payment — Uploads Summary: Action=Approved + Payment Auth=Awaiting Payment
+  5. Documents in pipeline — approval_board To Review count only
+  6. Payments queue — COUNT of same rows as #4
+  7. Budget utilisation — average of Budget vs Actual `% Utilise` (skip blank/-)
+  8. Open exceptions — Invoice Exception report row count
+  9. Expense claims pending — Claim Status where Status/Reason != Approved
+ 10. Employee advances — Advance Aging Outstanding across all age buckets
 """
 
 from __future__ import annotations
@@ -13,33 +22,37 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.payment import Payment, PaymentStatus
-from app.services.approval.approval_board_service import approval_board_column_expr
 from app.models.tenant import Tenant
 from app.schemas.position_liquidity import (
+    CurrencyAmount,
     PositionLiquidityDashboard,
     PositionLiquidityKpis,
     PositionLiquidityMeta,
 )
-from app.services.approval.approval_quorum_service import quorum_met
-from app.services.invoice.invoice_evaluation_service import (
-    EVAL_PENDING_APPROVAL,
-    ROUTE_TEAM,
+from app.services.approval.approval_board_service import (
+    approval_board_column,
+    approval_board_column_expr,
 )
 from app.services.reports.dashboard_period import fy_window, resolve_dashboard_period
 from app.services.reports.dashboard_service import _institution_today
 from app.services.reports.exception_status_catalog_builders import (
     _parse_money,
     _preview_maps,
-    build_control_centre,
+    build_claim_status,
+    build_invoice_exception,
 )
+from app.services.reports.matrix_service import derive_matrix_payment_status
 from app.services.reports.payables_catalog_builders import (
+    _group_invoice_payments,
     _paid_payment_amount,
+    _register_window,
+    _select_display_payment,
     ap_outstanding_rows,
     ap_route_clause,
-    approval_status,
     build_vendor_spend_summary,
 )
 from app.services.reports.report_catalog import CATALOG_BY_ID
@@ -49,12 +62,10 @@ from app.services.reports.statement_builders import (
     _prior_window,
 )
 from app.services.reports.team_expense_catalog_builders import build_advance_aging
-from app.services.reports.team_expense_reports_service import build_advance_settlement_rows
 from app.services.shared.currency import convert_to_base
 from app.tenant_settings import tenant_currency
 
 _ZERO = Decimal("0.00")
-_OVERDUE_AP_THRESHOLD_PCT = Decimal("10")
 _MONTH_NAMES = (
     "",
     "Jan",
@@ -70,15 +81,16 @@ _MONTH_NAMES = (
     "Nov",
     "Dec",
 )
+_OVERDUE_BUCKETS = ("1–30", "31–60", "61–90", "90+")
+# TODO(confirm-schema): sheet said 1–30 / 31–60 / 60+; report uses 0–30 / 31–60 / 61–90 / 90+
+_ADVANCE_BUCKETS = ("0–30", "31–60", "61–90", "90+")
 
 
 @dataclass(frozen=True)
-class _ApLine:
-    invoice_id: int
+class _RegisterLine:
     due_date: date | None
-    remaining: Decimal
     currency: str
-    approved: bool
+    total: Decimal
 
 
 def _quantize(value: Decimal) -> Decimal:
@@ -100,10 +112,29 @@ def _fy_window(as_of: date) -> tuple[date, date, str]:
     return fy_window(as_of)
 
 
-def _due_bucket_days(due: date | None, as_of: date) -> int | None:
-    if due is None:
+def _currency_code(raw: str | None) -> str:
+    """Native currency only — blank stays blank (do not invent AUD/USD/base)."""
+    return (raw or "").strip().upper()
+
+
+def _currency_amounts(totals: dict[str, Decimal]) -> list[CurrencyAmount]:
+    return [
+        CurrencyAmount(currency=code, amount=_quantize(amount))
+        for code, amount in sorted(totals.items())
+        if amount != 0
+    ]
+
+
+def _parse_utilise_pct(raw: str | None) -> Decimal | None:
+    text = (raw or "").strip()
+    if not text or text == "-":
         return None
-    return (due - as_of).days
+    if text.endswith("%"):
+        text = text[:-1].strip()
+    try:
+        return Decimal(text)
+    except Exception:
+        return None
 
 
 def _is_non_po_invoice(invoice: Invoice) -> bool:
@@ -122,76 +153,222 @@ def _is_non_po_invoice(invoice: Invoice) -> bool:
     return True
 
 
-async def _ap_lines(
+async def _unpaid_register_lines(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     as_of: date,
     *,
     base: str,
-) -> list[_ApLine]:
-    outstanding = await ap_outstanding_rows(db, tenant_id, as_of)
-    if not outstanding:
-        return []
-    ids = [row.invoice_id for row in outstanding]
-    invoices = {
-        inv.id: inv
-        for inv in (
-            await db.execute(
-                select(Invoice).where(
-                    Invoice.tenant_id == tenant_id,
-                    Invoice.id.in_(ids),
-                )
-            )
-        ).scalars().all()
-        if inv.id is not None
-    }
-    lines: list[_ApLine] = []
-    for row in outstanding:
-        inv = invoices.get(row.invoice_id)
-        currency = (inv.currency if inv else None) or base
-        approved = approval_status(inv) == "Approved" if inv is not None else False
+) -> list[_RegisterLine]:
+    """Invoice Register rows with Payment Date empty — native currency totals (no FX).
+
+    # TODO(confirm-schema): Uploads Summary Module ∈ {Exp Mgt, Purchase Mgt}
+    # mapped to Invoice Register unpaid + ap_route_clause().
+    # TODO(confirm-schema): Amount Due mapped to register Total.
+    """
+    date_clause, _ = _register_window(as_of, as_of, as_of=True)
+    pay = aliased(Payment)
+    stmt = (
+        select(Invoice, pay)
+        .outerjoin(
+            pay,
+            (pay.invoice_id == Invoice.id) & (pay.tenant_id == tenant_id),
+        )
+        .where(
+            Invoice.tenant_id == tenant_id,
+            ap_route_clause(),
+            date_clause,
+        )
+        .order_by(Invoice.invoice_date, Invoice.id)
+    )
+    lines: list[_RegisterLine] = []
+    for invoice, payments in _group_invoice_payments((await db.execute(stmt)).all()):
+        payment = _select_display_payment(payments)
+        if payment is not None and payment.paid_date is not None:
+            continue
         lines.append(
-            _ApLine(
-                invoice_id=row.invoice_id,
-                due_date=row.due_date,
-                remaining=_to_base(row.remaining, currency, base=base),
-                currency=currency,
-                approved=approved,
+            _RegisterLine(
+                due_date=invoice.due_date,
+                currency=_currency_code(invoice.currency),
+                total=_quantize(Decimal(str(invoice.total or 0))),
             )
         )
     return lines
 
 
-def _sum_ap_buckets(lines: list[_ApLine], as_of: date) -> dict[str, Decimal]:
-    total = _ZERO
-    approved_not_paid = _ZERO
-    due_7 = _ZERO
-    due_14 = _ZERO
-    due_30 = _ZERO
-    overdue = _ZERO
+def _sum_register_by_currency(
+    lines: list[_RegisterLine],
+    *,
+    predicate,
+) -> list[CurrencyAmount]:
+    totals: dict[str, Decimal] = {}
     for line in lines:
-        total += line.remaining
-        if line.approved and line.remaining > 0:
-            approved_not_paid += line.remaining
-        days = _due_bucket_days(line.due_date, as_of)
-        if days is None:
+        if not predicate(line):
             continue
-        if days < 0:
-            overdue += line.remaining
-        elif days <= 7:
-            due_7 += line.remaining
-        elif days <= 14:
-            due_14 += line.remaining
-        elif days <= 30:
-            due_30 += line.remaining
-    return {
-        "ap_outstanding": total,
-        "approved_not_paid": approved_not_paid,
-        "due_7": due_7,
-        "due_14": due_14,
-        "due_30": due_30,
-        "overdue": overdue,
-    }
+        totals[line.currency] = totals.get(line.currency, _ZERO) + line.total
+    return _currency_amounts(totals)
+
+
+async def _uploads_approved_awaiting_payment(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    *,
+    base: str,
+) -> tuple[list[CurrencyAmount], int]:
+    """Uploads Summary: Action=Approved (board) and Payment Auth=Awaiting Payment.
+
+    Amount = native invoice.total per currency (no FX). Same row set drives
+    Approved · awaiting payment (sum) and Payments queue (count).
+    """
+    pay = aliased(Payment)
+    stmt = (
+        select(Invoice, pay)
+        .outerjoin(
+            pay,
+            (pay.invoice_id == Invoice.id) & (pay.tenant_id == tenant_id),
+        )
+        .where(Invoice.tenant_id == tenant_id)
+        .order_by(Invoice.id)
+    )
+    totals: dict[str, Decimal] = {}
+    count = 0
+    for invoice, payments in _group_invoice_payments((await db.execute(stmt)).all()):
+        # Action column / Upload status filter "Approved"
+        if approval_board_column(invoice) != "approved":
+            continue
+        payment = _select_display_payment(payments)
+        # Payment auth column
+        if derive_matrix_payment_status(invoice, payment) != "Awaiting Payment":
+            continue
+        currency = _currency_code(invoice.currency)
+        totals[currency] = totals.get(currency, _ZERO) + _quantize(
+            Decimal(str(invoice.total or 0))
+        )
+        count += 1
+    return _currency_amounts(totals), count
+
+
+async def _overdue_aged_buckets(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    as_of: date,
+) -> dict[str, Decimal]:
+    preview = await _build_aged(
+        db, tenant_id, CATALOG_BY_ID["aged-payables"], as_of
+    )
+    bucket_idx = {name: preview.columns.index(name) for name in _OVERDUE_BUCKETS}
+    totals = {name: _ZERO for name in _OVERDUE_BUCKETS}
+    for row in preview.rows:
+        if row.emphasize:
+            continue
+        for name, idx in bucket_idx.items():
+            totals[name] += _parse_money(row.cells[idx])
+    return {name: _quantize(totals[name]) for name in _OVERDUE_BUCKETS}
+
+
+async def _budget_utilisation_avg(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    start: date,
+    end: date,
+) -> Decimal | None:
+    preview = await _build_budget_variance(
+        db,
+        tenant_id,
+        CATALOG_BY_ID["budget-variance"],
+        start,
+        end,
+        compare=False,
+        as_of=True,
+    )
+    utilise_idx = preview.columns.index("% Utilise")
+    values: list[Decimal] = []
+    for row in preview.rows:
+        if row.emphasize:
+            continue
+        pct = _parse_utilise_pct(row.cells[utilise_idx])
+        if pct is None:
+            continue
+        values.append(pct)
+    if not values:
+        return None
+    return _quantize(sum(values, _ZERO) / Decimal(len(values)))
+
+
+async def _advance_outstanding_total(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    as_of: date,
+) -> Decimal:
+    aging, _ = await build_advance_aging(
+        db, tenant_id, CATALOG_BY_ID["advance-aging"], as_of
+    )
+    total = _ZERO
+    for item in _preview_maps(aging):
+        # Prefer Outstanding column; fall back to summing age bucket cells.
+        outstanding = _parse_money(item.get("Outstanding", "") or "")
+        if outstanding > 0:
+            total += outstanding
+            continue
+        for bucket in _ADVANCE_BUCKETS:
+            total += _parse_money(item.get(bucket, "") or "")
+    return _quantize(total)
+
+
+async def _open_invoice_exceptions(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    start: date,
+    end: date,
+) -> int:
+    preview = await build_invoice_exception(
+        db,
+        tenant_id,
+        CATALOG_BY_ID["invoice-exception"],
+        start,
+        end,
+    )
+    return len(_preview_maps(preview))
+
+
+async def _claims_pending_count(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    start: date,
+    end: date,
+) -> int:
+    # TODO(confirm-schema): literal Status/Reason != "Approved" includes
+    # Rejected / Duplicate skipped — intentional per sheet.
+    preview = await build_claim_status(
+        db,
+        tenant_id,
+        CATALOG_BY_ID["claim-status"],
+        start,
+        end,
+        as_of=True,
+    )
+    count = 0
+    for item in _preview_maps(preview):
+        status = (item.get("Status / Reason", "") or "").strip()
+        if status != "Approved":
+            count += 1
+    return count
+
+
+async def _documents_to_review_count(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> int:
+    col = approval_board_column_expr()
+    count = (
+        await db.execute(
+            select(func.count(Invoice.id)).where(
+                Invoice.tenant_id == tenant_id,
+                col == "review",
+            )
+        )
+    ).scalar() or 0
+    return int(count)
 
 
 async def ap_outstanding_total_from_aged(
@@ -221,8 +398,29 @@ async def _ap_balance_as_of(
     *,
     base: str,
 ) -> Decimal:
-    lines = await _ap_lines(db, tenant_id, as_of, base=base)
-    return sum((line.remaining for line in lines), _ZERO)
+    """Ledger AP remaining in base currency — used for DPO only."""
+    outstanding = await ap_outstanding_rows(db, tenant_id, as_of)
+    if not outstanding:
+        return _ZERO
+    ids = [row.invoice_id for row in outstanding]
+    invoices = {
+        inv.id: inv
+        for inv in (
+            await db.execute(
+                select(Invoice).where(
+                    Invoice.tenant_id == tenant_id,
+                    Invoice.id.in_(ids),
+                )
+            )
+        ).scalars().all()
+        if inv.id is not None
+    }
+    total = _ZERO
+    for row in outstanding:
+        inv = invoices.get(row.invoice_id)
+        currency = (inv.currency if inv else None) or base
+        total += _to_base(row.remaining, currency, base=base)
+    return total
 
 
 async def _purchases_for_period(
@@ -311,210 +509,6 @@ async def _on_time_payment_rate(
     return _pct(on_time_total, paid_total)
 
 
-async def _budget_totals(
-    db: AsyncSession,
-    tenant_id: uuid.UUID,
-    start: date,
-    end: date,
-    *,
-    base: str,
-) -> tuple[Decimal, Decimal, Decimal, Decimal | None]:
-    preview = await _build_budget_variance(
-        db,
-        tenant_id,
-        CATALOG_BY_ID["budget-variance"],
-        start,
-        end,
-        compare=False,
-        as_of=True,
-    )
-    budget_idx = preview.columns.index("Budget")
-    actual_idx = preview.columns.index("Actual")
-    committed_idx = preview.columns.index("Committed")
-    allocated = _ZERO
-    actual = _ZERO
-    committed = _ZERO
-    for row in preview.rows:
-        if row.emphasize:
-            continue
-        allocated += _parse_money(row.cells[budget_idx])
-        actual += _parse_money(row.cells[actual_idx])
-        committed += _parse_money(row.cells[committed_idx])
-    utilisation = _pct(actual, allocated)
-    return allocated, actual, committed, utilisation
-
-
-async def _advance_totals(
-    db: AsyncSession,
-    tenant_id: uuid.UUID,
-    as_of: date,
-    *,
-    base: str,
-) -> tuple[Decimal, Decimal, int]:
-    settlement = await build_advance_settlement_rows(db, tenant_id)
-    outstanding = sum(
-        (Decimal(str(row.advance_ledger_balance or 0)) for row in settlement),
-        _ZERO,
-    )
-    aging, _ = await build_advance_aging(
-        db, tenant_id, CATALOG_BY_ID["advance-aging"], as_of
-    )
-    overdue = _ZERO
-    employees: set[str] = set()
-    for item in _preview_maps(aging):
-        days = int(item.get("Days Outstanding", "0") or "0")
-        if days <= 0:
-            continue
-        amt = _parse_money(item.get("Outstanding", "") or item.get("Total", ""))
-        if amt <= 0:
-            continue
-        overdue += amt
-        owner = (item.get("Employee", "") or "").strip()
-        if owner:
-            employees.add(owner)
-    return outstanding, overdue, len(employees)
-
-
-async def _open_exceptions(
-    db: AsyncSession,
-    tenant_id: uuid.UUID,
-    start: date,
-    end: date,
-    *,
-    base: str,
-) -> tuple[int, Decimal]:
-    preview = await build_control_centre(
-        db,
-        tenant_id,
-        CATALOG_BY_ID["control-centre"],
-        start,
-        end,
-        as_of=True,
-    )
-    amount_idx = preview.columns.index("Amount")
-    count = 0
-    at_risk = _ZERO
-    for item in _preview_maps(preview):
-        count += 1
-        at_risk += _parse_money(item.get("Amount", ""))
-    return count, _quantize(at_risk)
-
-
-async def _document_board_totals(
-    db: AsyncSession,
-    tenant_id: uuid.UUID,
-    *,
-    base: str,
-) -> tuple[int, Decimal, int, Decimal]:
-    """Upload matrix approval-board columns (To Review / Processing)."""
-    col = approval_board_column_expr()
-    review_count = 0
-    review_value = _ZERO
-    processing_count = 0
-    processing_value = _ZERO
-    rows = (
-        await db.execute(
-            select(
-                col.label("board"),
-                func.count(Invoice.id),
-                Invoice.currency,
-                func.coalesce(func.sum(Invoice.total), 0),
-            )
-            .where(Invoice.tenant_id == tenant_id)
-            .group_by(col, Invoice.currency)
-        )
-    ).all()
-    for board, count, currency, total in rows:
-        key = str(board or "")
-        amount = _to_base(Decimal(str(total or 0)), currency, base=base)
-        item_count = int(count or 0)
-        if key == "review":
-            review_count += item_count
-            review_value += amount
-        elif key == "processing":
-            processing_count += item_count
-            processing_value += amount
-    return (
-        review_count,
-        _quantize(review_value),
-        processing_count,
-        _quantize(processing_value),
-    )
-
-
-async def _payments_queue_totals(
-    db: AsyncSession,
-    tenant_id: uuid.UUID,
-    *,
-    base: str,
-) -> tuple[int, Decimal]:
-    """Payments module open queue — same statuses as Payments workspace."""
-    open_statuses = (
-        PaymentStatus.QUEUE,
-        PaymentStatus.AWAITING,
-        PaymentStatus.SCHEDULED,
-    )
-    count = (
-        await db.execute(
-            select(func.count(Payment.id)).where(
-                Payment.tenant_id == tenant_id,
-                Payment.status.in_(open_statuses),
-            )
-        )
-    ).scalar() or 0
-    rows = (
-        await db.execute(
-            select(
-                Payment.currency,
-                func.coalesce(func.sum(Payment.amount), 0),
-            )
-            .where(
-                Payment.tenant_id == tenant_id,
-                Payment.status.in_(open_statuses),
-            )
-            .group_by(Payment.currency)
-        )
-    ).all()
-    value = sum(
-        (_to_base(Decimal(str(amount or 0)), currency, base=base) for currency, amount in rows),
-        _ZERO,
-    )
-    return int(count), _quantize(value)
-
-
-async def _claims_pending(
-    db: AsyncSession,
-    tenant_id: uuid.UUID,
-    *,
-    base: str,
-) -> tuple[int, Decimal]:
-    rows = (
-        await db.execute(
-            select(Invoice).where(
-                Invoice.tenant_id == tenant_id,
-                Invoice.route_target == ROUTE_TEAM,
-                Invoice.evaluation_status == EVAL_PENDING_APPROVAL,
-                Invoice.status.notin_(
-                    [InvoiceStatus.REJECTED, InvoiceStatus.DUPLICATE_SKIPPED]
-                ),
-            )
-        )
-    ).scalars().all()
-    pending: list[Invoice] = []
-    for inv in rows:
-        if quorum_met(inv.approval_chain):
-            continue
-        pending.append(inv)
-    total_value = sum(
-        (
-            _to_base(Decimal(str(inv.total or 0)), inv.currency, base=base)
-            for inv in pending
-        ),
-        _ZERO,
-    )
-    return len(pending), _quantize(total_value)
-
-
 async def _vendor_concentration(
     db: AsyncSession,
     tenant_id: uuid.UUID,
@@ -584,61 +578,63 @@ async def build_position_liquidity_dashboard(
     as_of = await _institution_today(db, tenant_id)
     period_start, period_end, period_label = resolve_dashboard_period(period, as_of)
 
-    ap_lines = await _ap_lines(db, tenant_id, as_of, base=base)
-    ap_buckets = _sum_ap_buckets(ap_lines, as_of)
-    overdue_pct = _pct(ap_buckets["overdue"], ap_buckets["ap_outstanding"])
+    register_lines = await _unpaid_register_lines(db, tenant_id, as_of, base=base)
+    ap_by_ccy = _sum_register_by_currency(register_lines, predicate=lambda _: True)
+    due_end = as_of + timedelta(days=7)
+    due7_by_ccy = _sum_register_by_currency(
+        register_lines,
+        predicate=lambda line: (
+            line.due_date is not None and as_of <= line.due_date <= due_end
+        ),
+    )
+    approved_by_ccy, payments_queue_count = await _uploads_approved_awaiting_payment(
+        db, tenant_id, base=base
+    )
+
+    overdue_buckets = await _overdue_aged_buckets(db, tenant_id, as_of)
+    overdue_total = _quantize(sum(overdue_buckets.values(), _ZERO))
 
     dpo = await _compute_dpo(db, tenant_id, period_start, period_end, base=base)
     prior_start, prior_end = _prior_window(period_start, period_end)
     dpo_prior = await _compute_dpo(db, tenant_id, prior_start, prior_end, base=base)
-
     on_time = await _on_time_payment_rate(
         db, tenant_id, period_start, period_end, base=base
     )
-    budget_allocated, budget_actual, budget_committed, utilisation = await _budget_totals(
-        db, tenant_id, period_start, period_end, base=base
+    utilisation = await _budget_utilisation_avg(
+        db, tenant_id, period_start, period_end
     )
-    advances_out, advances_overdue, advances_employees = await _advance_totals(
-        db, tenant_id, as_of, base=base
+    advances_out = await _advance_outstanding_total(db, tenant_id, as_of)
+    exceptions_count = await _open_invoice_exceptions(
+        db, tenant_id, period_start, period_end
     )
-    exceptions_count, exceptions_risk = await _open_exceptions(
-        db, tenant_id, period_start, period_end, base=base
+    claims_count = await _claims_pending_count(
+        db, tenant_id, period_start, period_end
     )
-    claims_count, claims_value = await _claims_pending(db, tenant_id, base=base)
-    (
-        review_count,
-        review_value,
-        processing_count,
-        processing_value,
-    ) = await _document_board_totals(db, tenant_id, base=base)
-    payments_count, payments_value = await _payments_queue_totals(
-        db, tenant_id, base=base
-    )
+    review_count = await _documents_to_review_count(db, tenant_id)
     top10_pct, non_po_pct = await _vendor_concentration(
         db, tenant_id, period_start, period_end, base=base
     )
 
     notes: list[str] = [
-        f"All figures {base}, consolidated.",
-        "AP balances use netted ledger truth (sum credit − debit on AP control), "
-        "same as Aged Payables.",
-        "Due buckets use non-overlapping windows: [0,7], (7,14], (14,30] days from as-of.",
-        f"Overdue threshold {_OVERDUE_AP_THRESHOLD_PCT}% is a default covenant constant "
-        "(not yet tenant-configurable).",
-        "Budget utilisation compares Actual to Allocated only; Committed (in-flight TE "
-        "claims) is excluded from the headline % — see Budget Variance for encumbrance.",
-        "Open exceptions = Control Centre row count (live rule evaluation, de-duplicated).",
-        "To Review / Processing use the Upload matrix approval-board columns "
-        "(same mapping as All Documents status filter).",
-        "Payments queue = open disbursements (queued, awaiting approval, scheduled).",
-        "Approved not paid = AP approved in ledger but not yet paid (Payments release).",
+        f"Reporting currency label {base}; Invoice Register money tiles are "
+        "per-currency native totals (no FX conversion).",
+        "AP Outstanding / Due next 7 read Invoice Register unpaid rows — they need "
+        "not reconcile with Overdue (Aged Payables journal remaining).",
+        "Approved · awaiting payment / Payments queue = Uploads Summary rows where "
+        "Action (approval board) is Approved and Payment Auth is Awaiting Payment "
+        "(native per-currency Amount sum / count).",
+        "Due next 7 days = due_date in [as_of, as_of+7] (already-overdue excluded).",
+        "Overdue = Aged Payables Balance Due in 1–30 / 31–60 / 61–90 / 90+.",
+        "Documents in pipeline = To Review count only (Processing excluded).",
+        "Budget utilisation = simple average of % Utilise (blank/- rows excluded).",
+        "Open exceptions = Invoice Exception report row count only.",
+        # TODO(confirm-schema): claims Status/Reason != Approved includes Rejected/Duplicate
+        "Claims pending = Claim Status rows where Status/Reason != Approved.",
+        "Employee advances = Advance Aging Outstanding across all age buckets.",
         "DPO and on-time payment rate remain in the API for reports but are not headline cards.",
         "Discount capture requires structured payment-term discount data — not tracked yet.",
     ]
     coverage_gaps = [
-        "bank_detail_change_before_payment: excluded from Open exceptions until a "
-        "dedicated register exists (Control Centre omits it by design; DT-23 bank-change "
-        "documents are tracked separately on the dashboard risk panel only).",
         "discount_capture: no structured vendor discount-term data — card shows honest gap.",
     ]
 
@@ -654,35 +650,24 @@ async def build_position_liquidity_dashboard(
             notes=notes,
         ),
         kpis=PositionLiquidityKpis(
-            ap_outstanding=ap_buckets["ap_outstanding"],
-            approved_not_paid=ap_buckets["approved_not_paid"],
-            due_next_7_days=ap_buckets["due_7"],
-            due_next_14_days=ap_buckets["due_14"],
-            due_next_30_days=ap_buckets["due_30"],
-            overdue=ap_buckets["overdue"],
-            overdue_pct=overdue_pct,
-            overdue_threshold_pct=_OVERDUE_AP_THRESHOLD_PCT,
+            ap_outstanding_by_currency=ap_by_ccy,
+            approved_not_paid_by_currency=approved_by_ccy,
+            due_next_7_days_by_currency=due7_by_ccy,
+            overdue=overdue_total,
+            overdue_1_30=overdue_buckets["1–30"],
+            overdue_31_60=overdue_buckets["31–60"],
+            overdue_61_90=overdue_buckets["61–90"],
+            overdue_90_plus=overdue_buckets["90+"],
             dpo_days=dpo,
             dpo_prior_year_days=dpo_prior,
             on_time_payment_rate_pct=on_time,
             discount_capture_rate_pct=None,
             budget_utilisation_pct=utilisation,
-            budget_actual=budget_actual,
-            budget_allocated=budget_allocated,
-            budget_committed=budget_committed,
             advances_outstanding=advances_out,
-            advances_overdue=advances_overdue,
-            advances_overdue_employees=advances_employees,
             open_exceptions_count=exceptions_count,
-            open_exceptions_at_risk=exceptions_risk,
             claims_pending_count=claims_count,
-            claims_pending_value=claims_value,
             documents_to_review_count=review_count,
-            documents_to_review_value=review_value,
-            documents_processing_count=processing_count,
-            documents_processing_value=processing_value,
-            payments_queue_count=payments_count,
-            payments_queue_value=payments_value,
+            payments_queue_count=payments_queue_count,
             vendor_top10_concentration_pct=top10_pct,
             vendor_non_po_spend_pct=non_po_pct,
         ),

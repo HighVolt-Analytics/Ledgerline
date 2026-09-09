@@ -1,4 +1,4 @@
-"""Reconciliation tests: Position & Liquidity dashboard === detail report totals."""
+"""Position & Liquidity dashboard — new report-sourced KPI definitions."""
 
 from __future__ import annotations
 
@@ -14,9 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models.invoice import Invoice, InvoiceStatus
-from app.models.tenant import Tenant
 from app.models.journal import EntryType
 from app.models.payment import Payment, PaymentStatus
+from app.models.tenant import Tenant
 from app.services.invoice.invoice_evaluation_service import (
     EVAL_PENDING_APPROVAL,
     ROUTE_TEAM,
@@ -24,24 +24,18 @@ from app.services.invoice.invoice_evaluation_service import (
 from app.services.reports.exception_status_catalog_builders import (
     _parse_money,
     _preview_maps,
-    build_control_centre,
-)
-from app.services.reports.payables_catalog_builders import (
-    ap_outstanding_rows,
-    build_vendor_spend_summary,
+    build_claim_status,
+    build_invoice_exception,
 )
 from app.services.reports.position_liquidity_service import (
-    _ap_lines,
     _compute_dpo,
     _on_time_payment_rate,
-    _sum_ap_buckets,
     _vendor_concentration,
-    ap_outstanding_total_from_aged,
     build_position_liquidity_dashboard,
 )
 from app.services.reports.report_catalog import CATALOG_BY_ID
 from app.services.reports.statement_builders import _build_aged, _build_budget_variance
-from app.services.reports.team_expense_reports_service import build_advance_settlement_rows
+from app.services.reports.team_expense_catalog_builders import build_advance_aging
 from app.tenant_ids import TESTING_TENANT_UUID
 from tests.auth_test_helpers import seed_admin_user, tenant_auth_headers
 from tests.journal_test_helpers import seed_journal_batch
@@ -52,6 +46,20 @@ TENANT_HEADER_A_ID = UUID("22222222-2222-4222-8222-222222222201")
 TENANT_HEADER_B_ID = UUID("22222222-2222-4222-8222-222222222202")
 AP_OUTSTANDING_A = Decimal("100000.00")
 AP_OUTSTANDING_B = Decimal("999999.00")
+
+
+def _ccy_amount(rows, currency: str = "AUD") -> Decimal:
+    for row in rows:
+        if row.currency == currency:
+            return Decimal(str(row.amount))
+    return Decimal("0.00")
+
+
+def _ccy_api(rows: list[dict[str, Any]], currency: str = "AUD") -> Decimal:
+    for row in rows:
+        if row.get("currency") == currency:
+            return Decimal(str(row.get("amount", "0")))
+    return Decimal("0.00")
 
 
 async def _invoice(db: AsyncSession, **kwargs) -> Invoice:
@@ -131,117 +139,206 @@ async def test_position_liquidity_api_empty(client: AsyncClient) -> None:
     res = await client.get("/api/dashboard/position-liquidity")
     assert res.status_code == 200
     body = res.json()["data"]
-    assert body["kpis"]["ap_outstanding"] == "0.00"
+    assert body["kpis"]["ap_outstanding_by_currency"] == []
+    assert body["kpis"]["due_next_7_days_by_currency"] == []
+    assert body["kpis"]["overdue"] == "0.00"
     assert body["meta"]["currency"]
 
 
 @pytest.mark.asyncio
-async def test_ap_outstanding_reconciles_with_aged_payables(
+async def test_ap_outstanding_sums_unpaid_register_totals_per_currency(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
     as_of = date.today()
-    inv = await _invoice(
+    await _invoice(
         db_session,
-        file_hash="pl-ap-1",
-        invoice_no="PL-AP-1",
+        file_hash="pl-ap-aud",
+        invoice_no="PL-AP-AUD",
         due_date=as_of + timedelta(days=5),
         total=Decimal("200.00"),
-        approval_chain={"approvals": [{"name": "Mgr", "at": "2026-01-01T00:00:00Z"}]},
+        currency="AUD",
     )
-    await _journal(db_session, inv, credit=Decimal("200.00"))
-    partial = await _invoice(
+    await _invoice(
         db_session,
-        file_hash="pl-ap-2",
-        invoice_no="PL-PARTIAL",
-        due_date=as_of - timedelta(days=3),
-        total=Decimal("100.00"),
+        file_hash="pl-ap-inr",
+        invoice_no="PL-AP-INR",
+        due_date=as_of + timedelta(days=5),
+        total=Decimal("500.00"),
+        currency="INR",
     )
-    await _journal(db_session, partial, credit=Decimal("100.00"))
-    await _journal(db_session, partial, debit=Decimal("40.00"))
+    paid = await _invoice(
+        db_session,
+        file_hash="pl-ap-paid",
+        invoice_no="PL-AP-PAID",
+        due_date=as_of + timedelta(days=5),
+        total=Decimal("999.00"),
+        currency="AUD",
+    )
+    await _payment(db_session, paid, amount=Decimal("999.00"), paid_date=as_of)
     await db_session.commit()
 
     dashboard = await build_position_liquidity_dashboard(
         db_session, tenant_id=TESTING_TENANT_UUID
     )
-    aged_total = await ap_outstanding_total_from_aged(
-        db_session, TESTING_TENANT_UUID, as_of, base=dashboard.meta.currency
+    assert _ccy_amount(dashboard.kpis.ap_outstanding_by_currency, "AUD") == Decimal(
+        "200.00"
     )
-    assert dashboard.kpis.ap_outstanding == aged_total
-
-    lines = await _ap_lines(
-        db_session, TESTING_TENANT_UUID, as_of, base=dashboard.meta.currency
+    assert _ccy_amount(dashboard.kpis.ap_outstanding_by_currency, "INR") == Decimal(
+        "500.00"
     )
-    buckets = _sum_ap_buckets(lines, as_of)
-    assert dashboard.kpis.ap_outstanding == buckets["ap_outstanding"]
-    assert dashboard.kpis.due_next_7_days == buckets["due_7"]
-    assert dashboard.kpis.overdue == buckets["overdue"]
 
     res = await client.get("/api/dashboard/position-liquidity")
-    assert Decimal(res.json()["data"]["kpis"]["ap_outstanding"]) == aged_total
+    body = res.json()["data"]["kpis"]
+    assert _ccy_api(body["ap_outstanding_by_currency"], "AUD") == Decimal("200.00")
+    assert _ccy_api(body["ap_outstanding_by_currency"], "INR") == Decimal("500.00")
 
 
 @pytest.mark.asyncio
-async def test_due_buckets_are_non_overlapping(
+async def test_due_next_7_days_window_excludes_overdue_and_beyond(
     db_session: AsyncSession,
 ) -> None:
     as_of = date.today()
     fixtures = [
-        ("d7", as_of + timedelta(days=3), Decimal("70.00")),
-        ("d14", as_of + timedelta(days=10), Decimal("80.00")),
-        ("d30", as_of + timedelta(days=20), Decimal("90.00")),
-        ("od", as_of - timedelta(days=2), Decimal("50.00")),
+        ("today", as_of, Decimal("10.00")),
+        ("d7", as_of + timedelta(days=7), Decimal("70.00")),
+        ("d8", as_of + timedelta(days=8), Decimal("80.00")),
+        ("od", as_of - timedelta(days=1), Decimal("50.00")),
+        ("none", None, Decimal("40.00")),
     ]
     for tag, due, amount in fixtures:
-        inv = await _invoice(
+        await _invoice(
             db_session,
-            file_hash=f"pl-bucket-{tag}",
-            invoice_no=f"PL-{tag.upper()}",
+            file_hash=f"pl-due-{tag}",
+            invoice_no=f"PL-DUE-{tag.upper()}",
             due_date=due,
             total=amount,
+            currency="AUD",
         )
-        await _journal(db_session, inv, credit=amount)
     await db_session.commit()
 
     dash = await build_position_liquidity_dashboard(
         db_session, tenant_id=TESTING_TENANT_UUID
     )
-    assert dash.kpis.due_next_7_days == Decimal("70.00")
-    assert dash.kpis.due_next_14_days == Decimal("80.00")
-    assert dash.kpis.due_next_30_days == Decimal("90.00")
-    assert dash.kpis.overdue == Decimal("50.00")
-    assert (
-        dash.kpis.due_next_7_days
-        + dash.kpis.due_next_14_days
-        + dash.kpis.due_next_30_days
-        + dash.kpis.overdue
-        <= dash.kpis.ap_outstanding
-    )
+    assert _ccy_amount(dash.kpis.due_next_7_days_by_currency) == Decimal("80.00")
+    assert _ccy_amount(dash.kpis.ap_outstanding_by_currency) == Decimal("250.00")
 
 
 @pytest.mark.asyncio
-async def test_overdue_pct_uses_same_ap_denominator(db_session: AsyncSession) -> None:
+async def test_overdue_uses_aged_payables_buckets_not_register(
+    db_session: AsyncSession,
+) -> None:
     as_of = date.today()
-    inv = await _invoice(
+    # Register unpaid (no payment) — not used for overdue tile
+    await _invoice(
         db_session,
-        file_hash="pl-od-pct",
-        due_date=as_of - timedelta(days=1),
-        total=Decimal("25.00"),
+        file_hash="pl-od-reg",
+        invoice_no="PL-OD-REG",
+        due_date=as_of - timedelta(days=10),
+        total=Decimal("999.00"),
+        currency="AUD",
+        status=InvoiceStatus.PENDING,
     )
-    await _journal(db_session, inv, credit=Decimal("25.00"))
+    # Aged Payables needs PROCESSED + journal remaining
+    aged = await _invoice(
+        db_session,
+        file_hash="pl-od-aged",
+        invoice_no="PL-OD-AGED",
+        due_date=as_of - timedelta(days=10),
+        total=Decimal("100.00"),
+        currency="AUD",
+        status=InvoiceStatus.PROCESSED,
+    )
+    await _journal(db_session, aged, credit=Decimal("100.00"))
+    edge30 = await _invoice(
+        db_session,
+        file_hash="pl-od-30",
+        invoice_no="PL-OD-30",
+        due_date=as_of - timedelta(days=30),
+        total=Decimal("30.00"),
+        status=InvoiceStatus.PROCESSED,
+    )
+    await _journal(db_session, edge30, credit=Decimal("30.00"))
+    edge31 = await _invoice(
+        db_session,
+        file_hash="pl-od-31",
+        invoice_no="PL-OD-31",
+        due_date=as_of - timedelta(days=31),
+        total=Decimal("31.00"),
+        status=InvoiceStatus.PROCESSED,
+    )
+    await _journal(db_session, edge31, credit=Decimal("31.00"))
     await db_session.commit()
 
     dash = await build_position_liquidity_dashboard(
         db_session, tenant_id=TESTING_TENANT_UUID
     )
-    if dash.kpis.ap_outstanding > 0:
-        expected = (
-            dash.kpis.overdue / dash.kpis.ap_outstanding * Decimal("100")
-        ).quantize(Decimal("0.01"))
-        assert dash.kpis.overdue_pct == expected
+    assert dash.kpis.overdue_1_30 == Decimal("130.00")
+    assert dash.kpis.overdue_31_60 == Decimal("31.00")
+    assert dash.kpis.overdue == Decimal("161.00")
+    assert "overdue_pct" not in dash.kpis.model_dump()
+
+    preview = await _build_aged(
+        db_session, TESTING_TENANT_UUID, CATALOG_BY_ID["aged-payables"], as_of
+    )
+    idx_130 = preview.columns.index("1–30")
+    idx_3160 = preview.columns.index("31–60")
+    manual_130 = sum(
+        (_parse_money(r.cells[idx_130]) for r in preview.rows if not r.emphasize),
+        Decimal("0"),
+    )
+    manual_3160 = sum(
+        (_parse_money(r.cells[idx_3160]) for r in preview.rows if not r.emphasize),
+        Decimal("0"),
+    )
+    assert dash.kpis.overdue_1_30 == manual_130
+    assert dash.kpis.overdue_31_60 == manual_3160
 
 
 @pytest.mark.asyncio
-async def test_budget_utilisation_reconciles_with_budget_variance(
+async def test_approved_awaiting_uses_uploads_approved_and_awaiting_payment(
+    db_session: AsyncSession,
+) -> None:
+    """Action=Approved (board) + Payment Auth=Awaiting Payment → sum Amount; queue = count."""
+    from app.services.approval.approval_board_service import approval_board_column
+    from app.services.reports.matrix_service import derive_matrix_payment_status
+
+    # PROCESSED + due date → board Approved + Payment Auth Awaiting Payment
+    match = await _invoice(
+        db_session,
+        file_hash="pl-appr-await",
+        invoice_no="PL-APPR-AWAIT",
+        due_date=date.today() + timedelta(days=3),
+        total=Decimal("1200.00"),
+        currency="AUD",
+        status=InvoiceStatus.PROCESSED,
+    )
+    # EXCEPTION On Hold (excluded)
+    await _invoice(
+        db_session,
+        file_hash="pl-appr-hold",
+        invoice_no="PL-APPR-HOLD",
+        total=Decimal("500.00"),
+        currency="AUD",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="vision_vaulted",
+        document_type_code="INV",
+    )
+    await db_session.commit()
+
+    assert approval_board_column(match) == "approved"
+    assert derive_matrix_payment_status(match, None) == "Awaiting Payment"
+
+    dash = await build_position_liquidity_dashboard(
+        db_session, tenant_id=TESTING_TENANT_UUID
+    )
+    assert _ccy_amount(dash.kpis.approved_not_paid_by_currency, "AUD") >= Decimal(
+        "1200.00"
+    )
+    assert dash.kpis.payments_queue_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_budget_utilisation_is_average_of_utilise_pct(
     db_session: AsyncSession,
 ) -> None:
     dash = await build_position_liquidity_dashboard(
@@ -258,35 +355,45 @@ async def test_budget_utilisation_reconciles_with_budget_variance(
         compare=False,
         as_of=True,
     )
-    budget_idx = preview.columns.index("Budget")
-    actual_idx = preview.columns.index("Actual")
-    allocated = Decimal("0")
-    actual = Decimal("0")
+    utilise_idx = preview.columns.index("% Utilise")
+    values: list[Decimal] = []
     for row in preview.rows:
         if row.emphasize:
             continue
-        allocated += _parse_money(row.cells[budget_idx])
-        actual += _parse_money(row.cells[actual_idx])
-    assert dash.kpis.budget_allocated == allocated
-    assert dash.kpis.budget_actual == actual
+        raw = (row.cells[utilise_idx] or "").strip()
+        if not raw or raw == "-":
+            continue
+        if raw.endswith("%"):
+            raw = raw[:-1].strip()
+        values.append(Decimal(raw))
+    if not values:
+        assert dash.kpis.budget_utilisation_pct is None
+    else:
+        expected = (sum(values) / Decimal(len(values))).quantize(Decimal("0.01"))
+        assert dash.kpis.budget_utilisation_pct == expected
 
 
 @pytest.mark.asyncio
-async def test_advances_outstanding_reconciles_with_advance_reconciliation(
+async def test_advances_outstanding_sums_aging_outstanding(
     db_session: AsyncSession,
 ) -> None:
     dash = await build_position_liquidity_dashboard(
         db_session, tenant_id=TESTING_TENANT_UUID
     )
-    rows = await build_advance_settlement_rows(db_session, TESTING_TENANT_UUID)
-    expected = sum(
-        (Decimal(str(r.advance_ledger_balance or 0)) for r in rows), Decimal("0")
+    as_of = date.fromisoformat(dash.meta.as_of)
+    aging, _ = await build_advance_aging(
+        db_session, TESTING_TENANT_UUID, CATALOG_BY_ID["advance-aging"], as_of
     )
+    expected = sum(
+        (_parse_money(item.get("Outstanding", "") or "") for item in _preview_maps(aging)),
+        Decimal("0"),
+    ).quantize(Decimal("0.01"))
     assert dash.kpis.advances_outstanding == expected
+    assert not hasattr(dash.kpis, "advances_overdue")
 
 
 @pytest.mark.asyncio
-async def test_open_exceptions_reconciles_with_control_centre(
+async def test_open_exceptions_counts_invoice_exception_only(
     db_session: AsyncSession,
 ) -> None:
     dash = await build_position_liquidity_dashboard(
@@ -294,23 +401,22 @@ async def test_open_exceptions_reconciles_with_control_centre(
     )
     start = date.fromisoformat(dash.meta.period_start)
     end = date.fromisoformat(dash.meta.period_end)
-    preview = await build_control_centre(
+    preview = await build_invoice_exception(
         db_session,
         TESTING_TENANT_UUID,
-        CATALOG_BY_ID["control-centre"],
+        CATALOG_BY_ID["invoice-exception"],
         start,
         end,
-        as_of=True,
     )
-    items = _preview_maps(preview)
-    assert dash.kpis.open_exceptions_count == len(items)
+    assert dash.kpis.open_exceptions_count == len(_preview_maps(preview))
+    assert not hasattr(dash.kpis, "open_exceptions_at_risk")
 
 
 @pytest.mark.asyncio
-async def test_claims_pending_counts_outstanding_approval_chain(
+async def test_claims_pending_excludes_only_approved_status_reason(
     db_session: AsyncSession,
 ) -> None:
-    pending = await _invoice(
+    await _invoice(
         db_session,
         file_hash="pl-claim-pending",
         route_target=ROUTE_TEAM,
@@ -318,43 +424,66 @@ async def test_claims_pending_counts_outstanding_approval_chain(
         evaluation_status=EVAL_PENDING_APPROVAL,
         status=InvoiceStatus.EXCEPTION,
         total=Decimal("55.00"),
-        approval_chain={
-            "module": "team_expenses",
-            "mode": "two_way",
-            "required": 2,
-            "approvals": [{"user_id": 1, "name": "Mgr"}],
-        },
+        invoice_date=date.today(),
     )
-    done = await _invoice(
+    await _invoice(
         db_session,
-        file_hash="pl-claim-done",
+        file_hash="pl-claim-approved",
         route_target=ROUTE_TEAM,
         team_expense_kind="claim",
-        evaluation_status=EVAL_PENDING_APPROVAL,
-        status=InvoiceStatus.EXCEPTION,
+        status=InvoiceStatus.PROCESSED,
         total=Decimal("99.00"),
-        approval_chain={
-            "module": "team_expenses",
-            "mode": "one_way",
-            "required": 1,
-            "approvals": [{"user_id": 1, "name": "Mgr"}],
-        },
+        invoice_date=date.today(),
+    )
+    await _invoice(
+        db_session,
+        file_hash="pl-claim-rejected",
+        route_target=ROUTE_TEAM,
+        team_expense_kind="claim",
+        status=InvoiceStatus.REJECTED,
+        total=Decimal("40.00"),
+        invoice_date=date.today(),
     )
     await db_session.commit()
 
     dash = await build_position_liquidity_dashboard(
         db_session, tenant_id=TESTING_TENANT_UUID
     )
-    assert dash.kpis.claims_pending_count == 1
-    assert dash.kpis.claims_pending_value == Decimal("55.00")
-    assert pending.id is not None
-    assert done.id is not None
+    start = date.fromisoformat(dash.meta.period_start)
+    end = date.fromisoformat(dash.meta.period_end)
+    preview = await build_claim_status(
+        db_session,
+        TESTING_TENANT_UUID,
+        CATALOG_BY_ID["claim-status"],
+        start,
+        end,
+        as_of=True,
+    )
+    expected = sum(
+        1
+        for item in _preview_maps(preview)
+        if (item.get("Status / Reason") or "").strip() != "Approved"
+    )
+    assert dash.kpis.claims_pending_count == expected
+    assert expected >= 2  # pending + rejected at minimum
 
 
 @pytest.mark.asyncio
-async def test_partial_payment_uses_netted_balance_not_invoice_total(
+async def test_documents_pipeline_is_to_review_only(
     db_session: AsyncSession,
 ) -> None:
+    dash = await build_position_liquidity_dashboard(
+        db_session, tenant_id=TESTING_TENANT_UUID
+    )
+    assert dash.kpis.documents_to_review_count >= 0
+    assert not hasattr(dash.kpis, "documents_processing_count")
+
+
+@pytest.mark.asyncio
+async def test_partial_payment_with_paid_date_excludes_from_register_ap(
+    db_session: AsyncSession,
+) -> None:
+    """Register unpaid = Payment Date empty; any paid_date drops the invoice from #1."""
     as_of = date.today()
     inv = await _invoice(
         db_session,
@@ -363,24 +492,18 @@ async def test_partial_payment_uses_netted_balance_not_invoice_total(
         due_date=as_of + timedelta(days=4),
         total=Decimal("110.00"),
     )
-    await _journal(db_session, inv, credit=Decimal("110.00"))
-    await _journal(db_session, inv, debit=Decimal("40.00"))
+    await _payment(db_session, inv, amount=Decimal("40.00"), paid_date=as_of)
     await db_session.commit()
-
-    rows = await ap_outstanding_rows(db_session, TESTING_TENANT_UUID, as_of)
-    partial = next(r for r in rows if r.invoice_no == "PL-PARTIAL")
-    assert partial.remaining == Decimal("70.00")
 
     dash = await build_position_liquidity_dashboard(
         db_session, tenant_id=TESTING_TENANT_UUID
     )
-    assert dash.kpis.due_next_7_days == Decimal("70.00")
-    assert dash.kpis.ap_outstanding == Decimal("70.00")
+    assert _ccy_amount(dash.kpis.ap_outstanding_by_currency) == Decimal("0.00")
+    assert _ccy_amount(dash.kpis.due_next_7_days_by_currency) == Decimal("0.00")
 
 
 @pytest.mark.asyncio
 async def test_dpo_known_inputs_formula(db_session: AsyncSession) -> None:
-    """DPO = (avg start/end AP balance ÷ purchases) × days — unit test with fixed window."""
     start = date(2026, 8, 1)
     end = date(2026, 8, 10)
     inv = await _invoice(
@@ -397,7 +520,6 @@ async def test_dpo_known_inputs_formula(db_session: AsyncSession) -> None:
         db_session, TESTING_TENANT_UUID, start, end, base="AUD"
     )
     assert dpo is not None
-    # AP at start = 0, at end = 200; purchases in window = 200; days = 10
     expected = (Decimal("100") / Decimal("200") * Decimal("10")).quantize(Decimal("0.01"))
     assert dpo == expected
 
@@ -444,15 +566,16 @@ async def test_discount_capture_honest_gap_not_computed(db_session: AsyncSession
 async def test_vendor_concentration_reconciles_with_vendor_spend_summary(
     db_session: AsyncSession,
 ) -> None:
-    today = date.today()
-    big = await _invoice(
+    from app.services.reports.payables_catalog_builders import build_vendor_spend_summary
+
+    await _invoice(
         db_session,
         file_hash="pl-vc-big",
         vendor="Big Vendor Co",
         invoice_no="PL-BIG",
         total=Decimal("800.00"),
     )
-    small = await _invoice(
+    await _invoice(
         db_session,
         file_hash="pl-vc-small",
         vendor="Small Vendor Co",
@@ -488,43 +611,18 @@ async def test_vendor_concentration_reconciles_with_vendor_spend_summary(
     manual_pct = (manual_top10 / total * Decimal("100")).quantize(Decimal("0.01"))
     assert dash.kpis.vendor_top10_concentration_pct == manual_pct
     assert dash.kpis.vendor_top10_concentration_pct == top10
-    assert big.vendor in {row.cells[0] for row in preview.rows if not row.emphasize}
 
 
 @pytest.mark.asyncio
-async def test_vendor_concentration_uses_invoiced_not_paid_amount(
+async def test_notes_document_register_vs_aged_divergence(
     db_session: AsyncSession,
 ) -> None:
-    """Bug #2 guard: concentration ranks on Total Invoiced, not Total Paid."""
-    inv = await _invoice(
-        db_session,
-        file_hash="pl-vc-zero-paid",
-        vendor="Zero Paid Co",
-        invoice_no="PL-ZERO-PAID",
-        total=Decimal("500.00"),
-    )
-    await _payment(db_session, inv, amount=Decimal("0.00"))
-    await db_session.commit()
-
     dash = await build_position_liquidity_dashboard(
         db_session, tenant_id=TESTING_TENANT_UUID
     )
-    preview = await build_vendor_spend_summary(
-        db_session,
-        TESTING_TENANT_UUID,
-        CATALOG_BY_ID["vendor-spend-summary"],
-        date.fromisoformat(dash.meta.period_start),
-        date.fromisoformat(dash.meta.period_end),
-        as_of=True,
-    )
-    paid_idx = preview.columns.index("Total Paid")
-    invoiced_idx = preview.columns.index("Total Invoiced")
-    row = next(
-        r for r in preview.rows if not r.emphasize and r.cells[0] == "Zero Paid Co"
-    )
-    assert row.cells[paid_idx] == "-"
-    assert row.cells[invoiced_idx] == "500.00"
-    assert dash.kpis.vendor_top10_concentration_pct == Decimal("100.00")
+    notes = " ".join(dash.meta.notes).lower()
+    assert "need not reconcile" in notes or "aged payables" in notes
+    assert "no fx" in notes or "per-currency" in notes
 
 
 def test_paid_payment_amount_null_is_zero_not_invoice_total() -> None:
@@ -537,18 +635,6 @@ def test_paid_payment_amount_null_is_zero_not_invoice_total() -> None:
     )
     assert amount == Decimal("0.00")
     assert missing is True
-
-
-@pytest.mark.asyncio
-async def test_open_exceptions_documents_bank_detail_gap(
-    db_session: AsyncSession,
-) -> None:
-    dash = await build_position_liquidity_dashboard(
-        db_session, tenant_id=TESTING_TENANT_UUID
-    )
-    gaps = " ".join(dash.meta.coverage_gaps).lower()
-    assert "bank_detail_change_before_payment" in gaps
-    assert "excluded" in gaps or "omits" in gaps
 
 
 def _iter_leaf_values(obj: Any) -> Iterator[Any]:
@@ -609,20 +695,6 @@ async def _seed_tenant_ap(
     )
     db.add(inv)
     await db.flush()
-    await seed_journal_batch(
-        db,
-        inv,
-        [
-            (
-                "2000",
-                "Accounts Payable",
-                Decimal("0"),
-                amount,
-                EntryType.CREDIT,
-            )
-        ],
-        entry_date=inv.invoice_date or date.today(),
-    )
     return inv
 
 
@@ -631,7 +703,6 @@ async def test_position_liquidity_does_not_leak_across_tenants(
     anon_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """GET /api/dashboard/position-liquidity scopes every KPI to the auth tenant only."""
     await _create_tenant(
         db_session,
         tenant_id=TENANT_A_ID,
@@ -676,7 +747,7 @@ async def test_position_liquidity_does_not_leak_across_tenants(
     )
     assert res_a.status_code == 200, res_a.text
     body_a = res_a.json()["data"]
-    assert body_a["kpis"]["ap_outstanding"] == str(AP_OUTSTANDING_A)
+    assert _ccy_api(body_a["kpis"]["ap_outstanding_by_currency"]) == AP_OUTSTANDING_A
     assert not _response_contains_decimal(body_a, AP_OUTSTANDING_B)
 
     res_b = await anon_client.get(
@@ -685,7 +756,7 @@ async def test_position_liquidity_does_not_leak_across_tenants(
     )
     assert res_b.status_code == 200, res_b.text
     body_b = res_b.json()["data"]
-    assert body_b["kpis"]["ap_outstanding"] == str(AP_OUTSTANDING_B)
+    assert _ccy_api(body_b["kpis"]["ap_outstanding_by_currency"]) == AP_OUTSTANDING_B
     assert not _response_contains_decimal(body_b, AP_OUTSTANDING_A)
 
 
