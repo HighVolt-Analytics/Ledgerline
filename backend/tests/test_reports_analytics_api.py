@@ -70,13 +70,13 @@ async def test_reports_analytics_processed_invoices(
     res = await client.get("/api/reports/analytics?month=2026-05")
     assert res.status_code == 200
     data = res.json()["data"]
-    # Pending + processed are downloadable; rejected/duplicate_skipped stay excluded.
-    assert data["document_count"] == 3
+    assert data["document_count"] == 2
     assert data["period_has_data"] is True
     assert Decimal(data["net_spend"]) == Decimal("300.00")
-    assert Decimal(data["gross_spend"]) == Decimal("1329.00")
-    assert len(data["by_gl_account"]) == 3
-    assert data["top_vendors"][0]["vendor"] == "Pending Co"
+    assert Decimal(data["gross_spend"]) == Decimal("330.00")
+    assert len(data["by_gl_account"]) == 2
+    assert data["by_gl_account"][0]["account"] == "Software Subscription Expense"
+    assert data["top_vendors"][0]["vendor"] == "Atlassian"
 
 
 @pytest.mark.asyncio

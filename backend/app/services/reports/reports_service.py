@@ -1,4 +1,4 @@
-"""Spend analytics for the Reports page — all active document statuses."""
+"""Spend analytics for the Reports page — processed invoices only."""
 
 from __future__ import annotations
 
@@ -23,12 +23,7 @@ from app.jurisdiction.packs import jurisdiction_pack_for_country
 from app.models.tenant import Tenant
 from app.tenant_settings import tenant_country, tenant_currency
 
-# Match workbook export: include vaulted/exception/pipeline docs; skip terminal rejects.
-_REPORTABLE_STATUSES = frozenset(
-    status
-    for status in InvoiceStatus
-    if status not in {InvoiceStatus.REJECTED, InvoiceStatus.DUPLICATE_SKIPPED}
-)
+_REPORTABLE_STATUSES = frozenset({InvoiceStatus.PROCESSED})
 _SUSPENSE_ACCOUNT = "Suspense Account"
 
 _ANALYTICS_INVOICE_LOAD = (
