@@ -205,13 +205,15 @@ async def list_approvals_board(
         reverse=True,
     )
     # Heal older queue items that entered Approvals before chain materialization.
+    from app.services.approval.approval_policy_io import load_policy_for_tenant_async
     from app.services.approval.approval_quorum_service import ensure_invoice_approval_chain
 
+    policy = await load_policy_for_tenant_async(db, tenant_id)
     healed = False
     for inv in rows:
         if inv.status not in _QUEUE_STATUSES:
             continue
-        if ensure_invoice_approval_chain(inv):
+        if ensure_invoice_approval_chain(inv, policy=policy):
             healed = True
     if healed:
         await db.flush()
@@ -283,11 +285,13 @@ async def list_approvals_queue(
             )
         ).scalars().all()
     )
+    from app.services.approval.approval_policy_io import load_policy_for_tenant_async
     from app.services.approval.approval_quorum_service import ensure_invoice_approval_chain
 
+    policy = await load_policy_for_tenant_async(db, tenant_id)
     healed = False
     for inv in rows:
-        if ensure_invoice_approval_chain(inv):
+        if ensure_invoice_approval_chain(inv, policy=policy):
             healed = True
     if healed:
         await db.flush()
@@ -550,6 +554,11 @@ async def approve_invoice_action(
 
     require_actor_in_pool(ctx)
     module_key = module_for_route_target(inv.route_target)
+    from app.services.approval.approval_policy_io import load_policy_for_tenant_async
+    from app.services.approval.approval_quorum_service import ensure_invoice_approval_chain
+
+    policy = await load_policy_for_tenant_async(db, ctx.tenant_id)
+    ensure_invoice_approval_chain(inv, policy=policy)
     inv.approval_chain = record_approval(
         inv.approval_chain,
         tenant_id=ctx.tenant_id,
@@ -558,6 +567,7 @@ async def approve_invoice_action(
         role=ctx.role or "",
         name=actor_name or actor_email or f"User {ctx.user_id}",
         amount=inv.total,
+        policy=policy,
     )
     progress = progress_from_chain(inv.approval_chain)
     if progress is None or not progress.quorum_met:
@@ -675,12 +685,22 @@ async def escalate_invoice_action(
     actor_name, actor_email = await actor_from_context(db, ctx)
     require_actor_in_pool(ctx)
     module_key = module_for_route_target(inv.route_target)
+    from app.services.approval.approval_policy_io import load_policy_for_tenant_async
+
+    policy = await load_policy_for_tenant_async(db, ctx.tenant_id)
     if not inv.approval_chain:
         inv.approval_chain = empty_chain(
             tenant_id=ctx.tenant_id,
             module_key=module_key,
             amount=inv.total,
+            policy=policy,
         )
+    else:
+        from app.services.approval.approval_quorum_service import (
+            ensure_invoice_approval_chain,
+        )
+
+        ensure_invoice_approval_chain(inv, policy=policy)
     inv.approval_chain = escalate_approval_chain(
         inv.approval_chain,
         note=note,

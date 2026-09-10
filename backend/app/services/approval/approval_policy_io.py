@@ -313,6 +313,26 @@ async def _delete_db_platform(tenant_id: uuid.UUID) -> None:
         await session.commit()
 
 
+def _policy_needs_schema_heal(raw: dict[str, Any] | None) -> bool:
+    """True when persisted JSON is pre-matrix legacy or missing required sections."""
+    if not isinstance(raw, dict):
+        return True
+    if "rules" in raw and "amount_approval_tiers" not in raw:
+        return True
+    tiers = raw.get("amount_approval_tiers")
+    if not isinstance(tiers, list) or not tiers:
+        return True
+    if "approval_limits" not in raw:
+        return True
+    matrix = raw.get("matrix")
+    if not isinstance(matrix, dict):
+        return True
+    for role in APPROVAL_ROLES:
+        if role not in matrix:
+            return True
+    return False
+
+
 def _filesystem_raw(tenant_id: uuid.UUID) -> dict[str, Any] | None:
     raw = _read_tenant_policy_file(_policy_path(tenant_id))
     if raw is not None:
@@ -324,12 +344,9 @@ async def load_policy_for_tenant_async(
     session: AsyncSession,
     tenant_id: uuid.UUID | int | str,
 ) -> ApprovalPolicyPayload:
-    """Load policy from the request DB session; migrate file → DB when missing."""
+    """Load policy from the request DB session; migrate/heal legacy rows into matrix schema."""
     tid = _coerce_tenant_uuid(tenant_id)
-    cached = _cache_get(tid)
-    if cached is not None:
-        return cached
-
+    # Always hit DB on request paths so multi-pod caches cannot serve a stale matrix.
     stored = await fetch_policy_dict(session, tid)
     if stored is None:
         file_raw = _filesystem_raw(tid)
@@ -339,6 +356,15 @@ async def load_policy_for_tenant_async(
         payload = ApprovalPolicyPayload.model_validate(normalized)
     else:
         payload = _payload_from_raw(stored)
+        if _policy_needs_schema_heal(stored):
+            healed = payload.model_dump()
+            await upsert_policy(session, tid, healed)
+            logger.info(
+                "approval_policy_schema_healed",
+                tenant_id=str(tid),
+                had_rules="rules" in stored,
+                had_tiers=isinstance(stored.get("amount_approval_tiers"), list),
+            )
 
     _cache_set(tid, payload)
     _save_tenant_policy_file(tid, payload.model_dump())
@@ -398,6 +424,8 @@ def load_policy_for_tenant(tenant_id: uuid.UUID | int | str) -> ApprovalPolicyPa
         else:
             raw = default_policy_dict()
             seeded_from_file = True
+    elif _policy_needs_schema_heal(raw):
+        seeded_from_file = True  # force persist of healed modern schema
 
     payload = _payload_from_raw(raw)
     _cache_set(tid, payload)

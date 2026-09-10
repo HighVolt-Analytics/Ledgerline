@@ -18,6 +18,33 @@ from app.tenant_ids import TESTING_TENANT_UUID
 
 
 @pytest.mark.asyncio
+async def test_approval_policy_heals_legacy_rules_only_schema(
+    db_session: AsyncSession,
+) -> None:
+    from app.services.approval.approval_policy_repository import upsert_policy
+
+    clear_approval_policy_cache()
+    await upsert_policy(
+        db_session,
+        TESTING_TENANT_UUID,
+        {
+            "locked": False,
+            "matrix": {"Admin": {"View": True, "Approve": True}},
+            "rules": [{"id": "ap1", "approver": "CFO approval"}],
+        },
+    )
+    policy = await load_policy_for_tenant_async(db_session, TESTING_TENANT_UUID)
+    assert policy.amount_approval_tiers
+    assert policy.amount_approval_tiers[0].approval_1 == "Manager"
+    assert "Finance Manager" in policy.matrix
+
+    row = await db_session.get(TenantApprovalPolicy, TESTING_TENANT_UUID)
+    assert row is not None
+    assert "amount_approval_tiers" in row.config
+    assert "rules" not in row.config
+
+
+@pytest.mark.asyncio
 async def test_approval_policy_persists_per_tenant_in_db(
     db_session: AsyncSession,
 ) -> None:

@@ -235,8 +235,10 @@ def empty_chain(
     tenant_id: uuid.UUID,
     module_key: str,
     amount: Any = None,
+    policy: Any | None = None,
 ) -> dict[str, Any]:
-    policy = load_policy_for_tenant(tenant_id)
+    if policy is None:
+        policy = load_policy_for_tenant(tenant_id)
     tiers = [t.model_dump() for t in policy.amount_approval_tiers]
     return build_chain_from_amount(
         tenant_id=tenant_id,
@@ -302,7 +304,11 @@ def _policy_chain_signature(chain: dict[str, Any] | None) -> tuple[Any, ...]:
     )
 
 
-def ensure_invoice_approval_chain(invoice: Any) -> bool:
+def ensure_invoice_approval_chain(
+    invoice: Any,
+    *,
+    policy: Any | None = None,
+) -> bool:
     """Materialize / refresh the amount-tier chain when a doc enters Approvals.
 
     Returns True when the invoice's approval_chain was written/updated.
@@ -319,6 +325,7 @@ def ensure_invoice_approval_chain(invoice: Any) -> bool:
             tenant_id=tenant_id,
             module_key=module_key,
             amount=getattr(invoice, "total", None),
+            policy=policy,
         )
         return True
     if not _pending_chain_without_approvals(existing):
@@ -327,6 +334,7 @@ def ensure_invoice_approval_chain(invoice: Any) -> bool:
         tenant_id=tenant_id,
         module_key=module_key,
         amount=getattr(invoice, "total", None),
+        policy=policy,
     )
     if _policy_chain_signature(existing) == _policy_chain_signature(refreshed):
         return False
@@ -343,9 +351,11 @@ def record_approval(
     role: str,
     name: str,
     amount: Any = None,
+    policy: Any | None = None,
 ) -> dict[str, Any]:
     """Append / advance amount-tier document approval; same user re-click is idempotent."""
-    policy = load_policy_for_tenant(tenant_id)
+    if policy is None:
+        policy = load_policy_for_tenant(tenant_id)
     tiers = [t.model_dump() for t in policy.amount_approval_tiers]
     limits = dict(policy.approval_limits or {})
 
@@ -356,6 +366,20 @@ def record_approval(
             amount=amount,
             tiers=tiers,
         )
+    elif _pending_chain_without_approvals(chain):
+        refreshed = build_chain_from_amount(
+            tenant_id=tenant_id,
+            module_key=module_key,
+            amount=amount,
+            tiers=tiers,
+        )
+        if _policy_chain_signature(chain) != _policy_chain_signature(refreshed):
+            base = refreshed
+        else:
+            base = deepcopy(chain)
+            base["module"] = module_key
+            if amount is not None:
+                base["amount"] = float(amount)
     else:
         base = deepcopy(chain)
         base["module"] = module_key
