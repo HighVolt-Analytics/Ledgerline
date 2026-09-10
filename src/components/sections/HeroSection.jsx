@@ -2,10 +2,9 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowRight, Play } from 'lucide-react';
 import HeroFloatingVisual from './HeroFloatingVisual';
-import { externalLinks } from '../../data/navigation';
+import { externalLinks, SUPADEMO_ID, SUPADEMO_EMBED_SRC } from '../../data/navigation';
 
 const EASE = [0.16, 1, 0.3, 1];
-const SUPADEMO_ID = 'cmrm3tpec02v5qm3qxyu3iris';
 
 export default function HeroSection() {
   const [tourOpen, setTourOpen] = useState(false);
@@ -86,7 +85,7 @@ export default function HeroSection() {
           </div>
         </div>
 
-        {/* Exact Supademo demo size: 2880×1304 (crops their 40px embed padding) */}
+        {/* Supademo Highvolt Demo: 2.21 aspect, 80svh cap */}
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
@@ -95,16 +94,16 @@ export default function HeroSection() {
         >
           <div
             className="relative w-full overflow-hidden rounded-2xl border border-border bg-black shadow-lg"
-            style={{ aspectRatio: '2880 / 1304', maxHeight: '80vh' }}
+            style={{ aspectRatio: '2.21', maxHeight: '80svh' }}
           >
             {tourOpen ? (
               <iframe
-                src={`https://app.supademo.com/embed/${SUPADEMO_ID}?embed_v=2`}
-                title="Ledgerline interactive product tour"
+                src={SUPADEMO_EMBED_SRC}
+                title="Highvolt Demo"
                 allow="clipboard-write"
                 allowFullScreen
-                className="absolute left-0 w-full border-0"
-                style={{ top: '-40px', height: 'calc(100% + 80px)' }}
+                loading="lazy"
+                className="absolute inset-0 h-full w-full border-0"
               />
             ) : (
               <button

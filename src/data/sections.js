@@ -121,7 +121,7 @@ export const entities = [
 export const integrations = [
   'Xero', 'QuickBooks', 'MYOB', 'NetSuite', 'SAP', 'Tally', 'Zoho',
   'Stripe Connect', 'WhatsApp', 'Viber', 'Microsoft 365', 'Google Drive',
-  'Slack', 'Notion', 'Zapier', 'Plaid',
+  'Slack', 'Oracle', 'Zapier', 'Plaid',
 ];
 
 export const recentInvoices = [

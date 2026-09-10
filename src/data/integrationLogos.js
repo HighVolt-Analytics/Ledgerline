@@ -2,7 +2,7 @@ import googledrive from '../assets/integrations/googledrive.svg?raw';
 import microsoft from '../assets/integrations/microsoft.svg?raw';
 import myob from '../assets/integrations/myob.svg?raw';
 import netsuite from '../assets/integrations/netsuite.svg?raw';
-import notion from '../assets/integrations/notion.svg?raw';
+import oracle from '../assets/integrations/oracle.svg?raw';
 import plaid from '../assets/integrations/plaid.svg?raw';
 import quickbooks from '../assets/integrations/quickbooks.svg?raw';
 import sap from '../assets/integrations/sap.svg?raw';
@@ -29,7 +29,7 @@ export const integrationLogoMap = {
   'Microsoft 365': microsoft,
   'Google Drive': googledrive,
   Slack: slack,
-  Notion: notion,
+  Oracle: oracle,
   Zapier: zapier,
   Plaid: plaid,
 };

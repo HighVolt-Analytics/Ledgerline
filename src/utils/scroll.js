@@ -1,3 +1,6 @@
 export function scrollToSection(id) {
-  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const el = document.getElementById(id);
+  if (!el) return;
+  const top = el.getBoundingClientRect().top + window.pageYOffset - 88;
+  window.scrollTo({ top, behavior: 'smooth' });
 }

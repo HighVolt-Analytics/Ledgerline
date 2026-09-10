@@ -9,15 +9,15 @@
   --card: 220 25% 7%;
   --card-foreground: 40 20% 96%;
   --card-border: 220 20% 13%;
-  --primary: 178 85% 45%;
-  --primary-foreground: 220 30% 4%;
+  --primary: 169 66% 51%;
+  --primary-foreground: 193 75% 6%;
   --secondary: 220 20% 12%;
   --secondary-foreground: 40 20% 96%;
   --muted: 220 20% 10%;
   --muted-foreground: 220 10% 65%;
-  --accent: 178 40% 16%;
-  --accent-foreground: 178 85% 70%;
-  --accent-glow: 185 95% 60%;
+  --accent: 169 40% 16%;
+  --accent-foreground: 169 66% 70%;
+  --accent-glow: 169 66% 51%;
   --destructive: 0 70% 50%;
   --destructive-foreground: 0 0% 100%;
   --font-sans: 'Geist', 'Inter', system-ui, sans-serif;
@@ -40,6 +40,22 @@
   html {
     scroll-behavior: smooth;
     overflow-x: clip;
+  }
+}
+
+@layer components {
+  .brand-wordmark {
+    white-space: nowrap;
+    font-size: 12.5px;
+    font-weight: 600;
+    letter-spacing: -0.012em;
+    color: hsl(var(--foreground));
+    line-height: 1.1;
+  }
+  @media (min-width: 640px) {
+    .brand-wordmark {
+      font-size: 15px;
+    }
   }
 }
 
@@ -636,11 +652,11 @@
   }
 
   .control-blocks-badge {
-    color: hsl(42 75% 58% / 0.9);
+    color: hsl(178 75% 58% / 0.9);
   }
 
   .control-glass-card:hover .control-blocks-badge {
-    color: hsl(42 78% 64% / 0.95);
+    color: hsl(178 80% 64% / 0.95);
   }
 
   /* Capture · v4 channel icons */
