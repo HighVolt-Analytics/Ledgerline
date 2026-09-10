@@ -23,7 +23,7 @@ export function ClaimApprovalChainBlock({
   const approvers =
     approversProp ?? approvalChainToApproverSteps(approvalChain);
   return (
-    <div className="mt-3" data-testid="claim-approval-chain">
+    <div className="mt-3" data-testid="document-approval-chain">
       <div className="text-[11px] text-muted-foreground uppercase tracking-wide mb-1.5">
         Approval chain
       </div>
@@ -31,7 +31,9 @@ export function ClaimApprovalChainBlock({
         {approvers.length > 0 ? (
           approvers.map((a) => <ApproverChip key={a.id} {...a} />)
         ) : (
-          <span className="text-xs text-muted-foreground">Awaiting first approval</span>
+          <span className="text-xs text-muted-foreground">
+            Waiting for approval steps from Policy &amp; privileges
+          </span>
         )}
       </div>
       {approvers.some((a) => a.state === "pending") &&
@@ -148,7 +150,6 @@ export function InvoiceClaimReviewSection({
   budgetAllocated,
   budgetConsumed,
   currency,
-  approvalChain,
 }: {
   showKind?: boolean;
   kind?: TeamExpenseKind;
@@ -168,7 +169,6 @@ export function InvoiceClaimReviewSection({
   budgetAllocated?: number | null;
   budgetConsumed?: number | null;
   currency: string;
-  approvalChain?: ApprovalChain | null;
 }) {
   return (
     <div className="mt-4 space-y-0" data-testid="invoice-claim-review">
@@ -200,7 +200,6 @@ export function InvoiceClaimReviewSection({
           currency={currency}
         />
       ) : null}
-      <ClaimApprovalChainBlock approvalChain={approvalChain} />
     </div>
   );
 }

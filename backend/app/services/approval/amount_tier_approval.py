@@ -449,3 +449,45 @@ def require_payment_approver_role(
         raise AmountTierApprovalError(
             f"Payment approval requires {required} or higher for this amount"
         )
+
+
+def approval_limit_for_role(
+    limits: dict[str, float | None] | None, actor_role: str | None
+) -> float | None:
+    """Return the numeric ceiling for this role, or None when unlimited/unset."""
+    if not limits or not actor_role:
+        return None
+    label = _normalize_role_label(actor_role)
+    if not label:
+        normalized = normalize_tenant_role(actor_role)
+        if normalized is not None:
+            label = format_tenant_role_label(normalized.value)
+    if not label:
+        return None
+    value = limits.get(label)
+    if value is None or value == "":
+        return None
+    return _to_float(value)
+
+
+def require_actor_within_approval_limit(
+    limits: dict[str, float | None] | None,
+    actor_role: str | None,
+    amount: float | Decimal | None,
+) -> None:
+    """Block approve when document amount exceeds the actor role's approval limit.
+
+    null / missing limit = unlimited. Amount tiers still decide *who* must sign;
+    this ceiling caps what a given role may personally approve.
+    """
+    limit = approval_limit_for_role(limits, actor_role)
+    if limit is None:
+        return
+    amt = _to_float(amount)
+    if amt is None:
+        amt = 0.0
+    if amt > float(limit):
+        raise AmountTierApprovalError(
+            f"Your approval limit is {float(limit):,.2f}; this document is "
+            f"{amt:,.2f}. Escalate to a higher role."
+        )

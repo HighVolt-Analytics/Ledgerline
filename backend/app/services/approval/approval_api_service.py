@@ -205,6 +205,17 @@ async def list_approvals_board(
         key=lambda inv: (inv.created_at, inv.id),
         reverse=True,
     )
+    # Heal older queue items that entered Approvals before chain materialization.
+    from app.services.approval.approval_quorum_service import ensure_invoice_approval_chain
+
+    healed = False
+    for inv in rows:
+        if inv.status not in _QUEUE_STATUSES:
+            continue
+        if ensure_invoice_approval_chain(inv):
+            healed = True
+    if healed:
+        await db.flush()
     responses = await responses_for_approval_board(db, list(rows), tenant_id=tenant_id)
     by_id_inv = {inv.id: inv for inv in rows}
     enriched: list[InvoiceResponse] = []
@@ -266,15 +277,25 @@ async def list_approvals_queue(
 
     total = (await db.execute(count_stmt)).scalar() or 0
     pages = max(1, (total + params.page_size - 1) // params.page_size)
-    rows = (
-        await db.execute(
-            stmt.offset((params.page - 1) * params.page_size).limit(params.page_size)
-        )
-    ).scalars().all()
+    rows = list(
+        (
+            await db.execute(
+                stmt.offset((params.page - 1) * params.page_size).limit(params.page_size)
+            )
+        ).scalars().all()
+    )
+    from app.services.approval.approval_quorum_service import ensure_invoice_approval_chain
+
+    healed = False
+    for inv in rows:
+        if ensure_invoice_approval_chain(inv):
+            healed = True
+    if healed:
+        await db.flush()
 
     return ApprovalListResult(
         rows=await responses_for_invoices(
-            db, list(rows), tenant_id=tenant_id, for_list=True
+            db, rows, tenant_id=tenant_id, for_list=True
         ),
         meta=ResponseMeta(page=params.page, total=total, pages=pages),
     )

@@ -239,6 +239,9 @@ async def apply_team_expense_approval_gate(
 
     invoice.status = InvoiceStatus.EXCEPTION
     invoice.evaluation_status = EVAL_PENDING_APPROVAL
+    from app.services.approval.approval_quorum_service import ensure_invoice_approval_chain
+
+    ensure_invoice_approval_chain(invoice)
     await log_event(
         session,
         "team_expense_approval_required",

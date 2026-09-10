@@ -48,7 +48,7 @@ export const LEGACY_APPROVAL_ROLE_LABELS: Record<string, ApprovalRole> = {
   Auditor: "Director",
 };
 
-/** Per-role approval amount ceiling. Placeholder — not enforced yet. null = unset. */
+/** Per-role approval amount ceiling. null = unlimited. Enforced on approve/payment. */
 export type ApprovalLimitsByRole = Record<ApprovalRole, number | null>;
 
 export type AmountApprovalTierRow = {
@@ -64,7 +64,7 @@ export type AmountApprovalTierRow = {
 export type LocalApprovalPolicy = {
   locked: boolean;
   matrix: Record<ApprovalRole, Record<ApprovalAction, boolean>>;
-  /** Placeholder per-role ceilings; editable only when Approve is on. */
+  /** Max amount this role may personally approve; null = unlimited. */
   approval_limits: ApprovalLimitsByRole;
   amount_approval_tiers: AmountApprovalTierRow[];
 };

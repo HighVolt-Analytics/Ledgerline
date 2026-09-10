@@ -134,7 +134,7 @@ PROFILE_PRESETS: dict[PlaybookProfile, PlaybookProfilePreset] = {
     ),
     PROFILE_STANDARD_TRANSACTIONAL: PlaybookProfilePreset(
         match_mode="none",
-        approval_mode="touchless_on_clean_match",
+        approval_mode="full_doa",
         enforce_bundle_mandatory=False,
     ),
 }

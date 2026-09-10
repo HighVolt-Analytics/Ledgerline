@@ -12,6 +12,7 @@ from app.schemas.document_type import DocumentTypeDefinition
 from app.services.classification.document_type_approval_service import apply_document_type_approval_gate
 from app.services.invoice.invoice_evaluation_service import EVAL_PENDING_APPROVAL
 from app.services.rule_book.validator import ValidationResult
+from app.tenant_ids import TESTING_TENANT_UUID
 
 
 def _definition(**kwargs) -> DocumentTypeDefinition:
@@ -50,6 +51,10 @@ def _setup_gate_mocks(monkeypatch: pytest.MonkeyPatch) -> _GateMocks:
     monkeypatch.setattr(
         "app.services.classification.document_type_approval_service.latest_audit_detail_after_cycle_reset",
         AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "app.services.approval.approval_quorum_service.ensure_invoice_approval_chain",
+        lambda invoice: False,
     )
     return _GateMocks(session=session, log_event=log_event)
 
@@ -161,9 +166,10 @@ async def test_po_goods_with_po_no_grn_still_match_not_clean(
 
 
 @pytest.mark.asyncio
-async def test_backward_compat_standard_transactional_none_passes_touchless(
+async def test_touchless_with_match_none_holds_for_amount_tier(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Touchless when matched + Match none cannot prove clean — hold for Approvals."""
     mocks = _setup_gate_mocks(monkeypatch)
     definition = _definition(
         code="DT-07",
@@ -173,8 +179,10 @@ async def test_backward_compat_standard_transactional_none_passes_touchless(
     )
     invoice = MagicMock()
     invoice.id = 7
+    invoice.tenant_id = TESTING_TENANT_UUID
     invoice.route_target = "Purchase Management"
     invoice.total = Decimal("100.00")
+    invoice.approval_chain = None
 
     held = await apply_document_type_approval_gate(
         mocks.session,
@@ -182,8 +190,9 @@ async def test_backward_compat_standard_transactional_none_passes_touchless(
         definition=definition,
         validation_results=[],
     )
-    assert held is False
-    mocks.log_event.assert_not_awaited()
+    assert held is True
+    assert invoice.evaluation_status == EVAL_PENDING_APPROVAL
+    assert _audit_reason(mocks.log_event) == "no_match_basis"
 
 
 @pytest.mark.asyncio
@@ -329,17 +338,34 @@ async def test_backward_compat_variance_workflow_holds_without_name_error(
     mocks = _setup_gate_mocks(monkeypatch)
     definition = _definition(
         playbookProfile="po_goods",
+        matchPolicy={"mode": "three_way_po_grn"},
         approvalPolicy={"mode": "variance_workflow"},
     )
     invoice = MagicMock()
     invoice.id = 99
+    invoice.tenant_id = TESTING_TENANT_UUID
     invoice.route_target = "Purchase Management"
+    invoice.approval_chain = None
 
-    po = MagicMock()
-    po.variance_approved = False
+    from app.services.match.match_variance_gate_service import MatchVarianceGateResult
+
     monkeypatch.setattr(
-        "app.services.classification.document_type_approval_service.load_purchase_order_for_invoice",
-        AsyncMock(return_value=po),
+        "app.services.invoice.invoice_evaluation_service.load_config_for_tenant",
+        AsyncMock(return_value=MagicMock(document_types=[], purchase_match=MagicMock())),
+    )
+    monkeypatch.setattr(
+        "app.services.match.match_variance_gate_service.evaluate_match_variance_gate",
+        AsyncMock(
+            return_value=MatchVarianceGateResult(
+                blocked=True,
+                outcome=MagicMock(status="Price Variance"),
+                variance_approved=False,
+                anchor_number="PO-9",
+                anchor_type="purchase",
+                qty_tolerance_pct=0.0,
+                match_mode="three_way_po_grn",
+            )
+        ),
     )
 
     held = await apply_document_type_approval_gate(
@@ -349,7 +375,7 @@ async def test_backward_compat_variance_workflow_holds_without_name_error(
         validation_results=[],
     )
     assert held is True
-    assert _audit_reason(mocks.log_event) == "purchase_variance_pending"
+    assert _audit_reason(mocks.log_event) == "match_variance_pending"
 
 
 # ---------------------------------------------------------------------------
@@ -397,7 +423,7 @@ async def test_require_approval_for_unmatched_holds_on_none_tier(
 
 
 @pytest.mark.asyncio
-async def test_require_approval_for_unmatched_default_still_passes_none_tier(
+async def test_require_approval_for_unmatched_default_holds_no_match_basis(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mocks = _setup_gate_mocks(monkeypatch)
@@ -409,8 +435,10 @@ async def test_require_approval_for_unmatched_default_still_passes_none_tier(
     )
     invoice = MagicMock()
     invoice.id = 71
+    invoice.tenant_id = TESTING_TENANT_UUID
     invoice.route_target = "Purchase Management"
     invoice.total = Decimal("100.00")
+    invoice.approval_chain = None
 
     held = await apply_document_type_approval_gate(
         mocks.session,
@@ -418,7 +446,8 @@ async def test_require_approval_for_unmatched_default_still_passes_none_tier(
         definition=definition,
         validation_results=[],
     )
-    assert held is False
+    assert held is True
+    assert _audit_reason(mocks.log_event) == "no_match_basis"
 
 
 @pytest.mark.asyncio
@@ -626,36 +655,97 @@ async def test_multiple_risk_reasons_combined_in_single_hold(
 
 
 @pytest.mark.asyncio
-async def test_variance_workflow_nameerror_isolated_without_touchless(
+async def test_variance_workflow_holds_only_when_variance_gate_blocks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mocks = _setup_gate_mocks(monkeypatch)
     definition = _definition(
         playbookProfile="po_goods",
+        matchPolicy={"mode": "three_way_po_grn"},
         approvalPolicy={"mode": "variance_workflow"},
     )
     invoice = MagicMock()
     invoice.id = 77
+    invoice.tenant_id = TESTING_TENANT_UUID
     invoice.route_target = "Purchase Management"
+    invoice.approval_chain = None
 
-    po = MagicMock()
-    po.variance_approved = False
+    from app.services.match.match_variance_gate_service import MatchVarianceGateResult
 
-    with patch(
-        "app.services.classification.document_type_approval_service.load_purchase_order_for_invoice",
-        new_callable=AsyncMock,
-        return_value=po,
-    ) as load_po:
-        held = await apply_document_type_approval_gate(
-            mocks.session,
-            invoice,
-            definition=definition,
-            validation_results=[],
-        )
-        load_po.assert_awaited_once()
+    monkeypatch.setattr(
+        "app.services.invoice.invoice_evaluation_service.load_config_for_tenant",
+        AsyncMock(return_value=MagicMock(document_types=[], purchase_match=MagicMock())),
+    )
+    monkeypatch.setattr(
+        "app.services.match.match_variance_gate_service.evaluate_match_variance_gate",
+        AsyncMock(
+            return_value=MatchVarianceGateResult(
+                blocked=True,
+                outcome=MagicMock(status="Qty Variance"),
+                variance_approved=False,
+                anchor_number="PO-1",
+                anchor_type="purchase",
+                qty_tolerance_pct=0.0,
+                match_mode="three_way_po_grn",
+            )
+        ),
+    )
+
+    held = await apply_document_type_approval_gate(
+        mocks.session,
+        invoice,
+        definition=definition,
+        validation_results=[],
+    )
 
     assert held is True
-    assert _audit_reason(mocks.log_event) == "purchase_variance_pending"
+    assert _audit_reason(mocks.log_event) == "match_variance_pending"
+
+
+@pytest.mark.asyncio
+async def test_variance_workflow_passes_when_no_blocking_variance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mocks = _setup_gate_mocks(monkeypatch)
+    definition = _definition(
+        playbookProfile="po_goods",
+        matchPolicy={"mode": "three_way_po_grn"},
+        approvalPolicy={"mode": "variance_workflow"},
+    )
+    invoice = MagicMock()
+    invoice.id = 78
+    invoice.tenant_id = TESTING_TENANT_UUID
+    invoice.route_target = "Purchase Management"
+
+    from app.services.match.match_variance_gate_service import MatchVarianceGateResult
+
+    monkeypatch.setattr(
+        "app.services.invoice.invoice_evaluation_service.load_config_for_tenant",
+        AsyncMock(return_value=MagicMock(document_types=[], purchase_match=MagicMock())),
+    )
+    monkeypatch.setattr(
+        "app.services.match.match_variance_gate_service.evaluate_match_variance_gate",
+        AsyncMock(
+            return_value=MatchVarianceGateResult(
+                blocked=False,
+                outcome=None,
+                variance_approved=False,
+                anchor_number=None,
+                anchor_type=None,
+                qty_tolerance_pct=0.0,
+                match_mode="three_way_po_grn",
+            )
+        ),
+    )
+
+    held = await apply_document_type_approval_gate(
+        mocks.session,
+        invoice,
+        definition=definition,
+        validation_results=[],
+    )
+    assert held is False
+    mocks.log_event.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -755,6 +845,10 @@ async def test_dt07_unmatched_opt_in_holds_with_real_match_resolver(
         "app.services.classification.document_type_approval_service.counterparty_requires_registration",
         AsyncMock(return_value=False),
     )
+    monkeypatch.setattr(
+        "app.services.approval.approval_quorum_service.ensure_invoice_approval_chain",
+        lambda inv: False,
+    )
 
     held = await apply_document_type_approval_gate(
         db_session,
@@ -771,11 +865,11 @@ async def test_dt07_unmatched_opt_in_holds_with_real_match_resolver(
 
 
 @pytest.mark.asyncio
-async def test_dt07_unmatched_default_passes_with_real_match_resolver(
+async def test_dt07_touchless_none_holds_no_match_basis_integration(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Same DT-07 invoice without the opt-in flag still passes touchless (production gap)."""
+    """DT-07 touchless + match none holds — no match evidence to prove clean."""
     from decimal import Decimal
 
     from app.models.invoice import Invoice, InvoiceStatus
@@ -813,6 +907,10 @@ async def test_dt07_unmatched_default_passes_with_real_match_resolver(
         "app.services.classification.document_type_approval_service.log_event",
         log_event,
     )
+    monkeypatch.setattr(
+        "app.services.approval.approval_quorum_service.ensure_invoice_approval_chain",
+        lambda inv: False,
+    )
 
     held = await apply_document_type_approval_gate(
         db_session,
@@ -821,9 +919,9 @@ async def test_dt07_unmatched_default_passes_with_real_match_resolver(
         validation_results=[],
     )
 
-    assert held is False
-    log_event.assert_not_awaited()
-
+    assert held is True
+    assert invoice.evaluation_status == EVAL_PENDING_APPROVAL
+    assert _audit_reason(log_event) == "no_match_basis"
 
 def test_rule_book_diff_detects_approval_policy_risk_field_change() -> None:
     """Risk field edits on a document type must appear in governance changelog diffs."""

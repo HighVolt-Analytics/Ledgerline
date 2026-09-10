@@ -423,6 +423,9 @@ async def request_approval(
     previous_status = inv.status.value
     inv.status = InvoiceStatus.EXCEPTION
     inv.evaluation_status = EVAL_PENDING_APPROVAL
+    from app.services.approval.approval_quorum_service import ensure_invoice_approval_chain
+
+    ensure_invoice_approval_chain(inv)
     await session.flush()
     await log_event(
         session,

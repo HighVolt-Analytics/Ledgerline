@@ -105,15 +105,73 @@ export const MATCH_MODE_OPTIONS: Array<{ value: MatchMode; label: string }> = [
   { value: "receipt_line", label: "Receipt per line" },
 ];
 
-export const APPROVAL_MODE_OPTIONS: Array<{ value: ApprovalMode; label: string }> = [
-  { value: "no_posting", label: "No posting" },
-  { value: "touchless_on_clean_match", label: "Touchless when matched" },
-  { value: "full_doa", label: "Full DOA approval" },
-  { value: "supervisor_on_exception", label: "Supervisor on exception" },
-  { value: "never_touchless", label: "Never touchless" },
-  { value: "manager_gate", label: "Manager gate (team expenses)" },
-  { value: "variance_workflow", label: "Variance workflow" },
+export const APPROVAL_MODE_OPTIONS: Array<{
+  value: ApprovalMode;
+  label: string;
+  hint: string;
+}> = [
+  {
+    value: "no_posting",
+    label: "No posting",
+    hint: "These documents are not sent for approval and are not posted to the books.",
+  },
+  {
+    value: "touchless_on_clean_match",
+    label: "Touchless when matched",
+    hint: "If the PO/SO match is clean, skip the Approvals queue. If match is off (None), documents still go to Approvals.",
+  },
+  {
+    value: "full_doa",
+    label: "Full DOA approval",
+    hint: "Every document of this type goes to the Approvals queue. Roles are set in Settings → Policy & privileges.",
+  },
+  {
+    value: "supervisor_on_exception",
+    label: "Supervisor on exception",
+    hint: "Clean matches skip Approvals. Incomplete or failed matches go to Approvals.",
+  },
+  {
+    value: "never_touchless",
+    label: "Never touchless",
+    hint: "Same as Full DOA approval — every document goes to the Approvals queue.",
+  },
+  {
+    value: "manager_gate",
+    label: "Manager gate (team expenses)",
+    hint: "For Team Expenses only. Uses the team amount threshold; who approves is still set in Policy & privileges.",
+  },
+  {
+    value: "variance_workflow",
+    label: "Variance workflow",
+    hint: "Goes to Approvals only when the PO/SO match shows a variance or a missing receipt.",
+  },
 ];
+
+export function approvalModeOptionsForEditor(draft: DocumentTypeDefinition) {
+  const route = (draft.routeTarget || "").trim();
+  const isTeam = route === "Team Expenses";
+  const current = effectiveApprovalPolicy(draft).mode;
+  const options = APPROVAL_MODE_OPTIONS.filter((row) => {
+    if (row.value === "manager_gate" && !isTeam && current !== "manager_gate") {
+      return false;
+    }
+    return true;
+  });
+  if (options.some((row) => row.value === current)) return options;
+  const orphan = APPROVAL_MODE_OPTIONS.find((row) => row.value === current);
+  if (!orphan) return options;
+  return [...options, { ...orphan, label: `${orphan.label} (current)` }];
+}
+
+export function clampApprovalModeForRoute(
+  routeTarget: string | undefined | null,
+  mode: ApprovalMode
+): ApprovalMode {
+  if (mode === "manager_gate" && (routeTarget || "").trim() !== "Team Expenses") {
+    return "full_doa";
+  }
+  return mode;
+}
 
 export function inferPlaybookProfileFromDefinition(
   docType: Pick<
@@ -246,7 +304,7 @@ const PROFILE_PRESETS: Record<
   },
   standard_transactional: {
     matchMode: "none",
-    approvalMode: "touchless_on_clean_match",
+    approvalMode: "full_doa",
     enforceBundle: false,
   },
 };
@@ -449,7 +507,10 @@ export function reconcilePlaybookDraft(draft: DocumentTypeDefinition): DocumentT
     draft.routeTarget,
     normalizeMatchMode(draft.matchPolicy?.mode, preset.matchMode)
   );
-  const approvalMode = normalizeApprovalMode(draft.approvalPolicy?.mode, preset.approvalMode);
+  const approvalMode = clampApprovalModeForRoute(
+    draft.routeTarget,
+    normalizeApprovalMode(draft.approvalPolicy?.mode, preset.approvalMode)
+  );
 
   return {
     ...draft,
@@ -468,7 +529,10 @@ export function applyPlaybookProfileSelection(
     ...draft,
     playbookProfile: profile,
     matchPolicy: { mode: clampMatchModeForRoute(draft.routeTarget, preset.matchMode) },
-    approvalPolicy: mergeApprovalPolicyMode(draft.approvalPolicy, preset.approvalMode),
+    approvalPolicy: mergeApprovalPolicyMode(
+      draft.approvalPolicy,
+      clampApprovalModeForRoute(draft.routeTarget, preset.approvalMode)
+    ),
   };
 }
 

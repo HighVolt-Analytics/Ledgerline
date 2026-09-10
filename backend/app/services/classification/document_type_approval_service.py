@@ -68,7 +68,14 @@ def _match_is_clean_for_touchless(
     *,
     match_mode: str,
 ) -> bool:
+    """Return True only when match mode can prove a clean match without further checks.
+
+    Match mode ``none`` / ``subledger_reconcile`` have no match evidence, so they
+    are never "clean for touchless" — callers must hold or recompute another way.
+    """
     _ = results
+    if match_mode in {"none", "subledger_reconcile"}:
+        return False
     if not match_mode_requires_po(match_mode) and match_mode not in {
         "reference_invoice",
         "shipment",
@@ -236,6 +243,9 @@ async def _hold_for_approval(
 ) -> None:
     invoice.status = InvoiceStatus.EXCEPTION
     invoice.evaluation_status = EVAL_PENDING_APPROVAL
+    from app.services.approval.approval_quorum_service import ensure_invoice_approval_chain
+
+    ensure_invoice_approval_chain(invoice)
     all_reasons = reasons if reasons else [reason]
     detail: dict[str, object] = {
         "reason": all_reasons[0],
@@ -389,8 +399,12 @@ async def apply_document_type_approval_gate(
     if mode == "no_posting":
         return False
 
+    # Manager gate is owned by the Team Expenses path. Off that route, treat as
+    # always-hold so a mis-set playbook still routes into Approvals + amount tiers.
     if mode == "manager_gate":
-        return False
+        if (invoice.route_target or "").strip() == ROUTE_TEAM:
+            return False
+        mode = "full_doa"
 
     match_mode = effective_match_policy(definition).mode
 
@@ -435,16 +449,28 @@ async def apply_document_type_approval_gate(
         return True
 
     if mode == "variance_workflow":
-        if not match_mode_requires_po(match_mode):
+        from app.services.invoice.invoice_evaluation_service import load_config_for_tenant
+        from app.services.match.match_variance_gate_service import (
+            evaluate_match_variance_gate,
+        )
+
+        if invoice.tenant_id is None:
             return False
-        po = await load_purchase_order_for_invoice(session, invoice)
-        if po is not None and po.variance_approved:
+        config = await load_config_for_tenant(session, invoice.tenant_id)
+        gate = await evaluate_match_variance_gate(session, invoice, config=config)
+        if not gate.blocked:
             return False
         await _hold_for_approval(
             session,
             invoice,
             definition=definition,
-            reason="purchase_variance_pending",
+            reason="match_variance_pending",
+            extra_detail={
+                "match_mode": gate.match_mode or match_mode,
+                "match_status": gate.outcome.status if gate.outcome else None,
+                "anchor_type": gate.anchor_type,
+                "anchor_number": gate.anchor_number,
+            },
         )
         return True
 
@@ -461,8 +487,16 @@ async def apply_document_type_approval_gate(
         return True
 
     if mode == "touchless_on_clean_match":
+        # No match mode ⇒ nothing to prove clean → hold for amount-tier approval.
         if match_mode in {"none", "subledger_reconcile"}:
-            return False
+            await _hold_for_approval(
+                session,
+                invoice,
+                definition=definition,
+                reason="no_match_basis",
+                extra_detail={"match_mode": match_mode},
+            )
+            return True
         if await _touchless_match_satisfied(
             session,
             invoice,

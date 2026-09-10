@@ -412,7 +412,8 @@ export function ApprovalPolicyPrivileges() {
               )}
             </h3>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Instead of assigning individual people, assign the Role.
+              When a document waits in Approvals, these amount bands choose which roles must
+              approve. Approval 1 and 2 are for the document; Approval 3 is for paying it later.
             </p>
           </div>
           {!policy.locked && (
@@ -553,8 +554,8 @@ export function ApprovalPolicyPrivileges() {
               )}
             </h3>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Role-based permissions across the approval workflow. Approval limit is a
-              placeholder and only editable when Approve is on for that role.
+              What each role can do. Approval limit is the highest amount that role can approve
+              (leave blank for no limit). Limits are editable only when Approve is turned on.
             </p>
           </div>
           {policy.locked ? (

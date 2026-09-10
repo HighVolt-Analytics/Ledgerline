@@ -2,6 +2,7 @@ import {
   APPROVAL_MODE_OPTIONS,
   applyPlaybookChange,
   approvalModeLabel,
+  approvalModeOptionsForEditor,
   effectiveApprovalPolicy,
   effectiveMatchPolicy,
   effectivePlaybookProfile,
@@ -33,15 +34,19 @@ function riskApprovalSummary(approval: ApprovalPolicy): string | null {
   if (!hasRiskApprovalSettings(approval)) return null;
   const parts: string[] = [];
   if (approval.autoApproveBelow != null && approval.autoApproveBelow > 0) {
-    parts.push(`approve below $${approval.autoApproveBelow}`);
+    parts.push(`at/above $${approval.autoApproveBelow}`);
   }
   if (approval.requireApprovalForUnmatched) {
-    parts.push("hold when unmatched");
+    parts.push("no PO/SO match");
   }
   if (approval.requireApprovalForUnverifiedCounterparty) {
-    parts.push("hold when counterparty unverified");
+    parts.push("new vendor/customer");
   }
   return parts.join(" · ");
+}
+
+function approvalModeHint(mode: ApprovalMode): string {
+  return APPROVAL_MODE_OPTIONS.find((row) => row.value === mode)?.hint ?? "";
 }
 
 export function PlaybookDetailSection({ docType }: { docType: DocumentTypeDefinition }) {
@@ -85,9 +90,13 @@ export function PlaybookPolicyEditor({
   const approval = effectiveApprovalPolicy(draft);
   const profileOptions = playbookProfileOptionsForEditor(draft);
   const matchOptions = matchModeOptionsForEditor(draft);
+  const approvalOptions = approvalModeOptionsForEditor(draft);
   const presetMatch = playbookPresetForProfile(profile).matchMode;
   const matchDiffersFromPreset = match.mode !== presetMatch;
   const presetRouteIncompatible = isProfilePresetMatchRouteIncompatible(draft);
+  const showRiskGates = approval.mode !== "no_posting";
+  const isTeamRoute = (draft.routeTarget || "").trim() === "Team Expenses";
+  const modeHint = approvalModeHint(approval.mode);
 
   const updateApprovalPolicy = (patch: Partial<ApprovalPolicy>) => {
     onChange({
@@ -165,60 +174,90 @@ export function PlaybookPolicyEditor({
               updateApprovalPolicy({ mode: e.target.value as ApprovalMode })
             }
             className="h-9 w-full rounded-md border border-border bg-field px-2 text-sm disabled:opacity-50"
+            data-testid="select-approval-mode"
           >
-            {APPROVAL_MODE_OPTIONS.map((row) => (
+            {approvalOptions.map((row) => (
               <option key={row.value} value={row.value}>
                 {row.label}
               </option>
             ))}
           </select>
+          <p className="text-[11px] text-muted-foreground">
+            Choose when this document type should wait in the Approvals queue. Who can
+            approve is set under Settings → Policy &amp; privileges.
+          </p>
+          {modeHint ? (
+            <p className="text-[11px] text-muted-foreground">{modeHint}</p>
+          ) : null}
+          {approval.mode === "manager_gate" && !isTeamRoute ? (
+            <p className="text-[11px] text-amber-600 dark:text-amber-500">
+              Team expense check is only for Team Expenses. On this route, documents will
+              always go to Approvals.
+            </p>
+          ) : null}
+          {approval.mode === "touchless_on_clean_match" &&
+          (match.mode === "none" || match.mode === "subledger_reconcile") ? (
+            <p className="text-[11px] text-amber-600 dark:text-amber-500">
+              Match is set to {matchModeLabel(match.mode)}, so there is nothing to auto-match.
+              Documents will go to Approvals. Pick &quot;Full DOA approval&quot;, or turn on a
+              real match mode if you want touchless on clean match.
+            </p>
+          ) : null}
         </div>
       </div>
 
-      <div className="space-y-3 rounded-md border border-border/70 bg-muted/20 p-3">
-        <p className="text-[11px] font-medium text-muted-foreground">Risk-based approval (opt-in)</p>
+      {showRiskGates ? (
+        <div className="space-y-3 rounded-md border border-border/70 bg-muted/20 p-3">
+          <p className="text-[11px] font-medium text-muted-foreground">
+            Also send for approval when…
+          </p>
+          <p className="text-[11px] text-muted-foreground">
+            Optional extras. Use the same currency as the document. Leave blank / off to use
+            Approval mode only.
+          </p>
+          {approval.mode === "manager_gate" ? (
+            <p className="text-[11px] text-muted-foreground">
+              Team Expenses also respects the amount threshold on the team rule.
+            </p>
+          ) : null}
+          <FieldLabel label="Total is at or above ($)">
+            <NumericInput
+              value={approval.autoApproveBelow ?? undefined}
+              onValueChange={(value) =>
+                updateApprovalPolicy({
+                  autoApproveBelow: value == null || value <= 0 ? null : value,
+                })
+              }
+              disabled={disabled}
+              className="h-8 text-xs"
+            />
+          </FieldLabel>
+          <label className="flex items-start gap-2 text-xs">
+            <Switch
+              checked={Boolean(approval.requireApprovalForUnmatched)}
+              disabled={disabled}
+              onCheckedChange={(checked) =>
+                updateApprovalPolicy({ requireApprovalForUnmatched: checked })
+              }
+            />
+            <span>There is no PO or SO match (even if Match mode is None).</span>
+          </label>
+          <label className="flex items-start gap-2 text-xs">
+            <Switch
+              checked={Boolean(approval.requireApprovalForUnverifiedCounterparty)}
+              disabled={disabled}
+              onCheckedChange={(checked) =>
+                updateApprovalPolicy({ requireApprovalForUnverifiedCounterparty: checked })
+              }
+            />
+            <span>The vendor or customer is not yet in your master list.</span>
+          </label>
+        </div>
+      ) : (
         <p className="text-[11px] text-muted-foreground">
-          Amount threshold is compared to invoice total in the document&apos;s own currency (no FX
-          conversion). Leave empty and switches off to preserve legacy behavior.
+          Extra approval rules are not used when the mode is &quot;No posting&quot;.
         </p>
-        <FieldLabel label="Require approval at/above ($)">
-          <NumericInput
-            value={approval.autoApproveBelow ?? undefined}
-            onValueChange={(value) =>
-              updateApprovalPolicy({
-                autoApproveBelow: value == null || value <= 0 ? null : value,
-              })
-            }
-            disabled={disabled}
-            className="h-8 text-xs"
-          />
-        </FieldLabel>
-        <label className="flex items-start gap-2 text-xs">
-          <Switch
-            checked={Boolean(approval.requireApprovalForUnmatched)}
-            disabled={disabled}
-            onCheckedChange={(checked) =>
-              updateApprovalPolicy({ requireApprovalForUnmatched: checked })
-            }
-          />
-          <span>
-            Require approval when no PO/SO match evidence exists (resolved tier is none), even if
-            match mode is &quot;none&quot; and approval is touchless.
-          </span>
-        </label>
-        <label className="flex items-start gap-2 text-xs">
-          <Switch
-            checked={Boolean(approval.requireApprovalForUnverifiedCounterparty)}
-            disabled={disabled}
-            onCheckedChange={(checked) =>
-              updateApprovalPolicy({ requireApprovalForUnverifiedCounterparty: checked })
-            }
-          />
-          <span>
-            Require approval when vendor/customer is not yet an established master record.
-          </span>
-        </label>
-      </div>
+      )}
     </div>
   );
 }

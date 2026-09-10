@@ -107,7 +107,10 @@ import {
   summarizePurchaseMatchReview,
   summarizeSalesMatchReview,
 } from "@/components/invoices/InvoiceMatchReviewSection";
-import { InvoiceClaimReviewSection } from "@/components/team-expenses/InvoiceClaimReviewSection";
+import {
+  ClaimApprovalChainBlock,
+  InvoiceClaimReviewSection,
+} from "@/components/team-expenses/InvoiceClaimReviewSection";
 import {
   isClaimExpenseRoute,
   isMatchRoute,
@@ -2516,9 +2519,10 @@ export function InvoiceDetailDrawer({
                         budgetAllocated={claimBudgetRow?.allocated ?? null}
                         budgetConsumed={claimBudgetRow?.consumed ?? null}
                         currency={(inv.currency || "").trim().toUpperCase() || "MMK"}
-                        approvalChain={inv.approval_chain}
                       />
                     ) : null}
+                    {/* Amount-tier approval chain — all routes (purchase/sales/expenses/team/vault) */}
+                    <ClaimApprovalChainBlock approvalChain={inv.approval_chain} />
                     {isPurchaseSalesRoute ? (
                       <InvoiceMatchReviewSection
                         inv={inv}

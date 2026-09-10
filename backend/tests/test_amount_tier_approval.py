@@ -23,6 +23,7 @@ from app.services.approval.approval_quorum_service import (
     quorum_met,
     record_approval,
 )
+from app.services.approval.approval_policy_io import load_policy_for_tenant
 from app.tenant_ids import TESTING_TENANT_UUID
 
 
@@ -140,3 +141,46 @@ def test_record_approval_blocks_wrong_role() -> None:
             name="Emp",
             amount=100,
         )
+
+
+def test_approval_limit_blocks_over_ceiling(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.schemas.approval_policy import ApprovalPolicyPayload
+    from app.services.approval import approval_quorum_service as quorum_mod
+
+    policy = load_policy_for_tenant(TESTING_TENANT_UUID)
+    data = policy.model_dump()
+    data["approval_limits"] = {**data.get("approval_limits", {}), "Manager": 500.0}
+    capped = ApprovalPolicyPayload.model_validate(data)
+    monkeypatch.setattr(quorum_mod, "load_policy_for_tenant", lambda _tid: capped)
+
+    with pytest.raises(ApprovalQuorumForbiddenError, match="approval limit"):
+        record_approval(
+            None,
+            tenant_id=TESTING_TENANT_UUID,
+            module_key="expenses",
+            user_id=1,
+            role="manager",
+            name="Mgr",
+            amount=1_000,
+        )
+
+
+def test_ensure_invoice_approval_chain_materializes() -> None:
+    from types import SimpleNamespace
+
+    from app.services.approval.approval_quorum_service import (
+        ensure_invoice_approval_chain,
+    )
+
+    inv = SimpleNamespace(
+        tenant_id=TESTING_TENANT_UUID,
+        route_target="Team Expenses",
+        total=12_500,
+        approval_chain=None,
+    )
+    assert ensure_invoice_approval_chain(inv) is True
+    assert inv.approval_chain["mode"] == "amount_tier"
+    assert inv.approval_chain["tier_id"] == "tier-5k-20k"
+    assert len([s for s in inv.approval_chain["steps"] if s["kind"] == "document"]) == 2
+    assert ensure_invoice_approval_chain(inv) is False  # already materialized
+

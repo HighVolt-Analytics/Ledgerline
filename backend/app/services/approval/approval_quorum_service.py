@@ -17,6 +17,7 @@ from app.services.approval.amount_tier_approval import (
     document_quorum_met,
     escalate_current_document_step,
     require_actor_for_current_step,
+    require_actor_within_approval_limit,
 )
 from app.services.approval.approval_policy_io import load_policy_for_tenant
 from app.tenant_roles import TenantRole, normalize_tenant_role
@@ -245,6 +246,33 @@ def empty_chain(
     )
 
 
+def chain_needs_materialize(chain: dict[str, Any] | None) -> bool:
+    if not isinstance(chain, dict) or not chain:
+        return True
+    steps = chain.get("steps")
+    return not isinstance(steps, list) or not steps
+
+
+def ensure_invoice_approval_chain(invoice: Any) -> bool:
+    """Materialize the amount-tier chain when a doc enters Approvals.
+
+    Returns True when the invoice's approval_chain was written/updated.
+    Does not rewrite chains that already have steps (in-progress or complete).
+    """
+    if not chain_needs_materialize(getattr(invoice, "approval_chain", None)):
+        return False
+    tenant_id = getattr(invoice, "tenant_id", None)
+    if tenant_id is None:
+        return False
+    module_key = module_for_route_target(getattr(invoice, "route_target", None))
+    invoice.approval_chain = empty_chain(
+        tenant_id=tenant_id,
+        module_key=module_key,
+        amount=getattr(invoice, "total", None),
+    )
+    return True
+
+
 def record_approval(
     chain: dict[str, Any] | None,
     *,
@@ -258,6 +286,7 @@ def record_approval(
     """Append / advance amount-tier document approval; same user re-click is idempotent."""
     policy = load_policy_for_tenant(tenant_id)
     tiers = [t.model_dump() for t in policy.amount_approval_tiers]
+    limits = dict(policy.approval_limits or {})
 
     if not isinstance(chain, dict) or not chain or not chain.get("steps"):
         base = build_chain_from_amount(
@@ -284,6 +313,7 @@ def record_approval(
             return base
 
     try:
+        require_actor_within_approval_limit(limits, role, amount)
         require_actor_for_current_step(base, role)
         return apply_document_approval(
             base, user_id=user_id, role=role, name=name

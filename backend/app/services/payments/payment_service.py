@@ -171,15 +171,20 @@ async def approve_payment(
         if invoice is not None:
             from app.services.approval.amount_tier_approval import (
                 AmountTierApprovalError,
+                require_actor_within_approval_limit,
                 require_payment_approver_role,
             )
             from app.services.approval.approval_policy_io import load_policy_for_tenant
 
             policy = load_policy_for_tenant(tenant_id)
             tiers = [t.model_dump() for t in policy.amount_approval_tiers]
+            actor_role = str(actor.get("role") or "")
             try:
-                require_payment_approver_role(
-                    tiers, invoice.total, str(actor.get("role") or "")
+                require_payment_approver_role(tiers, invoice.total, actor_role)
+                require_actor_within_approval_limit(
+                    dict(policy.approval_limits or {}),
+                    actor_role,
+                    invoice.total if invoice.total is not None else row.amount,
                 )
             except AmountTierApprovalError as exc:
                 raise ValueError(str(exc)) from exc
