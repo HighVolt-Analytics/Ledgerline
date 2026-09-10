@@ -285,9 +285,8 @@ class InvalidMobileQuickActionsError(ValueError):
 
 def _default_mobile_qa_fields() -> dict[str, Any]:
     return {
-        "expenseType": {"visible": True, "required": True},
+        "parentLedger": {"visible": True, "required": True},
         "adjustAdvance": {"visible": True, "required": False},
-        "amount": {"visible": True, "required": True},
         "spentFor": {"visible": True, "required": True},
         "remarks": {"visible": True, "required": False},
     }
@@ -321,16 +320,18 @@ def _normalize_mobile_qa_item(raw: Any, *, index: int) -> dict[str, Any] | None:
         photo = "optional"
     defaults = _default_mobile_qa_fields()
     fields_raw = raw.get("fields") if isinstance(raw.get("fields"), dict) else {}
+    parent_raw = (
+        fields_raw.get("parentLedger")
+        or fields_raw.get("parent_ledger")
+        or fields_raw.get("expenseType")
+        or fields_raw.get("expense_type")
+    )
     fields = {
-        "expenseType": _normalize_mobile_qa_field(
-            fields_raw.get("expenseType") or fields_raw.get("expense_type"),
-            defaults["expenseType"],
-        ),
+        "parentLedger": _normalize_mobile_qa_field(parent_raw, defaults["parentLedger"]),
         "adjustAdvance": _normalize_mobile_qa_field(
             fields_raw.get("adjustAdvance") or fields_raw.get("adjust_advance"),
             defaults["adjustAdvance"],
         ),
-        "amount": _normalize_mobile_qa_field(fields_raw.get("amount"), defaults["amount"]),
         "spentFor": _normalize_mobile_qa_field(
             fields_raw.get("spentFor") or fields_raw.get("spent_for"),
             defaults["spentFor"],

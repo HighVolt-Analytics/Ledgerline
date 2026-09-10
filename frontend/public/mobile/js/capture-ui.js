@@ -419,16 +419,63 @@
     return opts;
   }
 
+  function resolveQaDocumentType(qaCfg) {
+    var code = String(
+      (qaCfg && (qaCfg.documentTypeCode || qaCfg.document_type_code)) ||
+        preferredDtCode ||
+        ''
+    )
+      .trim()
+      .toUpperCase();
+    if (!code) return null;
+    for (var i = 0; i < documentTypes.length; i++) {
+      if (String(documentTypes[i].code || '').toUpperCase() === code) {
+        return documentTypes[i];
+      }
+    }
+    return null;
+  }
+
+  function parentLedgerOptions(dt) {
+    var ledger = String((dt && dt.postTo && dt.postTo.ledger) || '').trim();
+    var sub = String((dt && dt.postTo && dt.postTo.subLedger) || '').trim();
+    var opts = [];
+    if (ledger) {
+      opts.push({ value: ledger, label: ledger, sub: sub ? '' : 'Parent ledger' });
+    }
+    if (sub) {
+      opts.push({ value: sub, label: sub, sub: ledger || 'Sub-ledger' });
+    }
+    // Offer budget-tree children under the DT parent ledger when available.
+    var tree = (deps.QLL && deps.QLL.me && deps.QLL.me.budgetTree) || [];
+    var needle = ledger.toLowerCase();
+    if (needle) {
+      tree.forEach(function (node) {
+        if (String(node.label || '').toLowerCase() !== needle) return;
+        (node.children || []).forEach(function (c) {
+          var v = String(c.label || '').trim();
+          if (!v) return;
+          if (opts.some(function (o) { return o.value === v; })) return;
+          opts.push({ value: v, label: v, sub: ledger });
+        });
+      });
+    }
+    if (!opts.length) {
+      return expenseTypeOptions();
+    }
+    return opts;
+  }
+
   function normalizeMobileQaConfig(raw) {
     var base = {
       enabled: false,
       allowWithDoc: true,
       allowWithoutDoc: true,
       photoRequired: 'optional',
+      documentTypeCode: '',
       fields: {
-        expenseType: { visible: true, required: true },
+        parentLedger: { visible: true, required: true },
         adjustAdvance: { visible: true, required: false },
-        amount: { visible: true, required: true },
         spentFor: { visible: true, required: true },
         remarks: { visible: true, required: false }
       }
@@ -444,6 +491,11 @@
     else if (raw.allow_with_doc != null) base.allowWithDoc = !!raw.allow_with_doc;
     if (raw.allowWithoutDoc != null) base.allowWithoutDoc = !!raw.allowWithoutDoc;
     else if (raw.allow_without_doc != null) base.allowWithoutDoc = !!raw.allow_without_doc;
+    base.documentTypeCode = String(
+      raw.documentTypeCode || raw.document_type_code || preferredDtCode || ''
+    )
+      .trim()
+      .toUpperCase();
     var photo = String(raw.photoRequired || raw.photo_required || base.photoRequired);
     if (photo === 'compulsory' || photo === 'optional' || photo === 'none') {
       base.photoRequired = photo;
@@ -456,30 +508,86 @@
         required: src.required != null ? !!src.required : fallback.required
       };
     }
+    // Legacy expenseType → parentLedger; amount / detailFields ignored (DT owns details).
+    var parentSrc =
+      fieldsRaw.parentLedger ||
+      fieldsRaw.parent_ledger ||
+      fieldsRaw.expenseType ||
+      fieldsRaw.expense_type;
     base.fields = {
-      expenseType: field('expenseType', 'expense_type', base.fields.expenseType),
+      parentLedger: field('parentLedger', 'parent_ledger', base.fields.parentLedger),
       adjustAdvance: field('adjustAdvance', 'adjust_advance', base.fields.adjustAdvance),
-      amount: field('amount', 'amount', base.fields.amount),
       spentFor: field('spentFor', 'spent_for', base.fields.spentFor),
       remarks: field('remarks', 'remarks', base.fields.remarks)
     };
+    if (parentSrc && typeof parentSrc === 'object') {
+      base.fields.parentLedger = {
+        visible: parentSrc.visible != null ? !!parentSrc.visible : true,
+        required: parentSrc.required != null ? !!parentSrc.required : true
+      };
+    }
     if (base.enabled && !base.allowWithDoc && !base.allowWithoutDoc) {
       base.allowWithDoc = true;
     }
     return base;
   }
 
-  function claimDetailsFormHtml(prefill, qaCfg, mode) {
+  /** DT detail fields for the claim sheet — mirrors Rule Book DT, not QA settings. */
+  function dtDetailFields(dt) {
+    var keys = [];
+    if (dt && LLCaptureApi.formKeysForDocumentType) {
+      keys = LLCaptureApi.formKeysForDocumentType(dt).filter(function (k) {
+        return k !== 'line_items' && k !== 'bank_details';
+      });
+    }
+    var requiredSet = {};
+    if (dt && LLCaptureApi.requiredKeysForDocumentType) {
+      LLCaptureApi.requiredKeysForDocumentType(dt).forEach(function (k) {
+        requiredSet[String(k || '').toLowerCase()] = true;
+      });
+    } else {
+      (dt && dt.requiredFields ? dt.requiredFields : []).forEach(function (raw) {
+        requiredSet[String(raw || '').trim().toLowerCase()] = true;
+      });
+    }
+    return keys.map(function (key) {
+      return {
+        key: key,
+        required: !!requiredSet[String(key).toLowerCase()]
+      };
+    });
+  }
+
+  function visibleDetailFieldKeys(_qaCfg, dt) {
+    return dtDetailFields(dt).map(function (row) {
+      return row.key;
+    });
+  }
+
+  function claimDetailsFormHtml(prefill, qaCfg, mode, dt) {
     prefill = prefill || {};
     qaCfg = normalizeMobileQaConfig(qaCfg || { enabled: true });
     mode = mode || 'with_doc';
+    dt = dt || resolveQaDocumentType(qaCfg);
     var fields = qaCfg.fields;
-    var types = expenseTypeOptions();
-    var typeOpts = types
+    var ledgerOpts = parentLedgerOptions(dt);
+    var defaultLedger =
+      String(prefill.parentLedger || prefill.expenseType || '').trim() ||
+      (dt && dt.postTo && (dt.postTo.subLedger || dt.postTo.ledger)) ||
+      '';
+    var typeOpts = ledgerOpts
       .map(function (t) {
-        var sel = String(prefill.expenseType || '') === t.value ? ' selected' : '';
-        return '<option value="' + esc(t.value) + '"' + sel + '>' + esc(t.label) +
-          (t.sub ? ' (' + esc(t.sub) + ')' : '') + '</option>';
+        var sel = String(defaultLedger) === t.value ? ' selected' : '';
+        return (
+          '<option value="' +
+          esc(t.value) +
+          '"' +
+          sel +
+          '>' +
+          esc(t.label) +
+          (t.sub ? ' (' + esc(t.sub) + ')' : '') +
+          '</option>'
+        );
       })
       .join('');
     var spentRaw = String(prefill.spentFor || 'Myself');
@@ -489,16 +597,30 @@
       spentOther = spentRaw;
     }
     var adj = !!prefill.adjustAdvance;
-    var amt = prefill.amount != null && prefill.amount !== '' ? String(prefill.amount) : '';
     var remarks = String(prefill.remarks || '');
+    var detailVals = prefill.detailValues || {};
     var html = '<div style="padding:4px 16px 8px">';
-    if (fields.expenseType.visible) {
+    if (fields.parentLedger.visible) {
+      var ledgerLabel =
+        (dt && dt.postTo && dt.postTo.ledger
+          ? 'Parent ledger'
+          : 'Parent ledger') ;
       html +=
-        '<label class="cap-fill-label" for="claimExpenseType">Expenses type' +
-        (fields.expenseType.required ? ' *' : '') +
+        '<label class="cap-fill-label" for="claimParentLedger">' +
+        ledgerLabel +
+        (fields.parentLedger.required ? ' *' : '') +
         '</label>' +
-        '<select id="claimExpenseType" class="cap-fill-input" style="appearance:auto">' +
-        '<option value="">Select…</option>' + typeOpts + '</select>';
+        '<select id="claimParentLedger" class="cap-fill-input" style="appearance:auto">' +
+        '<option value="">Select…</option>' +
+        typeOpts +
+        '</select>';
+      if (dt && dt.postTo && dt.postTo.ledger) {
+        html +=
+          '<p class="claim-photo-hint" style="margin:4px 0 0">From DT Post to: ' +
+          esc(dt.postTo.ledger) +
+          (dt.postTo.subLedger ? ' → ' + esc(dt.postTo.subLedger) : '') +
+          '</p>';
+      }
     }
     if (fields.adjustAdvance.visible) {
       html +=
@@ -506,17 +628,12 @@
         (fields.adjustAdvance.required ? ' *' : '') +
         '</label>' +
         '<div class="seg" id="claimAdjAdvance" role="group" style="margin:0 0 12px">' +
-        '<button type="button" data-adj="0"' + (!adj ? ' class="active"' : '') + '>No</button>' +
-        '<button type="button" data-adj="1"' + (adj ? ' class="active"' : '') + '>Yes</button></div>';
-    }
-    if (fields.amount.visible) {
-      html +=
-        '<label class="cap-fill-label" for="claimAmt">Amt' +
-        (fields.amount.required ? ' *' : '') +
-        '</label>' +
-        '<input id="claimAmt" class="cap-fill-input" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00" value="' +
-        esc(amt) +
-        '">';
+        '<button type="button" data-adj="0"' +
+        (!adj ? ' class="active"' : '') +
+        '>No</button>' +
+        '<button type="button" data-adj="1"' +
+        (adj ? ' class="active"' : '') +
+        '>Yes</button></div>';
     }
     if (fields.spentFor.visible) {
       html +=
@@ -549,6 +666,38 @@
         '">' +
         '</div>';
     }
+    var detailRows = dtDetailFields(dt);
+    detailRows.forEach(function (row) {
+      var key = row.key;
+      var label = LLCaptureApi.fieldLabel ? LLCaptureApi.fieldLabel(key) : key;
+      var val = detailVals[key] != null ? String(detailVals[key]) : '';
+      if (!val && prefill[key] != null) val = String(prefill[key]);
+      var inputType =
+        key.indexOf('date') >= 0
+          ? 'date'
+          : key === 'total' || key === 'subtotal' || key === 'gst' || key === 'gst_rate'
+            ? 'number'
+            : 'text';
+      var step = inputType === 'number' ? ' step="0.01"' : '';
+      html +=
+        '<label class="cap-fill-label" for="claimDetail_' +
+        esc(key) +
+        '" style="margin-top:14px">' +
+        esc(label) +
+        (row.required ? ' *' : '') +
+        '</label>' +
+        '<input id="claimDetail_' +
+        esc(key) +
+        '" data-detail-field="' +
+        esc(key) +
+        '" class="cap-fill-input" type="' +
+        inputType +
+        '"' +
+        step +
+        ' autocomplete="off" value="' +
+        esc(val) +
+        '">';
+    });
     if (qaCfg.photoRequired !== 'none' || mode === 'with_doc') {
       var photoReq = mode === 'with_doc' || qaCfg.photoRequired === 'compulsory';
       html +=
@@ -596,25 +745,32 @@
   }
 
   function readClaimDetailsForm() {
-    var expenseType = String(($('#claimExpenseType') && $('#claimExpenseType').value) || '').trim();
-    var amtEl = $('#claimAmt');
-    var amount = amtEl ? String(amtEl.value || '').trim() : '';
+    var parentLedger = String(
+      ($('#claimParentLedger') && $('#claimParentLedger').value) || ''
+    ).trim();
     var adjBtn = $('#claimAdjAdvance button.active');
     var adjustAdvance = !!(adjBtn && adjBtn.getAttribute('data-adj') === '1');
     var spentBtn = $('#claimSpentFor button.active');
     var spentChoice = spentBtn ? String(spentBtn.getAttribute('data-spent') || 'Myself') : 'Myself';
     var spentOther = String(($('#claimSpentForOther') && $('#claimSpentForOther').value) || '').trim();
-    var spentFor =
-      spentChoice === 'Others' ? spentOther || 'Others' : spentChoice;
+    var spentFor = spentChoice === 'Others' ? spentOther || 'Others' : spentChoice;
     var remarks = String(($('#claimRemarks') && $('#claimRemarks').value) || '').trim();
+    var detailValues = {};
+    $$('[data-detail-field]').forEach(function (el) {
+      var key = String(el.getAttribute('data-detail-field') || '').trim();
+      if (!key) return;
+      detailValues[key] = String(el.value || '').trim();
+    });
     return {
-      expenseType: expenseType,
-      amount: amount,
+      parentLedger: parentLedger,
+      expenseType: parentLedger,
+      amount: detailValues.total || '',
       adjustAdvance: adjustAdvance,
       spentFor: spentFor,
       spentChoice: spentChoice,
       spentForOther: spentOther,
       remarks: remarks,
+      detailValues: detailValues,
       photoFile: claimDetailsPhotoFile || null
     };
   }
@@ -622,12 +778,8 @@
   function validateClaimDetails(details, qaCfg, mode) {
     qaCfg = normalizeMobileQaConfig(qaCfg || { enabled: true });
     var fields = qaCfg.fields;
-    if (fields.expenseType.visible && fields.expenseType.required && !details.expenseType) {
-      return 'Select expenses type';
-    }
-    if (fields.amount.visible && fields.amount.required) {
-      var n = Number(details.amount);
-      if (!details.amount || !isFinite(n) || n <= 0) return 'Enter amount';
+    if (fields.parentLedger.visible && fields.parentLedger.required && !details.parentLedger) {
+      return 'Select parent ledger';
     }
     if (fields.spentFor.visible && fields.spentFor.required) {
       if (!details.spentChoice) return 'Select spent for';
@@ -641,7 +793,17 @@
     if (fields.adjustAdvance.visible && fields.adjustAdvance.required && details.adjustAdvance == null) {
       return 'Select adjust against advance';
     }
-    // Photo: with_doc always needs a document photo; without_doc follows config.
+    var dt = resolveQaDocumentType(qaCfg);
+    var detailRows = dtDetailFields(dt);
+    for (var i = 0; i < detailRows.length; i++) {
+      var row = detailRows[i];
+      if (!row.required) continue;
+      var val = details.detailValues && details.detailValues[row.key];
+      if (!String(val || '').trim()) {
+        var label = LLCaptureApi.fieldLabel ? LLCaptureApi.fieldLabel(row.key) : row.key;
+        return 'Enter ' + label;
+      }
+    }
     if (mode === 'with_doc' && !details.photoFile) {
       return 'Add a document photo';
     }
@@ -770,35 +932,47 @@
     if (details.spentFor) remarksParts.push('Spent for: ' + details.spentFor);
     if (details.adjustAdvance) remarksParts.push('Adjust against advance: Yes');
     if (details.remarks) remarksParts.push(details.remarks);
-    var patch = {
-      account_name: details.expenseType || '',
-      category: details.expenseType || '',
-      total: details.amount || '',
-      document_heading: details.spentFor ? 'Spent for ' + details.spentFor : '',
-      billing_address: remarksParts.join('\n')
-    };
+    var patch = Object.assign({}, details.detailValues || {});
+    if (details.parentLedger || details.expenseType) {
+      patch.account_name = details.parentLedger || details.expenseType || '';
+      patch.category = details.parentLedger || details.expenseType || '';
+    }
+    if (details.spentFor) {
+      patch.document_heading = 'Spent for ' + details.spentFor;
+    }
+    if (remarksParts.length) {
+      patch.billing_address = remarksParts.join('\n');
+    }
     return LLCaptureApi.buildUpdatePayload(patch);
   }
 
   function claimFieldsToManualFields(details) {
-    return {
-      vendor: details.spentFor === 'Myself' ? 'Employee claim' : details.spentFor + ' claim',
-      total: details.amount || '0',
-      account_name: details.expenseType || '',
-      category: details.expenseType || '',
+    var total = (details.detailValues && details.detailValues.total) || details.amount || '0';
+    var ledger = details.parentLedger || details.expenseType || '';
+    var fields = Object.assign({}, details.detailValues || {}, {
+      vendor:
+        details.spentFor === 'Myself'
+          ? 'Employee claim'
+          : (details.spentFor || 'Employee') + ' claim',
+      total: total,
+      account_name: ledger,
+      category: ledger,
       document_heading: details.spentFor ? 'Spent for ' + details.spentFor : '',
-      cost_centre: details.adjustAdvance ? 'Adjust against advance' : '',
+      cost_centre: details.adjustAdvance
+        ? 'Adjust against advance'
+        : (details.detailValues && details.detailValues.cost_centre) || '',
       billing_address: details.remarks || '',
       line_items: [
         {
-          description: details.expenseType || 'Expense claim',
+          description: ledger || 'Expense claim',
           qty: 1,
-          unit_price: details.amount || 0,
-          amount: details.amount || 0,
+          unit_price: total || 0,
+          amount: total || 0,
           tax_amount: 0
         }
       ]
-    };
+    });
+    return fields;
   }
 
   function tinyJpegBlob() {
@@ -857,46 +1031,70 @@
     activeQaConfig = qaCfg;
     if (options.title) activeQaTitle = String(options.title || '').trim();
     var heading = qaDetailsTitle();
-    if (inv) {
-      var ocrTotal = LLCaptureApi.readExtractionValue(inv, 'total');
-      if (!prefill.amount && ocrTotal) prefill.amount = String(ocrTotal).replace(/[^0-9.]/g, '');
-      if (!prefill.expenseType) {
-        prefill.expenseType =
-          LLCaptureApi.readExtractionValue(inv, 'account_name') ||
-          LLCaptureApi.readExtractionValue(inv, 'category') ||
-          '';
-      }
-    }
-    var hasAdvance =
-      deps.QLL &&
-      deps.QLL.me &&
-      deps.QLL.me.advance &&
-      (Number(deps.QLL.me.advance.outstanding) > 0 || Number(deps.QLL.me.advance.amount) > 0);
 
-    deps.openSheet({
-      tall: true,
-      title: heading,
-      sub:
-        mode === 'without_doc'
-          ? 'Without document · fill and submit'
-          : 'With document · complete details and submit',
-      body:
-        claimDetailsFormHtml(prefill, qaCfg, mode) +
-        (hasAdvance && qaCfg.fields.adjustAdvance.visible
-          ? '<p style="padding:0 16px 8px;font-size:12px;color:var(--ink-3);margin:0">You have an advance outstanding — choose Yes to adjust against it.</p>'
-          : ''),
-      foot:
-        '<button class="btn sm sec" data-close style="flex:0 0 96px">Close</button>' +
-        '<button class="btn" id="claimFormSubmit" style="flex:1">Submit</button>',
-      onMount: function (b, f) {
-        wireClaimDetailsForm(b, { initialPhoto: initialPhoto });
-        var btn = $('#claimFormSubmit', f);
-        if (!btn) return;
-        btn.addEventListener('click', function () {
-          void submitClaimDetailsForm({ mode: mode, invoice: inv, qaConfig: qaCfg });
+    function showForm(dt) {
+      if (inv) {
+        var ocrTotal = LLCaptureApi.readExtractionValue(inv, 'total');
+        prefill.detailValues = prefill.detailValues || {};
+        if (ocrTotal && !prefill.detailValues.total) {
+          prefill.detailValues.total = String(ocrTotal).replace(/[^0-9.]/g, '');
+        }
+        if (!prefill.parentLedger && !prefill.expenseType) {
+          prefill.parentLedger =
+            LLCaptureApi.readExtractionValue(inv, 'account_name') ||
+            LLCaptureApi.readExtractionValue(inv, 'category') ||
+            (dt && dt.postTo && (dt.postTo.subLedger || dt.postTo.ledger)) ||
+            '';
+        }
+        visibleDetailFieldKeys(qaCfg, dt).forEach(function (key) {
+          if (prefill.detailValues[key]) return;
+          var extracted = LLCaptureApi.readExtractionValue(inv, key);
+          if (extracted) prefill.detailValues[key] = String(extracted);
         });
+      } else if (dt && dt.postTo) {
+        if (!prefill.parentLedger) {
+          prefill.parentLedger = dt.postTo.subLedger || dt.postTo.ledger || '';
+        }
       }
-    });
+      var hasAdvance =
+        deps.QLL &&
+        deps.QLL.me &&
+        deps.QLL.me.advance &&
+        (Number(deps.QLL.me.advance.outstanding) > 0 || Number(deps.QLL.me.advance.amount) > 0);
+
+      deps.openSheet({
+        tall: true,
+        title: heading,
+        sub:
+          mode === 'without_doc'
+            ? 'Without document · fill and submit'
+            : 'With document · complete details and submit',
+        body:
+          claimDetailsFormHtml(prefill, qaCfg, mode, dt) +
+          (hasAdvance && qaCfg.fields.adjustAdvance.visible
+            ? '<p style="padding:0 16px 8px;font-size:12px;color:var(--ink-3);margin:0">You have an advance outstanding — choose Yes to adjust against it.</p>'
+            : ''),
+        foot:
+          '<button class="btn sm sec" data-close style="flex:0 0 96px">Close</button>' +
+          '<button class="btn" id="claimFormSubmit" style="flex:1">Submit</button>',
+        onMount: function (b, f) {
+          wireClaimDetailsForm(b, { initialPhoto: initialPhoto });
+          var btn = $('#claimFormSubmit', f);
+          if (!btn) return;
+          btn.addEventListener('click', function () {
+            void submitClaimDetailsForm({ mode: mode, invoice: inv, qaConfig: qaCfg });
+          });
+        }
+      });
+    }
+
+    void ensureDocumentTypes()
+      .then(function () {
+        showForm(resolveQaDocumentType(qaCfg));
+      })
+      .catch(function () {
+        showForm(resolveQaDocumentType(qaCfg));
+      });
   }
 
   async function submitManualCaptureFromForm(details) {
@@ -972,7 +1170,7 @@
       LLCaptureApi.updatePending(after.id, {
         status: 'submitted',
         vendor: LLCaptureApi.fieldValue(after, 'vendor'),
-        total: details.amount,
+        total: (details.detailValues && details.detailValues.total) || details.amount || '',
         label: after.document_ref || ('#' + after.id)
       });
       deps.closeSheet();

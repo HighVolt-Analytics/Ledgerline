@@ -159,7 +159,14 @@
           extractionFields: dt.extraction_fields || dt.extractionFields || [],
           routeTarget: dt.route_target || dt.routeTarget || '',
           teamExpenseKind: reconcileKind(configured, title, shortTitle) || configured || '',
-          shortTitle: shortTitle
+          shortTitle: shortTitle,
+          postTo: (function () {
+            var raw = dt.post_to || dt.postTo || {};
+            return {
+              ledger: String(raw.ledger || '').trim(),
+              subLedger: String(raw.sub_ledger || raw.subLedger || '').trim()
+            };
+          })()
         };
       })
       .sort(function (a, b) {

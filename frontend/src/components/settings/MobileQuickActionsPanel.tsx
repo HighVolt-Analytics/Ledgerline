@@ -24,14 +24,13 @@ import {
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
 import { cn } from "@/lib/cn";
 
-const FIELD_ROWS: {
+const CHROME_FIELD_ROWS: {
   key: keyof MobileQuickActionFieldsConfig;
   label: string;
   hint: string;
 }[] = [
-  { key: "expenseType", label: "Expenses type", hint: "GL / budget line" },
+  { key: "parentLedger", label: "Parent ledger", hint: "From selected DT Post to" },
   { key: "adjustAdvance", label: "Adjust against advance", hint: "Yes / No" },
-  { key: "amount", label: "Amt", hint: "Claim amount" },
   { key: "spentFor", label: "Spent for", hint: "Myself / Others (+ details)" },
   { key: "remarks", label: "Remarks", hint: "Free-text notes" },
 ];
@@ -46,6 +45,14 @@ function kindLabel(dt: DocumentTypeDefinition | undefined) {
   if (!dt) return "";
   const kind = (dt.teamExpenseKind || "expense_claim") as keyof typeof TEAM_EXPENSE_KIND_LABELS;
   return TEAM_EXPENSE_KIND_LABELS[kind] || kind;
+}
+
+function parentLedgerHint(dt: DocumentTypeDefinition | undefined) {
+  if (!dt) return "Select a document type";
+  const ledger = (dt.postTo?.ledger || "").trim();
+  const sub = (dt.postTo?.subLedger || "").trim();
+  if (!ledger) return "No parent ledger on this DT — set Post to in Rule Book";
+  return sub ? `${ledger} → ${sub}` : ledger;
 }
 
 function sameItems(a: MobileQuickActionItem[], b: MobileQuickActionItem[]) {
@@ -96,6 +103,10 @@ export function MobileQuickActionsPanel({ canEdit = false }: MobileQuickActionsP
     documentTypes.forEach((dt) => map.set(dt.code.toUpperCase(), dt));
     return map;
   }, [documentTypes]);
+
+  const selectedDt = draft.documentTypeCode
+    ? dtByCode.get(draft.documentTypeCode.toUpperCase())
+    : undefined;
 
   const pickerOptions = useMemo(() => {
     const used = new Set(
@@ -178,6 +189,15 @@ export function MobileQuickActionsPanel({ canEdit = false }: MobileQuickActionsP
     }));
   }
 
+  function onDocumentTypeChange(code: string) {
+    const dt = dtByCode.get(code.toUpperCase());
+    setDraft((prev) => ({
+      ...prev,
+      documentTypeCode: code,
+      label: prev.label || dt?.shortTitle || dt?.title || "",
+    }));
+  }
+
   function commitModal() {
     if (!draft.documentTypeCode) {
       setError("Select a document type.");
@@ -203,7 +223,8 @@ export function MobileQuickActionsPanel({ canEdit = false }: MobileQuickActionsP
     } else {
       const next = newMobileQuickActionItem(
         draft.documentTypeCode,
-        draft.label.trim() || dt?.shortTitle || dt?.title || ""
+        draft.label.trim() || dt?.shortTitle || dt?.title || "",
+        dt
       );
       next.allowWithDoc = draft.allowWithDoc;
       next.allowWithoutDoc = draft.allowWithoutDoc;
@@ -294,13 +315,7 @@ export function MobileQuickActionsPanel({ canEdit = false }: MobileQuickActionsP
                     value={draft.documentTypeCode}
                     disabled={!canEdit || isEdit}
                     size="sm"
-                    onValueChange={(code) => {
-                      const dt = dtByCode.get(code.toUpperCase());
-                      patchDraft({
-                        documentTypeCode: code,
-                        label: draft.label || dt?.shortTitle || dt?.title || "",
-                      });
-                    }}
+                    onValueChange={onDocumentTypeChange}
                     placeholder="Select…"
                     options={pickerOptions.map((dt) => ({
                       value: dt.code,
@@ -363,17 +378,26 @@ export function MobileQuickActionsPanel({ canEdit = false }: MobileQuickActionsP
 
               <section className="rounded-lg border border-border/60 px-3 py-2">
                 <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Form fields
+                  Quick Action fields
+                </p>
+                <p className="mb-2 text-[10px] text-muted-foreground">
+                  Detail fields come from the document type in Rule Book. Compulsory DT fields
+                  are required on mobile automatically.
                 </p>
                 <ul className="divide-y divide-border/50">
-                  {FIELD_ROWS.map((row) => {
+                  {CHROME_FIELD_ROWS.map((row) => {
                     const f = draft.fields[row.key];
+                    const hint =
+                      row.key === "parentLedger" ? parentLedgerHint(selectedDt) : row.hint;
                     return (
                       <li
                         key={row.key}
                         className="flex items-center justify-between gap-2 py-1.5"
                       >
-                        <span className="truncate text-xs font-medium">{row.label}</span>
+                        <div className="min-w-0">
+                          <span className="truncate text-xs font-medium">{row.label}</span>
+                          <p className="truncate text-[10px] text-muted-foreground">{hint}</p>
+                        </div>
                         <div className="flex shrink-0 items-center gap-2.5">
                           <label className="flex items-center gap-1 text-[10px] text-muted-foreground">
                             <Switch
@@ -469,6 +493,7 @@ export function MobileQuickActionsPanel({ canEdit = false }: MobileQuickActionsP
           items.map((item) => {
             const dt = dtByCode.get(item.documentTypeCode);
             const title = item.label || dt?.shortTitle || dt?.title || item.documentTypeCode;
+            const ledgerHint = parentLedgerHint(dt);
             return (
               <div
                 key={item.id}
@@ -483,6 +508,9 @@ export function MobileQuickActionsPanel({ canEdit = false }: MobileQuickActionsP
                   <p className="mt-0.5 truncate text-xs text-muted-foreground">
                     {item.documentTypeCode}
                     {kindLabel(dt) ? ` · ${kindLabel(dt)}` : ""}
+                    {ledgerHint.startsWith("No parent") || ledgerHint.startsWith("Select")
+                      ? ""
+                      : ` · ${ledgerHint}`}
                     {" · "}
                     {[
                       item.allowWithDoc ? "With doc" : null,

@@ -17,16 +17,21 @@ class MobileQuickActionFieldConfig(BaseModel):
 
 
 class MobileQuickActionFieldsConfig(BaseModel):
-    expense_type: MobileQuickActionFieldConfig = Field(
+    """Quick Action form setup.
+
+    ``parent_ledger`` replaces legacy ``expenseType`` (DT Post-to ledger).
+    ``amount`` was removed — use DT detail fields (e.g. ``total``) instead.
+    DT extraction/required fields are not configured here; mobile reads them
+    from the document type (compulsory DT fields stay required on mobile).
+    """
+
+    parent_ledger: MobileQuickActionFieldConfig = Field(
         default_factory=lambda: MobileQuickActionFieldConfig(visible=True, required=True),
-        alias="expenseType",
+        alias="parentLedger",
     )
     adjust_advance: MobileQuickActionFieldConfig = Field(
         default_factory=lambda: MobileQuickActionFieldConfig(visible=True, required=False),
         alias="adjustAdvance",
-    )
-    amount: MobileQuickActionFieldConfig = Field(
-        default_factory=lambda: MobileQuickActionFieldConfig(visible=True, required=True),
     )
     spent_for: MobileQuickActionFieldConfig = Field(
         default_factory=lambda: MobileQuickActionFieldConfig(visible=True, required=True),
@@ -36,7 +41,25 @@ class MobileQuickActionFieldsConfig(BaseModel):
         default_factory=lambda: MobileQuickActionFieldConfig(visible=True, required=False),
     )
 
-    model_config = {"populate_by_name": True}
+    model_config = {"populate_by_name": True, "extra": "ignore"}
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_fields(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        out = dict(data)
+        # Legacy expenseType → parentLedger when parent ledger missing.
+        if "parentLedger" not in out and "parent_ledger" not in out:
+            legacy = out.get("expenseType") or out.get("expense_type")
+            if legacy is not None:
+                out["parentLedger"] = legacy
+        out.pop("amount", None)
+        out.pop("expenseType", None)
+        out.pop("expense_type", None)
+        out.pop("detailFields", None)
+        out.pop("detail_fields", None)
+        return out
 
 
 class MobileQuickActionItem(BaseModel):

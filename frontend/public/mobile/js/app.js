@@ -52,6 +52,8 @@
   var state = {
     screen: 'home',
     role: 'employee',
+    tenantRole: '',
+    matrixRole: '',
     canApprove: false,
     canReject: false,
     hasEmployeeProfile: false,
@@ -115,6 +117,7 @@
     var roleLabel = LLSession.formatRole(user.role);
     var memberships = LLSession.getMemberships();
     var tenantName = String(user.tenant_name || '').trim();
+    state.tenantRole = String(user.role || '').trim().toLowerCase();
 
     QLL.me.name = name;
     QLL.me.initials = LLSession.initialsFromName(name);
@@ -454,6 +457,7 @@
       allowWithDoc: item.allowWithDoc !== false,
       allowWithoutDoc: item.allowWithoutDoc !== false,
       photoRequired: item.photoRequired || 'optional',
+      documentTypeCode: code,
       fields: item.fields || null
     };
     var allowWith = qaCfg.allowWithDoc !== false;
@@ -541,6 +545,13 @@
     return !!(state.canApprove || state.canReject);
   }
 
+  /** Team membership role is employee (not admin/manager with Approve). */
+  function isEmployeeTenantRole() {
+    var r = String(state.tenantRole || '').toLowerCase();
+    var m = String(state.matrixRole || '').toLowerCase();
+    return r === 'employee' || m === 'employee';
+  }
+
   /** Show Employee | Approver toggle only when both roles apply. */
   function syncRoleSegVisibility() {
     var approver = canActAsApprover();
@@ -549,9 +560,11 @@
     var roleSeg = $('#roleSeg');
     if (roleSeg) roleSeg.hidden = !dual;
     if (!dual) {
-      state.role = approver ? 'approver' : 'employee';
+      // Pure employees stay on employee chrome even if a custom matrix grants Approve.
+      state.role = approver && !isEmployeeTenantRole() ? 'approver' : 'employee';
     } else if (state.role !== 'employee' && state.role !== 'approver') {
-      state.role = 'approver';
+      // Dual-role default: employee invite path prefers capture; admins prefer approvals.
+      state.role = isEmployeeTenantRole() ? 'employee' : 'approver';
     }
     syncRoleChrome();
   }
@@ -560,6 +573,12 @@
     var bag = (perms && perms.permissions) || {};
     state.canApprove = !!bag.Approve;
     state.canReject = !!bag.Reject;
+    if (perms && perms.role) {
+      state.tenantRole = String(perms.role).trim().toLowerCase();
+    }
+    if (perms && perms.matrix_role) {
+      state.matrixRole = String(perms.matrix_role).trim().toLowerCase();
+    }
     var mqa = perms && perms.mobile_quick_actions;
     var rawItems = mqa && Array.isArray(mqa.items) ? mqa.items : [];
     state.mobileQaItems = rawItems.map(normalizeQaItem).filter(function (item) {
@@ -738,7 +757,8 @@
           teamExpenseKind: dt.teamExpenseKind || item.teamExpenseKind,
           shortTitle: dt.shortTitle || dt.title || item.shortTitle,
           title: dt.title || item.title,
-          label: item.label || dt.shortTitle || dt.title || item.label
+          label: item.label || dt.shortTitle || dt.title || item.label,
+          postTo: dt.postTo || item.postTo || null
         });
       });
       refreshApprovalKindsFromDocumentTypes();
@@ -2952,7 +2972,7 @@
   };
   function setRole(r) {
     if (!state.dualRole) {
-      r = canActAsApprover() ? 'approver' : 'employee';
+      r = canActAsApprover() && !isEmployeeTenantRole() ? 'approver' : 'employee';
     } else if (r === 'approver' && !canActAsApprover()) {
       r = 'employee';
     } else if (r === 'employee' && !state.hasEmployeeProfile) {
@@ -3029,13 +3049,15 @@
         return LLSession.fetchPermissions();
       })
       .then(function (perms) {
-        return applyPrivileges(perms).then(function () {
-          return Promise.all([
-            loadLiveApprovals(),
-            loadMyItems(),
-            loadHomeFinance(),
-            loadEmployeeProfile()
-          ]);
+        // Resolve employee profile before role chrome so dual-role defaults are correct.
+        return loadEmployeeProfile().then(function () {
+          return applyPrivileges(perms).then(function () {
+            return Promise.all([
+              loadLiveApprovals(),
+              loadMyItems(),
+              loadHomeFinance()
+            ]);
+          });
         });
       })
       .catch(function (err) {
@@ -3045,9 +3067,11 @@
           return;
         }
         // Permissions failed — treat as employee (capture only), still load home finance.
-        void applyPrivileges({ permissions: {} });
-        renderApprovals();
-        void Promise.all([loadMyItems(), loadHomeFinance(), loadEmployeeProfile()]);
+        void loadEmployeeProfile().then(function () {
+          void applyPrivileges({ permissions: {} });
+          renderApprovals();
+          void Promise.all([loadMyItems(), loadHomeFinance()]);
+        });
       });
   })();
 })();

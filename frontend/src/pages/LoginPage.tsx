@@ -13,6 +13,8 @@ import { setAuthToken, setAuthUser } from "@/api/client";
 import { Eye, EyeOff } from "lucide-react";
 
 type Step = "credentials" | "otp" | "pick-tenant";
+/** When returnTo is set, avoid silently reusing another browser session. */
+type SessionGate = "pending" | "offer-switch" | "pass";
 
 export function LoginPage() {
   const location = useLocation();
@@ -28,6 +30,7 @@ export function LoginPage() {
     user,
     loading,
     login,
+    logout,
     verifyOtp,
     selectTenant,
     resendOtp,
@@ -37,6 +40,7 @@ export function LoginPage() {
   const [step, setStep] = useState<Step>("credentials");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [sessionGate, setSessionGate] = useState<SessionGate>("pending");
   const [email, setEmail] = useState(() => {
     const state = location.state;
     if (
@@ -68,6 +72,15 @@ export function LoginPage() {
       .then((p) => setOauthProviders({ google: p.google, microsoft: p.microsoft }))
       .catch(() => setOauthProviders({ google: false, microsoft: false }));
   }, []);
+
+  useEffect(() => {
+    if (loading || sessionGate !== "pending") return;
+    if (returnTo && user && user.id > 0) {
+      setSessionGate("offer-switch");
+      return;
+    }
+    setSessionGate("pass");
+  }, [loading, user, returnTo, sessionGate]);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -106,7 +119,10 @@ export function LoginPage() {
     };
   }, [location]);
 
-  if (!loading && user && user.id > 0) {
+  const sessionReady = !loading && user && user.id > 0;
+  const needsAccountChoice = sessionGate === "offer-switch" && sessionReady && Boolean(returnTo);
+
+  if (sessionReady && sessionGate === "pass") {
     return <Navigate to={postLoginPathForRole(user.role, returnTo)} replace />;
   }
 
@@ -171,18 +187,22 @@ export function LoginPage() {
   return (
     <AuthCenteredCard
       title={
-        step === "credentials"
-          ? "Sign in to Ledgerlink"
-          : step === "otp"
-            ? "Verify your email"
-            : "Choose organisation"
+        needsAccountChoice
+          ? "Continue to mobile?"
+          : step === "credentials"
+            ? "Sign in to Ledgerlink"
+            : step === "otp"
+              ? "Verify your email"
+              : "Choose organisation"
       }
       subtitle={
-        step === "credentials"
-          ? "Welcome to a workspace that's secure, powerful, and totally private."
-          : step === "otp"
-            ? "Enter the verification code sent to your email (dev: 123456)"
-            : "Select which organisation to open"
+        needsAccountChoice
+          ? "Use this account only if it matches the invite. Otherwise sign in with the employee email."
+          : step === "credentials"
+            ? "Welcome to a workspace that's secure, powerful, and totally private."
+            : step === "otp"
+              ? "Enter the verification code sent to your email (dev: 123456)"
+              : "Select which organisation to open"
       }
     >
       {loading && (
@@ -199,7 +219,35 @@ export function LoginPage() {
         </div>
       )}
 
-      {!loading && step === "credentials" && (
+      {needsAccountChoice && user ? (
+        <div className="auth-form">
+          <p className="auth-invite-meta">
+            <strong>{user.full_name || user.email}</strong>
+            <span>{user.email}</span>
+          </p>
+          <button
+            type="button"
+            className="auth-submit"
+            onClick={() => setSessionGate("pass")}
+          >
+            Continue as {user.email}
+          </button>
+          <button
+            type="button"
+            className="auth-secondary-btn"
+            onClick={() => {
+              logout();
+              setSessionGate("pass");
+              setStep("credentials");
+              setError(null);
+            }}
+          >
+            Use a different account
+          </button>
+        </div>
+      ) : null}
+
+      {!loading && !needsAccountChoice && step === "credentials" && (
         <form onSubmit={onCredentials} className="auth-form">
           {signupMessage ? (
             <p className="auth-success" role="status">
@@ -287,7 +335,7 @@ export function LoginPage() {
         </form>
       )}
 
-      {!loading && step === "otp" && (
+      {!loading && !needsAccountChoice && step === "otp" && (
         <form onSubmit={onOtp} className="auth-form">
           <input
             className="auth-input"
@@ -317,7 +365,7 @@ export function LoginPage() {
         </form>
       )}
 
-      {!loading && step === "pick-tenant" && (
+      {!loading && !needsAccountChoice && step === "pick-tenant" && (
         <div className="auth-form">
           {oauthAccountsLoading ? (
             <p className="text-sm text-muted-foreground text-center">Loading organisations…</p>

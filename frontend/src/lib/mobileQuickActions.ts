@@ -1,3 +1,5 @@
+import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
+
 export type MobileQuickActionPhotoMode = "compulsory" | "optional" | "none";
 
 export type MobileQuickActionFieldConfig = {
@@ -5,10 +7,10 @@ export type MobileQuickActionFieldConfig = {
   required: boolean;
 };
 
+/** Fixed Quick Action chrome fields. DT detail fields come from the document type itself. */
 export type MobileQuickActionFieldsConfig = {
-  expenseType: MobileQuickActionFieldConfig;
+  parentLedger: MobileQuickActionFieldConfig;
   adjustAdvance: MobileQuickActionFieldConfig;
-  amount: MobileQuickActionFieldConfig;
   spentFor: MobileQuickActionFieldConfig;
   remarks: MobileQuickActionFieldConfig;
 };
@@ -30,9 +32,8 @@ export type MobileQuickActionsSettings = {
 
 export function defaultMobileQaFields(): MobileQuickActionFieldsConfig {
   return {
-    expenseType: { visible: true, required: true },
+    parentLedger: { visible: true, required: true },
     adjustAdvance: { visible: true, required: false },
-    amount: { visible: true, required: true },
     spentFor: { visible: true, required: true },
     remarks: { visible: true, required: false },
   };
@@ -40,7 +41,8 @@ export function defaultMobileQaFields(): MobileQuickActionFieldsConfig {
 
 export function newMobileQuickActionItem(
   documentTypeCode: string,
-  label = ""
+  label = "",
+  _dt?: DocumentTypeDefinition
 ): MobileQuickActionItem {
   return {
     id: `mqa_${Math.random().toString(36).slice(2, 10)}`,
@@ -51,6 +53,19 @@ export function newMobileQuickActionItem(
     allowWithoutDoc: true,
     photoRequired: "optional",
     fields: defaultMobileQaFields(),
+  };
+}
+
+function pickField(
+  fieldsRaw: Record<string, unknown>,
+  camel: string,
+  snake: string,
+  fallback: MobileQuickActionFieldConfig
+): MobileQuickActionFieldConfig {
+  const src = (fieldsRaw[camel] || fieldsRaw[snake] || {}) as Record<string, unknown>;
+  return {
+    visible: src.visible !== undefined ? Boolean(src.visible) : fallback.visible,
+    required: src.required !== undefined ? Boolean(src.required) : fallback.required,
   };
 }
 
@@ -72,17 +87,6 @@ export function normalizeMobileQuickActionsSettings(
     seenCodes.add(code);
     const base = newMobileQuickActionItem(code, String(r.label || ""));
     const fieldsRaw = (r.fields || {}) as Record<string, unknown>;
-    const pick = (
-      camel: keyof MobileQuickActionFieldsConfig,
-      snake: string,
-      fallback: MobileQuickActionFieldConfig
-    ): MobileQuickActionFieldConfig => {
-      const src = (fieldsRaw[camel] || fieldsRaw[snake] || {}) as Record<string, unknown>;
-      return {
-        visible: src.visible !== undefined ? Boolean(src.visible) : fallback.visible,
-        required: src.required !== undefined ? Boolean(src.required) : fallback.required,
-      };
-    };
     const photo = String(r.photoRequired ?? r.photo_required ?? base.photoRequired);
     let allowWith =
       r.allowWithDoc !== undefined
@@ -97,6 +101,27 @@ export function normalizeMobileQuickActionsSettings(
           ? Boolean(r.allow_without_doc)
           : true;
     if (!allowWith && !allowWithout) allowWith = true;
+
+    // Legacy expenseType → parentLedger; amount / detailFields ignored (DT owns details).
+    let parentLedger = pickField(
+      fieldsRaw,
+      "parentLedger",
+      "parent_ledger",
+      base.fields.parentLedger
+    );
+    if (
+      fieldsRaw.parentLedger == null &&
+      fieldsRaw.parent_ledger == null &&
+      (fieldsRaw.expenseType != null || fieldsRaw.expense_type != null)
+    ) {
+      parentLedger = pickField(
+        fieldsRaw,
+        "expenseType",
+        "expense_type",
+        base.fields.parentLedger
+      );
+    }
+
     items.push({
       id: String(r.id || base.id),
       documentTypeCode: code,
@@ -109,11 +134,15 @@ export function normalizeMobileQuickActionsSettings(
           ? photo
           : "optional",
       fields: {
-        expenseType: pick("expenseType", "expense_type", base.fields.expenseType),
-        adjustAdvance: pick("adjustAdvance", "adjust_advance", base.fields.adjustAdvance),
-        amount: pick("amount", "amount", base.fields.amount),
-        spentFor: pick("spentFor", "spent_for", base.fields.spentFor),
-        remarks: pick("remarks", "remarks", base.fields.remarks),
+        parentLedger,
+        adjustAdvance: pickField(
+          fieldsRaw,
+          "adjustAdvance",
+          "adjust_advance",
+          base.fields.adjustAdvance
+        ),
+        spentFor: pickField(fieldsRaw, "spentFor", "spent_for", base.fields.spentFor),
+        remarks: pickField(fieldsRaw, "remarks", "remarks", base.fields.remarks),
       },
     });
     if (items.length >= 12) break;
