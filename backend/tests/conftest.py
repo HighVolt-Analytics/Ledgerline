@@ -56,6 +56,7 @@ from app.models.tenant import Tenant
 from app.models.platform_credit_settings import PlatformCreditSettings
 from app.models.tenant_billing import TenantBilling
 from app.models.tenant_rule_book_config import TenantRuleBookConfig
+from app.models.tenant_approval_policy import TenantApprovalPolicy  # noqa: F401
 from app.tenant_ids import TESTING_TENANT_UUID
 from app.services.invoice.invoice_data import InvoiceData, ParsedLineItem
 
@@ -167,17 +168,22 @@ def _use_demo_rule_book_fixture(monkeypatch: pytest.MonkeyPatch, tmp_path_factor
     monkeypatch.setenv("RULE_BOOK_CONFIG_PATH", str(fixture))
     monkeypatch.setenv("UPLOAD_DIR", str(upload))
     monkeypatch.setenv("RULE_BOOK_SAVE_DEBOUNCE_MS", "0")
+    # Keep sync approval-policy helpers on tmp filesystem; API uses the test DB session.
+    monkeypatch.setenv("APPROVAL_POLICY_USE_DB", "0")
     get_settings.cache_clear()
     from app.services.rule_book.account_mapper import clear_rule_book_cache
     from app.services.classification.document_type_catalog import clear_document_type_catalog_cache
     from app.services.rule_book.rule_book_mapper import clear_classification_config_cache
     from app.services.rule_book.rule_book_save_buffer import clear_rule_book_save_buffers
+    from app.services.approval.approval_policy_io import clear_approval_policy_cache
 
     clear_rule_book_cache()
     clear_document_type_catalog_cache()
     clear_classification_config_cache()
     clear_rule_book_save_buffers()
+    clear_approval_policy_cache()
     yield
+    clear_approval_policy_cache()
     clear_rule_book_save_buffers()
     clear_classification_config_cache()
     clear_document_type_catalog_cache()

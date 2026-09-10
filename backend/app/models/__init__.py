@@ -47,6 +47,7 @@ from app.models.currency import Currency
 from app.models.tenant import Tenant
 from app.models.tenant_module import TenantModule
 from app.models.tenant_rule_book_config import TenantRuleBookConfig
+from app.models.tenant_approval_policy import TenantApprovalPolicy
 from app.models.payment import Payment
 from app.models.payment_execution_instruction import PaymentExecutionInstruction
 from app.models.stripe_payments import (
@@ -162,6 +163,7 @@ __all__ = [
     "TenantMemberInvite",
     "TenantModule",
     "TenantPaymentProviderAccount",
+    "TenantApprovalPolicy",
     "TenantRuleBookConfig",
     "User",
     "ReportColumnLayout",
