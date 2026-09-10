@@ -202,6 +202,49 @@ async def send_login_otp_email(*, to_email: str, otp: str) -> InviteEmailResult:
     return smtp_result
 
 
+async def send_employee_mobile_access_email(
+    *,
+    to_email: str,
+    tenant_name: str,
+    sign_in_url: str,
+) -> InviteEmailResult:
+    """Email an existing Team member the mobile sign-in deep link (returnTo=/m)."""
+    settings = get_settings()
+    if settings.is_production or graph_mail_send_configured():
+        validate_deliverable_email_or_raise(to_email)
+
+    subject = f"Open {tenant_name} on LedgerLink mobile"
+    body_text = (
+        f"You already have a Team login for {tenant_name}.\n\n"
+        f"Sign in to open the mobile capture app:\n{sign_in_url}\n\n"
+        "If you did not expect this email, you can ignore it."
+    )
+    body_html = (
+        f"<p>You already have a Team login for <strong>{tenant_name}</strong>.</p>"
+        f'<p><a href="{sign_in_url}">Sign in to LedgerLink mobile</a></p>'
+        "<p>After signing in you will land on the mobile capture app.</p>"
+        "<p>If you did not expect this email, you can ignore it.</p>"
+    )
+
+    if not settings.is_production:
+        logger.info(
+            "employee_mobile_access_email",
+            extra={
+                "email": to_email,
+                "tenant": tenant_name,
+                "sign_in_url": sign_in_url,
+            },
+        )
+
+    return await asyncio.to_thread(
+        _deliver_tenant_invite_sync,
+        to_email=to_email,
+        subject=subject,
+        body_text=body_text,
+        body_html=body_html,
+    )
+
+
 async def send_tenant_invite_email(
     *,
     to_email: str,

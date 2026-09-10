@@ -154,6 +154,13 @@ export function EmployeesTab({
       onSuccess: async (result) => {
         const link = result.accept_url;
         if (result.already_member) {
+          if (result.email_sent) {
+            toast({
+              title: "Mobile sign-in link sent",
+              description: `${result.email} already has a Team login — mobile sign-in link emailed.`,
+            });
+            return;
+          }
           try {
             if (link) await navigator.clipboard.writeText(link);
           } catch {
@@ -161,9 +168,11 @@ export function EmployeesTab({
           }
           toast({
             title: "Already on the Team",
-            description:
-              `${result.email} already has a Team login. Share the mobile sign-in link` +
-              (link ? ` (copied): ${link}` : "."),
+            description: result.email_error
+              ? `Email failed (${result.email_error}). Share the mobile sign-in link` +
+                (link ? ` (copied): ${link}` : ".")
+              : `${result.email} already has a Team login. Share the mobile sign-in link` +
+                (link ? ` (copied): ${link}` : "."),
           });
           return;
         }

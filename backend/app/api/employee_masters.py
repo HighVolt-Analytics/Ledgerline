@@ -10,7 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_db, require_admin
 from app.models.tenant import Tenant
 from app.services.audit.audit_service import log_event
-from app.services.auth.auth_email_service import send_tenant_invite_email
+from app.services.auth.auth_email_service import (
+    send_employee_mobile_access_email,
+    send_tenant_invite_email,
+)
 from app.services.auth.privilege_service import require_bank_reveal, require_privilege
 from app.schemas.common import ApiEnvelope
 from app.schemas.master_data import (
@@ -348,26 +351,30 @@ async def invite_employee_to_mobile(
     tenant = await db.get(Tenant, ctx.tenant_id)
     email_sent = False
     email_error: str | None = None
-    if tenant and not created.already_member:
-        delivery = await send_tenant_invite_email(
-            to_email=created.email,
-            tenant_name=tenant.name,
-            role=TenantRole.EMPLOYEE.value,
-            accept_url=created.accept_url,
-            for_mobile=True,
-        )
+    if tenant:
+        if created.already_member:
+            # Existing members cannot get a fresh invite token — email the mobile sign-in link.
+            delivery = await send_employee_mobile_access_email(
+                to_email=created.email,
+                tenant_name=tenant.name,
+                sign_in_url=created.accept_url,
+            )
+        else:
+            delivery = await send_tenant_invite_email(
+                to_email=created.email,
+                tenant_name=tenant.name,
+                role=TenantRole.EMPLOYEE.value,
+                accept_url=created.accept_url,
+                for_mobile=True,
+            )
         email_sent = delivery.sent
         email_error = delivery.error
-    elif created.already_member:
-        email_error = (
-            "Already a Team member — share the mobile sign-in link instead of a new invite."
-        )
 
     actor_name, actor_email = await actor_from_context(db, ctx)
     client_ip = request.client.host if request.client else None
     await log_event(
         db,
-        "employee_mobile_invited" if not created.already_member else "employee_mobile_invite_already_member",
+        "employee_mobile_invited" if not created.already_member else "employee_mobile_access_emailed",
         tenant_id=ctx.tenant_id,
         detail={
             "master_id": master_id,
@@ -375,6 +382,8 @@ async def invite_employee_to_mobile(
             "email": created.email,
             "role": TenantRole.EMPLOYEE.value,
             "already_member": created.already_member,
+            "email_sent": email_sent,
+            "email_error": email_error,
         },
         actor_name=actor_name,
         actor_email=actor_email,
