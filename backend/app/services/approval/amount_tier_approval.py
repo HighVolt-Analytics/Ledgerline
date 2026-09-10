@@ -302,10 +302,20 @@ def current_document_step(chain: dict[str, Any] | None) -> dict[str, Any] | None
 
 
 def actor_can_cover_role(actor_role: str | None, required_label: str | None) -> bool:
+    """True when the actor may sign a step assigned to ``required_label``.
+
+    Leadership roles (Manager → Director) may cover equal-or-lower steps.
+    Platform Admin does **not** substitute for business matrix roles — Admin may
+    only sign steps assigned to Admin (use Escalate to raise the step to Admin).
+    """
     if role_rank(actor_role) < 0:
         return False
     if not required_label:
         return True
+    actor = normalize_tenant_role(actor_role)
+    required_slug = role_slug_for_label(required_label)
+    if actor == TenantRole.ADMIN:
+        return required_slug == TenantRole.ADMIN.value
     return role_rank(actor_role) >= role_rank(required_label)
 
 
@@ -316,6 +326,13 @@ def require_actor_for_current_step(chain: dict[str, Any] | None, actor_role: str
         return
     required = effective_step_role(step)
     if not actor_can_cover_role(actor_role, required):
+        actor = normalize_tenant_role(actor_role)
+        if actor == TenantRole.ADMIN:
+            raise AmountTierApprovalError(
+                f"Current step requires {required}. "
+                "Admin cannot substitute for that role — escalate until the step "
+                "is Admin, or have the assigned role approve."
+            )
         raise AmountTierApprovalError(
             f"Current step requires {required} or higher. "
             "Escalate to a higher role if you cannot approve."
@@ -446,6 +463,12 @@ def require_payment_approver_role(
     if not required:
         return
     if not actor_can_cover_role(actor_role, required):
+        actor = normalize_tenant_role(actor_role)
+        if actor == TenantRole.ADMIN:
+            raise AmountTierApprovalError(
+                f"Payment approval requires {required}. "
+                "Admin cannot substitute for that role."
+            )
         raise AmountTierApprovalError(
             f"Payment approval requires {required} or higher for this amount"
         )

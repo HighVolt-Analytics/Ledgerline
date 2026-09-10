@@ -28,19 +28,18 @@ from app.services.approval.approval_pipeline_service import (
 from app.services.approval.approval_service import (
     APPROVABLE_STATUSES,
     _assert_invoice_ready_for_approval,
-    approve_invoice_for_reprocess,
     confirm_invoice_for_process,
     escalate_invoice,
     permanently_delete_invoice,
     reject_invoice,
     request_approval,
     resolution_for_review_action,
+    restore_rejected_invoice_file_if_needed,
 )
 from app.services.audit.audit_service import log_event
 from app.services.shared.file_storage import ensure_stored_file_for_approval
 from app.services.invoice.invoice_access_service import get_invoice_for_tenant
 from app.services.invoice.invoice_evaluation_service import (
-    EVAL_PENDING_APPROVAL,
     EVAL_VISION_HEADER_REVIEW,
     ROUTE_TEAM,
     load_config_for_tenant,
@@ -326,24 +325,18 @@ def _is_vision_header_review_hold(inv: Invoice) -> bool:
     return (inv.evaluation_status or "").strip().lower() == EVAL_VISION_HEADER_REVIEW
 
 
-def _is_team_expense_approval_hold(inv: Invoice) -> bool:
-    return (
-        (inv.route_target or "").strip() == ROUTE_TEAM
-        and (inv.evaluation_status or "").strip().lower() == EVAL_PENDING_APPROVAL
-    )
-
-
-async def _approve_team_expense_for_posting(
+async def _approve_invoice_for_posting_resume(
     db: AsyncSession,
     inv: Invoice,
     *,
     actor_name: str | None,
     actor_email: str | None,
 ) -> None:
-    """Mark TE claim approved and ready for posting resume (async after HTTP returns).
+    """Mark approved and ready to continue mapping→journal→post (no full reprocess).
 
-    Mapping→journal can take longer than the Vite proxy timeout when Sub-GL LLM
-    runs, so resume is enqueued by the API route — do not run it inline.
+    Approvers review/edit while the doc waits; after quorum we resume the next
+    pipeline stages from persisted fields instead of restarting OCR/extract.
+    Resume is enqueued by the API route (async) so the HTTP response stays fast.
     """
     loaded = (
         await db.execute(
@@ -360,7 +353,14 @@ async def _approve_team_expense_for_posting(
     if payable_fields_complete(loaded, definition):
         apply_human_approval_processing_defaults(loaded)
 
+    await restore_rejected_invoice_file_if_needed(db, loaded)
+    from app.services.shared.file_storage import stored_file_available
+
+    if not stored_file_available(loaded.raw_file_path, tenant_id=loaded.tenant_id):
+        raise ValueError("Invoice has no stored file to process")
+
     previous_status = loaded.status.value
+    is_team = (loaded.route_target or "").strip() == ROUTE_TEAM
     await log_event(
         db,
         "invoice_approved",
@@ -371,13 +371,14 @@ async def _approve_team_expense_for_posting(
                 action="approve",
                 previous_status=previous_status,
             ),
-            "team_expense_posting_resume": True,
+            "posting_resume": True,
             "posting_resume_deferred": True,
+            "team_expense_posting_resume": is_team,
         },
         actor_name=actor_name,
         actor_email=actor_email,
     )
-    # Clears sticky pending_approval so the gate lets the claim through.
+    # Clears sticky pending_approval so gates let the document through on resume.
     await reset_invoice_for_approval(db, loaded)
     # Show as in-flight until background resume finishes.
     loaded.status = InvoiceStatus.MAPPING
@@ -393,6 +394,18 @@ async def _approve_team_expense_for_posting(
     inv.account_name = loaded.account_name
     inv.team_expense_kind = loaded.team_expense_kind
 
+
+async def _approve_team_expense_for_posting(
+    db: AsyncSession,
+    inv: Invoice,
+    *,
+    actor_name: str | None,
+    actor_email: str | None,
+) -> None:
+    """Backward-compatible alias — all routes now use posting resume after approve."""
+    await _approve_invoice_for_posting_resume(
+        db, inv, actor_name=actor_name, actor_email=actor_email
+    )
 
 async def _approve_vision_header_review_for_posting(
     db: AsyncSession,
@@ -580,29 +593,18 @@ async def approve_invoice_action(
             quorum=progress.as_dict(),
         )
 
-    if _is_team_expense_approval_hold(inv):
-        await _approve_team_expense_for_posting(
-            db,
-            inv,
-            actor_name=actor_name,
-            actor_email=actor_email,
-        )
-        response = await response_for_invoice(db, inv, tenant_id=ctx.tenant_id)
-        return ApproveInvoiceResult(
-            response=response,
-            enqueue_pipeline=False,
-            enqueue_posting_resume=True,
-            quorum_met=True,
-            quorum=progress.as_dict(),
-        )
-
-    await approve_invoice_for_reprocess(
-        db, inv, actor_name=actor_name, actor_email=actor_email
+    # Checkpoint complete: continue mapping→journal→post (do not full-reprocess).
+    await _approve_invoice_for_posting_resume(
+        db,
+        inv,
+        actor_name=actor_name,
+        actor_email=actor_email,
     )
     response = await response_for_invoice(db, inv, tenant_id=ctx.tenant_id)
     return ApproveInvoiceResult(
         response=response,
-        enqueue_pipeline=True,
+        enqueue_pipeline=False,
+        enqueue_posting_resume=True,
         quorum_met=True,
         quorum=progress.as_dict(),
     )

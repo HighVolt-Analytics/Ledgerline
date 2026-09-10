@@ -61,11 +61,12 @@ async def approve_invoice(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[InvoiceResponse]:
     """
-    Approve an exception/rejected invoice for reprocessing.
+    Approve an exception/rejected invoice and continue processing.
 
-    Restores rejected blobs to invoice/ layout when needed, resets to pending,
-    then queues the invoice pipeline for this row. Multi-way quorum may leave
-    the document pending until enough distinct pool approvers have signed off.
+    Multi-way quorum may leave the document pending until enough approvers have
+    signed off. When quorum is met, the document resumes mapping→journal→post
+    from persisted fields (edits kept) instead of a full OCR/extract reprocess.
+    Vision header-review holds use the vision continue path.
     """
     require_privilege(ctx, "Approve")
     try:

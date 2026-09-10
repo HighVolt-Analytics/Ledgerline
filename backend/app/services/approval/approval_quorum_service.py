@@ -253,23 +253,84 @@ def chain_needs_materialize(chain: dict[str, Any] | None) -> bool:
     return not isinstance(steps, list) or not steps
 
 
+def _pending_chain_without_approvals(chain: dict[str, Any] | None) -> bool:
+    """True when chain exists but nobody has signed yet — safe to rebuild from policy."""
+    if not isinstance(chain, dict) or not chain:
+        return False
+    steps = chain.get("steps")
+    if not isinstance(steps, list) or not steps:
+        return False
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        if step.get("kind") == "document" and step.get("status") == "approved":
+            return False
+        if step.get("user_id") is not None:
+            return False
+    approvals = chain.get("approvals")
+    if isinstance(approvals, list) and any(
+        isinstance(a, dict) and a.get("user_id") is not None for a in approvals
+    ):
+        return False
+    return True
+
+
+def _policy_chain_signature(chain: dict[str, Any] | None) -> tuple[Any, ...]:
+    """Compare unsigned chains to current policy without rewriting when unchanged."""
+    if not isinstance(chain, dict):
+        return ()
+    doc_roles: list[tuple[Any, ...]] = []
+    payment_role = None
+    for step in chain.get("steps") or []:
+        if not isinstance(step, dict):
+            continue
+        if step.get("kind") == "document":
+            doc_roles.append(
+                (
+                    step.get("key"),
+                    step.get("role"),
+                    step.get("escalated_to_role"),
+                )
+            )
+        elif step.get("kind") == "payment":
+            payment_role = step.get("role")
+    return (
+        chain.get("tier_id"),
+        str(chain.get("amount")),
+        tuple(doc_roles),
+        payment_role,
+    )
+
+
 def ensure_invoice_approval_chain(invoice: Any) -> bool:
-    """Materialize the amount-tier chain when a doc enters Approvals.
+    """Materialize / refresh the amount-tier chain when a doc enters Approvals.
 
     Returns True when the invoice's approval_chain was written/updated.
-    Does not rewrite chains that already have steps (in-progress or complete).
+    Rebuilds unsigned chains when Policy & privileges tiers changed (e.g. after
+    reprocess). Does not rewrite chains that already have approved steps.
     """
-    if not chain_needs_materialize(getattr(invoice, "approval_chain", None)):
-        return False
     tenant_id = getattr(invoice, "tenant_id", None)
     if tenant_id is None:
         return False
+    existing = getattr(invoice, "approval_chain", None)
     module_key = module_for_route_target(getattr(invoice, "route_target", None))
-    invoice.approval_chain = empty_chain(
+    if chain_needs_materialize(existing):
+        invoice.approval_chain = empty_chain(
+            tenant_id=tenant_id,
+            module_key=module_key,
+            amount=getattr(invoice, "total", None),
+        )
+        return True
+    if not _pending_chain_without_approvals(existing):
+        return False
+    refreshed = empty_chain(
         tenant_id=tenant_id,
         module_key=module_key,
         amount=getattr(invoice, "total", None),
     )
+    if _policy_chain_signature(existing) == _policy_chain_signature(refreshed):
+        return False
+    invoice.approval_chain = refreshed
     return True
 
 

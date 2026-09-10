@@ -102,23 +102,35 @@ def test_higher_role_can_cover_both_document_steps() -> None:
         tenant_id=TESTING_TENANT_UUID,
         module_key="purchase",
         user_id=10,
-        role="admin",
-        name="Admin",
+        role="director",
+        name="Director",
         amount=15_000,
     )
-    # Admin covers step 1 only; still need step 2 from a distinct approval click
-    # unless we apply again — but same user is idempotent once they approved a step.
+    # Director covers step 1 only; still need step 2 from a distinct approval click
     assert not quorum_met(chain)
     chain = record_approval(
         chain,
         tenant_id=TESTING_TENANT_UUID,
         module_key="purchase",
         user_id=11,
-        role="admin",
-        name="Admin2",
+        role="director",
+        name="Director2",
         amount=15_000,
     )
     assert quorum_met(chain)
+
+
+def test_admin_cannot_cover_finance_or_manager_step() -> None:
+    with pytest.raises(ApprovalQuorumForbiddenError, match="Admin cannot substitute"):
+        record_approval(
+            None,
+            tenant_id=TESTING_TENANT_UUID,
+            module_key="expenses",
+            user_id=1,
+            role="admin",
+            name="Admin",
+            amount=100,
+        )
 
 
 def test_employee_not_in_pool() -> None:
@@ -226,11 +238,7 @@ async def test_approve_api_two_step_amount_tier(
         lambda *_a, **_k: False,
     )
     monkeypatch.setattr(
-        "app.services.approval.approval_api_service._is_team_expense_approval_hold",
-        lambda *_a, **_k: True,
-    )
-    monkeypatch.setattr(
-        "app.services.approval.approval_api_service._approve_team_expense_for_posting",
+        "app.services.approval.approval_api_service._approve_invoice_for_posting_resume",
         _noop_approve,
     )
     monkeypatch.setattr(
