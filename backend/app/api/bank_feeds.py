@@ -228,15 +228,25 @@ async def create_account(
         currency = validate_bank_account_currency(body.currency)
     except UnsupportedBankCurrencyError as exc:
         raise HTTPException(400, str(exc)) from exc
-    row = await account_service.create_bank_account(
-        db,
-        tenant_id=ctx.tenant_id,
-        name=body.name,
-        currency=currency,
-        account_number=body.account_number,
-        coa_account_name=body.coa_account_name,
-        account_mask=body.account_mask,
-    )
+    try:
+        row = await account_service.create_bank_account(
+            db,
+            tenant_id=ctx.tenant_id,
+            name=body.name,
+            currency=currency,
+            account_number=body.account_number,
+            coa_account_name=body.coa_account_name,
+            account_mask=body.account_mask,
+            statement_parse_profile_id=body.statement_parse_profile_id,
+        )
+    except Exception as exc:
+        from app.services.bank_feeds.statement_parse_profile import (
+            StatementParseProfileError,
+        )
+
+        if isinstance(exc, StatementParseProfileError):
+            raise HTTPException(400, str(exc)) from exc
+        raise
     actor_name, actor_email = await actor_from_context(db, ctx)
     await log_event(
         db,
@@ -271,16 +281,26 @@ async def update_account(
         currency = validate_bank_account_currency(body.currency)
     except UnsupportedBankCurrencyError as exc:
         raise HTTPException(400, str(exc)) from exc
-    row = await account_service.update_bank_account(
-        db,
-        tenant_id=ctx.tenant_id,
-        account_id=account_id,
-        name=body.name,
-        currency=currency,
-        account_number=body.account_number,
-        coa_account_name=body.coa_account_name,
-        account_mask=body.account_mask,
-    )
+    try:
+        row = await account_service.update_bank_account(
+            db,
+            tenant_id=ctx.tenant_id,
+            account_id=account_id,
+            name=body.name,
+            currency=currency,
+            account_number=body.account_number,
+            coa_account_name=body.coa_account_name,
+            account_mask=body.account_mask,
+            statement_parse_profile_id=body.statement_parse_profile_id,
+        )
+    except Exception as exc:
+        from app.services.bank_feeds.statement_parse_profile import (
+            StatementParseProfileError,
+        )
+
+        if isinstance(exc, StatementParseProfileError):
+            raise HTTPException(400, str(exc)) from exc
+        raise
     if row is None:
         raise HTTPException(404, "Bank account not found")
     actor_name, actor_email = await actor_from_context(db, ctx)

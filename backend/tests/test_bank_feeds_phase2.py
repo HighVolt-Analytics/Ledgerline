@@ -373,7 +373,7 @@ async def test_failed_pdf_import_can_be_retried_same_file(
         ]
     )
 
-    def _fail_parse(_content: bytes):
+    def _fail_parse(_content: bytes, **_kwargs):
         from app.services.bank_feeds.parse_common import CsvParseError, CsvParseResult
 
         return CsvParseResult(

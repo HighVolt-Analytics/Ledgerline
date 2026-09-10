@@ -1,6 +1,7 @@
 import { matchesListSearch } from "@/lib/listSearch";
 import type { ReportCatalogItem, ReportCategory } from "@/api/types";
 
+/** Compact catalog panels — original four sections. */
 export const REPORT_CATEGORY_ORDER: ReportCategory[] = [
   "payables_receivables",
   "budgets_performance",
@@ -9,13 +10,36 @@ export const REPORT_CATEGORY_ORDER: ReportCategory[] = [
 ];
 
 export const REPORT_CATEGORY_LABELS: Record<ReportCategory, string> = {
-  payables_receivables: "Payables & Receivables",
-  budgets_performance: "Budgets & Performance",
+  payables_receivables: "Payables & receivables",
+  budgets_performance: "Budgets & performance",
   transactions: "Transactions",
-  exceptions_controls: "Exceptions & Controls",
+  exceptions_controls: "Exceptions & controls",
+};
+
+export const REPORT_CATEGORY_ACCENTS: Record<ReportCategory, string> = {
+  payables_receivables: "#33C7A5",
+  budgets_performance: "#7C93EF",
+  transactions: "#4FB6D9",
+  exceptions_controls: "#F2A154",
 };
 
 export type ReportCategoryTab = "all" | ReportCategory;
+
+/**
+ * Invoice Exception appears under payables and exceptions
+ * (matches reports-redesign-compact.html dual-category row).
+ */
+export function reportCategories(item: ReportCatalogItem): ReportCategory[] {
+  if (item.id === "invoice-exception") {
+    return ["payables_receivables", "exceptions_controls"];
+  }
+  return [item.category];
+}
+
+/** Amber flag on Invoice Exception. */
+export function isFlaggedReport(item: ReportCatalogItem): boolean {
+  return item.id === "invoice-exception";
+}
 
 export function filterCatalogItems(
   items: ReportCatalogItem[],
@@ -23,7 +47,7 @@ export function filterCatalogItems(
   category: ReportCategoryTab
 ): ReportCatalogItem[] {
   return items.filter((item) => {
-    if (category !== "all" && item.category !== category) return false;
+    if (category !== "all" && !reportCategories(item).includes(category)) return false;
     return matchesListSearch(search, item.name, item.description, item.id);
   });
 }
@@ -34,7 +58,7 @@ export function groupCatalogByCategory(
   return REPORT_CATEGORY_ORDER.map((category) => ({
     category,
     label: REPORT_CATEGORY_LABELS[category],
-    items: items.filter((item) => item.category === category),
+    items: items.filter((item) => reportCategories(item).includes(category)),
   })).filter((group) => group.items.length > 0);
 }
 

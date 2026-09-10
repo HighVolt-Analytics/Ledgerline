@@ -59,13 +59,19 @@ async def create_bank_account(
     account_number: str,
     coa_account_name: str,
     account_mask: str | None = None,
+    statement_parse_profile_id: str | None = None,
 ) -> BankAccount:
     from app.services.rule_book.account_mapper import resolve_category_for_config
+    from app.services.bank_feeds.statement_parse_profile import load_statement_parse_profile
 
     config = await load_classification_config(session, tenant_id)
     mapping = resolve_category_for_config(coa_account_name.strip(), config)
     number = (account_number or "").strip()
     mask = (account_mask or "").strip() or mask_account_number(number)
+    # Validate profile id when provided (None → generic at parse time).
+    profile_id = (statement_parse_profile_id or "").strip() or None
+    if profile_id is not None:
+        load_statement_parse_profile(profile_id)
 
     row = BankAccount(
         tenant_id=tenant_id,
@@ -77,6 +83,7 @@ async def create_bank_account(
         coa_account_name=mapping.account_name,
         connection_type=BankConnectionType.MANUAL.value,
         status=BankAccountStatus.ACTIVE.value,
+        statement_parse_profile_id=profile_id,
     )
     session.add(row)
     await session.flush()
@@ -93,8 +100,10 @@ async def update_bank_account(
     account_number: str,
     coa_account_name: str,
     account_mask: str | None = None,
+    statement_parse_profile_id: str | None = None,
 ) -> BankAccount | None:
     from app.services.rule_book.account_mapper import resolve_category_for_config
+    from app.services.bank_feeds.statement_parse_profile import load_statement_parse_profile
 
     row = await get_bank_account(session, tenant_id=tenant_id, account_id=account_id)
     if row is None:
@@ -102,12 +111,16 @@ async def update_bank_account(
     config = await load_classification_config(session, tenant_id)
     mapping = resolve_category_for_config(coa_account_name.strip(), config)
     number = (account_number or "").strip()
+    profile_id = (statement_parse_profile_id or "").strip() or None
+    if profile_id is not None:
+        load_statement_parse_profile(profile_id)
     row.name = name.strip()
     row.currency = (currency or "").strip().upper()[:3]
     row.account_number = number or None
     row.account_mask = (account_mask or "").strip() or mask_account_number(number)
     row.coa_account_code = mapping.account_code
     row.coa_account_name = mapping.account_name
+    row.statement_parse_profile_id = profile_id
     await session.flush()
     return row
 

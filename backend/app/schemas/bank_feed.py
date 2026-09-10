@@ -22,6 +22,11 @@ class BankAccountCreate(BaseModel):
         max_length=255,
         description="COA ledger name from Chart of Accounts.",
     )
+    statement_parse_profile_id: str | None = Field(
+        default=None,
+        max_length=64,
+        description="Optional statement parse profile (default generic_v1).",
+    )
 
     @field_validator("currency")
     @classmethod
@@ -43,6 +48,7 @@ class BankAccountUpdate(BaseModel):
     account_number: str = Field(..., min_length=1, max_length=64)
     account_mask: str | None = Field(default=None, max_length=32)
     coa_account_name: str = Field(..., min_length=1, max_length=255)
+    statement_parse_profile_id: str | None = Field(default=None, max_length=64)
 
     @field_validator("currency")
     @classmethod
@@ -70,6 +76,7 @@ class BankAccountResponse(BaseModel):
     coa_account_name: str
     connection_type: str
     status: str
+    statement_parse_profile_id: str | None = None
     created_at: datetime
     updated_at: datetime
 

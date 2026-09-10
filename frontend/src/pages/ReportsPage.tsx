@@ -4,16 +4,13 @@ import { EmptyState } from "@/components/EmptyState";
 import { ReportsCatalog } from "@/components/reports/ReportsCatalog";
 import { useReportCatalog } from "@/hooks/useReportCatalog";
 
-const REPORTS_SUBTITLE =
-  "Payables, budgets, team expenses, and exception reports from the reporting pack.";
-
 export function ReportsPage() {
   const { data, isLoading, error } = useReportCatalog();
 
   if (isLoading) {
     return (
       <div>
-        <PageHeader title="Reports" subtitle={REPORTS_SUBTITLE} />
+        <PageHeader title="Reports" />
         <PageLoader variant="reports" />
       </div>
     );
@@ -22,7 +19,7 @@ export function ReportsPage() {
   if (error || !data) {
     return (
       <div>
-        <PageHeader title="Reports" subtitle={REPORTS_SUBTITLE} />
+        <PageHeader title="Reports" />
         <EmptyState
           title="Could not load reports"
           hint={error instanceof Error ? error.message : "Try again later."}
@@ -33,7 +30,6 @@ export function ReportsPage() {
 
   return (
     <div>
-      <PageHeader title="Reports" subtitle={REPORTS_SUBTITLE} />
       <ReportsCatalog reports={data.reports} favouriteIds={data.favourite_ids} />
     </div>
   );

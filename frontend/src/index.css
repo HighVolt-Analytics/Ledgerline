@@ -13,6 +13,7 @@
 @import "./styles/rule-book.css";
 @import "./styles/purchases.css";
 @import "./styles/billing.css";
+@import "./styles/reports-catalog.css";
 
 /* Form field surface — white (light) / elevated gray (dark), distinct from page canvas */
 .bg-field {

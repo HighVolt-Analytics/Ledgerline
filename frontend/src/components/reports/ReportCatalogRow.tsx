@@ -1,13 +1,41 @@
-import { Star } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Select } from "@/components/ui/select";
 import type { ReportCatalogItem, ReportExportFormat } from "@/api/types";
+import { isFlaggedReport } from "@/lib/reportCatalog";
 import { cn } from "@/lib/cn";
 
-const DOWNLOAD_OPTIONS = [
-  { value: "pdf", label: "PDF" },
-  { value: "xlsx", label: "Excel (.xlsx)" },
-];
+const STAR_OUTLINE = (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26" />
+  </svg>
+);
+
+const STAR_FILLED = (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" aria-hidden>
+    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26" />
+  </svg>
+);
+
+const PREVIEW_SVG = (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+    <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" />
+    <circle cx="12" cy="12" r="3" />
+  </svg>
+);
+
+const DOWNLOAD_SVG = (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
+    <path d="M12 3v13" />
+    <path d="M7 11l5 5 5-5" />
+    <path d="M5 21h14" />
+  </svg>
+);
+
+const INFO_SVG = (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+    <circle cx="12" cy="12" r="9" />
+    <line x1="12" y1="11" x2="12" y2="16" />
+    <circle cx="12" cy="8" r="0.5" fill="currentColor" />
+  </svg>
+);
 
 type ReportCatalogRowProps = {
   report: ReportCatalogItem;
@@ -16,7 +44,6 @@ type ReportCatalogRowProps = {
   onToggleFavourite: () => void;
   onTogglePreview: () => void;
   onDownloadFormat: (format: ReportExportFormat) => void;
-  children?: React.ReactNode;
 };
 
 export function ReportCatalogRow({
@@ -26,65 +53,63 @@ export function ReportCatalogRow({
   onToggleFavourite,
   onTogglePreview,
   onDownloadFormat,
-  children,
 }: ReportCatalogRowProps) {
   const panelId = `report-preview-${report.id}`;
+  const flagged = isFlaggedReport(report);
+
   return (
-    <div className="border-b border-border/60 py-3">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-foreground">{report.name}</p>
-          <p className="text-xs text-muted-foreground mt-0.5">{report.description}</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
-          <Button
+    <div
+      className={cn("rc-report-row", flagged && "exception", expanded && "is-expanded")}
+    >
+      <button
+        type="button"
+        className={cn("rc-star", favourite && "active")}
+        aria-label={favourite ? `Unfavourite ${report.name}` : `Favourite ${report.name}`}
+        aria-pressed={favourite}
+        data-testid={`button-favourite-${report.id}`}
+        onClick={onToggleFavourite}
+      >
+        {favourite ? STAR_FILLED : STAR_OUTLINE}
+      </button>
+
+      <span className="rc-report-name" title={report.name}>
+        {report.name}
+      </span>
+
+      <div className="rc-row-actions">
+        <button
+          type="button"
+          className={cn("rc-icon-btn", expanded && "is-active")}
+          aria-label={`Preview ${report.name}`}
+          aria-expanded={expanded}
+          aria-controls={panelId}
+          data-testid={`button-preview-${report.id}`}
+          onClick={onTogglePreview}
+        >
+          {PREVIEW_SVG}
+        </button>
+        <button
+          type="button"
+          className="rc-icon-btn"
+          aria-label={`Download ${report.name}`}
+          data-testid={`select-download-${report.id}`}
+          onClick={() => onDownloadFormat("xlsx")}
+        >
+          {DOWNLOAD_SVG}
+        </button>
+        <div className="rc-info-wrap" tabIndex={0}>
+          <button
             type="button"
-            variant="ghost"
-            size="icon"
-            className="h-11 w-11"
-            aria-label={favourite ? `Unfavourite ${report.name}` : `Favourite ${report.name}`}
-            aria-pressed={favourite}
-            data-testid={`button-favourite-${report.id}`}
-            onClick={onToggleFavourite}
+            className="rc-info-btn"
+            aria-label={`${report.name} details`}
           >
-            <Star
-              className={cn(favourite && "fill-current")}
-              aria-hidden
-            />
-          </Button>
-          <Button
-            type="button"
-            variant={expanded ? "default" : "outline"}
-            className="min-h-11"
-            aria-expanded={expanded}
-            aria-controls={panelId}
-            data-testid={`button-preview-${report.id}`}
-            onClick={onTogglePreview}
-          >
-            Preview
-          </Button>
-          <div role="group" aria-label={`Download ${report.name}`}>
-            <Select
-              value=""
-              placeholder="Download"
-              options={DOWNLOAD_OPTIONS}
-              onValueChange={(value) => onDownloadFormat(value as ReportExportFormat)}
-              data-testid={`select-download-${report.id}`}
-              className="min-h-11 min-w-[8rem]"
-            />
+            {INFO_SVG}
+          </button>
+          <div className="rc-tooltip" role="tooltip">
+            {report.description}
           </div>
         </div>
       </div>
-      {expanded ? (
-        <div
-          id={panelId}
-          role="region"
-          aria-label={`${report.name} preview`}
-          className="mt-3"
-        >
-          {children}
-        </div>
-      ) : null}
     </div>
   );
 }

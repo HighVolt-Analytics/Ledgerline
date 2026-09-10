@@ -106,6 +106,8 @@ class BankAccount(Base):
     status: Mapped[str] = mapped_column(
         String(32), nullable=False, default=BankAccountStatus.ACTIVE.value, index=True
     )
+    # Optional StatementParseProfile id (e.g. generic_v1, eu_decimal_v1). None → generic_v1.
+    statement_parse_profile_id: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

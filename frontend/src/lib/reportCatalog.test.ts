@@ -4,6 +4,8 @@ import {
   favouriteItems,
   filterCatalogItems,
   groupCatalogByCategory,
+  isFlaggedReport,
+  reportCategories,
 } from "@/lib/reportCatalog";
 
 const ITEMS: ReportCatalogItem[] = [
@@ -35,6 +37,13 @@ const ITEMS: ReportCatalogItem[] = [
     category: "exceptions_controls",
     supports_compare: false,
   },
+  {
+    id: "invoice-exception",
+    name: "Invoice Exception",
+    description: "Fraud indicators and validation.",
+    category: "payables_receivables",
+    supports_compare: false,
+  },
 ];
 
 describe("filterCatalogItems", () => {
@@ -54,11 +63,14 @@ describe("filterCatalogItems", () => {
   it("filters by category tab", () => {
     expect(
       filterCatalogItems(ITEMS, "", "payables_receivables").map((item) => item.id)
-    ).toEqual(["aged-payables"]);
+    ).toEqual(["aged-payables", "invoice-exception"]);
     expect(
       filterCatalogItems(ITEMS, "cash", "transactions").map((item) => item.id)
     ).toEqual(["cash-forecast"]);
     expect(filterCatalogItems(ITEMS, "cash", "payables_receivables")).toEqual([]);
+    expect(
+      filterCatalogItems(ITEMS, "", "exceptions_controls").map((item) => item.id)
+    ).toEqual(["control-centre", "invoice-exception"]);
   });
 });
 
@@ -72,6 +84,18 @@ describe("groupCatalogByCategory", () => {
     ]);
     expect(groups[1].items).toHaveLength(2);
   });
+
+  it("places invoice-exception in payables and exceptions", () => {
+    expect(reportCategories(ITEMS[4])).toEqual([
+      "payables_receivables",
+      "exceptions_controls",
+    ]);
+    const groups = groupCatalogByCategory([ITEMS[4]]);
+    expect(groups.map((g) => g.category)).toEqual([
+      "payables_receivables",
+      "exceptions_controls",
+    ]);
+  });
 });
 
 describe("favouriteItems", () => {
@@ -79,5 +103,13 @@ describe("favouriteItems", () => {
     expect(
       favouriteItems(ITEMS, ["aged-payables", "invoice-register"]).map((item) => item.id)
     ).toEqual(["invoice-register", "aged-payables"]);
+  });
+});
+
+describe("isFlaggedReport", () => {
+  it("flags only Invoice Exception", () => {
+    expect(isFlaggedReport(ITEMS[4])).toBe(true);
+    expect(isFlaggedReport(ITEMS[3])).toBe(false);
+    expect(isFlaggedReport(ITEMS[0])).toBe(false);
   });
 });

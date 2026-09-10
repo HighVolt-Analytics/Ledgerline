@@ -55,17 +55,42 @@ def _near_duplicate_candidates(
     return hits
 
 
+def _preferred_date_order_for_account(account: BankAccount):
+    from app.services.bank_feeds.parse_common import preferred_date_order_for_currency
+
+    return preferred_date_order_for_currency(account.currency)
+
+
+def _parse_profile_for_account(account: BankAccount):
+    from app.services.bank_feeds.statement_parse_profile import profile_from_account
+
+    return profile_from_account(account)
+
+
 def _parse_statement_content(
-    content: bytes, *, source: BankFeedSource
+    content: bytes,
+    *,
+    source: BankFeedSource,
+    preferred_date_order=None,
+    profile=None,
 ) -> CsvParseResult:
     if source == BankFeedSource.PDF:
-        return parse_bank_statement_pdf(content)
-    result = parse_canonical_bank_csv(content)
+        return parse_bank_statement_pdf(
+            content,
+            preferred_date_order=preferred_date_order,
+            profile=profile,
+        )
+    result = parse_canonical_bank_csv(
+        content,
+        preferred_date_order=preferred_date_order,
+        profile=profile,
+    )
     return CsvParseResult(
         rows=result.rows,
         errors=result.errors,
         extracted_count=len(result.rows),
         candidate_line_count=len(result.rows) + len(result.errors),
+        parse_meta=dict(result.parse_meta or {}),
     )
 
 
@@ -226,7 +251,12 @@ async def import_statement(
             client_ip=client_ip,
         )
 
-    parsed: CsvParseResult = _parse_statement_content(content, source=source)
+    parsed: CsvParseResult = _parse_statement_content(
+        content,
+        source=source,
+        preferred_date_order=_preferred_date_order_for_account(account),
+        profile=_parse_profile_for_account(account),
+    )
     if retry_import is not None:
         import_row = retry_import
         _reset_import_row(
@@ -353,6 +383,18 @@ async def import_statement(
             review_flags = {
                 "possible_duplicate_of": [t.id for t in near],
             }
+        if row.direction_confidence:
+            review_flags = dict(review_flags or {})
+            review_flags["direction_confidence"] = row.direction_confidence
+        if row.extraction_source:
+            review_flags = dict(review_flags or {})
+            review_flags["extraction_source"] = row.extraction_source
+        if row.extraction_confidence:
+            review_flags = dict(review_flags or {})
+            review_flags["extraction_confidence"] = row.extraction_confidence
+        if row.extraction_note:
+            review_flags = dict(review_flags or {})
+            review_flags["extraction_note"] = row.extraction_note
         review_flags = with_statement_reference(review_flags, row.reference)
 
         txn = BankTransaction(
@@ -417,6 +459,12 @@ async def import_statement(
             )
 
     error_count = len(parsed.errors)
+    low_confidence_count = sum(
+        1 for row in parsed.rows if row.direction_confidence == "low"
+    )
+    low_extraction_confidence_count = sum(
+        1 for row in parsed.rows if row.extraction_confidence == "low"
+    )
     import_row.row_count = max(parsed.extracted_count, len(parsed.rows)) + error_count
     import_row.accepted_count = len(accepted_ids)
     import_row.duplicate_count = duplicate_count
@@ -428,9 +476,13 @@ async def import_statement(
         "extracted_count": parsed.extracted_count,
         "candidate_line_count": parsed.candidate_line_count,
         "skipped_line_count": parsed.skipped_line_count,
+        "low_direction_confidence_count": low_confidence_count,
+        "low_extraction_confidence_count": low_extraction_confidence_count,
         **({"parse_meta": parsed.parse_meta} if parsed.parse_meta else {}),
     }
-    if error_count and accepted_ids:
+    if (error_count and accepted_ids) or (
+        (low_confidence_count or low_extraction_confidence_count) and accepted_ids
+    ):
         import_row.status = BankFeedImportStatus.PARTIAL.value
     elif accepted_ids or (not parsed.rows and not error_count):
         import_row.status = BankFeedImportStatus.COMPLETED.value

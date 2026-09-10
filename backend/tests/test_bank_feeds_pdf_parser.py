@@ -105,7 +105,7 @@ def test_outflow_inflow_headers_succeed(monkeypatch: pytest.MonkeyPatch) -> None
     )
     monkeypatch.setattr(
         "app.services.bank_feeds.pdf_parser._extract_text_with_ocr_fallback",
-        lambda _path, text: (text, "pdfplumber"),
+        lambda _path, text, **_kwargs: (text, "pdfplumber"),
     )
     result = parse_bank_statement_pdf(b"%PDF-1.4 test")
     assert len(result.rows) == 2
