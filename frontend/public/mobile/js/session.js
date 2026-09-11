@@ -222,6 +222,14 @@
     });
   }
 
+  async function fetchInstitutionSettings() {
+    return apiFetch('/api/tenants/current/institution', {
+      method: 'GET',
+      headers: authHeaders(),
+      cache: 'no-store'
+    });
+  }
+
   async function listApprovals(pageSize) {
     var size = pageSize || 100;
     return apiFetch('/api/approvals?page=1&page_size=' + size, {
@@ -312,6 +320,7 @@
     apiFetch: apiFetch,
     refreshMe: refreshMe,
     fetchPermissions: fetchPermissions,
+    fetchInstitutionSettings: fetchInstitutionSettings,
     listApprovals: listApprovals,
     approveInvoice: approveInvoice,
     rejectInvoice: rejectInvoice,

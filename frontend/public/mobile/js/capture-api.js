@@ -706,6 +706,7 @@
       t: title,
       s: sub,
       amt: amt,
+      currency: String(inv.currency || '').trim().toUpperCase() || '',
       chip: [chip.tone, chip.label],
       prog: chip.prog,
       tone: chip.tone,

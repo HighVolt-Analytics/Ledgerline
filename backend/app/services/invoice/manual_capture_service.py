@@ -379,6 +379,7 @@ async def create_without_document_invoice(
     Does not ingest a placeholder image — no receipt attachment, no file-hash dedup.
     """
     from app.models.invoice import InvoiceStatus
+    from app.models.tenant import Tenant
     from app.services.audit.audit_service import log_event
     from app.services.credit_service import (
         assert_can_upload,
@@ -386,13 +387,17 @@ async def create_without_document_invoice(
     )
     from app.services.dossier.document_ref_service import allocate_next_document_ref
     from app.services.extraction.extraction_field_values import merge_invoice_extracted_fields
+    from app.tenant_settings import tenant_currency
 
     await assert_can_upload(session, tenant_id, pages=1)
     document_ref = await allocate_next_document_ref(session, tenant_id)
+    tenant = await session.get(Tenant, tenant_id)
+    books_currency = tenant_currency(tenant) if tenant else "AUD"
+    field_currency = str((fields or {}).get("currency") or "").strip().upper()
     inv = Invoice(
         tenant_id=tenant_id,
         status=InvoiceStatus.PENDING,
-        currency="",
+        currency=field_currency or books_currency,
         document_ref=document_ref,
         capture_source="upload",
         uploaded_by_name=(actor_name or "").strip() or None,

@@ -7,11 +7,15 @@
   var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
 
   /* ---------------- formatting ---------------- */
+  function tenantCurrency() {
+    return String(state.tenantCurrency || state.currency || 'AUD').trim().toUpperCase() || 'AUD';
+  }
+
   function fmt(n, forceCents, currency) {
     var num = Number(n);
     if (!isFinite(num)) num = 0;
     var cents = forceCents || Math.abs(num % 1) > 0.001;
-    var code = String(currency || state.currency || 'AUD').trim().toUpperCase() || 'AUD';
+    var code = String(currency || tenantCurrency()).trim().toUpperCase() || 'AUD';
     try {
       return new Intl.NumberFormat('en-AU', {
         style: 'currency',
@@ -25,6 +29,34 @@
         maximumFractionDigits: cents ? 2 : 0
       });
     }
+  }
+
+  /** Books / GL / budget / advance float — always tenant currency. */
+  function fmtTenant(n, forceCents) {
+    return fmt(n, forceCents, tenantCurrency());
+  }
+
+  /** Document amounts — invoice currency, fallback tenant. */
+  function fmtDoc(n, forceCents, currency) {
+    var code = String(currency || '').trim().toUpperCase();
+    return fmt(n, forceCents, code || tenantCurrency());
+  }
+
+  /** Sum list amounts; use one currency only when all rows share it. */
+  function fmtListTotal(list, forceCents) {
+    var rows = Array.isArray(list) ? list : [];
+    var total = rows.reduce(function (s, i) {
+      return s + (Number(i && (i.amt != null ? i.amt : i.amount)) || 0);
+    }, 0);
+    var codes = {};
+    rows.forEach(function (i) {
+      var c = String((i && i.currency) || '').trim().toUpperCase();
+      if (c) codes[c] = 1;
+    });
+    var keys = Object.keys(codes);
+    if (keys.length === 1) return fmtDoc(total, forceCents, keys[0]);
+    if (!keys.length) return fmtTenant(total, forceCents);
+    return String(Math.round(total));
   }
   function esc(s) {
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -68,6 +100,9 @@
     fileQuery: '',
     fileView: 'grid',
     detailId: null,
+    /** Tenant books currency (budget, advances). Loaded from institution settings. */
+    tenantCurrency: 'AUD',
+    /** Alias kept for older call sites — always mirrors tenantCurrency. */
     currency: 'AUD',
     receiptsAttached: false,
     edited: {},
@@ -909,9 +944,6 @@
       var rows = await LLSession.listApprovals(100);
       if (!Array.isArray(rows)) rows = [];
       state.approvals = rows.map(invoiceToApproval).filter(Boolean);
-      if (state.approvals.length && state.approvals[0].currency) {
-        state.currency = state.approvals[0].currency;
-      }
       renderApprovalFilterChips();
       renderApprovals();
       syncRoleChrome();
@@ -1270,13 +1302,13 @@
 
     if (!hasBudget) {
       remEl.textContent = '—';
-      appEl.textContent = approved ? fmt(approved) : '—';
+      appEl.textContent = approved ? fmtTenant(approved) : '—';
       ring(ringEl, 0, 'accent', 'n/a');
       return;
     }
 
-    remEl.textContent = fmt(Math.max(rem, 0));
-    appEl.textContent = fmt(approved);
+    remEl.textContent = fmtTenant(Math.max(rem, 0));
+    appEl.textContent = fmtTenant(approved);
     if (leftPct == null) {
       ring(ringEl, 0, 'accent', 'n/a');
     } else {
@@ -1296,7 +1328,7 @@
     if (!amtEl) return;
 
     if (!a || !(Number(a.amount) > 0 || Number(a.outstanding) > 0 || Number(a.taken) > 0)) {
-      amtEl.textContent = fmt(0);
+      amtEl.textContent = fmtTenant(0);
       if (chip) { chip.hidden = true; chip.textContent = ''; }
       if (title) title.textContent = 'No advance outstanding';
       if (meta) meta.textContent = 'Tap to open Analysis';
@@ -1307,7 +1339,7 @@
     var outstanding = Number(a.outstanding != null ? a.outstanding : a.amount) || 0;
     var taken = Number(a.taken != null ? a.taken : a.amount) || outstanding;
     var acquitted = Number(a.acquitted) || 0;
-    amtEl.textContent = fmt(outstanding > 0 ? outstanding : taken);
+    amtEl.textContent = fmtTenant(outstanding > 0 ? outstanding : taken);
     if (chip) {
       chip.hidden = false;
       chip.className = 'chip warn';
@@ -1318,7 +1350,7 @@
     }
     if (meta) {
       meta.textContent =
-        (acquitted ? fmt(acquitted) + ' used' : 'No claims against advance yet') +
+        (acquitted ? fmtTenant(acquitted) + ' used' : 'No claims against advance yet') +
         (a.issued ? ' · issued ' + a.issued : '');
     }
     if (barWrap && bar) {
@@ -1347,7 +1379,9 @@
       '<span class="s truncate" style="display:block">' + esc(i.s) + '</span>' +
       '</span>' +
       '<span class="ir" style="text-align:right">' +
-      '<span class="amt" style="font-size:14px;font-weight:600;display:block">' + fmt(i.amt, i.amt % 1 !== 0) + '</span>' +
+      '<span class="amt" style="font-size:14px;font-weight:600;display:block">' +
+      fmtDoc(i.amt, i.amt % 1 !== 0, i.currency) +
+      '</span>' +
       '<span class="chip ' + esc((i.chip && i.chip[0]) || '') + '" style="margin-top:6px">' + esc((i.chip && i.chip[1]) || '') + '</span>' +
       '</span></button>';
   }
@@ -1386,7 +1420,7 @@
     var apTotal = state.approvals.reduce(function (s, a) { return s + (Number(a.amount) || 0); }, 0);
     var apN = state.approvals.length;
     var exceptions = state.approvals.filter(function (a) { return a.flag; }).length;
-    if (queueAmt) queueAmt.textContent = apN ? fmt(Math.round(apTotal)) : fmt(0);
+    if (queueAmt) queueAmt.textContent = apN ? fmtListTotal(state.approvals, false) : fmtTenant(0);
     if (queueSub) {
       queueSub.textContent = apN
         ? apN + ' item' + (apN === 1 ? '' : 's') + ' awaiting your decision'
@@ -1438,12 +1472,12 @@
           '<div class="row" style="align-items:flex-start;flex-direction:column;gap:7px">' +
           '<div style="display:flex;width:100%;gap:10px;align-items:baseline">' +
           '<span class="t truncate" style="flex:1">' + esc(QLL.me.name || 'You') + '</span>' +
-          '<span class="amt" style="font-size:14px;font-weight:600">' + fmt(Math.max(rem, 0)) + '</span>' +
+          '<span class="amt" style="font-size:14px;font-weight:600">' + fmtTenant(Math.max(rem, 0)) + '</span>' +
           '<span class="s" style="margin:0">remaining</span></div>' +
           '<div class="bar" style="width:100%"><i class="' + tone + '" style="width:' + (barPct * 100) + '%"></i></div>' +
           '<div style="display:flex;width:100%;gap:8px"><span class="s" style="margin:0;flex:1">' +
           esc(QLL.me.dept || QLL.me.role || '') + '</span>' +
-          '<span class="chip ' + tone + '">Spent ' + fmt(approved) + '</span></div></div>';
+          '<span class="chip ' + tone + '">Spent ' + fmtTenant(approved) + '</span></div></div>';
       } else {
         teamHost.innerHTML =
           '<div class="empty" style="padding:16px;font-size:13px;color:var(--ink-3)">No budget data for your employee profile.</div>';
@@ -1652,18 +1686,16 @@
         var items = list.filter(function (a) { return a.group === g; });
         if (!items.length) { return ''; }
         var tot = items.reduce(function (s, a) { return s + a.amount; }, 0);
-        var cur = items[0].currency || state.currency;
-        return '<div class="sect-h">' + g + '<span class="r">' + items.length + ' · ' + fmt(tot, true, cur) + '</span></div>' +
+        return '<div class="sect-h">' + g + '<span class="r">' + items.length + ' · ' + fmtListTotal(items, true) + '</span></div>' +
           '<div class="rows" style="border-radius:0">' + items.map(rowHTML).join('') + '</div>';
       }).join('');
     }
     var total = state.approvals.reduce(function (s, a) { return s + a.amount; }, 0);
-    var cur = (state.approvals[0] && state.approvals[0].currency) || state.currency;
     var needsReview = state.approvals.filter(function (a) {
       return String(a.status || '').toLowerCase() === 'exception';
     }).length;
     $('#apSub').textContent = state.approvals.length
-      ? (state.approvals.length + ' in queue · ' + fmt(total, true, cur) +
+      ? (state.approvals.length + ' in queue · ' + fmtListTotal(state.approvals, true) +
         (needsReview ? ' · ' + needsReview + ' need review' : ''))
       : 'No items in queue';
     $('#tabBadge').textContent = state.approvals.length;
@@ -1685,7 +1717,7 @@
       '<span class="av">' + esc(a.init) + '</span>' +
       '<span class="ai-main">' +
       '<span class="ai-top"><span class="ai-who truncate">' + esc(subWho) + '</span>' +
-      '<span class="ai-amt">' + fmt(a.amount, true, a.currency) + '</span></span>' +
+      '<span class="ai-amt">' + fmtDoc(a.amount, true, a.currency) + '</span></span>' +
       '<span class="ai-desc truncate" style="display:block">' + esc(a.heading || a.desc) + '</span>' +
       '<span class="ai-meta">' +
       '<span class="chip dt">' + esc(a.dt) + '</span>' +
@@ -1785,17 +1817,16 @@
     var items = ids.map(findAp).filter(Boolean);
     if (!items.length) return;
     var tot = items.reduce(function (s, a) { return s + a.amount; }, 0);
-    var cur = items[0].currency || state.currency;
     var many = items.length > 1;
     var first = items[0];
     openSheet({
-      title: many ? 'Approve ' + items.length + ' items?' : 'Approve ' + fmt(first.amount, true, cur) + '?',
+      title: many ? 'Approve ' + items.length + ' items?' : 'Approve ' + fmtDoc(first.amount, true, first.currency) + '?',
       sub: many
-        ? fmt(tot, true, cur) + ' total'
+        ? fmtListTotal(items, true) + ' total'
         : first.who + ' · ' + first.desc,
       body: '<div class="kv-list">' + (many
         ? items.map(function (a) {
-          return '<div class="kv"><span class="k truncate">' + esc(a.who) + ' · ' + esc(a.dt) + '</span><span class="v">' + fmt(a.amount, true, a.currency) + '</span></div>';
+          return '<div class="kv"><span class="k truncate">' + esc(a.who) + ' · ' + esc(a.dt) + '</span><span class="v">' + fmtDoc(a.amount, true, a.currency) + '</span></div>';
         }).join('')
         : [
           ['Reference', first.desc],
@@ -1828,7 +1859,7 @@
             .then(function () {
               removeItems(ids);
               closeSheet();
-              toast(many ? items.length + ' approved · ' + fmt(tot, true, cur) : 'Approved ' + fmt(first.amount, true, cur) + ' · ' + first.who);
+              toast(many ? items.length + ' approved · ' + fmtListTotal(items, true) : 'Approved ' + fmtDoc(first.amount, true, first.currency) + ' · ' + first.who);
               if (state.screen === 'detail') { showScreen('approvals'); }
               if (via === 'bulk') { exitSelect(); }
               void loadLiveApprovals();
@@ -1849,7 +1880,7 @@
     var many = items.length > 1;
     var first = items[0];
     openSheet({
-      title: many ? 'Reject ' + items.length + ' items?' : 'Reject ' + fmt(first.amount, true, first.currency) + '?',
+      title: many ? 'Reject ' + items.length + ' items?' : 'Reject ' + fmtDoc(first.amount, true, first.currency) + '?',
       sub: many ? 'These documents will be marked rejected.' : first.who + ' · ' + first.desc,
       body:
         '<div class="kv-list">' +
@@ -2008,7 +2039,7 @@
     var ids = selectedIds();
     var tot = ids.map(findAp).filter(Boolean).reduce(function (s, a) { return s + a.amount; }, 0);
     $('#bulkbar').classList.toggle('show', state.selectMode);
-    $('#bulkN').textContent = ids.length + ' selected' + (ids.length ? ' · ' + fmt(Math.round(tot)) : '');
+    $('#bulkN').textContent = ids.length + ' selected' + (ids.length ? ' · ' + fmtListTotal(ids.map(findAp).filter(Boolean), false) : '');
     $('#bulkApprove').textContent = 'Approve (' + ids.length + ')';
     $('#bulkApprove').disabled = !ids.length || !state.canApprove;
     $('#bulkApprove').style.display = state.canApprove ? '' : 'none';
@@ -2060,7 +2091,7 @@
 
     $('#detailBody').innerHTML =
       '<div class="hero">' +
-      '<div class="amt-xl">' + fmt(a.amount, true, a.currency) + '</div>' +
+      '<div class="amt-xl">' + fmtDoc(a.amount, true, a.currency) + '</div>' +
       '<div class="who"><span class="av" style="width:24px;height:24px;font-size:10px">' + esc(a.init) + '</span>' +
       esc(a.who) + (a.dept && a.dept !== '—' ? ' · ' + esc(a.dept) : '') + '</div>' +
       '<div class="ai-meta" style="margin-top:10px">' + meta + '</div></div>' +
@@ -2187,7 +2218,7 @@
     host.innerHTML =
       '<div class="item-filter-active">Showing <b>' + esc(label) + '</b> · ' + list.length + ' item' + (list.length === 1 ? '' : 's') + '</div>' +
       '<div class="sect-h">' + esc(label) +
-      '<span class="r">' + list.length + ' · ' + fmt(Math.round(total)) + '</span></div>' +
+      '<span class="r">' + list.length + ' · ' + fmtListTotal(list, false) + '</span></div>' +
       '<div class="rows" style="border-radius:0">' + list.map(function (i) {
         return '<button type="button" class="item-row" data-item-id="' + i.id + '" style="width:100%;text-align:left">' +
           '<span class="im">' +
@@ -2195,7 +2226,9 @@
           '<span class="s truncate" style="display:block;font-size:12.5px;color:var(--ink-3);margin-top:2px">' + esc(i.s) + '</span>' +
           '<span class="bar" style="display:block;margin-top:9px;width:100%"><i class="' + esc(i.tone || '') + '" style="width:' + (i.prog || 0) + '%"></i></span>' +
           '</span>' +
-          '<span class="ir"><span class="amt" style="font-size:16px;font-weight:650;display:block">' + fmt(i.amt, i.amt % 1 !== 0) + '</span>' +
+          '<span class="ir"><span class="amt" style="font-size:16px;font-weight:650;display:block">' +
+          fmtDoc(i.amt, i.amt % 1 !== 0, i.currency) +
+          '</span>' +
           '<span class="chip ' + esc(i.chip[0] || '') + '" style="margin-top:7px">' + esc(i.chip[1] || '') + '</span></span>' +
           '</button>';
       }).join('') + '</div>' +
@@ -3017,6 +3050,22 @@
     applyAppearance(saved);
   })();
 
+  async function loadTenantCurrency() {
+    try {
+      if (!LLSession.fetchInstitutionSettings) return;
+      var inst = await LLSession.fetchInstitutionSettings();
+      var code = String((inst && inst.currency) || '').trim().toUpperCase();
+      if (!code) return;
+      state.tenantCurrency = code;
+      state.currency = code;
+      renderHomeBudget();
+      renderHomeAdvance();
+      renderHome();
+    } catch (e) {
+      /* keep default until institution loads */
+    }
+  }
+
   /* =========================================================
      BOOT
      ========================================================= */
@@ -3048,9 +3097,13 @@
           renderHome();
           renderItems();
         }
-        return LLSession.fetchPermissions();
+        return Promise.all([
+          LLSession.fetchPermissions(),
+          loadTenantCurrency()
+        ]);
       })
-      .then(function (perms) {
+      .then(function (results) {
+        var perms = results && results[0];
         // Resolve employee profile before role chrome so dual-role defaults are correct.
         return loadEmployeeProfile().then(function () {
           return applyPrivileges(perms).then(function () {
@@ -3069,6 +3122,7 @@
           return;
         }
         // Permissions failed — treat as employee (capture only), still load home finance.
+        void loadTenantCurrency();
         void loadEmployeeProfile().then(function () {
           void applyPrivileges({ permissions: {} });
           renderApprovals();

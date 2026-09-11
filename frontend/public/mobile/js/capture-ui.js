@@ -366,10 +366,14 @@
     }
   }
 
-  function money(n) {
+  function money(n, currency) {
     var num = Number(n);
     if (!isFinite(num)) return String(n || '—');
-    return fmt(num, true);
+    var code =
+      String(currency || '').trim() ||
+      String((activeInvoice && activeInvoice.currency) || '').trim() ||
+      String((deps.state && (deps.state.tenantCurrency || deps.state.currency)) || '').trim();
+    return deps.fmt(num, true, code || undefined);
   }
 
   function buildPatchFromEdits() {
