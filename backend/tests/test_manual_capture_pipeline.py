@@ -203,3 +203,79 @@ async def test_manual_entry_skip_extract_clears_duplicate_review_suggested() -> 
         )
 
     assert invoice.duplicate_review_suggested is False
+
+
+@pytest.mark.asyncio
+async def test_process_invoice_without_document_skips_no_stored_path() -> None:
+    """Without-document rows have no file — must not fail parsing_failed/no_stored_path."""
+    from app.services.invoice.pipeline import process_invoice
+
+    invoice = SimpleNamespace(
+        id=28776,
+        tenant_id="tenant-1",
+        document_ref="DOC-9",
+        document_type_code="DT-05",
+        status=InvoiceStatus.PENDING,
+        raw_file_path=None,
+        processing_overrides={"skip_extraction": True},
+        extracted_fields={"without_document": "true", "manual_entry": "true"},
+    )
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=SimpleNamespace())
+    session.refresh = AsyncMock()
+    session.flush = AsyncMock()
+    session.rollback = AsyncMock()
+
+    with (
+        patch(
+            "app.services.prompt_registry.warm_prompt_cache",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.services.invoice.pipeline.assign_document_ref",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.services.invoice.pipeline.human_approved_payable_bypass",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
+        patch(
+            "app.services.invoice.invoice_edit_service.invoice_has_manual_field_edits",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
+        patch(
+            "app.services.invoice.processing_override_catalog.consume_preserve_extracted_fields",
+            return_value=False,
+        ),
+        patch(
+            "app.services.invoice.processing_override_catalog.has_skip_extraction",
+            return_value=True,
+        ),
+        patch(
+            "app.services.invoice.pipeline.load_config_for_tenant",
+            new_callable=AsyncMock,
+            return_value=SimpleNamespace(document_types=[]),
+        ),
+        patch(
+            "app.services.invoice.pipeline.org_context_from_config",
+            return_value=SimpleNamespace(),
+        ),
+        patch(
+            "app.services.invoice.pipeline._process_manual_entry_skip_extract",
+            new_callable=AsyncMock,
+        ) as skip_extract,
+        patch(
+            "app.services.invoice.pipeline.log_event",
+            new_callable=AsyncMock,
+        ) as log_event,
+    ):
+        await process_invoice(session, invoice)  # type: ignore[arg-type]
+
+    skip_extract.assert_awaited_once()
+    assert all(
+        (call.kwargs or {}).get("detail", {}).get("reason") != "no_stored_path"
+        for call in log_event.await_args_list
+    )
+    assert invoice.status == InvoiceStatus.PARSING

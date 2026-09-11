@@ -33,6 +33,28 @@ class Settings(BaseSettings):
         le=900,
         validation_alias="DATABASE_COMMAND_TIMEOUT_SECONDS",
     )
+    # API process pool. Keep small on Azure Flexible Server — staging+prod often share one host.
+    db_pool_size: int = Field(
+        default=5,
+        ge=1,
+        le=50,
+        validation_alias="DB_POOL_SIZE",
+        description="SQLAlchemy pool_size for the API process (ignored when CELERY_WORKER=1).",
+    )
+    db_max_overflow: int = Field(
+        default=5,
+        ge=0,
+        le=50,
+        validation_alias="DB_MAX_OVERFLOW",
+        description="SQLAlchemy max_overflow for the API process.",
+    )
+    db_pool_timeout_seconds: int = Field(
+        default=20,
+        ge=5,
+        le=120,
+        validation_alias="DB_POOL_TIMEOUT_SECONDS",
+        description="Seconds to wait for a pooled connection before failing the request.",
+    )
     redis_url: str = "redis://localhost:6379/0"
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/1"
@@ -173,7 +195,7 @@ class Settings(BaseSettings):
     )
     graph_poll_interval_minutes: int = Field(default=2, ge=1, le=60)
     mailbox_poll_concurrency: int = Field(
-        default=3,
+        default=2,
         ge=1,
         le=16,
         validation_alias="MAILBOX_POLL_CONCURRENCY",

@@ -17,6 +17,11 @@ data:
   POSTGRES_PORT: "5432"
   POSTGRES_DB: "ledgerlink_db"
   POSTGRES_USER: "<your-db-user>"
+  # Shared Azure Flexible Server: keep API pools small (staging+prod on one host).
+  DB_POOL_SIZE: "5"
+  DB_MAX_OVERFLOW: "5"
+  DB_POOL_TIMEOUT_SECONDS: "20"
+  MAILBOX_POLL_CONCURRENCY: "2"
   REDIS_HOST: "<your-redis-host>"
   REDIS_SSL_PORT: "6380"
   UPLOAD_DIR: "/app/uploads"

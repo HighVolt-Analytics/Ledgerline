@@ -2475,6 +2475,24 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         )
     )
 
+    from app.services.invoice.processing_override_catalog import has_skip_extraction
+
+    # Without-document / manual capture: no stored file is expected. Branch before
+    # the raw_file_path gate so we don't fail with parsing_failed/no_stored_path.
+    if has_skip_extraction(invoice) and (invoice.document_type_code or "").strip():
+        tenant_row = await session.get(Tenant, invoice.tenant_id)
+        config = await load_config_for_tenant(session, invoice.tenant_id)
+        org = org_context_from_config(config, tenant_row)
+        invoice.status = InvoiceStatus.PARSING
+        await session.flush()
+        await _process_manual_entry_skip_extract(
+            session,
+            invoice,
+            config=config,
+            org=org,
+        )
+        return
+
     if not invoice.raw_file_path:
         invoice.status = InvoiceStatus.EXCEPTION
         await log_event(
@@ -2543,17 +2561,6 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                 },
             )
         send_notification(invoice, InvoiceStatus.EXCEPTION)
-        return
-
-    from app.services.invoice.processing_override_catalog import has_skip_extraction
-
-    if has_skip_extraction(invoice) and (invoice.document_type_code or "").strip():
-        await _process_manual_entry_skip_extract(
-            session,
-            invoice,
-            config=config,
-            org=org,
-        )
         return
 
     skip_classify_gate = bool(human_locked_dt)

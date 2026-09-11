@@ -45,15 +45,30 @@ def _build_engine() -> AsyncEngine:
     # Azure closes idle connections aggressively; recycle before the server does.
     # Also prefer recently-used sockets (LIFO) so mid-request idle drops are rarer.
     azure = "postgres.database.azure.com" in settings.database_url
-    pool_recycle = 300 if azure else 900
+    pool_recycle = 180 if azure else 900
+    # Cap pool so staging+prod sharing one Flexible Server do not exhaust max_connections.
+    pool_size = max(1, int(settings.db_pool_size))
+    max_overflow = max(0, int(settings.db_max_overflow))
+    if azure:
+        pool_size = min(pool_size, 8)
+        max_overflow = min(max_overflow, 8)
+    pool_timeout = max(5, int(settings.db_pool_timeout_seconds))
+    logger.info(
+        "db_pool_configured",
+        pool_size=pool_size,
+        max_overflow=max_overflow,
+        pool_recycle=pool_recycle,
+        pool_timeout=pool_timeout,
+        azure=azure,
+    )
     return create_async_engine(
         url,
         echo=False,
         pool_pre_ping=True,
-        pool_size=10,
-        max_overflow=20,
+        pool_size=pool_size,
+        max_overflow=max_overflow,
         pool_recycle=pool_recycle,
-        pool_timeout=30,
+        pool_timeout=pool_timeout,
         pool_use_lifo=True,
         connect_args=connect_args,
     )
