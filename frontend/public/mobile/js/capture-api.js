@@ -268,6 +268,26 @@
     return { invoice: invoice };
   }
 
+  /** Mobile Without document — no file, no placeholder image. */
+  async function createWithoutDocument(documentTypeCode, fields) {
+    var res = await fetch(apiBase() + '/api/invoices/without-document', {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        document_type_code: String(documentTypeCode || '').trim().toUpperCase(),
+        fields: fields || {}
+      })
+    });
+    var json = null;
+    try {
+      json = await res.json();
+    } catch (e) {
+      json = null;
+    }
+    if (!res.ok) throw parseError(json, res);
+    return { invoice: unwrap(json) };
+  }
+
   async function getInvoice(id) {
     var result = await apiFetch('/api/invoices/' + id, {
       method: 'GET',
@@ -1265,6 +1285,7 @@
     formKeysForDocumentType: formKeysForDocumentType,
     requiredKeysForDocumentType: requiredKeysForDocumentType,
     manualCapture: manualCapture,
+    createWithoutDocument: createWithoutDocument,
     getInvoice: getInvoice,
     updateInvoice: updateInvoice,
     confirmProcess: confirmProcess,

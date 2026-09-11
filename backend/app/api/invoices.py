@@ -28,6 +28,7 @@ from app.schemas.invoice import (
     ProcessInvoicesBatchRequest,
     TeamExpenseKindRequest,
     ValidationResultItem,
+    WithoutDocumentCreateRequest,
 )
 from app.schemas.classification_api import ClassificationResolveRequest, ClassificationReviewItem
 from app.services.classification.classification_learning_service import record_learning_from_resolution
@@ -954,6 +955,72 @@ async def manual_capture_invoice(
     return ApiEnvelope(
         data=await _response_for_invoice(
             db, primary, tenant_id=ctx.tenant_id, has_stored_file=True
+        ),
+    )
+
+
+@router.post("/without-document", response_model=ApiEnvelope[InvoiceResponse])
+async def create_without_document(
+    background_tasks: BackgroundTasks,
+    body: WithoutDocumentCreateRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[InvoiceResponse]:
+    """Mobile Without document — create TE/claim from DT + fields with no file."""
+    import json
+
+    from app.services.invoice.invoice_evaluation_service import load_config_for_tenant
+    from app.services.invoice.manual_capture_service import (
+        ManualCaptureError,
+        create_without_document_invoice,
+        parse_manual_fields_payload,
+        resolve_active_document_type,
+        validate_manual_fields,
+    )
+
+    try:
+        field_map, line_items = parse_manual_fields_payload(json.dumps(body.fields or {}))
+        config = await load_config_for_tenant(db, ctx.tenant_id)
+        definition = resolve_active_document_type(
+            body.document_type_code, list(config.document_types or [])
+        )
+        validate_manual_fields(definition, field_map, line_items=line_items)
+    except ManualCaptureError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    try:
+        actor_name, actor_email = await actor_from_context(db, ctx)
+        inv = await create_without_document_invoice(
+            db,
+            tenant_id=ctx.tenant_id,
+            definition=definition,
+            fields=field_map,
+            actor_name=actor_name,
+            actor_email=actor_email,
+            line_items=line_items,
+        )
+    except InsufficientCreditsError as exc:
+        raise HTTPException(
+            402,
+            f"Insufficient credits: need {exc.required}, balance {exc.balance}. Top up to continue.",
+        ) from exc
+    except PlanFeatureBlockedError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except ManualCaptureError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    await db.commit()
+    await _queue_upload_processing(
+        background_tasks,
+        [inv.id],
+        defer_processing=False,
+        tenant_id=ctx.tenant_id,
+    )
+
+    inv = await _get_invoice_for_tenant(db, inv.id, ctx.tenant_id)
+    return ApiEnvelope(
+        data=await _response_for_invoice(
+            db, inv, tenant_id=ctx.tenant_id, has_stored_file=False
         ),
     )
 

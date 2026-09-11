@@ -358,4 +358,92 @@ async def finalize_manual_capture_invoice(
     kind = document_type_team_expense_kind(definition)
     if kind:
         invoice.team_expense_kind = kind
+    # Skip-extract never runs OCR T4 refresh — clear sparse-ingest flag so Upload shows the row.
+    if getattr(invoice, "duplicate_review_suggested", False):
+        invoice.duplicate_review_suggested = False
     await session.flush()
+
+
+async def create_without_document_invoice(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    definition: DocumentTypeDefinition,
+    fields: dict[str, str],
+    actor_name: str | None,
+    actor_email: str | None,
+    line_items: list[dict[str, Any]] | None = None,
+) -> Invoice:
+    """Create a Team Expense / claim row with no file (mobile Without document path).
+
+    Does not ingest a placeholder image — no receipt attachment, no file-hash dedup.
+    """
+    from app.models.invoice import InvoiceStatus
+    from app.services.audit.audit_service import log_event
+    from app.services.credit_service import (
+        assert_can_upload,
+        charge_upload_credits,
+    )
+    from app.services.dossier.document_ref_service import allocate_next_document_ref
+    from app.services.extraction.extraction_field_values import merge_invoice_extracted_fields
+
+    await assert_can_upload(session, tenant_id, pages=1)
+    document_ref = await allocate_next_document_ref(session, tenant_id)
+    inv = Invoice(
+        tenant_id=tenant_id,
+        status=InvoiceStatus.PENDING,
+        currency="",
+        document_ref=document_ref,
+        capture_source="upload",
+        uploaded_by_name=(actor_name or "").strip() or None,
+        uploaded_by_email=(actor_email or "").strip() or None,
+        duplicate_review_suggested=False,
+        file_hash=None,
+        raw_file_path=None,
+        email_attachment_name=None,
+        normalized_filename=None,
+    )
+    session.add(inv)
+    await session.flush()
+
+    await finalize_manual_capture_invoice(
+        session,
+        tenant_id=tenant_id,
+        invoice=inv,
+        definition=definition,
+        fields=fields,
+        actor_email=actor_email,
+        line_items=line_items,
+    )
+    merge_invoice_extracted_fields(
+        inv,
+        {
+            "without_document": "true",
+            "manual_entry": "true",
+        },
+    )
+    inv.duplicate_review_suggested = False
+
+    await log_event(
+        session,
+        "invoice_uploaded",
+        invoice_id=inv.id,
+        detail={
+            "without_document": True,
+            "document_type_code": (definition.code or "").strip().upper(),
+            "capture_source": "upload",
+        },
+        actor_name=actor_name,
+        actor_email=actor_email,
+    )
+    await charge_upload_credits(
+        session,
+        tenant_id,
+        pages=1,
+        idempotency_key=f"without-doc:{inv.id}",
+        invoice_id=inv.id,
+        filename="without-document",
+        document_ai_provider=None,
+    )
+    await session.flush()
+    return inv

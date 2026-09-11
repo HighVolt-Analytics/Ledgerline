@@ -139,3 +139,67 @@ async def test_manual_entry_skip_extract_holds_review_when_not_continuing() -> N
     continue_posting.assert_not_awaited()
     assert invoice.status == InvoiceStatus.EXCEPTION
     assert invoice.evaluation_status == "needs_review"
+
+
+@pytest.mark.asyncio
+async def test_manual_entry_skip_extract_clears_duplicate_review_suggested() -> None:
+    definition = DocumentTypeDefinition(
+        code="DT-ADV",
+        title="Advance",
+        shortTitle="Advance",
+        klass="Transactional",
+        posting="Yes",
+        routeTarget=ROUTE_EXPENSES,
+        playbookProfile="employee_claim",
+        requiredFields=["total"],
+        extractionFields=["total"],
+    )
+    invoice = SimpleNamespace(
+        id=42,
+        document_ref="DOC-42",
+        document_type_code="DT-ADV",
+        document_type_confidence=1.0,
+        route_target=ROUTE_EXPENSES,
+        evaluation_status=None,
+        status=InvoiceStatus.PARSING,
+        vendor="Employee",
+        total=50,
+        duplicate_review_suggested=True,
+        extracted_fields={"manual_entry": "true", "total": "50"},
+    )
+    config = SimpleNamespace(document_types=[definition])
+    org = SimpleNamespace()
+    session = AsyncMock()
+
+    with (
+        patch(
+            "app.services.invoice.pipeline._sync_counterparty_and_evaluate",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.services.invoice.vision_posting_continue.continue_vision_understood_posting",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.services.invoice.vision_posting_continue.vision_should_continue_posting",
+            return_value=False,
+        ),
+        patch(
+            "app.services.invoice.vision_posting_continue.resolve_vision_posting_definition",
+            return_value=definition,
+        ),
+        patch(
+            "app.services.audit.audit_service.log_event",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.services.invoice.invoice_data.invoice_data_from_invoice",
+            return_value=MagicMock(),
+        ),
+        patch("app.services.shared.notifier.send_notification"),
+    ):
+        await _process_manual_entry_skip_extract(
+            session, invoice, config=config, org=org  # type: ignore[arg-type]
+        )
+
+    assert invoice.duplicate_review_suggested is False

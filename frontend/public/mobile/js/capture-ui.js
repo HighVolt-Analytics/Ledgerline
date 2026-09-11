@@ -987,16 +987,6 @@
     return fields;
   }
 
-  function tinyJpegBlob() {
-    // 1x1 JPEG — satisfies manual-capture file requirement for without-doc claims.
-    var bin = atob(
-      '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAn/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAGcP//EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAQUCf//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQMBAT8Bf//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQIBAT8Bf//Z'
-    );
-    var arr = new Uint8Array(bin.length);
-    for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-    return new Blob([arr], { type: 'image/jpeg' });
-  }
-
   async function resolvePreferredDocumentTypeCode() {
     await ensureDocumentTypes();
     if (preferredDtCode) {
@@ -1121,10 +1111,11 @@
 
   async function submitManualCaptureFromForm(details) {
     var dtCode = await resolvePreferredDocumentTypeCode();
-    var file = details.photoFile
-      ? details.photoFile
-      : new File([tinyJpegBlob()], 'claim-no-doc.jpg', { type: 'image/jpeg' });
-    if (details.photoFile && global.LLPreprocess && LLPreprocess.compressImage) {
+    if (!details.photoFile) {
+      throw new Error('Add a document photo');
+    }
+    var file = details.photoFile;
+    if (global.LLPreprocess && LLPreprocess.compressImage) {
       try {
         var prepared = await LLPreprocess.compressImage(details.photoFile);
         if (prepared && prepared.blob) {
@@ -1157,6 +1148,26 @@
     return after;
   }
 
+  async function submitWithoutDocumentFromForm(details) {
+    var dtCode = await resolvePreferredDocumentTypeCode();
+    var created = await LLCaptureApi.createWithoutDocument(
+      dtCode,
+      claimFieldsToManualFields(details)
+    );
+    var after = created.invoice;
+    var status = String(after.status || '');
+    if (status === 'exception' || status === 'duplicate_skipped' || status === 'rejected') {
+      after = await LLCaptureApi.confirmProcess(after.id);
+    } else {
+      try {
+        after = await LLCaptureApi.confirmProcess(after.id);
+      } catch (e) {
+        /* already progressing */
+      }
+    }
+    return after;
+  }
+
   async function submitClaimDetailsForm(cfg) {
     var qaCfg = normalizeMobileQaConfig(cfg.qaConfig || activeQaConfig || { enabled: true });
     var details = readClaimDetailsForm();
@@ -1168,9 +1179,9 @@
     try {
       toast('Submitting…');
       var after;
-      var useManual =
-        cfg.mode === 'without_doc' || (cfg.mode === 'with_doc' && !(cfg.invoice && cfg.invoice.id));
-      if (useManual) {
+      if (cfg.mode === 'without_doc') {
+        after = await submitWithoutDocumentFromForm(details);
+      } else if (cfg.mode === 'with_doc' && !(cfg.invoice && cfg.invoice.id)) {
         after = await submitManualCaptureFromForm(details);
       } else {
         if (!cfg.invoice || !cfg.invoice.id) throw new Error('Missing captured claim');

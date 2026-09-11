@@ -269,6 +269,10 @@ async def _process_manual_entry_skip_extract(
     )
     from app.services.shared.notifier import send_notification
 
+    # Intentional manual entry — never hide behind Upload "exclude duplicates".
+    if getattr(invoice, "duplicate_review_suggested", False):
+        invoice.duplicate_review_suggested = False
+
     code = (invoice.document_type_code or "").strip().upper()
     definition = get_document_type_definition(
         code, document_types=list(config.document_types or [])

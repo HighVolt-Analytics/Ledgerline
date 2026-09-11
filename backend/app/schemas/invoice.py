@@ -184,5 +184,12 @@ class TeamExpenseKindRequest(BaseModel):
     linked_advance_invoice_id: int | None = None
 
 
+class WithoutDocumentCreateRequest(BaseModel):
+    """Mobile Without document create — DT + fields, no file."""
+
+    document_type_code: str = Field(min_length=1, max_length=32)
+    fields: dict[str, Any] = Field(default_factory=dict)
+
+
 class ProcessInvoicesBatchRequest(BaseModel):
     invoice_ids: list[int] = Field(min_length=1, max_length=50)

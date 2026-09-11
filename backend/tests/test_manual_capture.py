@@ -174,3 +174,66 @@ def test_has_skip_extraction_from_manual_entry_flag() -> None:
     assert has_skip_extraction(inv) is True  # type: ignore[arg-type]
     set_skip_extraction(inv)  # type: ignore[arg-type]
     assert inv.processing_overrides.get("skip_extraction") is True
+
+
+@pytest.mark.asyncio
+async def test_create_without_document_invoice_has_no_file() -> None:
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from app.services.invoice.manual_capture_service import create_without_document_invoice
+
+    definition = _dt("DT-ADV", kind="advance_requisition", required=["total"], extraction=["total"])
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.flush = AsyncMock()
+    tenant_id = __import__("uuid").uuid4()
+
+    created: list[object] = []
+
+    def _add(obj: object) -> None:
+        created.append(obj)
+        setattr(obj, "id", 77)
+
+    session.add.side_effect = _add
+
+    with (
+        patch(
+            "app.services.credit_service.assert_can_upload",
+            new_callable=AsyncMock,
+            return_value=1,
+        ),
+        patch(
+            "app.services.dossier.document_ref_service.allocate_next_document_ref",
+            new_callable=AsyncMock,
+            return_value="DOC-77",
+        ),
+        patch(
+            "app.services.invoice.manual_capture_service.finalize_manual_capture_invoice",
+            new_callable=AsyncMock,
+        ) as finalize,
+        patch(
+            "app.services.audit.audit_service.log_event",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.services.credit_service.charge_upload_credits",
+            new_callable=AsyncMock,
+        ),
+    ):
+        inv = await create_without_document_invoice(
+            session,
+            tenant_id=tenant_id,
+            definition=definition,
+            fields={"total": "100"},
+            actor_name="Priya",
+            actor_email="priya@example.com",
+            line_items=None,
+        )
+
+    assert inv.raw_file_path is None
+    assert inv.file_hash is None
+    assert inv.capture_source == "upload"
+    assert inv.duplicate_review_suggested is False
+    assert inv.document_ref == "DOC-77"
+    finalize.assert_awaited_once()
+    assert inv.extracted_fields.get("without_document") == "true"
