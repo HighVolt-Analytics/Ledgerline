@@ -1464,6 +1464,7 @@
       };
       QLL.me.budgetLines = Array.isArray(fin.lines) ? fin.lines : [];
       QLL.me.budgetTree = Array.isArray(fin.tree) ? fin.tree : [];
+      QLL.me.coaParentChildren = fin.coaParentChildren || {};
       if (!QLL.me.budgetLineKey) QLL.me.budgetLineKey = 'all';
       if (QLL.me.budgetLineKey !== 'all') {
         var stillThere = QLL.me.budgetLines.some(function (line) {
@@ -1479,6 +1480,7 @@
       QLL.me.budgetAll = { remaining: 0, approved: 0, leftPct: null, hasBudget: false };
       QLL.me.budgetLines = [];
       QLL.me.budgetTree = [];
+      QLL.me.coaParentChildren = {};
       QLL.me.budgetLineKey = 'all';
       QLL.me.remaining = 0;
       QLL.me.approved = 0;

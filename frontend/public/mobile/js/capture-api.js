@@ -1143,6 +1143,7 @@
       all: { remaining: 0, approved: 0, leftPct: null, hasBudget: false },
       lines: [],
       tree: [],
+      coaParentChildren: {},
       advance: null
     };
 
@@ -1167,7 +1168,9 @@
 
     var merged = mergeGlLinesWithMySpend(glLines, spendLines);
     var coa = await coaPromise;
-    var built = buildBudgetTree(merged, buildCoaIndex(coa));
+    var coaIndex = buildCoaIndex(coa);
+    out.coaParentChildren = coaIndex.parentChildren || {};
+    var built = buildBudgetTree(merged, coaIndex);
     out.tree = built.tree;
     out.lines = built.lines;
     out.all = built.all;

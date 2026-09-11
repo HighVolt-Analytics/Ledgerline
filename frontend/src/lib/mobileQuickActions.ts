@@ -51,7 +51,7 @@ export function newMobileQuickActionItem(
     enabled: true,
     allowWithDoc: true,
     allowWithoutDoc: true,
-    photoRequired: "optional",
+    photoRequired: "none",
     fields: defaultMobileQaFields(),
   };
 }
@@ -132,7 +132,7 @@ export function normalizeMobileQuickActionsSettings(
       photoRequired:
         photo === "compulsory" || photo === "optional" || photo === "none"
           ? photo
-          : "optional",
+          : "none",
       fields: {
         parentLedger,
         adjustAdvance: pickField(

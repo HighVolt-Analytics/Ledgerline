@@ -19,7 +19,6 @@ import {
   type MobileQuickActionFieldConfig,
   type MobileQuickActionFieldsConfig,
   type MobileQuickActionItem,
-  type MobileQuickActionPhotoMode,
 } from "@/lib/mobileQuickActions";
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
 import { cn } from "@/lib/cn";
@@ -29,16 +28,14 @@ const CHROME_FIELD_ROWS: {
   label: string;
   hint: string;
 }[] = [
-  { key: "parentLedger", label: "Parent ledger", hint: "From selected DT Post to" },
+  {
+    key: "parentLedger",
+    label: "Sub-ledger",
+    hint: "Sub-ledgers under the DT Post-to GL",
+  },
   { key: "adjustAdvance", label: "Adjust against advance", hint: "Yes / No" },
   { key: "spentFor", label: "Spent for", hint: "Myself / Others (+ details)" },
   { key: "remarks", label: "Remarks", hint: "Free-text notes" },
-];
-
-const PHOTO_OPTIONS = [
-  { value: "compulsory", label: "Compulsory" },
-  { value: "optional", label: "Optional" },
-  { value: "none", label: "Hidden" },
 ];
 
 function kindLabel(dt: DocumentTypeDefinition | undefined) {
@@ -51,8 +48,9 @@ function parentLedgerHint(dt: DocumentTypeDefinition | undefined) {
   if (!dt) return "Select a document type";
   const ledger = (dt.postTo?.ledger || "").trim();
   const sub = (dt.postTo?.subLedger || "").trim();
-  if (!ledger) return "No parent ledger on this DT — set Post to in Rule Book";
-  return sub ? `${ledger} → ${sub}` : ledger;
+  if (!ledger) return "No GL on this DT — set Post to in Rule Book";
+  if (sub) return `Subs of ${ledger} (DT default: ${sub})`;
+  return `Subs of ${ledger}`;
 }
 
 function sameItems(a: MobileQuickActionItem[], b: MobileQuickActionItem[]) {
@@ -65,7 +63,6 @@ type DraftState = {
   label: string;
   allowWithDoc: boolean;
   allowWithoutDoc: boolean;
-  photoRequired: MobileQuickActionPhotoMode;
   fields: MobileQuickActionFieldsConfig;
 };
 
@@ -75,7 +72,6 @@ function emptyDraft(): DraftState {
     label: "",
     allowWithDoc: true,
     allowWithoutDoc: true,
-    photoRequired: "optional",
     fields: defaultMobileQaFields(),
   };
 }
@@ -160,7 +156,6 @@ export function MobileQuickActionsPanel({ canEdit = false }: MobileQuickActionsP
       label: item.label,
       allowWithDoc: item.allowWithDoc,
       allowWithoutDoc: item.allowWithoutDoc,
-      photoRequired: item.photoRequired,
       fields: { ...item.fields },
     });
     setError(null);
@@ -214,7 +209,7 @@ export function MobileQuickActionsPanel({ canEdit = false }: MobileQuickActionsP
                 label: draft.label.trim() || dt?.shortTitle || dt?.title || "",
                 allowWithDoc: draft.allowWithDoc,
                 allowWithoutDoc: draft.allowWithoutDoc,
-                photoRequired: draft.photoRequired,
+                photoRequired: "none" as const,
                 fields: draft.fields,
               }
             : row
@@ -228,7 +223,7 @@ export function MobileQuickActionsPanel({ canEdit = false }: MobileQuickActionsP
       );
       next.allowWithDoc = draft.allowWithDoc;
       next.allowWithoutDoc = draft.allowWithoutDoc;
-      next.photoRequired = draft.photoRequired;
+      next.photoRequired = "none";
       next.fields = draft.fields;
       setItems((prev) => [...prev, next]);
     }
@@ -360,20 +355,9 @@ export function MobileQuickActionsPanel({ canEdit = false }: MobileQuickActionsP
                     />
                   </div>
                 </div>
-                <label className="flex items-center justify-between gap-3">
-                  <span className="text-xs font-medium text-muted-foreground">Add picture</span>
-                  <div className="w-[140px]">
-                    <Select
-                      value={draft.photoRequired}
-                      disabled={!canEdit}
-                      size="sm"
-                      onValueChange={(value) =>
-                        patchDraft({ photoRequired: value as MobileQuickActionPhotoMode })
-                      }
-                      options={PHOTO_OPTIONS}
-                    />
-                  </div>
-                </label>
+                <p className="text-[10px] text-muted-foreground">
+                  With document asks for a photo first. Without document skips the photo step.
+                </p>
               </section>
 
               <section className="rounded-lg border border-border/60 px-3 py-2">
@@ -508,7 +492,7 @@ export function MobileQuickActionsPanel({ canEdit = false }: MobileQuickActionsP
                   <p className="mt-0.5 truncate text-xs text-muted-foreground">
                     {item.documentTypeCode}
                     {kindLabel(dt) ? ` · ${kindLabel(dt)}` : ""}
-                    {ledgerHint.startsWith("No parent") || ledgerHint.startsWith("Select")
+                    {ledgerHint.startsWith("No GL") || ledgerHint.startsWith("Select")
                       ? ""
                       : ` · ${ledgerHint}`}
                     {" · "}

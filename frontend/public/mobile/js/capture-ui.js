@@ -440,29 +440,43 @@
     var ledger = String((dt && dt.postTo && dt.postTo.ledger) || '').trim();
     var sub = String((dt && dt.postTo && dt.postTo.subLedger) || '').trim();
     var opts = [];
-    if (ledger) {
-      opts.push({ value: ledger, label: ledger, sub: sub ? '' : 'Parent ledger' });
+    var parentKey = ledger.toLowerCase();
+
+    function pushSub(value, parentLabel) {
+      var v = String(value || '').trim();
+      if (!v) return;
+      // Never offer the parent GL itself — only its sub-ledgers.
+      if (parentKey && v.toLowerCase() === parentKey) return;
+      if (opts.some(function (o) { return o.value.toLowerCase() === v.toLowerCase(); })) return;
+      opts.push({
+        value: v,
+        label: v,
+        sub: parentLabel || ledger || 'Sub-ledger'
+      });
     }
-    if (sub) {
-      opts.push({ value: sub, label: sub, sub: ledger || 'Sub-ledger' });
+
+    if (sub) pushSub(sub, ledger || 'Sub-ledger');
+
+    // Full COA children under the DT Post-to GL (preferred).
+    var coaMap = (deps.QLL && deps.QLL.me && deps.QLL.me.coaParentChildren) || {};
+    if (parentKey && coaMap[parentKey] && Array.isArray(coaMap[parentKey].children)) {
+      var coaParent = coaMap[parentKey].name || ledger;
+      coaMap[parentKey].children.forEach(function (c) {
+        pushSub(c, coaParent);
+      });
     }
-    // Offer budget-tree children under the DT parent ledger when available.
+
+    // Budget-tree children under the DT parent ledger (supplement).
     var tree = (deps.QLL && deps.QLL.me && deps.QLL.me.budgetTree) || [];
-    var needle = ledger.toLowerCase();
-    if (needle) {
+    if (parentKey) {
       tree.forEach(function (node) {
-        if (String(node.label || '').toLowerCase() !== needle) return;
+        if (String(node.label || '').toLowerCase() !== parentKey) return;
         (node.children || []).forEach(function (c) {
-          var v = String(c.label || '').trim();
-          if (!v) return;
-          if (opts.some(function (o) { return o.value === v; })) return;
-          opts.push({ value: v, label: v, sub: ledger });
+          pushSub(c.label, ledger);
         });
       });
     }
-    if (!opts.length) {
-      return expenseTypeOptions();
-    }
+
     return opts;
   }
 
@@ -471,7 +485,7 @@
       enabled: false,
       allowWithDoc: true,
       allowWithoutDoc: true,
-      photoRequired: 'optional',
+      photoRequired: 'none',
       documentTypeCode: '',
       fields: {
         parentLedger: { visible: true, required: true },
@@ -573,8 +587,21 @@
     var ledgerOpts = parentLedgerOptions(dt);
     var defaultLedger =
       String(prefill.parentLedger || prefill.expenseType || '').trim() ||
-      (dt && dt.postTo && (dt.postTo.subLedger || dt.postTo.ledger)) ||
+      (dt && dt.postTo && dt.postTo.subLedger) ||
+      (ledgerOpts.length === 1 ? ledgerOpts[0].value : '') ||
       '';
+    // Never default to the parent GL — only a sub-ledger.
+    if (
+      defaultLedger &&
+      dt &&
+      dt.postTo &&
+      dt.postTo.ledger &&
+      String(defaultLedger).toLowerCase() === String(dt.postTo.ledger).toLowerCase()
+    ) {
+      defaultLedger =
+        (dt.postTo.subLedger || '') ||
+        (ledgerOpts.length === 1 ? ledgerOpts[0].value : '');
+    }
     var typeOpts = ledgerOpts
       .map(function (t) {
         var sel = String(defaultLedger) === t.value ? ' selected' : '';
@@ -601,13 +628,8 @@
     var detailVals = prefill.detailValues || {};
     var html = '<div style="padding:4px 16px 8px">';
     if (fields.parentLedger.visible) {
-      var ledgerLabel =
-        (dt && dt.postTo && dt.postTo.ledger
-          ? 'Parent ledger'
-          : 'Parent ledger') ;
       html +=
-        '<label class="cap-fill-label" for="claimParentLedger">' +
-        ledgerLabel +
+        '<label class="cap-fill-label" for="claimParentLedger">Sub-ledger' +
         (fields.parentLedger.required ? ' *' : '') +
         '</label>' +
         '<select id="claimParentLedger" class="cap-fill-input" style="appearance:auto">' +
@@ -616,10 +638,12 @@
         '</select>';
       if (dt && dt.postTo && dt.postTo.ledger) {
         html +=
-          '<p class="claim-photo-hint" style="margin:4px 0 0">From DT Post to: ' +
+          '<p class="claim-photo-hint" style="margin:4px 0 0">Under GL: ' +
           esc(dt.postTo.ledger) +
-          (dt.postTo.subLedger ? ' → ' + esc(dt.postTo.subLedger) : '') +
           '</p>';
+      } else if (!ledgerOpts.length) {
+        html +=
+          '<p class="claim-photo-hint" style="margin:4px 0 0">No sub-ledgers found for this document type.</p>';
       }
     }
     if (fields.adjustAdvance.visible) {
@@ -698,20 +722,11 @@
         esc(val) +
         '">';
     });
-    if (qaCfg.photoRequired !== 'none' || mode === 'with_doc') {
-      var photoReq = mode === 'with_doc' || qaCfg.photoRequired === 'compulsory';
+    if (mode === 'with_doc') {
       html +=
         '<div class="claim-photo" id="claimPhotoBlock">' +
-        '<label class="cap-fill-label">Document photo' +
-        (photoReq ? ' *' : '') +
-        '</label>' +
-        '<p class="claim-photo-hint">' +
-        (mode === 'with_doc'
-          ? 'Required — take or choose a clear photo of the document.'
-          : photoReq
-            ? 'A receipt or supporting photo is required.'
-            : 'Optional — add a receipt photo if you have one.') +
-        '</p>' +
+        '<label class="cap-fill-label">Document photo *</label>' +
+        '<p class="claim-photo-hint">Required — take or choose a clear photo of the document.</p>' +
         '<div class="claim-photo-card" id="claimPhotoCard">' +
         '<div class="claim-photo-empty" id="claimPhotoEmpty">' +
         '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h1.7l1.1-1.8h6.4L15.8 6h2.7A2.5 2.5 0 0 1 21 8.5v8A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5v-8Z"/><circle cx="12" cy="12.4" r="3.4"/></svg>' +
@@ -779,7 +794,7 @@
     qaCfg = normalizeMobileQaConfig(qaCfg || { enabled: true });
     var fields = qaCfg.fields;
     if (fields.parentLedger.visible && fields.parentLedger.required && !details.parentLedger) {
-      return 'Select parent ledger';
+      return 'Select sub-ledger';
     }
     if (fields.spentFor.visible && fields.spentFor.required) {
       if (!details.spentChoice) return 'Select spent for';
@@ -806,9 +821,6 @@
     }
     if (mode === 'with_doc' && !details.photoFile) {
       return 'Add a document photo';
-    }
-    if (qaCfg.photoRequired === 'compulsory' && mode === 'without_doc' && !details.photoFile) {
-      return 'Add a picture';
     }
     return '';
   }
@@ -1043,7 +1055,7 @@
           prefill.parentLedger =
             LLCaptureApi.readExtractionValue(inv, 'account_name') ||
             LLCaptureApi.readExtractionValue(inv, 'category') ||
-            (dt && dt.postTo && (dt.postTo.subLedger || dt.postTo.ledger)) ||
+            (dt && dt.postTo && dt.postTo.subLedger) ||
             '';
         }
         visibleDetailFieldKeys(qaCfg, dt).forEach(function (key) {
@@ -1053,8 +1065,18 @@
         });
       } else if (dt && dt.postTo) {
         if (!prefill.parentLedger) {
-          prefill.parentLedger = dt.postTo.subLedger || dt.postTo.ledger || '';
+          prefill.parentLedger = dt.postTo.subLedger || '';
         }
+      }
+      // Drop accidental parent-GL selection — picker is sub-ledgers only.
+      if (
+        prefill.parentLedger &&
+        dt &&
+        dt.postTo &&
+        dt.postTo.ledger &&
+        String(prefill.parentLedger).toLowerCase() === String(dt.postTo.ledger).toLowerCase()
+      ) {
+        prefill.parentLedger = dt.postTo.subLedger || '';
       }
       var hasAdvance =
         deps.QLL &&
