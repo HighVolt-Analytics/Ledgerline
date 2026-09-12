@@ -37,43 +37,51 @@ const YOUTUBE_EMBED =
 
 const compareRows = [
   {
+    label: 'Capture',
     today: 'Documents scattered everywhere',
     ledger: 'Captured automatically from authorised channels',
     Icon: FileText,
   },
   {
+    label: 'Data entry',
     today: 'Manual data entry',
-    ledger: 'AI reads & understands the document',
+    ledger: 'AI reads and understands the document',
     Icon: Keyboard,
   },
   {
-    today: 'Manual classification & filing',
-    ledger: 'Automatically classified & stored',
+    label: 'Filing',
+    today: 'Manual classification and filing',
+    ledger: 'Automatically classified and stored',
     Icon: FolderOpen,
   },
   {
+    label: 'Approvals',
     today: 'Approvals chased manually',
     ledger: 'Approvals intelligently routed',
     Icon: RefreshCw,
   },
   {
-    today: 'Duplicates & errors found late',
+    label: 'Exceptions',
+    today: 'Duplicates and errors found late',
     ledger: 'Exceptions detected before processing',
     Icon: AlertTriangle,
   },
   {
+    label: 'Payment',
     today: 'Payment disconnected from workflow',
-    ledger: 'Invoice → approval → payment connected',
+    ledger: 'Invoice, approval, and payment connected',
     Icon: Banknote,
   },
   {
+    label: 'Records',
     today: 'Records spread across systems',
     ledger: 'Complete audit-ready record maintained',
     Icon: Files,
   },
   {
+    label: 'Finance',
     today: 'Finance spends time processing',
-    ledger: 'Finance focuses on decisions & exceptions',
+    ledger: 'Finance focuses on decisions and exceptions',
     Icon: Clock,
   },
 ];
@@ -742,32 +750,29 @@ export default function QuantumLedgerLinkPage() {
             <h2 className="h2 r">Right now, nobody can tell you what you owe.</h2>
 
             <div className="compare-board r">
-              <span className="compare-orb compare-orb--warm" aria-hidden="true" />
-              <span className="compare-orb compare-orb--cool" aria-hidden="true" />
-
-              <p className="compare-title compare-title--today">Today</p>
-              <span className="compare-title-spacer" aria-hidden="true" />
-              <p className="compare-title compare-title--ledger">With Ledgerline</p>
+              <article className="compare-card compare-card--features">
+                <h3>Features</h3>
+                {compareRows.map(({ label, Icon }) => (
+                  <div className="compare-row compare-row--feature" key={label}>
+                    <Icon className="compare-icon" strokeWidth={1.75} aria-hidden="true" />
+                    <span>{label}</span>
+                  </div>
+                ))}
+              </article>
 
               <article className="compare-card compare-card--today">
-                {compareRows.map(({ today }) => (
-                  <p className="compare-row" key={today}>
+                <h3>Today</h3>
+                {compareRows.map(({ label, today }) => (
+                  <p className="compare-row" key={label}>
                     {today}
                   </p>
                 ))}
               </article>
 
-              <div className="compare-rail" aria-hidden="true">
-                {compareRows.map(({ today, Icon }) => (
-                  <span className="compare-rail-item" key={today}>
-                    <Icon strokeWidth={1.75} />
-                  </span>
-                ))}
-              </div>
-
               <article className="compare-card compare-card--ledger">
-                {compareRows.map(({ today, ledger }) => (
-                  <p className="compare-row" key={today}>
+                <h3>With Ledgerline</h3>
+                {compareRows.map(({ label, ledger }) => (
+                  <p className="compare-row" key={label}>
                     {ledger}
                   </p>
                 ))}

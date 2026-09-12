@@ -318,161 +318,94 @@ h1,h2,h3,p{margin:0;overflow-wrap:break-word}
   transform:translateX(-50%);
 }
 .compare-board{
-  position:relative;
-  z-index:0;
   display:grid;
-  grid-template-columns:minmax(0,1fr) 56px minmax(0,1fr);
-  grid-template-rows:auto 1fr;
-  column-gap:14px;
-  row-gap:12px;
+  grid-template-columns:minmax(180px,.82fr) minmax(0,1.12fr) minmax(0,1.12fr);
   align-items:stretch;
-  margin-top:28px;
-  max-width:920px;
-  margin-left:auto;
-  margin-right:auto;
+  gap:18px;
+  margin:36px auto 0;
+  max-width:1040px;
 }
-.compare-orb{
-  position:absolute;
-  width:150px;
-  height:150px;
-  border-radius:50%;
-  pointer-events:none;
-  z-index:0;
-}
-.compare-orb--warm{
-  left:-42px;
-  top:46%;
-  background:radial-gradient(circle, #ff9a3c 0%, rgba(255,154,60,.55) 42%, transparent 70%);
-}
-.compare-orb--cool{
-  right:-48px;
-  top:42%;
-  background:radial-gradient(circle, #7c3aed 0%, rgba(139,92,246,.55) 42%, transparent 70%);
-}
-.compare-title{
-  position:relative;
-  z-index:1;
-  margin:0;
-  font-size:11px;
-  font-weight:700;
-  letter-spacing:.18em;
-  text-transform:uppercase;
-  text-align:center;
-  color:var(--on-dark);
-}
-.compare-title--today{grid-column:1;grid-row:1}
-.compare-title-spacer{grid-column:2;grid-row:1}
-.compare-title--ledger{grid-column:3;grid-row:1}
 .compare-card{
-  position:relative;
-  z-index:1;
   display:flex;
   flex-direction:column;
-  grid-row:2;
-  isolation:isolate;
+  min-width:0;
   overflow:hidden;
-  border-radius:22px;
-  padding:14px 22px 12px;
-  min-height:0;
+  border-radius:28px;
+  padding:28px 26px 18px;
   color:var(--on-dark);
-  border:1px solid hsl(0 0% 100% / 0.12);
-  background:hsl(220 24% 8% / 0.52);
-  backdrop-filter:blur(22px) saturate(1.35);
-  -webkit-backdrop-filter:blur(22px) saturate(1.35);
-  box-shadow:
-    inset 0 1px 0 hsl(0 0% 100% / 0.12),
-    inset 0 -1px 0 hsl(0 0% 100% / 0.04),
-    0 18px 40px hsl(0 0% 0% / 0.38);
+  background:#141416;
+  border:1px solid rgba(255,255,255,.08);
+  box-shadow:0 18px 40px rgba(0,0,0,.35);
 }
-.compare-card::before{
-  content:"";
-  position:absolute;
-  inset:0;
-  z-index:0;
-  pointer-events:none;
-  border-radius:inherit;
-  background:linear-gradient(180deg, hsl(0 0% 100% / 0.07) 0%, transparent 28%);
+.compare-card h3{
+  margin:0 0 8px;
+  padding:0 0 14px;
+  font-size:15px;
+  font-weight:700;
+  letter-spacing:.04em;
+  text-transform:uppercase;
+  color:var(--on-dark);
+}
+.compare-card--features{
+  background:
+    linear-gradient(180deg, rgba(47,212,181,.12) 0%, rgba(20,20,22,.96) 38%, rgba(196,92,62,.14) 100%),
+    #141416;
 }
 .compare-card--today{
-  grid-column:1;
   background:
-    linear-gradient(135deg, rgba(255,154,60,.18) 0%, hsl(220 24% 8% / 0.42) 48%),
-    hsl(220 24% 8% / 0.45);
+    radial-gradient(120% 90% at 0% 100%, rgba(196,92,62,.42) 0%, rgba(196,92,62,0) 58%),
+    linear-gradient(180deg, #1A1412 0%, #141416 100%);
 }
 .compare-card--ledger{
-  grid-column:3;
   background:
-    linear-gradient(225deg, rgba(139,92,246,.22) 0%, hsl(220 24% 8% / 0.42) 48%),
-    hsl(220 24% 8% / 0.45);
+    radial-gradient(120% 90% at 0% 100%, rgba(47,212,181,.36) 0%, rgba(47,212,181,0) 58%),
+    linear-gradient(180deg, #101816 0%, #141416 100%);
 }
 .compare-row{
-  position:relative;
-  z-index:1;
   flex:1 1 auto;
   display:flex;
   align-items:center;
   margin:0;
-  padding:11px 0;
-  font-size:13px;
+  padding:14px 0;
+  font-size:14px;
   font-weight:500;
-  line-height:1.35;
+  line-height:1.45;
   letter-spacing:-.01em;
-  color:var(--on-dark);
-  border-bottom:1px solid hsl(0 0% 100% / 0.08);
+  color:var(--on-dark-muted);
+  border-bottom:1px solid rgba(255,255,255,.08);
 }
 .compare-row:last-child{border-bottom:0}
-.compare-rail{
-  position:relative;
-  z-index:1;
-  grid-column:2;
-  grid-row:2;
-  display:flex;
-  flex-direction:column;
-  justify-content:stretch;
-  isolation:isolate;
-  overflow:hidden;
-  border-radius:999px;
-  padding:10px 0;
-  border:1px solid hsl(0 0% 100% / 0.12);
-  background:hsl(220 24% 10% / 0.45);
-  backdrop-filter:blur(22px) saturate(1.35);
-  -webkit-backdrop-filter:blur(22px) saturate(1.35);
-  box-shadow:
-    inset 0 1px 0 hsl(0 0% 100% / 0.1),
-    0 12px 28px hsl(0 0% 0% / 0.32);
+.compare-row--feature{
+  gap:12px;
+  font-size:12px;
+  font-weight:650;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  color:var(--on-dark);
 }
-.compare-rail-item{
-  flex:1 1 auto;
-  display:grid;
-  place-items:center;
+.compare-icon{
+  width:16px;
+  height:16px;
+  flex-shrink:0;
   color:var(--qll-accent);
 }
-.compare-rail-item svg{width:15px;height:15px}
 
 @media (max-width:900px){
   .compare-board{
-    max-width:100%;
-    grid-template-columns:minmax(0,1fr) 46px minmax(0,1fr);
-    column-gap:10px;
+    grid-template-columns:minmax(150px,.78fr) minmax(0,1fr) minmax(0,1fr);
+    gap:12px;
   }
-  .compare-card{padding:6px 16px;border-radius:18px}
-  .compare-row{padding:9px 0;font-size:12.5px}
-  .compare-orb{width:110px;height:110px}
+  .compare-card{padding:22px 18px 12px;border-radius:22px}
+  .compare-row{padding:12px 0;font-size:13px}
+  .compare-row--feature{font-size:11px;gap:8px}
+  .compare-icon{width:15px;height:15px}
 }
 @media (max-width:720px){
-  .compare-orb{display:none}
   .compare-board{
     grid-template-columns:1fr;
-    grid-template-rows:auto auto auto auto;
-    gap:10px;
+    gap:14px;
   }
-  .compare-title--today{grid-column:1;grid-row:1}
-  .compare-title-spacer,
-  .compare-rail{display:none}
-  .compare-card--today{grid-column:1;grid-row:2}
-  .compare-title--ledger{grid-column:1;grid-row:3}
-  .compare-card--ledger{grid-column:1;grid-row:4}
-  .compare-row{padding:10px 0}
+  .compare-row{padding:12px 0}
 }
 
 /* ---------- how it works flows ---------- */
