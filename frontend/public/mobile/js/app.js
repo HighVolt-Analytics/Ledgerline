@@ -948,10 +948,17 @@
       renderApprovals();
       syncRoleChrome();
     } catch (err) {
-      toast((err && err.message) || 'Could not load approvals');
-      state.approvals = [];
-      renderApprovalFilterChips();
-      renderApprovals();
+      var msg = (err && err.message) || 'Could not load approvals';
+      if (err && err.status >= 500) {
+        msg = 'Approvals temporarily unavailable — pull to refresh';
+      }
+      toast(msg);
+      // Keep any previously loaded queue so a blip does not wipe the screen.
+      if (!(state.approvals && state.approvals.length)) {
+        state.approvals = [];
+        renderApprovalFilterChips();
+        renderApprovals();
+      }
     }
   }
 
@@ -3107,11 +3114,11 @@
         // Resolve employee profile before role chrome so dual-role defaults are correct.
         return loadEmployeeProfile().then(function () {
           return applyPrivileges(perms).then(function () {
-            return Promise.all([
-              loadLiveApprovals(),
-              loadMyItems(),
-              loadHomeFinance()
-            ]);
+            // Approvals + my items gate the shell; home finance reports are
+            // heavier and must not block first paint when the API is busy.
+            var critical = Promise.all([loadLiveApprovals(), loadMyItems()]);
+            void loadHomeFinance();
+            return critical;
           });
         });
       })

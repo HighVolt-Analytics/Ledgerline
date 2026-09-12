@@ -75,7 +75,7 @@ from app.services.auth.membership_service import ensure_membership, user_has_ten
 from app.services.auth.privilege_service import (
     can_reveal_bank_details,
     matrix_role_for_context,
-    permissions_for_context,
+    permissions_for_context_async,
 )
 from app.services.auth.super_admin_portal_embed_service import (
     check_portal_embed_request,
@@ -819,11 +819,12 @@ async def my_permissions(
 
     modules = await enabled_modules_map(db, ctx.tenant_id)
     tenant = await db.get(Tenant, ctx.tenant_id)
+    permissions = await permissions_for_context_async(db, ctx)
     return ApiEnvelope(
         data=PermissionsResponse(
             role=ctx.role,
             matrix_role=matrix_role_for_context(ctx),
-            permissions=permissions_for_context(ctx),
+            permissions=permissions,
             enabled_modules=modules,
             can_reveal_bank=can_reveal_bank_details(ctx),
             mobile_quick_actions=tenant_mobile_quick_actions(tenant),

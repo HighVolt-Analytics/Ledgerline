@@ -1171,8 +1171,19 @@
     var glUtilPromise = fetchDepartmentBudgetUtilization();
     var coaPromise = fetchChartOfAccounts();
     var spendPromise = fetchEmployeeSpendDetail();
+    var advancePromise = fetchAdvanceSettlement();
 
-    var glRows = await glUtilPromise;
+    var settled = await Promise.all([
+      glUtilPromise,
+      coaPromise,
+      spendPromise,
+      advancePromise
+    ]);
+    var glRows = settled[0];
+    var coa = settled[1];
+    var spendRows = settled[2];
+    var advRows = settled[3];
+
     var glLines = glRows && glRows.length ? pickGlBudgetRows(glRows).map(budgetLineFromGlRow) : [];
 
     if (!glLines.length) {
@@ -1182,13 +1193,11 @@
       }
     }
 
-    var spendRows = await spendPromise;
     var spendLines = spendRows
       ? filterEmployeeRows(spendRows, email).map(budgetLineFromSpendRow)
       : [];
 
     var merged = mergeGlLinesWithMySpend(glLines, spendLines);
-    var coa = await coaPromise;
     var coaIndex = buildCoaIndex(coa);
     out.coaParentChildren = coaIndex.parentChildren || {};
     var built = buildBudgetTree(merged, coaIndex);
@@ -1200,7 +1209,6 @@
     out.leftPct = out.all.leftPct;
     out.hasBudget = out.all.hasBudget;
 
-    var advRows = await fetchAdvanceSettlement();
     var advRow = advRows ? matchEmployeeRow(advRows, email) : null;
     if (advRow) {
       var taken = Number(advRow.advance_taken) || 0;

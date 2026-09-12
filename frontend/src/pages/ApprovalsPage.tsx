@@ -19,6 +19,7 @@ import {
   approveAndProcess,
   confirmAndProcess,
   invoiceCanAttemptReprocess,
+  invoiceHasApprovableSource,
   reprocessAndWatch,
   validateInvoiceReadyForApproval,
   watchProcessingUntilIdle,
@@ -291,7 +292,7 @@ export function ApprovalsPage() {
       setToast("Save your edits in the review drawer before approving from the board.");
       return;
     }
-    if (!inv.has_stored_file) {
+    if (!invoiceHasApprovableSource(inv)) {
       setToast("Upload a PDF before approving this invoice.");
       return;
     }
@@ -368,7 +369,7 @@ export function ApprovalsPage() {
       setToast("Save your edits in the review drawer before confirming from the board.");
       return;
     }
-    if (!inv.has_stored_file) {
+    if (!invoiceHasApprovableSource(inv)) {
       setToast("Upload a PDF before confirming this invoice.");
       return;
     }

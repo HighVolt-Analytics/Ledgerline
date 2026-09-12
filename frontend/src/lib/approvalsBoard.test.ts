@@ -190,6 +190,17 @@ describe("isPreClassificationReview and approve visibility", () => {
     expect(canShowApproveOnBoard(held, "pending")).toBe(false);
   });
 
+  it("shows Approve on Review for without-document claims", () => {
+    const withoutDoc = inv(13, "exception", {
+      evaluation_status: "needs_review",
+      document_type_code: "DT-05",
+      has_stored_file: false,
+      extracted_fields: { without_document: "true", manual_entry: "true" },
+    });
+    expect(canShowApproveOnBoard(withoutDoc, "pending")).toBe(true);
+    expect(canShowApproveOnBoard(withoutDoc, "awaiting")).toBe(false);
+  });
+
   it("shows reprocess only for rejected status with stored file on Rejected column", () => {
     const rejectedInv = inv(3, "rejected", {
       has_stored_file: true,

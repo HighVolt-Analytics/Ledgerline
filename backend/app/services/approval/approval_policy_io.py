@@ -8,7 +8,6 @@ optional file mirror so unit tests / local tools keep working without a live DB.
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
 import json
 import os
 import time
@@ -267,18 +266,29 @@ def _payload_from_raw(raw: dict[str, Any]) -> ApprovalPolicyPayload:
     return ApprovalPolicyPayload.model_validate(_normalize_raw_policy(raw))
 
 
-def _run_coro_sync(coro: Any) -> Any:
-    """Run an async coroutine from sync code (including inside a running loop)."""
+def _running_in_async_loop() -> bool:
     try:
         asyncio.get_running_loop()
+        return True
     except RuntimeError:
-        return asyncio.run(coro)
+        return False
 
-    def _runner() -> Any:
-        return asyncio.run(coro)
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(_runner).result(timeout=30)
+def _run_coro_sync(coro: Any) -> Any:
+    """Run an async coroutine from sync code outside the request event loop.
+
+    Never nest ``asyncio.run`` / a thread-local loop against the shared asyncpg
+    engine while FastAPI's loop is already running — that poisons pool
+    connections (``Future attached to a different loop`` / ``Event loop is
+    closed``) and stalls the API for tens of seconds under load.
+    """
+    if _running_in_async_loop():
+        coro.close()
+        raise RuntimeError(
+            "async DB bridge cannot run inside a running event loop; "
+            "use load_policy_for_tenant_async or filesystem/cache fallback"
+        )
+    return asyncio.run(coro)
 
 
 async def _fetch_db_with_rls(tenant_id: uuid.UUID) -> dict[str, Any] | None:
@@ -405,7 +415,9 @@ def load_policy_for_tenant(tenant_id: uuid.UUID | int | str) -> ApprovalPolicyPa
 
     raw: dict[str, Any] | None = None
     seeded_from_file = False
-    if _db_bridge_enabled():
+    # Sync callers inside FastAPI must not open a nested asyncpg loop. Prefer
+    # process cache (warmed by async request paths) then filesystem defaults.
+    if _db_bridge_enabled() and not _running_in_async_loop():
         try:
             raw = _run_coro_sync(_fetch_db_with_rls(tid))
         except Exception:
@@ -430,7 +442,7 @@ def load_policy_for_tenant(tenant_id: uuid.UUID | int | str) -> ApprovalPolicyPa
     payload = _payload_from_raw(raw)
     _cache_set(tid, payload)
 
-    if _db_bridge_enabled() and seeded_from_file:
+    if _db_bridge_enabled() and seeded_from_file and not _running_in_async_loop():
         try:
             _run_coro_sync(_upsert_db_with_rls(tid, payload.model_dump()))
         except Exception:
@@ -444,6 +456,9 @@ def load_policy_for_tenant(tenant_id: uuid.UUID | int | str) -> ApprovalPolicyPa
         # Tests / local: keep filesystem materialization of defaults
         if not _policy_path(tid).is_file():
             _save_tenant_policy_file(tid, payload.model_dump())
+    elif seeded_from_file:
+        # Inside FastAPI: persist to local mirror only; async writers own the DB.
+        _save_tenant_policy_file(tid, payload.model_dump())
 
     return payload.model_copy(deep=True)
 
@@ -460,7 +475,7 @@ def save_policy_for_tenant(
     )
     saved = ApprovalPolicyPayload.model_validate(data)
 
-    if _db_bridge_enabled():
+    if _db_bridge_enabled() and not _running_in_async_loop():
         try:
             _run_coro_sync(_upsert_db_with_rls(tid, data))
         except Exception:
@@ -469,6 +484,11 @@ def save_policy_for_tenant(
                 tenant_id=str(tid),
                 exc_info=True,
             )
+    elif _db_bridge_enabled() and _running_in_async_loop():
+        logger.warning(
+            "approval_policy_sync_write_skipped_in_async_loop",
+            tenant_id=str(tid),
+        )
 
     _save_tenant_policy_file(tid, data)
     _cache_set(tid, saved)

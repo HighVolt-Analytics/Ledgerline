@@ -13,6 +13,7 @@ import { TeamExpenseChannelsStrip } from "@/components/team-expenses/TeamExpense
 import { Card } from "@/components/ui/card";
 import { useEmployeeMasters } from "@/hooks/useMasterData";
 import { useExpenseClaimActions } from "@/hooks/useExpenseClaimActions";
+import { invoiceHasApprovableSource } from "@/lib/invoiceActions";
 import { useRuleBookTeamExpensesWorkspace } from "@/hooks/useRuleBookConfig";
 import { useRoutedInvoices } from "@/hooks/useRoutedInvoices";
 import { useInstitutionSettings } from "@/hooks/useInstitutionSettings";
@@ -375,7 +376,7 @@ export function TeamExpensesPage({ embedded = false }: { embedded?: boolean }) {
                     claim={selected}
                     invoiceId={selectedInvoice.id}
                     invoiceStatus={selectedInvoice.status}
-                    hasStoredFile={selectedInvoice.has_stored_file}
+                    hasStoredFile={invoiceHasApprovableSource(selectedInvoice)}
                     budget={budget}
                     busy={actions.busyId === selectedInvoice.id}
                     canApprove={actions.canApproveClaim(selectedInvoice.status)}
@@ -487,7 +488,7 @@ export function TeamExpensesPage({ embedded = false }: { embedded?: boolean }) {
                     claim={selected}
                     invoiceId={selectedInvoice.id}
                     invoiceStatus={selectedInvoice.status}
-                    hasStoredFile={selectedInvoice.has_stored_file}
+                    hasStoredFile={invoiceHasApprovableSource(selectedInvoice)}
                     budget={budget}
                     busy={actions.busyId === selectedInvoice.id}
                     canApprove={actions.canApproveClaim(selectedInvoice.status)}

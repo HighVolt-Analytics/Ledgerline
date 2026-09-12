@@ -12,6 +12,7 @@ import { ChannelBadge, ExpenseStateBadge } from "@/components/team-expenses/Expe
 import { RoutedInvoicesPanel } from "@/components/rule-book/RoutedInvoicesPanel";
 import { Card } from "@/components/ui/card";
 import { useExpenseClaimActions } from "@/hooks/useExpenseClaimActions";
+import { invoiceHasApprovableSource } from "@/lib/invoiceActions";
 import { useRuleBookExpenseRules } from "@/hooks/useRuleBookConfig";
 import { useRoutedInvoices } from "@/hooks/useRoutedInvoices";
 import { useExpensesWorkspaceKpis, useTeamExpenseDepartmentBudgetUtilization } from "@/hooks/useTeamExpenseReports";
@@ -261,7 +262,7 @@ export function ExpensesManagementPage({ embedded = false }: { embedded?: boolea
                     claim={selected}
                     invoiceId={selectedInvoice.id}
                     invoiceStatus={selectedInvoice.status}
-                    hasStoredFile={selectedInvoice.has_stored_file}
+                    hasStoredFile={invoiceHasApprovableSource(selectedInvoice)}
                     budget={budget}
                     showBudgetGap
                     busy={actions.busyId === selectedInvoice.id}

@@ -232,10 +232,27 @@
 
   async function listApprovals(pageSize) {
     var size = pageSize || 100;
-    return apiFetch('/api/approvals?page=1&page_size=' + size, {
+    var path = '/api/approvals?page=1&page_size=' + size;
+    var init = {
       method: 'GET',
-      headers: authHeaders()
-    });
+      headers: authHeaders(),
+      cache: 'no-store'
+    };
+    try {
+      return await apiFetch(path, init);
+    } catch (err) {
+      // Transient API/pool failures are common under load — one retry.
+      var status = err && err.status;
+      if (status >= 500 || status === 0 || status == null) {
+        await new Promise(function (r) { setTimeout(r, 400); });
+        return apiFetch(path, {
+          method: 'GET',
+          headers: authHeaders(),
+          cache: 'no-store'
+        });
+      }
+      throw err;
+    }
   }
 
   async function approveInvoice(id) {

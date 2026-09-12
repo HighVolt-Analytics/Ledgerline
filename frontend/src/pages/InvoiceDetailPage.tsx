@@ -19,6 +19,7 @@ import {
   handleTenantScopedLoadFailure,
   isTenantFetchScopeCurrent,
 } from "@/lib/tenantSession";
+import { invoiceHasApprovableSource, allowsApprovalWithoutStoredFile } from "@/lib/invoiceActions";
 
 export function InvoiceDetailPage() {
   const { id } = useParams();
@@ -78,7 +79,7 @@ export function InvoiceDetailPage() {
   }
 
   const canApprove =
-    inv.has_stored_file &&
+    invoiceHasApprovableSource(inv) &&
     (inv.status === "exception" || inv.status === "duplicate_skipped");
 
   return (
@@ -100,7 +101,7 @@ export function InvoiceDetailPage() {
         }
       />
 
-      {!inv.has_stored_file && (
+      {!inv.has_stored_file && !allowsApprovalWithoutStoredFile(inv) && (
         <Card className="p-4 mb-4 border-dashed border-destructive/40 bg-destructive/5">
           <p className="text-sm font-medium text-destructive mb-1">No stored file</p>
           <p className="text-xs text-muted-foreground mb-3">
@@ -117,6 +118,14 @@ export function InvoiceDetailPage() {
               onChange={onAttach}
             />
           </label>
+        </Card>
+      )}
+      {!inv.has_stored_file && allowsApprovalWithoutStoredFile(inv) && (
+        <Card className="p-4 mb-4 border-dashed">
+          <p className="text-sm font-medium mb-1">Submitted without a document</p>
+          <p className="text-xs text-muted-foreground">
+            This claim has no receipt file. You can still approve it based on the entered fields.
+          </p>
         </Card>
       )}
 

@@ -7,6 +7,7 @@ import {
   canApproveClaim,
   canRejectClaim,
   canRequestInfo,
+  invoiceHasApprovableSource,
   validateInvoiceReadyForApproval,
 } from "@/lib/invoiceActions";
 import { useRuleBookDocumentTypes } from "@/hooks/useRuleBookConfig";
@@ -34,7 +35,7 @@ export function useExpenseClaimActions(routeTarget: string) {
         setToast("This claim is not in the approval queue.");
         return false;
       }
-      if (!inv.has_stored_file) {
+      if (!invoiceHasApprovableSource(inv)) {
         setToast("Upload a receipt before approving this claim.");
         return false;
       }

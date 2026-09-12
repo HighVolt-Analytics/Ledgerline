@@ -2,6 +2,7 @@ import type { Invoice } from "@/api/types";
 import {
   canReprocessInvoice,
   invoiceCanAttemptReprocess,
+  allowsApprovalWithoutStoredFile,
   PIPELINE_STATUSES as PIPELINE_STATUS_LIST,
 } from "@/lib/invoiceActions";
 import { effectiveEvaluationStatus, isNeedsReviewEvaluation, isPendingApprovalEvaluation } from "@/lib/invoice";
@@ -71,7 +72,25 @@ export function canShowConfirmOnBoard(inv: Invoice, column: ApprovalBoardColumnK
 }
 
 export function canShowApproveOnBoard(inv: Invoice, column: ApprovalBoardColumnKey): boolean {
-  return canShowConfirmOnBoard(inv, column) && isPendingApprovalInvoice(inv);
+  if (isVisionVaultTerminal(inv)) return false;
+  if (column === "approved" || column === "rejected") return false;
+  if (!APPROVABLE_STATUSES.has(inv.status)) return false;
+
+  // Processing: manager sign-off while policy holds the document.
+  if (column === "awaiting") {
+    return isPendingApprovalInvoice(inv);
+  }
+
+  // Review: without-document / manual claims are already classified and must
+  // still expose Approve (Reject alone is not enough).
+  if (column === "pending") {
+    return (
+      inv.status === "exception" &&
+      isClassificationConfirmed(inv) &&
+      allowsApprovalWithoutStoredFile(inv)
+    );
+  }
+  return false;
 }
 
 /** Reject from Approved: ledger-posted rows, or vision-understood vaulted rows. */

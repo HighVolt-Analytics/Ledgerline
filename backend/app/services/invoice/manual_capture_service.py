@@ -427,6 +427,9 @@ async def create_without_document_invoice(
             "manual_entry": "true",
         },
     )
+    from app.services.invoice.processing_override_catalog import set_skip_extraction
+
+    set_skip_extraction(inv)
     inv.duplicate_review_suggested = False
 
     await log_event(

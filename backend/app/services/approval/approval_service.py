@@ -326,7 +326,13 @@ async def approve_invoice_for_reprocess(
 
     await restore_rejected_invoice_file_if_needed(session, inv)
 
-    if not stored_file_available(inv.raw_file_path, tenant_id=inv.tenant_id):
+    from app.services.invoice.processing_override_catalog import (
+        allows_approval_without_stored_file,
+    )
+
+    if not allows_approval_without_stored_file(inv) and not stored_file_available(
+        inv.raw_file_path, tenant_id=inv.tenant_id
+    ):
         raise ValueError("Invoice has no stored file to process")
 
     await reset_invoice_for_approval(session, inv)
@@ -383,7 +389,13 @@ async def confirm_invoice_for_process(
     await repair_invoice_stored_path(session, inv)
     await restore_rejected_invoice_file_if_needed(session, inv)
 
-    if not stored_file_available(inv.raw_file_path, tenant_id=inv.tenant_id):
+    from app.services.invoice.processing_override_catalog import (
+        allows_approval_without_stored_file,
+    )
+
+    if not allows_approval_without_stored_file(inv) and not stored_file_available(
+        inv.raw_file_path, tenant_id=inv.tenant_id
+    ):
         raise ValueError("Invoice has no stored file to process")
 
     inv.approval_chain = None

@@ -5,9 +5,13 @@ from __future__ import annotations
 import uuid
 
 from fastapi import HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext
-from app.services.approval.approval_policy_io import load_policy_for_tenant
+from app.services.approval.approval_policy_io import (
+    load_policy_for_tenant,
+    load_policy_for_tenant_async,
+)
 from app.tenant_roles import (
     APPROVAL_ACTIONS,
     APPROVE_ALIASES,
@@ -57,8 +61,25 @@ def permissions_for_role(tenant_id: uuid.UUID, role: str) -> dict[str, bool]:
     return _matrix_row_permissions(row)
 
 
+async def permissions_for_role_async(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    role: str,
+) -> dict[str, bool]:
+    policy = await load_policy_for_tenant_async(session, tenant_id)
+    row = policy.matrix.get(matrix_row_for_role(role)) or {}
+    return _matrix_row_permissions(row)
+
+
 def permissions_for_context(ctx: AuthContext) -> dict[str, bool]:
     return permissions_for_role(ctx.tenant_id, ctx.role)
+
+
+async def permissions_for_context_async(
+    session: AsyncSession,
+    ctx: AuthContext,
+) -> dict[str, bool]:
+    return await permissions_for_role_async(session, ctx.tenant_id, ctx.role)
 
 
 def user_has_privilege(ctx: AuthContext, action: str) -> bool:

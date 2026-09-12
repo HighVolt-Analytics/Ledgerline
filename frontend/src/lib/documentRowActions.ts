@@ -10,6 +10,7 @@ import {
 import {
   canApproveFromDrawer,
   canRejectClaim,
+  invoiceHasApprovableSource,
   validateInvoiceReadyForApproval,
 } from "@/lib/invoiceActions";
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
@@ -77,7 +78,7 @@ function canOneClickApprove(
   documentTypes: DocumentTypeDefinition[] | undefined
 ): boolean {
   if (!canApproveFromDrawer(inv)) return false;
-  if (!inv.has_stored_file) return false;
+  if (!invoiceHasApprovableSource(inv)) return false;
   if (documentTypes === undefined) {
     // Without catalogue, still require positive amount on claim expense routes.
     const route = routeOf(inv);

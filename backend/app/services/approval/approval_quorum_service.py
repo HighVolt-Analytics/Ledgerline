@@ -304,6 +304,30 @@ def _policy_chain_signature(chain: dict[str, Any] | None) -> tuple[Any, ...]:
     )
 
 
+def _sync_safe_attr(obj: Any, name: str, default: Any = None) -> Any:
+    """Read an ORM attribute without triggering async lazy/deferred IO.
+
+    List queries often ``defer(approval_chain)``. Touching an unloaded deferred
+    column under AsyncSession raises MissingGreenlet and 500s mobile
+    ``GET /api/approvals``.
+    """
+    try:
+        from sqlalchemy import inspect as sa_inspect
+
+        state = sa_inspect(obj)
+        unloaded = getattr(state, "unloaded", None) or set()
+        if name in unloaded:
+            return default
+        if name in state.dict:
+            return state.dict.get(name, default)
+    except Exception:
+        pass
+    try:
+        return getattr(obj, name, default)
+    except Exception:
+        return default
+
+
 def ensure_invoice_approval_chain(
     invoice: Any,
     *,
@@ -315,16 +339,17 @@ def ensure_invoice_approval_chain(
     Rebuilds unsigned chains when Policy & privileges tiers changed (e.g. after
     reprocess). Does not rewrite chains that already have approved steps.
     """
-    tenant_id = getattr(invoice, "tenant_id", None)
+    tenant_id = _sync_safe_attr(invoice, "tenant_id", None)
     if tenant_id is None:
         return False
-    existing = getattr(invoice, "approval_chain", None)
-    module_key = module_for_route_target(getattr(invoice, "route_target", None))
+    existing = _sync_safe_attr(invoice, "approval_chain", None)
+    module_key = module_for_route_target(_sync_safe_attr(invoice, "route_target", None))
+    amount = _sync_safe_attr(invoice, "total", None)
     if chain_needs_materialize(existing):
         invoice.approval_chain = empty_chain(
             tenant_id=tenant_id,
             module_key=module_key,
-            amount=getattr(invoice, "total", None),
+            amount=amount,
             policy=policy,
         )
         return True
@@ -333,7 +358,7 @@ def ensure_invoice_approval_chain(
     refreshed = empty_chain(
         tenant_id=tenant_id,
         module_key=module_key,
-        amount=getattr(invoice, "total", None),
+        amount=amount,
         policy=policy,
     )
     if _policy_chain_signature(existing) == _policy_chain_signature(refreshed):

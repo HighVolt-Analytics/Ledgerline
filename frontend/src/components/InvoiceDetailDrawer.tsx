@@ -76,6 +76,7 @@ import {
   canRequestInfo,
   confirmAndProcess,
   invoiceCanAttemptReprocess,
+  invoiceHasApprovableSource,
   reprocessAndWatch,
   resolveClassificationAndWatch,
   settlementApprovalHint,
@@ -1988,7 +1989,7 @@ export function InvoiceDetailDrawer({
       );
       return;
     }
-    if (!fresh.has_stored_file) {
+    if (!invoiceHasApprovableSource(fresh)) {
       alert("Upload a PDF before confirming this invoice.");
       return;
     }
@@ -2051,7 +2052,7 @@ export function InvoiceDetailDrawer({
       );
       return;
     }
-    if (!fresh.has_stored_file) {
+    if (!invoiceHasApprovableSource(fresh)) {
       alert("Upload a PDF before approving this invoice.");
       return;
     }
@@ -2815,7 +2816,7 @@ export function InvoiceDetailDrawer({
                       <Button
                         size="sm"
                         data-testid="button-approve-process"
-                        disabled={actionBusy || !inv.has_stored_file}
+                        disabled={actionBusy || !invoiceHasApprovableSource(inv)}
                         onClick={() =>
                           void (isClaimRoute
                             ? handleApproveAndProcess()
@@ -2909,9 +2910,9 @@ export function InvoiceDetailDrawer({
                       <Button
                         size="sm"
                         data-testid="button-manager-approve"
-                        disabled={actionBusy || !inv.has_stored_file}
+                        disabled={actionBusy || !invoiceHasApprovableSource(inv)}
                         title={
-                          !inv.has_stored_file
+                          !invoiceHasApprovableSource(inv)
                             ? "Upload a receipt before this claim can be approved."
                             : undefined
                         }
@@ -3027,7 +3028,7 @@ export function InvoiceDetailDrawer({
                         }
                         size="sm"
                         data-testid="button-approve-process"
-                        disabled={actionBusy || !inv.has_stored_file}
+                        disabled={actionBusy || !invoiceHasApprovableSource(inv)}
                         onClick={() => void handleConfirmAndProcess()}
                       >
                         <Send className="h-4 w-4 mr-1" />
@@ -3038,7 +3039,7 @@ export function InvoiceDetailDrawer({
                       <Button
                         size="sm"
                         data-testid="button-manager-approve"
-                        disabled={actionBusy || !inv.has_stored_file}
+                        disabled={actionBusy || !invoiceHasApprovableSource(inv)}
                         onClick={() => void handleApproveAndProcess()}
                       >
                         <Check className="h-4 w-4 mr-1" />

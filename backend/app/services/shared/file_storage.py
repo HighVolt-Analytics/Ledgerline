@@ -532,8 +532,16 @@ async def ensure_invoice_stored_file(session, invoice) -> None:
     """
     Repair raw_file_path and locate the stored PDF before approve/reprocess/download.
 
-    Raises ValueError when no blob or local file can be resolved.
+    Raises ValueError when no blob or local file can be resolved — unless the
+    invoice is an intentional without-document / manual-entry capture.
     """
+    from app.services.invoice.processing_override_catalog import (
+        allows_approval_without_stored_file,
+    )
+
+    if allows_approval_without_stored_file(invoice):
+        return
+
     await repair_invoice_stored_path(session, invoice)
     if await asyncio.to_thread(
         stored_file_available, invoice.raw_file_path, tenant_id=invoice.tenant_id

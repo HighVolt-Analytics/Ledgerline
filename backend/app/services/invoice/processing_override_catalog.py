@@ -215,9 +215,15 @@ def has_skip_extraction(invoice: Invoice) -> bool:
         return True
     fields = getattr(invoice, "extracted_fields", None)
     if isinstance(fields, dict):
-        token = fields.get("manual_entry")
-        if token is True:
-            return True
-        if isinstance(token, str) and token.strip().lower() in {"1", "true", "yes"}:
-            return True
+        for key in ("manual_entry", "without_document"):
+            token = fields.get(key)
+            if token is True:
+                return True
+            if isinstance(token, str) and token.strip().lower() in {"1", "true", "yes"}:
+                return True
     return False
+
+
+def allows_approval_without_stored_file(invoice: Invoice) -> bool:
+    """True for without-document / manual-entry claims that never had a receipt blob."""
+    return has_skip_extraction(invoice)

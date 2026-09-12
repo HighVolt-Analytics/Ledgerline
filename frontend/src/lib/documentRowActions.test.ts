@@ -87,6 +87,17 @@ describe("documentRowActions", () => {
     expect(result.primary.kind).toBe("reject");
   });
 
+  it("shows Approve for without-document claims with no stored file", () => {
+    const result = documentRowActions(
+      baseInvoice({
+        has_stored_file: false,
+        extracted_fields: { without_document: "true", manual_entry: "true" },
+      }),
+      documentTypes
+    );
+    expect(result.primary).toEqual({ kind: "approve", label: "Approve" });
+  });
+
   it("hides Approve when Team Expenses amount is zero", () => {
     const result = documentRowActions(baseInvoice({ total: "0" }), documentTypes);
     expect(result.primary.kind).not.toBe("approve");

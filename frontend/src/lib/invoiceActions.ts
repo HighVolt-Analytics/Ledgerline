@@ -5,6 +5,7 @@ import type {
   InvoiceDetails,
   InvoiceUpdatePayload,
   PaymentApi,
+  ProcessingOverrides,
 } from "@/api/types";
 import { isPendingApprovalEvaluation } from "@/lib/invoice";
 import {
@@ -348,6 +349,44 @@ export function invoiceCanAttemptReprocess(inv: {
   raw_file_path?: string | null;
 }): boolean {
   return Boolean(inv.has_stored_file || inv.raw_file_path?.trim());
+}
+
+function _truthyFlag(value: unknown): boolean {
+  if (value === true) return true;
+  if (typeof value === "string") {
+    return ["1", "true", "yes"].includes(value.trim().toLowerCase());
+  }
+  return false;
+}
+
+/**
+ * Without-document / manual-entry captures intentionally have no receipt blob.
+ * Approve/confirm must not require a stored file for these rows.
+ */
+export function allowsApprovalWithoutStoredFile(inv: {
+  extracted_fields?: object | null;
+  processing_overrides?: ProcessingOverrides | object | null;
+}): boolean {
+  const fields = inv.extracted_fields as Record<string, unknown> | null | undefined;
+  if (fields && typeof fields === "object") {
+    if (_truthyFlag(fields.without_document) || _truthyFlag(fields.manual_entry)) {
+      return true;
+    }
+  }
+  const overrides = inv.processing_overrides as Record<string, unknown> | null | undefined;
+  if (overrides && typeof overrides === "object" && _truthyFlag(overrides.skip_extraction)) {
+    return true;
+  }
+  return false;
+}
+
+/** Approve/confirm may proceed when a file exists or the claim is without-document. */
+export function invoiceHasApprovableSource(inv: {
+  has_stored_file?: boolean;
+  extracted_fields?: object | null;
+  processing_overrides?: ProcessingOverrides | object | null;
+}): boolean {
+  return Boolean(inv.has_stored_file) || allowsApprovalWithoutStoredFile(inv);
 }
 
 /** Expected AR/AP side effect after a processed invoice, by route and field completeness. */

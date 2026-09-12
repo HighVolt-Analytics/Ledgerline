@@ -237,3 +237,6 @@ async def test_create_without_document_invoice_has_no_file() -> None:
     assert inv.document_ref == "DOC-77"
     finalize.assert_awaited_once()
     assert inv.extracted_fields.get("without_document") == "true"
+    assert inv.extracted_fields.get("manual_entry") == "true"
+    assert inv.processing_overrides is not None
+    assert inv.processing_overrides.get("skip_extraction") is True

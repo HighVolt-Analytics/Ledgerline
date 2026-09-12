@@ -478,6 +478,11 @@ export interface ValidationResult {
 
 export interface ProcessingOverrides {
   skip_steps: string[];
+  /** Without-document / manual capture: pipeline skips OCR extract. */
+  skip_extraction?: boolean;
+  preserve_extracted_fields?: boolean;
+  deferred_full_reset?: boolean;
+  [key: string]: unknown;
 }
 
 export interface ApprovalChainEntry {

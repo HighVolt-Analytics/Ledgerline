@@ -17,6 +17,7 @@ from app.models.tenant import Tenant
 from app.schemas.approvals import ApprovalListRequest
 from app.schemas.common import ResponseMeta
 from app.schemas.invoice import InvoiceResponse
+from app.utils.logger import get_logger
 from app.services.approval.approval_board_service import (
     approval_board_column,
     is_understood_path_vault_terminal,
@@ -46,7 +47,6 @@ from app.services.invoice.invoice_evaluation_service import (
 )
 from app.services.invoice.invoice_reset import reset_invoice_for_approval
 from app.services.invoice.invoice_response_service import (
-    invoice_list_load_options,
     response_for_invoice,
     responses_for_approval_board,
     responses_for_invoices,
@@ -69,6 +69,8 @@ from app.services.approval.approval_quorum_service import (
     record_approval,
     require_actor_in_pool,
 )
+
+logger = get_logger(__name__)
 
 _VAULT_TERMINAL_MESSAGE = (
     "Supporting document — stored in vault only; posting is not applicable "
@@ -97,6 +99,15 @@ _BOARD_PROCESSED_LIMIT = 100
 
 def _board_load_options() -> tuple:
     # Keep quorum JSON for card labels; skip OCR blobs.
+    return (
+        defer(Invoice.document_text),
+        defer(Invoice.extracted_fields),
+        defer(Invoice.processing_overrides),
+    )
+
+
+def _approvals_queue_load_options() -> tuple:
+    """Mobile queue needs approval_chain; generic list options defer it."""
     return (
         defer(Invoice.document_text),
         defer(Invoice.extracted_fields),
@@ -208,15 +219,39 @@ async def list_approvals_board(
     from app.services.approval.approval_policy_io import load_policy_for_tenant_async
     from app.services.approval.approval_quorum_service import ensure_invoice_approval_chain
 
-    policy = await load_policy_for_tenant_async(db, tenant_id)
+    try:
+        policy = await load_policy_for_tenant_async(db, tenant_id)
+    except Exception:
+        logger.warning(
+            "approval_board_policy_load_failed",
+            tenant_id=str(tenant_id),
+            exc_info=True,
+        )
+        policy = None
     healed = False
-    for inv in rows:
-        if inv.status not in _QUEUE_STATUSES:
-            continue
-        if ensure_invoice_approval_chain(inv, policy=policy):
-            healed = True
+    if policy is not None:
+        for inv in rows:
+            if inv.status not in _QUEUE_STATUSES:
+                continue
+            try:
+                if ensure_invoice_approval_chain(inv, policy=policy):
+                    healed = True
+            except Exception:
+                logger.warning(
+                    "approval_chain_heal_failed",
+                    invoice_id=getattr(inv, "id", None),
+                    tenant_id=str(tenant_id),
+                    exc_info=True,
+                )
     if healed:
-        await db.flush()
+        try:
+            await db.flush()
+        except Exception:
+            logger.warning(
+                "approval_chain_heal_flush_failed",
+                tenant_id=str(tenant_id),
+                exc_info=True,
+            )
     responses = await responses_for_approval_board(db, list(rows), tenant_id=tenant_id)
     by_id_inv = {inv.id: inv for inv in rows}
     enriched: list[InvoiceResponse] = []
@@ -264,7 +299,7 @@ async def list_approvals_queue(
 ) -> ApprovalListResult:
     stmt = (
         select(Invoice)
-        .options(*invoice_list_load_options())
+        .options(*_approvals_queue_load_options())
         .where(
             Invoice.tenant_id == tenant_id,
             Invoice.status.in_(_QUEUE_STATUSES),
@@ -288,13 +323,38 @@ async def list_approvals_queue(
     from app.services.approval.approval_policy_io import load_policy_for_tenant_async
     from app.services.approval.approval_quorum_service import ensure_invoice_approval_chain
 
-    policy = await load_policy_for_tenant_async(db, tenant_id)
+    try:
+        policy = await load_policy_for_tenant_async(db, tenant_id)
+    except Exception:
+        logger.warning(
+            "approval_queue_policy_load_failed",
+            tenant_id=str(tenant_id),
+            exc_info=True,
+        )
+        policy = None
+
     healed = False
-    for inv in rows:
-        if ensure_invoice_approval_chain(inv, policy=policy):
-            healed = True
+    if policy is not None:
+        for inv in rows:
+            try:
+                if ensure_invoice_approval_chain(inv, policy=policy):
+                    healed = True
+            except Exception:
+                logger.warning(
+                    "approval_chain_heal_failed",
+                    invoice_id=getattr(inv, "id", None),
+                    tenant_id=str(tenant_id),
+                    exc_info=True,
+                )
     if healed:
-        await db.flush()
+        try:
+            await db.flush()
+        except Exception:
+            logger.warning(
+                "approval_chain_heal_flush_failed",
+                tenant_id=str(tenant_id),
+                exc_info=True,
+            )
 
     return ApprovalListResult(
         rows=await responses_for_invoices(
@@ -358,9 +418,14 @@ async def _approve_invoice_for_posting_resume(
         apply_human_approval_processing_defaults(loaded)
 
     await restore_rejected_invoice_file_if_needed(db, loaded)
+    from app.services.invoice.processing_override_catalog import (
+        allows_approval_without_stored_file,
+    )
     from app.services.shared.file_storage import stored_file_available
 
-    if not stored_file_available(loaded.raw_file_path, tenant_id=loaded.tenant_id):
+    if not allows_approval_without_stored_file(loaded) and not stored_file_available(
+        loaded.raw_file_path, tenant_id=loaded.tenant_id
+    ):
         raise ValueError("Invoice has no stored file to process")
 
     previous_status = loaded.status.value
