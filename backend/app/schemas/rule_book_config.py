@@ -1276,14 +1276,15 @@ def _backfill_shipped_document_type_identity(data: dict[str, Any]) -> dict[str, 
 
 
 def _backfill_extraction_fields_from_shipped_defaults(data: dict[str, Any]) -> dict[str, Any]:
-    """Union shipped + playbook-recommended extraction keys into tenant document types."""
+    """Seed empty extraction lists from shipped defaults; preserve tenant edits.
+
+    When a DT already has ``extraction_fields``, do **not** re-inject playbook
+    recommended keys on load/save — that wiped Rule Book chip removals on reload.
+    Always ensure starred ``required_fields`` remain inside the extraction set.
+    """
     from app.schemas.document_type import DocumentTypeDefinition
     from app.services.classification.document_type_catalog import shipped_matrix_slot_for_org_row
     from app.services.classification.document_type_field_defaults import default_extraction_fields
-    from app.services.classification.document_type_playbook_profile_service import (
-        effective_playbook_profile,
-    )
-    from app.services.rule_book.extraction_field_config_audit import RECOMMENDED_FIELDS_BY_PLAYBOOK
 
     types = data.get("document_types")
     if not isinstance(types, list):
@@ -1313,31 +1314,42 @@ def _backfill_extraction_fields_from_shipped_defaults(data: dict[str, Any]) -> d
             normalized.append(token)
             seen.add(lowered)
 
-        # Only seed the full shipped catalogue when the tenant left extraction empty.
-        # Always union playbook-recommended keys so gaps (e.g. employee_claim + invoice_no)
-        # are filled without wiping intentional field lists.
-        seed_shipped = not normalized
-        try:
-            definition_for_slot = DocumentTypeDefinition.model_validate(row)
-            matrix_code = shipped_matrix_slot_for_org_row(definition_for_slot)
-        except Exception:
+        # Seed full shipped catalogue only when the tenant left extraction empty.
+        if not normalized:
             matrix_code = None
-        if seed_shipped and matrix_code:
-            for key in default_extraction_fields(matrix_code):
-                _append(key)
+            profile = None
+            try:
+                definition_for_slot = DocumentTypeDefinition.model_validate(row)
+                matrix_code = shipped_matrix_slot_for_org_row(definition_for_slot)
+                from app.services.classification.document_type_playbook_profile_service import (
+                    effective_playbook_profile,
+                )
 
+                profile = effective_playbook_profile(definition_for_slot)
+            except Exception:
+                pass
+            seed_code = matrix_code or code
+            for key in default_extraction_fields(seed_code):
+                _append(key)
+            # Fallback seed from playbook recommendations when matrix defaults are empty.
+            if not normalized and profile:
+                from app.services.rule_book.extraction_field_config_audit import (
+                    RECOMMENDED_FIELDS_BY_PLAYBOOK,
+                )
+
+                for key in RECOMMENDED_FIELDS_BY_PLAYBOOK.get(profile, ()):
+                    _append(key)
+
+        # Keep starred required fields inside the extract set (stars ⊆ extraction).
         try:
             definition = DocumentTypeDefinition.model_validate(row)
-            profile = effective_playbook_profile(definition)
-            for key in RECOMMENDED_FIELDS_BY_PLAYBOOK.get(profile, ()):
-                _append(key)
             for key in definition.required_fields or []:
                 _append(str(key))
         except Exception:
             pass
 
-        if normalized != current:
-            row = {**row, "extraction_fields": normalized, "extractionFields": normalized}
+        # Always normalize both key styles so GET/PUT round-trips keep tenant edits.
+        row = {**row, "extraction_fields": normalized, "extractionFields": normalized}
         merged.append(row)
 
     data["document_types"] = merged

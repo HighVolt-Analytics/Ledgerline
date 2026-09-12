@@ -1240,11 +1240,11 @@ export function DocumentTypesTab({
     );
   };
 
-  const flushPendingFieldPatch = () => {
+  const flushPendingFieldPatch = (options?: { immediate?: boolean }) => {
     const pending = pendingFieldPatchRef.current;
     if (!pending || !onPatchDocumentType) return;
     pendingFieldPatchRef.current = null;
-    onPatchDocumentType(pending.code, pending.fields);
+    onPatchDocumentType(pending.code, pending.fields, options);
   };
 
   const persistEditingFields = (fields: DocumentTypeFieldPatch) => {
@@ -1252,9 +1252,10 @@ export function DocumentTypesTab({
     const code = selectedCode ?? editing.code;
     pendingFieldPatchRef.current = { code, fields };
     if (fieldSaveTimerRef.current) clearTimeout(fieldSaveTimerRef.current);
+    // Save field chip edits promptly so a page reload cannot drop them.
     fieldSaveTimerRef.current = setTimeout(() => {
       fieldSaveTimerRef.current = null;
-      flushPendingFieldPatch();
+      flushPendingFieldPatch({ immediate: true });
     }, FIELD_SAVE_DEBOUNCE_MS);
   };
 
@@ -1264,7 +1265,7 @@ export function DocumentTypesTab({
         clearTimeout(fieldSaveTimerRef.current);
         fieldSaveTimerRef.current = null;
       }
-      flushPendingFieldPatch();
+      flushPendingFieldPatch({ immediate: true });
     };
   }, []);
 
@@ -1273,7 +1274,7 @@ export function DocumentTypesTab({
       clearTimeout(fieldSaveTimerRef.current);
       fieldSaveTimerRef.current = null;
     }
-    flushPendingFieldPatch();
+    flushPendingFieldPatch({ immediate: true });
     if (!editing) return;
     const normalized = editing.code.trim().toUpperCase();
     const validationRules = mergeConfigurableRules(
@@ -1471,6 +1472,11 @@ export function DocumentTypesTab({
           onChange={setEditing}
           onPersistFields={persistEditingFields}
           onClose={() => {
+            if (fieldSaveTimerRef.current) {
+              clearTimeout(fieldSaveTimerRef.current);
+              fieldSaveTimerRef.current = null;
+            }
+            flushPendingFieldPatch({ immediate: true });
             setEditing(null);
             setIsNew(false);
           }}

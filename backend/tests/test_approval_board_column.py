@@ -43,8 +43,21 @@ def test_pre_classification_exception_review() -> None:
     )
 
 
+def test_needs_review_field_hold_goes_to_review() -> None:
+    assert (
+        approval_board_column(
+            _inv(
+                status=InvoiceStatus.EXCEPTION,
+                evaluation_status="needs_review",
+                document_type_code="DT-03",
+            )
+        )
+        == "review"
+    )
+
+
 def test_post_classification_exception_processing() -> None:
-    for eval_status in ("needs_review", "awaiting_po", "pending_vendor", "pending_approval"):
+    for eval_status in ("awaiting_po", "pending_vendor", "pending_approval"):
         assert (
             approval_board_column(
                 _inv(

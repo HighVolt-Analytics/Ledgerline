@@ -73,7 +73,8 @@ def test_log_warnings_dedupes_identical_sets(caplog) -> None:
     assert second == first
 
 
-def test_backfill_unions_recommended_into_existing_extraction_fields() -> None:
+def test_backfill_preserves_tenant_extraction_field_edits() -> None:
+    """Removing playbook-recommended keys must survive load/save backfill."""
     from app.schemas.rule_book_config import _backfill_extraction_fields_from_shipped_defaults
 
     data = {
@@ -90,6 +91,35 @@ def test_backfill_unions_recommended_into_existing_extraction_fields() -> None:
                 "routeTarget": "Team Expenses",
                 "playbookProfile": "employee_claim",
                 "extractionFields": ["total", "invoice_date"],
+                "requiredFields": ["total"],
+            }
+        ]
+    }
+    out = _backfill_extraction_fields_from_shipped_defaults(data)
+    keys = [
+        str(k).strip().lower()
+        for k in (out["document_types"][0].get("extraction_fields") or [])
+    ]
+    assert keys == ["total", "invoice_date"]
+
+
+def test_backfill_seeds_empty_extraction_from_shipped_defaults() -> None:
+    from app.schemas.rule_book_config import _backfill_extraction_fields_from_shipped_defaults
+
+    data = {
+        "document_types": [
+            {
+                "code": "DT-08",
+                "title": "Expense claim",
+                "shortTitle": "Expense claim",
+                "klass": "Transactional",
+                "posting": "Yes",
+                "recognitionMode": "signals",
+                "recognitionSignals": [],
+                "llmPrompt": "",
+                "routeTarget": "Team Expenses",
+                "playbookProfile": "employee_claim",
+                "extractionFields": [],
             }
         ]
     }
@@ -99,9 +129,7 @@ def test_backfill_unions_recommended_into_existing_extraction_fields() -> None:
         for k in (out["document_types"][0].get("extraction_fields") or [])
     }
     assert "total" in keys
-    assert "invoice_date" in keys
-    assert "invoice_no" in keys
-    assert "email_sender" in keys
+    assert len(keys) > 0
 
 
 def test_audit_rule_book_iterates_enabled_types() -> None:

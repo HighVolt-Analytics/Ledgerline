@@ -2200,6 +2200,10 @@ async def resume_invoice_posting_pipeline(
         mapping_detail,
     )
 
+    # Field completeness before policy approval — never invent invoice_date.
+    if await halt_if_missing_accrual_date(session, invoice):
+        return
+
     if await apply_team_expense_approval_gate(session, invoice):
         send_notification(invoice, InvoiceStatus.EXCEPTION)
         return
@@ -4655,6 +4659,10 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                 "reason": "mobile channel — bypassed expense rules",
             },
         )
+
+    # Field completeness before policy approval — never invent invoice_date.
+    if await halt_if_missing_accrual_date(session, invoice):
+        return
 
     if await apply_team_expense_approval_gate(session, invoice):
         send_notification(invoice, InvoiceStatus.EXCEPTION)

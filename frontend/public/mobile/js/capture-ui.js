@@ -568,6 +568,12 @@
         requiredSet[String(raw || '').trim().toLowerCase()] = true;
       });
     }
+    // Team / claim posting always needs a user-entered invoice date (no default).
+    var route = String((dt && (dt.routeTarget || dt.route_target)) || '').toLowerCase();
+    var isTeam =
+      route.indexOf('team') >= 0 ||
+      String((dt && (dt.teamExpenseKind || dt.team_expense_kind)) || '').length > 0;
+    if (isTeam) requiredSet.invoice_date = true;
     return keys.map(function (key) {
       return {
         key: key,
@@ -821,6 +827,23 @@
       if (!String(val || '').trim()) {
         var label = LLCaptureApi.fieldLabel ? LLCaptureApi.fieldLabel(row.key) : row.key;
         return 'Enter ' + label;
+      }
+    }
+    // Accrual posting needs a real date — never invent/default one on mobile.
+    var hasInvoiceDateRow = detailRows.some(function (r) {
+      return String(r.key || '').toLowerCase() === 'invoice_date';
+    });
+    var invoiceDateVal =
+      (details.detailValues && details.detailValues.invoice_date) || '';
+    if (!String(invoiceDateVal || '').trim()) {
+      // Always require when the DT form includes the field, or for claim/TE paths.
+      var route = String((dt && (dt.routeTarget || dt.route_target)) || '').toLowerCase();
+      var isTeam =
+        route.indexOf('team') >= 0 ||
+        String(teIntent || '').length > 0 ||
+        String((dt && (dt.teamExpenseKind || dt.team_expense_kind)) || '').length > 0;
+      if (hasInvoiceDateRow || isTeam) {
+        return 'Enter invoice date';
       }
     }
     if (mode === 'with_doc' && !details.photoFile) {

@@ -34,6 +34,7 @@ async def test_halt_if_missing_accrual_date_blocks_undated_invoice(
     halted = await halt_if_missing_accrual_date(db_session, inv)
     assert halted is True
     assert inv.status == InvoiceStatus.EXCEPTION
+    assert inv.evaluation_status == "needs_review"
 
 
 def test_generate_entries_requires_invoice_date() -> None:

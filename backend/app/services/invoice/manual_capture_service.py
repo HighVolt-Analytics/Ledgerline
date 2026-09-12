@@ -135,13 +135,27 @@ def validate_manual_fields(
     *,
     line_items: list[dict[str, Any]] | None = None,
 ) -> list[str]:
-    """Validate compulsory keys; return required key list."""
+    """Validate compulsory keys; return required key list.
+
+    Team Expense / posting docs always require ``invoice_date`` (no default date).
+    """
+    from app.services.rule_book.rule_book_mapper import ROUTE_TEAM
+    from app.services.classification.document_type_catalog import (
+        resolved_route_for_definition,
+    )
+
     form_keys = form_keys_for_manual_form(definition)
     if not form_keys:
         raise ManualCaptureError(
             "This document type has no fillable fields configured"
         )
-    required = required_keys_for_manual_form(definition)
+    required = list(required_keys_for_manual_form(definition))
+    route = (resolved_route_for_definition(definition) or "").strip()
+    posting = (definition.posting or "").strip().lower()
+    # Accrual posting needs a real user-entered date — never invent one.
+    if route == ROUTE_TEAM or posting in {"yes", "true", "1"}:
+        if "invoice_date" not in required:
+            required.append("invoice_date")
     rows = list(line_items or [])
     missing: list[str] = []
     for key in required:
@@ -342,7 +356,7 @@ async def lock_manual_user_sub_ledger(
         resolve_parent_ledger,
         validate_sub_ledger_for_parent,
     )
-    from app.services.rule_book.rule_book_config_io import load_config_for_tenant
+    from app.services.invoice.invoice_evaluation_service import load_config_for_tenant
 
     config = await load_config_for_tenant(session, invoice.tenant_id)
     parent_ledger = resolve_parent_ledger(invoice, config)

@@ -44,8 +44,19 @@ describe("columnForInvoice", () => {
     expect(columnForInvoice(inv(3, "exception"))).toBe("pending");
   });
 
-  it("places post-classification exceptions in Processing", () => {
-    for (const evaluation_status of ["needs_review", "awaiting_po", "pending_vendor"] as const) {
+  it("places needs_review field holds in Review", () => {
+    expect(
+      columnForInvoice(
+        inv(1, "exception", {
+          evaluation_status: "needs_review",
+          document_type_code: "DT-03",
+        })
+      )
+    ).toBe("pending");
+  });
+
+  it("places post-classification hold exceptions in Processing", () => {
+    for (const evaluation_status of ["awaiting_po", "pending_vendor", "pending_approval"] as const) {
       expect(
         columnForInvoice(
           inv(1, "exception", {
@@ -136,7 +147,7 @@ describe("columnForInvoice", () => {
 });
 
 describe("isPreClassificationReview and approve visibility", () => {
-  it("flags Review column items", () => {
+  it("flags Review column items including needs_review field holds", () => {
     expect(
       isPreClassificationReview(
         inv(1, "exception", { evaluation_status: "awaiting_classification" })
@@ -149,21 +160,22 @@ describe("isPreClassificationReview and approve visibility", () => {
           document_type_code: "DT-03",
         })
       )
-    ).toBe(false);
+    ).toBe(true);
   });
 
-  it("hides confirm on Review and Rejected, shows on Processing only", () => {
+  it("shows Confirm on Review for needs_review, on Processing otherwise", () => {
     const reviewInv = inv(1, "exception", {
       evaluation_status: "awaiting_classification",
     });
-    const procInv = inv(2, "exception", {
+    const fieldHold = inv(2, "exception", {
       evaluation_status: "needs_review",
       document_type_code: "DT-03",
     });
     const rejectedInv = inv(3, "rejected");
     expect(canShowConfirmOnBoard(reviewInv, "pending")).toBe(false);
-    expect(canShowConfirmOnBoard(procInv, "awaiting")).toBe(true);
-    expect(canShowApproveOnBoard(procInv, "awaiting")).toBe(false);
+    expect(canShowConfirmOnBoard(fieldHold, "pending")).toBe(true);
+    expect(canShowApproveOnBoard(fieldHold, "pending")).toBe(false);
+    expect(canShowApproveOnBoard(fieldHold, "awaiting")).toBe(false);
     expect(canShowConfirmOnBoard(rejectedInv, "rejected")).toBe(false);
   });
 
@@ -190,15 +202,28 @@ describe("isPreClassificationReview and approve visibility", () => {
     expect(canShowApproveOnBoard(held, "pending")).toBe(false);
   });
 
-  it("shows Approve on Review for without-document claims", () => {
+  it("shows Confirm (not Approve) on Review for needs_review field holds", () => {
     const withoutDoc = inv(13, "exception", {
       evaluation_status: "needs_review",
       document_type_code: "DT-05",
       has_stored_file: false,
       extracted_fields: { without_document: "true", manual_entry: "true" },
     });
-    expect(canShowApproveOnBoard(withoutDoc, "pending")).toBe(true);
+    expect(canShowConfirmOnBoard(withoutDoc, "pending")).toBe(true);
+    expect(canShowApproveOnBoard(withoutDoc, "pending")).toBe(false);
     expect(canShowApproveOnBoard(withoutDoc, "awaiting")).toBe(false);
+  });
+
+  it("shows Approve on Review for without-document claims not in needs_review", () => {
+    const withoutDoc = inv(14, "exception", {
+      evaluation_status: "auto_coded",
+      document_type_code: "DT-05",
+      has_stored_file: false,
+      extracted_fields: { without_document: "true", manual_entry: "true" },
+    });
+    // effectiveEvaluationStatus maps exception+auto_coded → needs_review
+    expect(canShowConfirmOnBoard(withoutDoc, "pending")).toBe(true);
+    expect(canShowApproveOnBoard(withoutDoc, "pending")).toBe(false);
   });
 
   it("shows reprocess only for rejected status with stored file on Rejected column", () => {
@@ -241,7 +266,7 @@ describe("reviewQueueCount", () => {
       }),
       inv(3, "parsing"),
     ];
-    expect(reviewQueueCount(rows)).toBe(1);
+    expect(reviewQueueCount(rows)).toBe(2);
   });
 
   it("needsReviewQueueCount excludes pending_approval", () => {

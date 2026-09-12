@@ -67,8 +67,20 @@ export function isVisionVaultTerminal(inv: Invoice): boolean {
 
 export function canShowConfirmOnBoard(inv: Invoice, column: ApprovalBoardColumnKey): boolean {
   if (isVisionVaultTerminal(inv)) return false;
-  if (column === "approved" || column === "pending" || column === "rejected") return false;
-  return APPROVABLE_STATUSES.has(inv.status);
+  if (column === "approved" || column === "rejected") return false;
+  if (!APPROVABLE_STATUSES.has(inv.status)) return false;
+
+  // Processing: clerk can confirm after fixing blockers (or continue after edits).
+  if (column === "awaiting") return true;
+
+  // Review: field holds (e.g. missing invoice date) and without-doc claims.
+  if (column === "pending") {
+    return (
+      isNeedsReviewInvoice(inv) ||
+      (isClassificationConfirmed(inv) && allowsApprovalWithoutStoredFile(inv))
+    );
+  }
+  return false;
 }
 
 export function canShowApproveOnBoard(inv: Invoice, column: ApprovalBoardColumnKey): boolean {
@@ -76,14 +88,18 @@ export function canShowApproveOnBoard(inv: Invoice, column: ApprovalBoardColumnK
   if (column === "approved" || column === "rejected") return false;
   if (!APPROVABLE_STATUSES.has(inv.status)) return false;
 
-  // Processing: manager sign-off while policy holds the document.
+  // Processing: manager / policy sign-off while document waits for approval.
   if (column === "awaiting") {
     return isPendingApprovalInvoice(inv);
   }
 
   // Review: without-document / manual claims are already classified and must
-  // still expose Approve (Reject alone is not enough).
+  // still expose Approve when policy has not yet put them in pending_approval
+  // (Reject alone is not enough). Prefer Confirm for pure needs_review holds.
   if (column === "pending") {
+    if (isNeedsReviewInvoice(inv) && !isPendingApprovalInvoice(inv)) {
+      return false;
+    }
     return (
       inv.status === "exception" &&
       isClassificationConfirmed(inv) &&
@@ -179,9 +195,18 @@ function localApprovalBoardColumn(inv: Invoice): ApprovalBoardColumnApi {
 
   if (inv.status === "exception" && !isClassificationConfirmed(inv)) return "review";
 
+  // Missing fields / coding holds → Review (Confirm & Edit), not Processing.
+  if (inv.status === "exception" && isNeedsReviewInvoice(inv) && !isPendingApprovalInvoice(inv)) {
+    return "review";
+  }
+
   if (PIPELINE_STATUSES.has(inv.status)) return "processing";
 
-  if (inv.status === "exception" && (isClassificationConfirmed(inv) || isPendingApprovalInvoice(inv))) {
+  if (inv.status === "exception" && isPendingApprovalInvoice(inv)) {
+    return "processing";
+  }
+
+  if (inv.status === "exception" && isClassificationConfirmed(inv)) {
     return "processing";
   }
 

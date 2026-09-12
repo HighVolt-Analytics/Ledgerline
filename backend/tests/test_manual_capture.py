@@ -73,9 +73,25 @@ def test_validate_manual_fields_requires_starred_keys() -> None:
     )
     with pytest.raises(ManualCaptureError, match="Missing required"):
         validate_manual_fields(definition, {"vendor": "Acme"})
+    with pytest.raises(ManualCaptureError, match="invoice_date"):
+        validate_manual_fields(definition, {"vendor": "Acme", "total": "10"})
     assert validate_manual_fields(
-        definition, {"vendor": "Acme", "total": "10"}
-    ) == ["vendor", "total"]
+        definition,
+        {"vendor": "Acme", "total": "10", "invoice_date": "2026-09-12"},
+    ) == ["vendor", "total", "invoice_date"]
+
+
+def test_validate_manual_fields_requires_invoice_date_for_team_expense() -> None:
+    """TE posting never invents a date — user must supply invoice_date."""
+    definition = _dt(
+        "DT-04",
+        required=["vendor", "total"],
+        extraction=["vendor", "total"],
+    )
+    with pytest.raises(ManualCaptureError, match="invoice_date"):
+        validate_manual_fields(
+            definition, {"vendor": "Claim", "total": "100"}
+        )
 
 
 def test_validate_line_items_required_needs_rows() -> None:
@@ -84,9 +100,9 @@ def test_validate_line_items_required_needs_rows() -> None:
         validate_manual_fields(definition, {"vendor": "Acme"}, line_items=[])
     assert validate_manual_fields(
         definition,
-        {"vendor": "Acme"},
+        {"vendor": "Acme", "invoice_date": "2026-09-12"},
         line_items=[{"description": "Widget", "amount": "10"}],
-    ) == ["line_items", "vendor"]
+    ) == ["line_items", "vendor", "invoice_date"]
 
 
 def test_form_keys_union_required_and_extraction() -> None:

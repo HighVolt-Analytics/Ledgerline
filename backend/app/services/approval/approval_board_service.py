@@ -124,12 +124,21 @@ def approval_board_column(inv: Invoice) -> ApprovalBoardColumn:
     if status == InvoiceStatus.EXCEPTION and not is_classification_confirmed(inv):
         return "review"
 
+    # Missing fields / coding holds → Review (Confirm & Edit), not Processing.
+    if (
+        status == InvoiceStatus.EXCEPTION
+        and eval_token == EvaluationStatus.NEEDS_REVIEW.value
+        and not is_pending_approval(inv)
+    ):
+        return "review"
+
     if status in PIPELINE_STATUSES:
         return "processing"
 
-    if status == InvoiceStatus.EXCEPTION and (
-        is_classification_confirmed(inv) or is_pending_approval(inv)
-    ):
+    if status == InvoiceStatus.EXCEPTION and is_pending_approval(inv):
+        return "processing"
+
+    if status == InvoiceStatus.EXCEPTION and is_classification_confirmed(inv):
         return "processing"
 
     return "review"
@@ -154,6 +163,7 @@ def approval_board_column_expr():
     )
     pipeline = Invoice.status.in_(tuple(PIPELINE_STATUSES))
     pending_appr = eval_l == EvaluationStatus.PENDING_APPROVAL.value
+    needs_review = eval_l == EvaluationStatus.NEEDS_REVIEW.value
     exception = Invoice.status == InvoiceStatus.EXCEPTION
     return case(
         (rejected, "rejected"),
@@ -163,8 +173,10 @@ def approval_board_column_expr():
         (header, "review"),
         (pre_class, "review"),
         (and_(exception, ~classified), "review"),
+        (and_(exception, needs_review, ~pending_appr), "review"),
         (pipeline, "processing"),
-        (and_(exception, or_(classified, pending_appr)), "processing"),
+        (and_(exception, pending_appr), "processing"),
+        (and_(exception, classified), "processing"),
         else_="review",
     )
 

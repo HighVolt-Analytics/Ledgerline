@@ -30,14 +30,16 @@ async def halt_if_missing_accrual_date(
 ) -> bool:
     """Stop before journaling when invoice date is unknown.
 
+    Never invents a default date — the user must enter one on Fields.
     Returns True when processing was halted.
     """
     if invoice_accrual_date(invoice) is not None:
         return False
 
     invoice.status = InvoiceStatus.EXCEPTION
-    if not (invoice.evaluation_status or "").strip():
-        invoice.evaluation_status = EVAL_NEEDS_REVIEW
+    # Always surface as needs_review so LedgerLink shows Confirm / Edit
+    # (do not leave stale auto_coded from an earlier mapping step).
+    invoice.evaluation_status = EVAL_NEEDS_REVIEW
     await log_event(
         session,
         "accrual_date_required",
@@ -45,6 +47,7 @@ async def halt_if_missing_accrual_date(
         detail={
             "reason": "Invoice date is required before accrual posting and reconciliation",
             "resume": resume,
+            "hint": "Fields tab — enter invoice date, then Confirm & process",
         },
     )
     send_notification(invoice, InvoiceStatus.EXCEPTION)
