@@ -134,10 +134,6 @@
                 <span style="font-size:13.5px;font-weight:600">Capture document</span>
                 <button type="button" class="cam-flash" id="capFlash" data-flash="auto" aria-label="Flash Auto" title="Flash">Flash Auto</button>
               </div>
-              <div class="cap-path" id="capPath" role="group" aria-label="Capture method">
-                <button type="button" class="active" data-path="scan">Scan</button>
-                <button type="button" data-path="fill">Fill form</button>
-              </div>
               <div id="capScanPanel" class="cap-scan">
                 <p class="cam-hint" id="camHint">Hold steady, then tap the shutter.</p>
                 <div class="viewfinder">
@@ -172,27 +168,7 @@
                   </div>
                 </div>
               </div>
-              <div id="capFillPanel" class="cap-fill" hidden>
-                <div class="cap-fill-scroll" data-scroll>
-                  <p class="cap-fill-hint">Pick a document type, fill fields, then attach one or more reference photos (or a PDF). Multiple photos are combined into one submission.</p>
-                  <label class="cap-fill-label" for="capDtSearch">Document type</label>
-                  <input type="search" id="capDtSearch" class="cap-fill-input" placeholder="Search types…" autocomplete="off">
-                  <div id="capDtList" class="cap-dt-list" role="listbox" aria-label="Document types"></div>
-                  <div id="capDtSelected" class="cap-dt-selected" hidden></div>
-                  <div id="capDtFields" class="cap-dt-fields" hidden></div>
-                  <div id="capFillAttach" class="cap-fill-attach">
-                    <div class="cap-fill-attach-meta" id="capFillFileMeta">No reference images yet</div>
-                    <div id="capFillPageStrip" class="cap-fill-pages" hidden></div>
-                    <div class="cap-fill-attach-actions">
-                      <button type="button" class="btn sec sm" id="capFillFile">Add photos / PDF</button>
-                      <button type="button" class="btn sec sm" id="capFillShot">Take photo</button>
-                    </div>
-                  </div>
-                  <button type="button" class="btn" id="capFillSubmit" disabled>Submit</button>
-                </div>
-              </div>
               <input type="file" id="capLibraryInput" accept="image/*,application/pdf,.pdf,.jpg,.jpeg,.png,.webp" multiple hidden>
-              <input type="file" id="capFillLibraryInput" accept="image/*,application/pdf,.pdf,.jpg,.jpeg,.png,.webp" multiple hidden>
             </div>
           </section>
 

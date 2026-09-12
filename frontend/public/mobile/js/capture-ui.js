@@ -6,7 +6,7 @@
   var stream = null;
   var mode = 'invoice'; // invoice | receipt | multipage
   var teIntent = 'expense_claim'; // expense_claim | advance_requisition | vendor_invoice
-  var capturePath = 'scan'; // scan | fill
+  var capturePath = 'scan'; // scan only — Fill form removed; photo opens details form
   var flashMode = 'auto'; // auto | on | off
   var torchSupported = false;
   var pages = []; // { blob, thumbUrl }
@@ -21,7 +21,7 @@
   var fillPages = []; // { blob, thumbUrl, name, kind: 'image'|'pdf' }
   var fillSubmitting = false;
   var fillLineItems = []; // { description, qty, unit_price, amount, tax_amount }
-  /** After photo from a configured Quick Action, show the details form before submit. */
+  /** Capture tab always opens the with-doc details form (no OCR extraction). */
   var preferClaimDetailsForm = true;
   var preferredDtCode = '';
   var activeQaConfig = null;
@@ -47,7 +47,7 @@
       alwaysPdf: false,
       purchaseDocumentType: null,
       basename: 'receipt',
-      hint: 'One clear photo — uploads automatically.',
+      hint: 'One clear photo — then fill details and submit.',
       pill: 'Receipt · single shot',
       fileMultiple: false,
       stripActions: false
@@ -58,7 +58,7 @@
       alwaysPdf: false,
       purchaseDocumentType: 'invoice',
       basename: 'invoice',
-      hint: 'Capture the page. Add more if needed, then Review & upload.',
+      hint: 'Capture the page. Add more if needed, then Continue to fill details.',
       pill: 'Document · add pages if needed',
       fileMultiple: true,
       stripActions: true
@@ -69,7 +69,7 @@
       alwaysPdf: true,
       purchaseDocumentType: 'invoice',
       basename: 'invoice-multipage',
-      hint: 'Photograph each sheet in order, then Review & upload.',
+      hint: 'Photograph each sheet in order, then Continue to fill details.',
       pill: 'Multi-page · each sheet',
       fileMultiple: true,
       stripActions: true
@@ -123,7 +123,7 @@
     var actions = c.stripActions
       ? '<div class="cap-page-actions">' +
         '<button type="button" class="btn sm sec" id="capAddPage">Add page</button>' +
-        '<button type="button" class="btn sm" id="capReviewUpload">Review &amp; upload</button>' +
+        '<button type="button" class="btn sm" id="capReviewUpload">Continue</button>' +
         '</div>'
       : '';
     strip.innerHTML =
@@ -323,7 +323,7 @@
     if (c.autoUploadOnCapture) {
       void startUploadFlow();
     } else {
-      toast('Page ' + pages.length + ' added · Add another or Review & upload');
+      toast('Page ' + pages.length + ' added · Add another or Continue');
     }
   }
 
@@ -347,7 +347,7 @@
         }
         composedFile = f;
         clearPages();
-        toast('PDF selected · uploading…');
+        toast('PDF selected · opening form…');
         void startUploadFlow({ file: f });
         return;
       }
@@ -362,7 +362,7 @@
     if (c.autoUploadOnCapture) {
       void startUploadFlow();
     } else {
-      toast(pages.length + ' page' + (pages.length === 1 ? '' : 's') + ' ready · Review & upload');
+      toast(pages.length + ' page' + (pages.length === 1 ? '' : 's') + ' ready · Continue');
     }
   }
 
@@ -1599,9 +1599,42 @@
     });
   }
 
+  function syncCaptureRouteQaContext() {
+    var code = String(captureRouteDtCode || preferredDtCode || '').trim().toUpperCase();
+    var qa = code ? quickActionByCode[code] : null;
+    if (qa) {
+      preferredDtCode = String(qa.documentTypeCode || code).trim().toUpperCase();
+      captureRouteDtCode = preferredDtCode;
+      activeQaTitle = String(qa.label || qa.shortTitle || qa.title || '').trim();
+      activeQaConfig = normalizeMobileQaConfig(qa);
+      var intent =
+        routeIntentFromKind(qa.teamExpenseKind) ||
+        routeIntentFromKind(teIntent) ||
+        'expense_claim';
+      setTeamExpenseIntent(intent, { quiet: true, force: true, skipChrome: true });
+      return;
+    }
+    preferredDtCode = code || preferredDtCode;
+    if (!activeQaTitle) activeQaTitle = 'Details';
+    activeQaConfig = normalizeMobileQaConfig(activeQaConfig || { enabled: true });
+  }
+
+  /** After photo/PDF: open the with-doc details form (no OCR / extraction upload). */
+  function openCaptureDetailsForm(file) {
+    syncCaptureRouteQaContext();
+    openClaimDetailsForm({
+      mode: 'with_doc',
+      photoFile: file,
+      title: activeQaTitle,
+      qaConfig: activeQaConfig,
+      sourceLabel: (file && file.name) || 'Capture',
+      prefill: { spentFor: 'Myself' }
+    });
+  }
+
   async function startUploadFlow(opts) {
     if (uploading) {
-      toast('Upload already in progress');
+      toast('Already preparing…');
       return;
     }
     opts = opts || {};
@@ -1627,79 +1660,25 @@
     }
 
     uploading = true;
-    toast('Uploading…');
     try {
-      var result = await LLCaptureApi.uploadInvoice(file, {
-        purchaseDocumentType: cfg().purchaseDocumentType,
-        teamExpenseIntent: teIntent
-      });
-      var inv = result.invoice;
-      LLCaptureApi.upsertPending({
-        invoiceId: inv.id,
-        startedAt: Date.now(),
-        status: 'processing',
-        label: inv.document_ref || ('#' + inv.id),
-        vendor: inv.vendor || '',
-        total: inv.total || ''
-      });
-      if (deps.onPendingChange) deps.onPendingChange();
-      toast('Processing…');
-      pollController.cancel = false;
-      var token = pollController;
-      var settled = await LLCaptureApi.watchUntilSettled(inv.id, {
-        shouldCancel: function () { return token.cancel; },
-        onTick: function (cur) {
-          LLCaptureApi.updatePending(inv.id, {
-            status: LLCaptureApi.isPipelineActive(cur.status) ? 'processing' : 'ready',
-            vendor: LLCaptureApi.fieldValue(cur, 'vendor'),
-            total: LLCaptureApi.fieldValue(cur, 'total'),
-            label: cur.document_ref || ('#' + cur.id)
-          });
-          if (deps.onPendingChange) deps.onPendingChange();
-        }
-      });
-      LLCaptureApi.updatePending(settled.id, {
-        status: 'ready',
-        vendor: LLCaptureApi.fieldValue(settled, 'vendor'),
-        total: LLCaptureApi.fieldValue(settled, 'total'),
-        label: settled.document_ref || ('#' + settled.id)
-      });
-      if (deps.onPendingChange) deps.onPendingChange();
-      uploading = false;
-      if (deps.state && deps.state.screen === 'capture') {
-        if (preferClaimDetailsForm) {
-          openClaimDetailsForm({
-            mode: 'with_doc',
-            invoice: settled,
-            title: activeQaTitle,
-            sourceLabel: file.name || 'Capture'
-          });
-        } else {
-          openReviewSheet(settled, file.name || 'Capture');
-        }
-      } else {
-        toast('Ready for review · open Capture or My items');
-      }
+      // Same path as Quick Action "With document": photo → details form → manual-capture.
+      // Do not call /api/invoices/upload or poll OCR extraction.
+      openCaptureDetailsForm(file);
     } catch (err) {
-      uploading = false;
-      if (err && err.cancelled) return;
-      if (err && err.status === 409) {
-        toast(err.message || 'Duplicate document');
-        return;
-      }
-      // Keep pages + composedFile for retry
-      toast((err && err.message ? err.message : 'Upload failed') + ' · tap Review & upload to retry');
+      toast((err && err.message) || 'Could not open form');
       renderPageStrip();
       var strip = $('#capPageStrip');
       if (strip && !pages.length && composedFile) {
         strip.hidden = false;
         strip.innerHTML =
           '<div class="cap-page-actions" style="padding-top:8px">' +
-          '<button type="button" class="btn sm" id="capRetryUpload">Retry upload</button></div>';
+          '<button type="button" class="btn sm" id="capRetryUpload">Retry</button></div>';
         $('#capRetryUpload', strip).addEventListener('click', function () {
           void startUploadFlow({ file: composedFile });
         });
       }
+    } finally {
+      uploading = false;
     }
   }
 
@@ -1910,8 +1889,6 @@
 
     syncIntentChrome(false);
     syncModeChrome();
-    renderDtList();
-    syncFillSubmit();
   }
 
   function scrollChipIntoBar(host, chip) {
@@ -1961,10 +1938,6 @@
       skipChrome: true
     });
     syncIntentChrome(opts.scroll !== false);
-    if (capturePath === 'fill') {
-      renderDtList();
-      syncFillSubmit();
-    }
     if (!opts.quiet) {
       var qa = quickActionByCode[captureRouteDtCode];
       var label =
@@ -1990,22 +1963,6 @@
     teIntent = next;
     if (!opts.skipChrome) syncIntentChrome(false);
     syncModeChrome();
-    if (capturePath === 'fill') {
-      if (selectedDt) {
-        var selCode = String(selectedDt.code || '').trim().toUpperCase();
-        var qa = quickActionByCode[selCode];
-        var intent = routeIntentFromKind(
-          (qa && qa.teamExpenseKind) || selectedDt.teamExpenseKind || ''
-        );
-        if (intent && intent !== teIntent) {
-          selectedDt = null;
-          fillFields = {};
-          fillLineItems = [];
-        }
-      }
-      renderDtList();
-      syncFillSubmit();
-    }
     if (opts.quiet || prev === teIntent) return;
     toast(
       teIntent === 'advance_requisition'
@@ -2017,29 +1974,17 @@
   }
 
   function syncCapturePathChrome() {
-    $$('#capPath button').forEach(function (b) {
-      b.classList.toggle('active', b.dataset.path === capturePath);
-    });
     var scan = $('#capScanPanel');
-    var fill = $('#capFillPanel');
     var flash = $('#capFlash');
-    if (scan) scan.hidden = capturePath !== 'scan';
-    if (fill) fill.hidden = capturePath !== 'fill';
-    if (flash) flash.hidden = capturePath !== 'scan';
+    if (scan) scan.hidden = false;
+    if (flash) flash.hidden = false;
   }
 
   function setCapturePath(next) {
-    if (next !== 'scan' && next !== 'fill') return;
-    capturePath = next;
+    // Fill form removed — Capture is always camera → details form.
+    capturePath = 'scan';
     syncCapturePathChrome();
-    if (capturePath === 'scan') {
-      void ensureCamera();
-    } else {
-      stopCamera();
-      void ensureDocumentTypes();
-      renderDtList();
-      syncFillSubmit();
-    }
+    void ensureCamera();
   }
 
   async function ensureDocumentTypes() {
@@ -2606,61 +2551,7 @@
     }
     setTeamExpenseIntent('expense_claim', { quiet: true, force: true });
 
-    $$('#capPath button').forEach(function (b) {
-      b.addEventListener('click', function () {
-        setCapturePath(b.dataset.path || 'scan');
-      });
-    });
     setCapturePath('scan');
-
-    var dtList = $('#capDtList');
-    if (dtList) {
-      dtList.addEventListener('click', function (e) {
-        var btn = e.target.closest('button[data-code]');
-        if (!btn) return;
-        selectDocumentType(btn.dataset.code);
-      });
-    }
-    var dtSearch = $('#capDtSearch');
-    if (dtSearch) {
-      dtSearch.addEventListener('input', function () {
-        renderDtList();
-      });
-    }
-    var fillFileBtn = $('#capFillFile');
-    var fillFileInput = $('#capFillLibraryInput');
-    if (fillFileBtn && fillFileInput) {
-      fillFileBtn.addEventListener('click', function () {
-        fillFileInput.removeAttribute('capture');
-        fillFileInput.setAttribute(
-          'accept',
-          'image/*,application/pdf,.pdf,.jpg,.jpeg,.png,.webp'
-        );
-        fillFileInput.setAttribute('multiple', '');
-        fillFileInput.value = '';
-        fillFileInput.click();
-      });
-      fillFileInput.addEventListener('change', function () {
-        void onFillLibraryFiles(fillFileInput.files);
-      });
-    }
-    var fillShot = $('#capFillShot');
-    if (fillShot && fillFileInput) {
-      fillShot.addEventListener('click', function () {
-        fillFileInput.setAttribute('capture', 'environment');
-        fillFileInput.setAttribute('accept', 'image/*');
-        // Camera capture is typically one shot; keep multiple for gallery picks.
-        fillFileInput.removeAttribute('multiple');
-        fillFileInput.value = '';
-        fillFileInput.click();
-      });
-    }
-    var fillSubmit = $('#capFillSubmit');
-    if (fillSubmit) {
-      fillSubmit.addEventListener('click', function () {
-        void submitFillForm();
-      });
-    }
 
     var flashBtn = $('#capFlash');
     if (flashBtn) {
@@ -2684,12 +2575,6 @@
   }
 
   function onShowCapture() {
-    if (capturePath === 'fill') {
-      void ensureDocumentTypes().then(function () {
-        renderDtList();
-      });
-      return;
-    }
     void ensureCamera();
   }
 
