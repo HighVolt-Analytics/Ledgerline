@@ -1,7 +1,6 @@
 export const navLinks = [
   { label: 'Product', id: 'product' },
   { label: 'How it works', id: 'how' },
-  { label: 'Controls', id: 'controls' },
   { label: 'Integrations', id: 'integrations' },
   { label: "Who it's for", id: 'audience' },
   { label: 'Team', id: 'team' },

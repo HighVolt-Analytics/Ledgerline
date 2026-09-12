@@ -1,19 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, Fragment } from 'react';
 import {
-  Fingerprint,
-  FileCheck,
-  GitCompare,
   Users,
-  Shield,
-  Lock,
-  Inbox,
   Keyboard,
   AlertTriangle,
   FolderOpen,
-  Download,
-  Tags,
-  ScanText,
-  CheckCircle2,
+  FileText,
+  Files,
+  RefreshCw,
+  Clock,
   Banknote,
   MousePointerClick,
   Camera,
@@ -26,113 +20,276 @@ import {
   SearchCheck,
   Check,
   X,
+  TrendingUp,
+  ChevronRight,
+  Zap,
 } from 'lucide-react';
 import Header from '../components/layout/Header';
 import Logo from '../components/ui/Logo';
+import HowVisual from '../components/ui/HowVisuals';
 import { WorldMap } from '../components/ui/WorldMap';
 import IntegrationsSection from '../components/sections/IntegrationsSection';
 import { externalLinks } from '../data/navigation';
-import { controls } from '../data/sections';
 import '../qll.css';
 
 const YOUTUBE_EMBED =
   'https://www.youtube-nocookie.com/embed/0luxUk3VtgA?autoplay=1&rel=0&modestbranding=1';
 
-const controlIcons = {
-  C1: Fingerprint,
-  C2: FileCheck,
-  C3: GitCompare,
-  C4: Users,
-  C5: Shield,
-  C6: Lock,
-};
-
-const productCards = [
+const compareRows = [
   {
-    tone: 'teal',
-    title: 'Invoice to pay',
-    desc: 'Every bill arrives in one queue and leaves as a payment you approved.',
-    items: ['Capture from any channel', 'AI extraction', 'PO and GRN three-way match', 'Pay from your own bank'],
+    today: 'Documents scattered everywhere',
+    ledger: 'Captured automatically from authorised channels',
+    Icon: FileText,
   },
   {
-    tone: 'rust',
-    title: 'Expenses',
-    desc: 'Spending is claimed, checked against budget and settled without a spreadsheet.',
-    items: ['Card feeds', 'Receipt capture', 'Mileage and per-diem', 'Claims against budget and advances'],
-  },
-  {
-    tone: 'blue',
-    title: 'Records',
-    desc: 'One place for every document your finance team has to defend.',
-    items: ['Encrypted vault', 'Version history', 'Retention and legal hold', 'Semantic search'],
-  },
-];
-
-const problemCards = [
-  {
-    title: 'Invoices scatter',
-    desc: 'Inboxes, WhatsApp, drive folders, a supervisor’s phone.',
-    Icon: Inbox,
-  },
-  {
-    title: 'People do work computers should do',
-    desc: 'Download, code, re-key, chase.',
+    today: 'Manual data entry',
+    ledger: 'AI reads & understands the document',
     Icon: Keyboard,
   },
   {
-    title: 'Risk hides in the gaps',
-    desc: 'A double payment. A vendor whose bank details changed last night.',
+    today: 'Manual classification & filing',
+    ledger: 'Automatically classified & stored',
+    Icon: FolderOpen,
+  },
+  {
+    today: 'Approvals chased manually',
+    ledger: 'Approvals intelligently routed',
+    Icon: RefreshCw,
+  },
+  {
+    today: 'Duplicates & errors found late',
+    ledger: 'Exceptions detected before processing',
     Icon: AlertTriangle,
   },
   {
-    title: 'The record never survives the audit',
-    desc: 'The invoice, the approval and the payment live in three systems.',
-    Icon: FolderOpen,
+    today: 'Payment disconnected from workflow',
+    ledger: 'Invoice → approval → payment connected',
+    Icon: Banknote,
+  },
+  {
+    today: 'Records spread across systems',
+    ledger: 'Complete audit-ready record maintained',
+    Icon: Files,
+  },
+  {
+    today: 'Finance spends time processing',
+    ledger: 'Finance focuses on decisions & exceptions',
+    Icon: Clock,
   },
 ];
 
-const howSteps = [
+const howFlows = [
   {
-    code: '01',
-    title: 'Capture',
-    desc: 'It arrives by email, chat or phone.',
-    meta: 'Any channel',
-    Icon: Download,
+    title: 'Invoice to Pay',
+    subtitle: 'Simple. Automated. Controlled.',
+    stages: [
+      {
+        name: '1. Capture & Understand',
+        tone: 'blue',
+        steps: [
+          {
+            n: '1',
+            title: 'Capture Invoices',
+            desc: 'Invoices arrive from WhatsApp, Viber, email, app, or Slack.',
+            visual: 'capture',
+          },
+          {
+            n: '2',
+            title: 'Analyse Document',
+            desc: 'AI reads each file and analyses the document instantly.',
+            visual: 'analyse',
+          },
+          {
+            n: '3',
+            title: 'Classify Type',
+            desc: 'Identifies invoice, receipt, statement, or supporting file.',
+            visual: 'classify',
+          },
+          {
+            n: '4',
+            title: 'Extract & Attach',
+            desc: 'Extracts key details and links supporting documents automatically.',
+            visual: 'extract',
+          },
+        ],
+      },
+      {
+        name: '2. Check, Post & Store',
+        tone: 'teal',
+        steps: [
+          {
+            n: '5',
+            title: 'Apply Rules',
+            desc: 'Finds the right rulebook or policy for the document.',
+            visual: 'rules',
+          },
+          {
+            n: '6',
+            title: 'Check Budget & Approval',
+            desc: 'Checks budget, advance, and approval matrix.',
+            visual: 'budget',
+          },
+          {
+            n: '7',
+            title: 'Suggest Coding',
+            desc: 'Suggests description, ledger, and sub-ledger mapping.',
+            visual: 'coding',
+          },
+          {
+            n: '8',
+            title: 'Validate & Create Entry',
+            desc: 'Checks invoice number, due date, and tax, then creates the entry.',
+            visual: 'validate',
+          },
+          {
+            n: '9',
+            title: 'Sync to Accounting',
+            desc: 'Syncs to the accounting system and keeps it in draft stage.',
+            visual: 'sync',
+          },
+          {
+            n: '10',
+            title: 'Archive & Store',
+            desc: 'Auto-attaches supporting documents and stores everything in the right folder.',
+            visual: 'archive',
+          },
+        ],
+      },
+    ],
   },
   {
-    code: '02',
-    title: 'Classify',
-    desc: 'Invoice, receipt, statement or contract.',
-    meta: 'Auto-typed',
-    Icon: Tags,
+    title: 'Expense Management',
+    subtitle: 'Simple. Automated. Fast.',
+    foot: 'All in 2 seconds — from request to payment, fully automated.',
+    stages: [
+      {
+        name: '1. Advance Request',
+        tone: 'blue',
+        steps: [
+          {
+            n: '1',
+            title: 'Raise Request',
+            desc: 'Field staff, sales or any team raises an advance request.',
+            visual: 'raise',
+          },
+          {
+            n: '2',
+            title: 'Supervisor Approval',
+            desc: 'Routed to supervisor for authorization.',
+            visual: 'supervisor',
+          },
+          {
+            n: '3',
+            title: 'Finance Approval',
+            desc: 'Routed to finance for approval.',
+            visual: 'finance',
+          },
+          {
+            n: '4',
+            title: 'Funds Credited',
+            desc: 'Funds credited to staff account in 1 minute.',
+            visual: 'funds',
+          },
+        ],
+      },
+      {
+        name: '2. Expense Claim',
+        tone: 'teal',
+        steps: [
+          {
+            n: '1',
+            title: 'Upload Invoice',
+            desc: 'Team takes a photo of the invoice and uploads it.',
+            visual: 'upload',
+          },
+          {
+            n: '2',
+            title: 'Automated Checks',
+            desc: 'System checks against advance, budget, and policy.',
+            visual: 'checks',
+          },
+          {
+            n: '3',
+            title: 'Routed for Approval',
+            desc: 'Routed based on the approval matrix.',
+            visual: 'routed',
+          },
+          {
+            n: '4',
+            title: 'Payment Released',
+            desc: 'Approved amount is released.',
+            visual: 'payment',
+          },
+        ],
+      },
+    ],
   },
   {
-    code: '03',
-    title: 'Extract',
-    desc: 'Every field read, every line item.',
-    meta: 'OCR + AI',
-    Icon: ScanText,
-  },
-  {
-    code: '04',
-    title: 'Match',
-    desc: 'Against the order and the goods received.',
-    meta: '3-way check',
-    Icon: GitCompare,
-  },
-  {
-    code: '05',
-    title: 'Approve',
-    desc: 'In your inbox or in your pocket.',
-    meta: 'Policy routed',
-    Icon: CheckCircle2,
-  },
-  {
-    code: '06',
-    title: 'Pay & post',
-    desc: 'Your bank pays, your ledger updates.',
-    meta: 'Same day',
-    Icon: Banknote,
+    title: 'File Management',
+    subtitle: 'Capture. Organize. Bundle. Notify.',
+    foot: 'From file capture to bundled reporting — fast, organized, and automated.',
+    stages: [
+      {
+        name: '1. Capture & Organize',
+        tone: 'blue',
+        steps: [
+          {
+            n: '1',
+            title: 'Capture Files',
+            desc: 'Files arrive from email, WhatsApp, Slack, Viber, app, or other channels.',
+            visual: 'captureFiles',
+          },
+          {
+            n: '2',
+            title: 'Route to Folder',
+            desc: 'Each file lands automatically in the correct folder.',
+            visual: 'routeFolder',
+          },
+          {
+            n: '3',
+            title: 'Time-Stamp & Index',
+            desc: 'Tagged by vendor, year, month, date, and timestamp.',
+            visual: 'timestamp',
+          },
+          {
+            n: '4',
+            title: 'Organize Structure',
+            desc: 'Files are arranged in a searchable, structured archive.',
+            visual: 'organize',
+          },
+        ],
+      },
+      {
+        name: '2. Match, Bundle & Notify',
+        tone: 'teal',
+        steps: [
+          {
+            n: '5',
+            title: 'Find Companion Files',
+            desc: 'The system searches for related or supporting documents.',
+            visual: 'companion',
+          },
+          {
+            n: '6',
+            title: 'Auto-Bundle',
+            desc: 'When a supporting file arrives, it is linked and bundled automatically.',
+            visual: 'bundle',
+          },
+          {
+            n: '7',
+            title: 'Update Records',
+            desc: 'The file set updates instantly with the latest attachments and status.',
+            visual: 'update',
+          },
+          {
+            n: '8',
+            title: 'Report & Notify',
+            desc: 'Reports are updated and notifications are sent automatically.',
+            visual: 'report',
+          },
+        ],
+      },
+    ],
   },
 ];
 
@@ -170,6 +327,18 @@ const peopleCards = [
     visual: 'audit',
   },
 ];
+
+function HowStep({ n, title, desc, visual }) {
+  return (
+    <li className="how-step">
+      <HowVisual name={visual} />
+      <p className="how-step-title">
+        {n}. {title}
+      </p>
+      <p className="how-step-desc">{desc}</p>
+    </li>
+  );
+}
 
 function PeopleCardVisual({ visual }) {
   if (visual === 'cfo') {
@@ -439,6 +608,7 @@ function PricingCard({ plan }) {
 
 export default function QuantumLedgerLinkPage() {
   const [videoPlaying, setVideoPlaying] = useState(false);
+  const [howTab, setHowTab] = useState(0);
   const rootRef = useRef(null);
 
   useEffect(() => {
@@ -493,10 +663,9 @@ export default function QuantumLedgerLinkPage() {
           <div className="wrap">
             <div className="hero-copy">
               <p className="eyebrow r">Invoice to pay · Expenses · Records</p>
-              <h1 className="h1 r">Every dollar that leaves your business, back in your hands.</h1>
+              <h1 className="h1 r">Every invoice. Every expense. Every record. Handled.</h1>
               <p className="lead r">
-                Quantum Ledgerline captures the document, runs the controls, pays from your own bank, and
-                files the record. One system, from the invoice to the audit.
+                One intelligent system that runs finance work from capture to payment to audit.
               </p>
               <div className="actions r in">
                 <a
@@ -562,146 +731,181 @@ export default function QuantumLedgerLinkPage() {
                 Captures via email · WhatsApp · Viber · mobile <span className="sep">·</span> Pays from your
                 bank <span className="sep">·</span> Posts to Xero · QuickBooks · MYOB · NetSuite
               </p>
-              <ul className="figs r">
-                <li>
-                  <span className="fig">3 seconds</span>
-                  <span className="figlabel">per invoice</span>
-                </li>
-                <li>
-                  <span className="fig">12</span>
-                  <span className="figlabel">control gates</span>
-                </li>
-                <li>
-                  <span className="fig">Δ$0.00</span>
-                  <span className="figlabel">daily reconciliation</span>
-                </li>
-              </ul>
             </div>
           </div>
         </section>
 
-        <section className="s paper" id="problem">
+        <div id="product" className="product-block">
+        <section className="s dark tight compare-section" id="problem">
           <div className="wrap">
-            <p className="eyebrow r">The problem</p>
+            <p className="eyebrow r">Today versus Ledgerline</p>
             <h2 className="h2 r">Right now, nobody can tell you what you owe.</h2>
-            <p className="lead r">
-              15 minutes and about <span className="num">US$30</span> of somebody&apos;s time, per invoice.
+
+            <div className="compare-board r">
+              <span className="compare-orb compare-orb--warm" aria-hidden="true" />
+              <span className="compare-orb compare-orb--cool" aria-hidden="true" />
+
+              <p className="compare-title compare-title--today">Today</p>
+              <span className="compare-title-spacer" aria-hidden="true" />
+              <p className="compare-title compare-title--ledger">With Ledgerline</p>
+
+              <article className="compare-card compare-card--today">
+                {compareRows.map(({ today }) => (
+                  <p className="compare-row" key={today}>
+                    {today}
+                  </p>
+                ))}
+              </article>
+
+              <div className="compare-rail" aria-hidden="true">
+                {compareRows.map(({ today, Icon }) => (
+                  <span className="compare-rail-item" key={today}>
+                    <Icon strokeWidth={1.75} />
+                  </span>
+                ))}
+              </div>
+
+              <article className="compare-card compare-card--ledger">
+                {compareRows.map(({ today, ledger }) => (
+                  <p className="compare-row" key={today}>
+                    {ledger}
+                  </p>
+                ))}
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <section className="s dark ink2 outcome-section">
+          <div className="wrap">
+            <p className="outcome-kicker r">
+              <span className="outcome-kicker-dot" aria-hidden="true" />
+              The outcome
+            </p>
+            <h2 className="outcome-heading r">
+              Finance runs itself.
+              <br />
+              Your people move forward.
+            </h2>
+            <p className="outcome-lead r">
+              98% less processing time. 99% accuracy. 24/7 automation. 40%+ cost savings.*
             </p>
 
-            <div className="problem-grid r">
-              {problemCards.map(({ title, desc, Icon }) => (
-                <article key={title} className="problem-card">
-                  <Icon className="problem-icon" strokeWidth={2} aria-hidden="true" />
-                  <h3 className="problem-card-title">{title}</h3>
-                  <p className="problem-card-desc">{desc}</p>
-                </article>
-              ))}
-            </div>
-          </div>
-        </section>
+            <div className="outcome-bento r">
+              <article className="outcome-card outcome-card--247">
+                <h3>24/7 Always Running</h3>
+                <p>Invoices. Expenses. Records.</p>
+              </article>
 
-        <section className="s dark ink2" id="product">
-          <div className="wrap">
-            <p className="eyebrow r">Three in one</p>
-            <h2 className="h2 r">Three systems your team stopped needing.</h2>
-            <div className="product-glow-grid r">
-              {productCards.map(({ tone, title, desc, items }) => (
-                <article key={title} className={`product-glow-card product-glow-card--${tone}`}>
-                  <h3>{title}</h3>
-                  <p>{desc}</p>
-                  <ul>
-                    {items.map((item) => (
-                      <li key={item}>{item}</li>
-                    ))}
-                  </ul>
-                </article>
-              ))}
+              <article className="outcome-card outcome-card--time">
+                <p>Seconds, not minutes.</p>
+                <div className="outcome-metric">
+                  <p className="outcome-num">
+                    98<span>%</span>
+                  </p>
+                  <p className="outcome-label">Time Saved</p>
+                </div>
+              </article>
+
+              <article className="outcome-card outcome-card--accuracy">
+                <h3>99% Accuracy</h3>
+                <p>Duplicates and suspicious invoices flagged.</p>
+              </article>
+
+              <article className="outcome-card outcome-card--cost">
+                <p className="outcome-num">
+                  40%<span>+</span>
+                </p>
+                <p className="outcome-label">Cost Saved*</p>
+              </article>
+
+              <article className="outcome-card outcome-card--pill">
+                <span className="outcome-pill-dot" aria-hidden="true" />
+                Guaranteed efficiency.
+              </article>
+
+              <article className="outcome-card outcome-card--faster">
+                <TrendingUp className="outcome-watermark" strokeWidth={1.25} aria-hidden="true" />
+                <h3>And the business moves faster.</h3>
+                <ul>
+                  <li>
+                    <strong>Faster reporting</strong>
+                    <span>Books stay current.</span>
+                  </li>
+                  <li>
+                    <strong>Better cash visibility</strong>
+                    <span>Know what&apos;s due and what&apos;s coming.</span>
+                  </li>
+                  <li>
+                    <strong>Audit ready</strong>
+                    <span>Every document. Every approval. Every record.</span>
+                  </li>
+                </ul>
+                <p className="outcome-faster-foot">People do what people do best. Think. Decide. Grow.</p>
+              </article>
             </div>
-            <p className="closer r">One pipeline. One audit trail. One place to look.</p>
           </div>
         </section>
+        </div>
 
         <section className="s dark" id="how">
           <div className="wrap">
             <p className="eyebrow r">How it works</p>
-            <h2 className="h2 wide r">One document lands. Twelve checks run. You approve. It pays.</h2>
-            <div className="how-grid r">
-              {howSteps.map(({ code, title, desc, meta, Icon }) => (
-                <article key={code} className="capture-ref-card how-card group flex h-full flex-col">
-                  <div className="capture-ref-body how-card-body flex h-full flex-col">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="capture-brand-logo">
-                        <Icon className="h-3.5 w-3.5 text-[#2FD4B5]" strokeWidth={2} aria-hidden="true" />
-                      </div>
-                      <span className="font-mono text-[10px] font-medium text-muted-foreground">{code}</span>
-                    </div>
-                    <h3 className="how-card-title">{title}</h3>
-                    <p className="how-card-desc">{desc}</p>
-                    <p className="capture-channel-meta how-card-meta">{meta}</p>
-                  </div>
-                </article>
+            <h2 className="h2 wide r">Simple. Automated. Controlled.</h2>
+
+            <div className="how-tabs r" role="tablist" aria-label="How it works">
+              {howFlows.map((flow, index) => (
+                <button
+                  key={flow.title}
+                  type="button"
+                  role="tab"
+                  aria-selected={howTab === index}
+                  className={`how-tab${howTab === index ? ' is-active' : ''}`}
+                  onClick={() => setHowTab(index)}
+                >
+                  {flow.title}
+                </button>
               ))}
             </div>
-            <div className="band r">
-              <div className="bandcol">
-                <p className="bandlabel">Before</p>
-                <p className="bandfig">
-                  <span className="num">15 minutes</span>
-                </p>
-                <p className="bandsub">
-                  <span className="num">US$30</span> per invoice
-                </p>
-              </div>
-              <div className="bandcol">
-                <p className="bandlabel">With Ledgerline</p>
-                <p className="bandfig accent">
-                  <span className="num">3 seconds</span>
-                </p>
-                <p className="bandsub">
-                  <span className="num">US$3</span> per invoice
-                </p>
-              </div>
-            </div>
-            <p className="statline r">
-              AI reads the document. Deterministic rules do the accounting. That separation is why auditors trust it.
-            </p>
-          </div>
-        </section>
 
-        <section className="s dark ink2" id="controls">
-          <div className="wrap">
-            <p className="eyebrow r">CFO-grade controls</p>
-            <h2 className="h2 r">Six gates between the invoice and the wire.</h2>
-            <p className="lead r">
-              Every control is enforced server-side. The UI may hint; the API rejects. This is the layer
-              CFOs trust enough to sign for.
-            </p>
-            <div className="mt-14 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {controls.map((ctrl) => {
-                const Icon = controlIcons[ctrl.code];
-                return (
-                  <article key={ctrl.code} className="control-glass-card group relative flex h-full flex-col p-6 r">
-                    <div className="relative z-10 flex h-full flex-col">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="control-icon-box">
-                          <Icon className="control-icon-symbol h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
-                        </div>
-                        <span className="font-mono text-[11px] font-medium text-muted-foreground">{ctrl.code}</span>
-                      </div>
-                      <h3 className="mt-5 text-lg font-medium tracking-[-0.02em] text-foreground">{ctrl.title}</h3>
-                      <p className="mt-2 flex-1 text-sm leading-relaxed text-muted-foreground">{ctrl.desc}</p>
-                      <p className="control-blocks-badge mt-4 whitespace-nowrap font-mono text-[9px] uppercase tracking-[0.14em]">
-                        {ctrl.blocks}
-                      </p>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-            <p className="closer r">
-              Enforced server-side. The interface may hint; the API refuses. Funds never leave your bank —
-              we instruct, your bank executes.
-            </p>
+            {howFlows.map((flow, index) => (
+              <article
+                key={flow.title}
+                className="how-board r"
+                role="tabpanel"
+                hidden={howTab !== index}
+              >
+                <header className="how-board-head">
+                  <h3>{flow.title} – How It Works</h3>
+                  <p>{flow.subtitle}</p>
+                </header>
+
+                {flow.stages.map((stage) => (
+                  <div key={stage.name} className={`how-stage how-stage--${stage.tone}`}>
+                    <p className="how-stage-label">{stage.name}</p>
+                    <ol className={`how-flow how-flow--${stage.steps.length}`}>
+                      {stage.steps.map((step, stepIndex) => (
+                        <Fragment key={step.title}>
+                          {stepIndex > 0 ? (
+                            <li className="how-flow-arrow" aria-hidden="true">
+                              <ChevronRight strokeWidth={2} />
+                            </li>
+                          ) : null}
+                          <HowStep {...step} />
+                        </Fragment>
+                      ))}
+                    </ol>
+                  </div>
+                ))}
+
+                {flow.foot ? (
+                  <p className="how-board-foot">
+                    <Zap className="how-board-foot-icon" strokeWidth={2} aria-hidden="true" />
+                    {flow.foot}
+                  </p>
+                ) : null}
+              </article>
+            ))}
           </div>
         </section>
 

@@ -1,5 +1,3 @@
-import FadeIn from '../ui/FadeIn';
-import SectionLabel from '../ui/SectionLabel';
 import { integrations } from '../../data/sections';
 import { integrationLogoMap } from '../../data/integrationLogos';
 
@@ -57,28 +55,22 @@ function IntegrationCloud() {
 
 export default function IntegrationsSection() {
   return (
-    <section id="integrations" className="mx-auto max-w-[1200px] px-5 py-20 sm:px-8 sm:py-28">
-      <div className="grid grid-cols-1 items-center gap-14 lg:grid-cols-2 lg:gap-16">
-        <FadeIn>
-          <SectionLabel>Integrations</SectionLabel>
-          <h2 className="mt-4 max-w-md text-3xl font-medium leading-[1.12] tracking-[-0.03em] text-foreground sm:text-4xl lg:text-[2.65rem]">
-            Seamless integrations for your financial workflow
-          </h2>
-          <p className="mt-5 max-w-md text-base leading-relaxed text-muted-foreground sm:text-lg">
-            Sync payments, banking, and accounting tools to automate your workflow and keep your financial data
-            accurate and up to date.
-          </p>
-          <a
-            href="#pricing"
-            className="mt-8 inline-flex items-center justify-center rounded-xl bg-primary px-6 py-3 text-sm font-medium text-primary-foreground shadow-[0_0_24px_hsl(var(--primary)/0.28)] transition-transform duration-200 hover:scale-[1.02] active:scale-100"
-          >
-            View integrations
-          </a>
-        </FadeIn>
+    <section id="integrations" className="s dark">
+      <div className="wrap">
+        <div className="integrations-layout">
+          <div>
+            <p className="eyebrow">Integrations</p>
+            <h2 className="h2">Seamless integrations for your financial workflow</h2>
+            <p className="lead">
+              Sync payments, banking, and accounting tools to automate your workflow and keep your financial
+              data accurate and up to date.
+            </p>
+          </div>
 
-        <FadeIn delay={0.08} className="integration-cloud-column flex w-full justify-center">
-          <IntegrationCloud />
-        </FadeIn>
+          <div className="integration-cloud-column">
+            <IntegrationCloud />
+          </div>
+        </div>
       </div>
     </section>
   );
