@@ -310,7 +310,13 @@ async def apply_line_gl_mapping(
     invoice: Invoice,
     config: RuleBookConfigPayload,
 ) -> bool:
-    """Assign Sub-GLs under the Document Type parent ledger (content-driven)."""
+    """Assign Sub-GLs under the Document Type parent ledger (content-driven).
+
+    LedgerLink (OCR) path may call the Sub-GL LLM. Mobile / manual-entry
+    (``has_skip_extraction``) never does — user-filled Sub-GL is authoritative.
+    """
+    from app.services.invoice.processing_override_catalog import has_skip_extraction
+
     if not line_gl_mapping_applicable(invoice, config):
         return False
 
@@ -320,6 +326,7 @@ async def apply_line_gl_mapping(
 
     is_te = _is_team_expense_invoice(invoice, config)
     has_lines = bool(invoice.line_items)
+    manual_skip = has_skip_extraction(invoice)
 
     if not parent_ledger_has_sub_ledger_catalogue(
         parent_ledger, config.chart_of_accounts
@@ -349,6 +356,7 @@ async def apply_line_gl_mapping(
                 "prompt_key": PROMPT_KEY,
                 "fallback": "main_gl",
                 "had_lines": has_lines,
+                "manual_entry_skip_llm": manual_skip,
             },
         )
         return True
@@ -368,7 +376,45 @@ async def apply_line_gl_mapping(
     llm_raw: dict[str, Any] | None = None
     suggestions: list[dict[str, Any]] = []
     doc_sub, doc_confidence, doc_reasoning = "", None, ""
-    if unlocked:
+
+    if manual_skip:
+        # Mobile / without-doc: use user Sub-GL only — never call Sub-GL LLM.
+        fields = (
+            invoice.extracted_fields
+            if isinstance(invoice.extracted_fields, dict)
+            else {}
+        )
+        doc_sub = (
+            (invoice.account_name or "").strip()
+            or str(fields.get("manual_sub_ledger") or "").strip()
+            or str(fields.get("account_name") or "").strip()
+            or str(fields.get("category") or "").strip()
+            or _dominant_line_sub_ledger(invoice)
+        )
+        doc_reasoning = "mobile_manual_entry"
+        for line in unlocked:
+            candidate = (getattr(line, "sub_ledger", None) or "").strip() or doc_sub
+            if candidate and validate_sub_ledger_for_parent(
+                candidate,
+                parent_ledger=parent_ledger,
+                accounts=config.chart_of_accounts,
+            ):
+                apply_sub_ledger_to_line(
+                    line,
+                    sub_ledger=candidate,
+                    source="manual",
+                    reason="mobile_manual_entry",
+                    parent_ledger=parent_ledger,
+                )
+            else:
+                apply_sub_ledger_to_line(
+                    line,
+                    sub_ledger="",
+                    source="main_gl",
+                    reason="Manual entry — keep parent GL",
+                    parent_ledger=parent_ledger,
+                )
+    elif unlocked:
         llm_raw = await _llm_sub_ledger_assign(
             parent_ledger=parent_ledger,
             parent_code=parent_code,
@@ -392,74 +438,78 @@ async def apply_line_gl_mapping(
     min_confidence = float(get_settings().runtime_llm_min_confidence)
     applied = 0
     # Same content → Sub-GL rules for every line under the fixed parent.
-    for index, line in enumerate(invoice.line_items or []):
-        if line_gl_is_locked(line):
-            continue
-        row = suggestion_by_index.get(index)
-        if row is not None:
-            candidate = str(row.get("sub_ledger") or "").strip()
-            confidence_raw = row.get("confidence")
-            reasoning = str(row.get("reasoning") or "").strip()
-            try:
-                confidence = float(confidence_raw) if confidence_raw is not None else None
-            except (TypeError, ValueError):
-                confidence = None
-            llm_confident = _accept_llm_sub_ledger(
-                candidate,
-                confidence,
-                parent_ledger=parent_ledger,
-                accounts=config.chart_of_accounts,
-                min_confidence=min_confidence,
-            )
-            if llm_confident:
-                apply_sub_ledger_to_line(
-                    line,
-                    sub_ledger=candidate,
-                    source="llm",
-                    confidence=confidence,
-                    reason=reasoning or "LLM sub-ledger suggestion",
-                    parent_ledger=parent_ledger,
-                )
-                applied += 1
+    # Manual-skip path already mapped unlocked lines above.
+    if manual_skip:
+        applied = len(unlocked)
+    else:
+        for index, line in enumerate(invoice.line_items or []):
+            if line_gl_is_locked(line):
                 continue
-            if not candidate:
-                fallback, source, reason = _fallback_sub_ledger(
-                    invoice, config, parent_ledger=parent_ledger
+            row = suggestion_by_index.get(index)
+            if row is not None:
+                candidate = str(row.get("sub_ledger") or "").strip()
+                confidence_raw = row.get("confidence")
+                reasoning = str(row.get("reasoning") or "").strip()
+                try:
+                    confidence = float(confidence_raw) if confidence_raw is not None else None
+                except (TypeError, ValueError):
+                    confidence = None
+                llm_confident = _accept_llm_sub_ledger(
+                    candidate,
+                    confidence,
+                    parent_ledger=parent_ledger,
+                    accounts=config.chart_of_accounts,
+                    min_confidence=min_confidence,
                 )
+                if llm_confident:
+                    apply_sub_ledger_to_line(
+                        line,
+                        sub_ledger=candidate,
+                        source="llm",
+                        confidence=confidence,
+                        reason=reasoning or "LLM sub-ledger suggestion",
+                        parent_ledger=parent_ledger,
+                    )
+                    applied += 1
+                    continue
+                if not candidate:
+                    fallback, source, reason = _fallback_sub_ledger(
+                        invoice, config, parent_ledger=parent_ledger
+                    )
+                    apply_sub_ledger_to_line(
+                        line,
+                        sub_ledger=fallback,
+                        source=source,
+                        confidence=confidence,
+                        reason=reasoning or reason,
+                        parent_ledger=parent_ledger,
+                    )
+                    applied += 1
+                    continue
+
+            hint = _keyword_sub_ledger_hint(line.description or "", catalogue)
+            if hint:
                 apply_sub_ledger_to_line(
                     line,
-                    sub_ledger=fallback,
-                    source=source,
-                    confidence=confidence,
-                    reason=reasoning or reason,
+                    sub_ledger=hint,
+                    source="keyword",
+                    reason=f"Description match: {hint}",
                     parent_ledger=parent_ledger,
                 )
                 applied += 1
                 continue
 
-        hint = _keyword_sub_ledger_hint(line.description or "", catalogue)
-        if hint:
+            fallback, source, reason = _fallback_sub_ledger(
+                invoice, config, parent_ledger=parent_ledger
+            )
             apply_sub_ledger_to_line(
                 line,
-                sub_ledger=hint,
-                source="keyword",
-                reason=f"Description match: {hint}",
+                sub_ledger=fallback,
+                source=source,
+                reason=reason,
                 parent_ledger=parent_ledger,
             )
             applied += 1
-            continue
-
-        fallback, source, reason = _fallback_sub_ledger(
-            invoice, config, parent_ledger=parent_ledger
-        )
-        apply_sub_ledger_to_line(
-            line,
-            sub_ledger=fallback,
-            source=source,
-            reason=reason,
-            parent_ledger=parent_ledger,
-        )
-        applied += 1
 
     header_stamped = False
     if is_te:
@@ -484,6 +534,7 @@ async def apply_line_gl_mapping(
             "team_expense_header_stamped": header_stamped,
             "document_sub_ledger": (invoice.account_name if header_stamped else doc_sub) or "",
             "had_lines": has_lines,
+            "manual_entry_skip_llm": manual_skip,
         },
     )
     return applied > 0 or header_stamped

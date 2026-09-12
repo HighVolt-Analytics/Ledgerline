@@ -1452,6 +1452,11 @@ def _pipeline_error_messages(detail: dict) -> tuple[str, str]:
             "Control account not configured for posting",
             "Rule Book → Posting — select the missing control ledger, then reprocess",
         )
+    if "value too long" in lowered or "character varying" in lowered:
+        return (
+            "Chart of accounts code is too long for posting",
+            "Rule Book → Chart of accounts — shorten the parent or sub-ledger code, then Approve again",
+        )
     short = error.split("\n")[0].strip()
     if len(short) > 140:
         short = short[:137] + "…"

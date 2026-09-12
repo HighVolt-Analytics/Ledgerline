@@ -265,6 +265,13 @@ export function approvalFailureMessage(inv: InvoiceDetails): string {
     if (hint && !/open document( drawer)?/i.test(hint)) {
       return `Processing stopped: ${hint}`;
     }
+    const issue = (inv.issue_summary ?? "").trim();
+    if (/value too long|character varying/i.test(issue)) {
+      return (
+        "Processing stopped: a chart-of-accounts code is too long for posting. " +
+        "Shorten the parent or sub-ledger code in Rule Book → Chart of accounts, then Approve again."
+      );
+    }
     const stage = (inv.current_stage ?? "").trim();
     if (inv.current_stage_state === "fail") {
       if (/posted|control account/i.test(stage)) {
@@ -329,13 +336,15 @@ export async function watchInvoiceUntilSettled(
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let sawPipeline = !options?.requirePipelineObserved;
+  // Poll invoice only — callers often pass a matrix reload as `refresh`;
+  // hammering /api/matrix every tick is what floods the network tab after Approve.
   while (Date.now() < deadline) {
-    await refresh();
     const inv = await api.getInvoice(invoiceId, { fresh: true });
     if (PIPELINE_ACTIVE.has(inv.status)) {
       sawPipeline = true;
     }
     if (sawPipeline && !PIPELINE_ACTIVE.has(inv.status)) {
+      await refresh();
       return;
     }
     await new Promise((r) => setTimeout(r, PROCESSING_POLL_MS));
@@ -463,9 +472,18 @@ export async function approveAndProcess(
     };
   }
 
-  await watchInvoiceUntilSettled(invoiceId, refresh, PROCESSING_TIMEOUT_MS, {
-    requirePipelineObserved: true,
-  });
+  // Approve sets mapping and resumes posting in the background. If the response
+  // is already settled (resume finished during the request), skip the watch loop.
+  if (!PIPELINE_ACTIVE.has(approved.status)) {
+    const invoice = (await api.getInvoice(invoiceId, { fresh: true })) as InvoiceDetails;
+    if (invoice.status === "processed") {
+      const extra = await settlementAfterProcessed(invoice, invoiceId);
+      return { invoice, ...extra };
+    }
+    throw new Error(approvalFailureMessage(invoice));
+  }
+
+  await watchInvoiceUntilSettled(invoiceId, refresh, PROCESSING_TIMEOUT_MS);
   const invoice = await api.getInvoice(invoiceId, { fresh: true });
 
   if (invoice.status !== "processed") {

@@ -696,11 +696,36 @@
     var chip = statusChip(inv);
     var amt = Number(inv.total);
     if (!isFinite(amt)) amt = 0;
-    var title = String(inv.vendor || inv.document_ref || ('#' + inv.id)).trim();
+    var vendor = String(inv.vendor || '').trim();
+    var heading = String(inv.document_heading || '').trim();
+    var kind = String(inv.team_expense_kind || '').trim().toLowerCase();
+    var kindTitle =
+      kind === 'advance_requisition'
+        ? 'Advance'
+        : kind === 'direct_payment'
+          ? 'Direct payment'
+          : kind === 'vendor_invoice'
+            ? 'Vendor'
+            : kind === 'expense_claim'
+              ? 'Claim'
+              : '';
+    // Legacy mobile submits stamped vendor as "Employee claim" for every DT.
+    var syntheticVendor =
+      /^employee claim$/i.test(vendor) ||
+      (/^[^·]+ claim$/i.test(vendor) && !heading);
+    var title = vendor;
+    if (!title || syntheticVendor) {
+      if (heading && heading.indexOf('Spent for') !== 0) title = heading;
+      else if (kindTitle) title = kindTitle;
+      else title = String(inv.document_ref || inv.invoice_no || ('#' + inv.id)).trim();
+    }
     var ref = String(inv.document_ref || inv.invoice_no || ('#' + inv.id)).trim();
     var dt = String(inv.document_type_code || '').trim().toUpperCase();
     var date = formatItemDate(inv);
-    var sub = [ref, date, dt].filter(Boolean).join(' · ');
+    var subParts = [ref, date];
+    if (kindTitle) subParts.push(kindTitle);
+    else if (dt) subParts.push(dt);
+    var sub = subParts.filter(Boolean).join(' · ');
     return {
       id: Number(inv.id),
       t: title,

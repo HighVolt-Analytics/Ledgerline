@@ -943,6 +943,29 @@
     }
   }
 
+  function currentDocumentDisplayName() {
+    var code = String(captureRouteDtCode || preferredDtCode || '').trim().toUpperCase();
+    var qa = code ? quickActionByCode[code] : null;
+    if (qa) {
+      var qaLabel = String(qa.label || qa.shortTitle || qa.title || '').trim();
+      if (qaLabel) return qaLabel;
+    }
+    var dt = null;
+    for (var i = 0; i < documentTypes.length; i++) {
+      if (String(documentTypes[i].code || '').toUpperCase() === code) {
+        dt = documentTypes[i];
+        break;
+      }
+    }
+    if (dt) {
+      var dtLabel = String(dt.shortTitle || dt.title || dt.code || '').trim();
+      if (dtLabel) return dtLabel;
+    }
+    var active = String(activeQaTitle || '').trim();
+    if (active) return active;
+    return routeIntentLabel(teIntent);
+  }
+
   function claimFieldsToPatch(details) {
     var remarksParts = [];
     if (details.spentFor) remarksParts.push('Spent for: ' + details.spentFor);
@@ -953,8 +976,10 @@
       patch.account_name = details.parentLedger || details.expenseType || '';
       patch.category = details.parentLedger || details.expenseType || '';
     }
-    if (details.spentFor) {
-      patch.document_heading = 'Spent for ' + details.spentFor;
+    var docName = currentDocumentDisplayName();
+    if (docName) {
+      patch.document_heading = docName;
+      if (!patch.vendor) patch.vendor = docName;
     }
     if (remarksParts.length) {
       patch.billing_address = remarksParts.join('\n');
@@ -965,26 +990,38 @@
   function claimFieldsToManualFields(details) {
     var total = (details.detailValues && details.detailValues.total) || details.amount || '0';
     var ledger = details.parentLedger || details.expenseType || '';
+    var docName = currentDocumentDisplayName();
+    var spent = String(details.spentFor || '').trim();
+    // Title must reflect the document type / Quick Action — never hardcode "Employee claim".
+    var vendorTitle = docName || routeIntentLabel(teIntent);
+    if (spent && spent !== 'Myself') {
+      vendorTitle = spent + ' · ' + vendorTitle;
+    }
+    var remarkParts = [];
+    if (spent) remarkParts.push('Spent for: ' + spent);
+    if (details.adjustAdvance) remarkParts.push('Adjust against advance: Yes');
+    if (details.remarks) remarkParts.push(details.remarks);
     var fields = Object.assign({}, details.detailValues || {}, {
-      vendor:
-        details.spentFor === 'Myself'
-          ? 'Employee claim'
-          : (details.spentFor || 'Employee') + ' claim',
+      vendor: vendorTitle,
       total: total,
       account_name: ledger,
       category: ledger,
-      document_heading: details.spentFor ? 'Spent for ' + details.spentFor : '',
+      document_heading: docName || vendorTitle,
       cost_centre: details.adjustAdvance
         ? 'Adjust against advance'
         : (details.detailValues && details.detailValues.cost_centre) || '',
-      billing_address: details.remarks || '',
+      billing_address: remarkParts.join('\n'),
       line_items: [
         {
-          description: ledger || 'Expense claim',
+          description: ledger || docName || 'Line item',
           qty: 1,
           unit_price: total || 0,
           amount: total || 0,
-          tax_amount: 0
+          tax_amount: 0,
+          // Mobile path: user picked Sub-GL — lock it so posting skips AI remapping.
+          sub_ledger: ledger || '',
+          gl_mapping_source: ledger ? 'manual' : '',
+          gl_mapping_reason: ledger ? 'mobile_manual_entry' : ''
         }
       ]
     });
@@ -1566,7 +1603,27 @@
 
   function showSuccess(inv) {
     deps.hideSuccess();
-    var vendor = LLCaptureApi.fieldValue(inv, 'vendor') || 'Document';
+    var kind = String(inv.team_expense_kind || '').trim().toLowerCase();
+    var kindTitle =
+      kind === 'advance_requisition'
+        ? 'Advance'
+        : kind === 'direct_payment'
+          ? 'Direct payment'
+          : kind === 'vendor_invoice'
+            ? 'Vendor'
+            : kind === 'expense_claim'
+              ? 'Claim'
+              : '';
+    var vendorRaw = LLCaptureApi.fieldValue(inv, 'vendor') || '';
+    var heading = String(inv.document_heading || '').trim();
+    var vendor = vendorRaw;
+    if (
+      !vendor ||
+      /^employee claim$/i.test(vendor) ||
+      (/ claim$/i.test(vendor) && vendor.indexOf('·') < 0)
+    ) {
+      vendor = heading || kindTitle || vendorRaw || 'Document';
+    }
     var total = LLCaptureApi.fieldValue(inv, 'total');
     var ref = inv.document_ref || ('#' + inv.id);
     var el = document.createElement('div');

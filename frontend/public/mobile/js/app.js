@@ -814,12 +814,17 @@
 
   function approvalRequester(inv) {
     var kind = resolveInvoiceKind(inv);
-    var employee = String((inv && (inv.employee_email || inv.email_sender)) || '').trim();
+    var employee = String((inv && (inv.employee_email || inv.email_sender || inv.uploaded_by_name)) || '').trim();
     var vendor = String((inv && inv.vendor) || '').trim();
+    var syntheticVendor =
+      /^employee claim$/i.test(vendor) || /^[^·]+ claim$/i.test(vendor);
     if (kind === 'expense_claim' || kind === 'advance_requisition' || kind === 'direct_payment') {
-      return employee || vendor || 'Employee';
+      if (employee) return employee;
+      if (vendor && !syntheticVendor) return vendor;
+      return 'Employee';
     }
-    return vendor || employee || 'Document';
+    if (vendor && !syntheticVendor) return vendor;
+    return employee || 'Document';
   }
 
   function approvalGroupFromCreated(createdAt) {
@@ -891,8 +896,25 @@
     var desc = documentDisplayRef(inv);
     var dt = String(inv.document_type_code || inv.purchase_document_type || '').trim() || '—';
     var heading = String(inv.document_heading || '').trim();
+    var vendorRaw = String(inv.vendor || '').trim();
     var status = String(inv.status || '').trim();
     var kind = resolveInvoiceKind(inv);
+    var kindChip = kindLabel(kind);
+    if (
+      !heading ||
+      heading.indexOf('Spent for') === 0 ||
+      /^employee claim$/i.test(heading)
+    ) {
+      if (
+        vendorRaw &&
+        !/^employee claim$/i.test(vendorRaw) &&
+        !/^[^·]+ claim$/i.test(vendorRaw)
+      ) {
+        heading = vendorRaw;
+      } else if (kindChip) {
+        heading = kindChip;
+      }
+    }
     var flag = statusFlag(status);
     var checks = checksFromInvoice(inv);
     if (!checks.length && flag.label) {
@@ -906,7 +928,7 @@
       group: approvalGroupFromCreated(createdAt),
       who: who,
       init: LLSession.initialsFromName(who),
-      vendor: String(inv.vendor || '').trim(),
+      vendor: vendorRaw,
       employeeEmail: String(inv.employee_email || '').trim(),
       dept: String(inv.cost_centre || '').trim() || '—',
       amount: amount,

@@ -163,14 +163,33 @@ async def reset_invoice_for_reprocess(
 
 async def reset_invoice_for_approval(session: AsyncSession, inv: Invoice) -> None:
     """Re-queue for pipeline while preserving user-corrected extracted fields."""
+    from app.services.invoice.processing_override_catalog import has_skip_extraction
+
     set_preserve_extracted_fields(inv)
     inv.status = InvoiceStatus.PENDING
     # Approval is the resume path for sticky pending_approval / await PO|SO holds.
     # Leaving evaluation_status set would re-stick the hold after a successful reprocess.
     inv.evaluation_status = None
     inv.validation_results = None
-    inv.account_code = None
-    inv.account_name = None
+    # Mobile / manual-entry: keep user Sub-GL codes — resume must not wipe them
+    # before apply_line_gl_mapping (which skips LLM when lines are locked).
+    if not has_skip_extraction(inv):
+        inv.account_code = None
+        inv.account_name = None
+    else:
+        fields = inv.extracted_fields if isinstance(inv.extracted_fields, dict) else {}
+        if not (inv.account_name or "").strip():
+            restored = (
+                str(fields.get("account_name") or "").strip()
+                or str(fields.get("manual_sub_ledger") or "").strip()
+                or str(fields.get("category") or "").strip()
+            )
+            if restored:
+                inv.account_name = restored
+        if not (inv.account_code or "").strip():
+            restored_code = str(fields.get("account_code") or "").strip()
+            if restored_code:
+                inv.account_code = restored_code
 
     with session.no_autoflush:
         entries = (

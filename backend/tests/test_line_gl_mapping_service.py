@@ -306,6 +306,34 @@ def test_resolve_effective_ledger_mapping_nested_sub() -> None:
     assert mapping.account_name == "AWS Production"
 
 
+def test_resolve_effective_ledger_mapping_parent_sub_composite_fits_column() -> None:
+    """TE header stamps parent-sub codes; must fit invoices.account_code (64)."""
+    config = RuleBookConfigPayload(
+        chart_of_accounts=[
+            ChartOfAccountEntry(
+                code="40011",
+                name="Marketing Expenses",
+                type="Expense",
+                sub_ledgers=[
+                    {
+                        "code": "EM-NEW-EMPLOYEE-8815",
+                        "name": "Dhiren Parekh",
+                        "origin": "party",
+                    }
+                ],
+            ),
+        ],
+    )
+    mapping = resolve_effective_ledger_mapping(
+        parent_ledger="Marketing Expenses",
+        effective_ledger="Dhiren Parekh",
+        config=config,
+    )
+    assert mapping.account_code == "40011-EM-NEW-EMPLOYEE-8815"
+    assert len(mapping.account_code) <= 64
+    assert mapping.account_name == "Dhiren Parekh"
+
+
 def test_resolve_effective_ledger_mapping_other_main_and_sub() -> None:
     config = RuleBookConfigPayload(
         chart_of_accounts=[
@@ -460,3 +488,56 @@ async def test_apply_line_gl_mapping_does_not_overwrite_manual_or_call_llm(
     assert await apply_line_gl_mapping(session, invoice, _config_with_sub_ledgers()) is False
     assert line.sub_ledger == "Advertising"
     assert line.gl_mapping_source == "manual"
+
+
+@pytest.mark.asyncio
+async def test_apply_line_gl_mapping_skips_llm_for_manual_entry_mobile(
+    monkeypatch,
+) -> None:
+    """Mobile skip-extraction claims must not call Sub-GL LLM."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.services.classification.line_gl_mapping_service import apply_line_gl_mapping
+    from app.services.rule_book.rule_book_mapper import ROUTE_TEAM
+
+    async def _boom(**_kwargs):
+        raise AssertionError("sub-ledger LLM must not run for mobile manual entry")
+
+    monkeypatch.setattr(
+        "app.services.classification.line_gl_mapping_service._llm_sub_ledger_assign",
+        _boom,
+    )
+    monkeypatch.setattr(
+        "app.services.classification.line_gl_mapping_service.log_event",
+        AsyncMock(),
+    )
+    session = MagicMock()
+    session.flush = AsyncMock()
+    line = SimpleNamespace(
+        description="AWS Production",
+        amount=None,
+        sub_ledger=None,
+        parent_ledger=None,
+        gl_mapping_source=None,
+        gl_mapping_confidence=None,
+        gl_mapping_reason=None,
+    )
+    invoice = SimpleNamespace(
+        id=28784,
+        document_type_code="DT-08",
+        route_target=ROUTE_TEAM,
+        account_name="AWS Production",
+        account_code=None,
+        gl_posting_applicable=True,
+        team_expense_kind="expense_claim",
+        vendor="Claim",
+        document_text="",
+        document_heading="",
+        extracted_fields={"manual_entry": "true", "account_name": "AWS Production"},
+        processing_overrides={"skip_extraction": True},
+        line_items=[line],
+    )
+    assert await apply_line_gl_mapping(session, invoice, _config_with_sub_ledgers()) is True
+    assert line.sub_ledger == "AWS Production"
+    assert line.gl_mapping_source == "manual"
+    assert invoice.account_code == "6110-01"

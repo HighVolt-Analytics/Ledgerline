@@ -113,7 +113,7 @@ class Invoice(Base):
     uploaded_by_email: Mapped[str | None] = mapped_column(String(255))
     storage_vendor_slug: Mapped[str | None] = mapped_column(String(100))
     validation_results: Mapped[str | None] = mapped_column(Text)
-    account_code: Mapped[str | None] = mapped_column(String(20))
+    account_code: Mapped[str | None] = mapped_column(String(64))
     account_name: Mapped[str | None] = mapped_column(String(255))
     route_target: Mapped[str | None] = mapped_column(String(100), index=True)
     team_expense_kind: Mapped[str | None] = mapped_column(String(32))

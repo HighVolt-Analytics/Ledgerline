@@ -48,7 +48,7 @@ class JournalEntry(Base):
         index=True,
     )
     date: Mapped[date] = mapped_column(Date)
-    account_code: Mapped[str] = mapped_column(String(20))
+    account_code: Mapped[str] = mapped_column(String(64))
     account_name: Mapped[str] = mapped_column(String(255))
     debit: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
     credit: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)

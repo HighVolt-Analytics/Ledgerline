@@ -300,6 +300,9 @@ async def apply_manual_line_items(
         )
         if not cleaned.description:
             continue
+        sub_ledger = str(row.get("sub_ledger") or "").strip() or None
+        parent_ledger = str(row.get("parent_ledger") or "").strip() or None
+        gl_source = str(row.get("gl_mapping_source") or "").strip().lower() or None
         session.add(
             LineItem(
                 tenant_id=invoice.tenant_id,
@@ -309,9 +312,93 @@ async def apply_manual_line_items(
                 unit_price=cleaned.unit_price,
                 amount=cleaned.amount,
                 tax_amount=cleaned.tax_amount,
+                sub_ledger=sub_ledger,
+                parent_ledger=parent_ledger,
+                gl_mapping_source=gl_source,
+                gl_mapping_reason=(
+                    str(row.get("gl_mapping_reason") or "").strip() or None
+                ),
             )
         )
     await session.flush()
+
+
+async def lock_manual_user_sub_ledger(
+    session: AsyncSession,
+    invoice: Invoice,
+) -> bool:
+    """Lock user-selected Sub-GL from mobile form — no AI remapping later.
+
+    Mobile capture already chose the Sub-ledger (stored as account_name / category).
+    Stamp lines as ``gl_mapping_source=manual`` and resolve the parent-sub
+    ``account_code`` so posting resume skips LLM Sub-GL assignment.
+    """
+    from sqlalchemy import select
+
+    from app.models.line_item import LineItem
+    from app.services.invoice.line_item_gl_service import (
+        apply_sub_ledger_to_line,
+        resolve_effective_ledger_mapping,
+        resolve_parent_ledger,
+        validate_sub_ledger_for_parent,
+    )
+    from app.services.rule_book.rule_book_config_io import load_config_for_tenant
+
+    config = await load_config_for_tenant(session, invoice.tenant_id)
+    parent_ledger = resolve_parent_ledger(invoice, config)
+    if not parent_ledger:
+        return False
+
+    fields = invoice.extracted_fields if isinstance(invoice.extracted_fields, dict) else {}
+    candidate = (
+        (invoice.account_name or "").strip()
+        or str(fields.get("account_name") or "").strip()
+        or str(fields.get("category") or "").strip()
+    )
+    if not candidate:
+        return False
+    if not validate_sub_ledger_for_parent(
+        candidate,
+        parent_ledger=parent_ledger,
+        accounts=config.chart_of_accounts,
+    ):
+        # User picked the parent wallet itself (or unknown name) — keep parent GL.
+        return False
+
+    mapped = resolve_effective_ledger_mapping(
+        parent_ledger=parent_ledger,
+        effective_ledger=candidate,
+        config=config,
+    )
+    invoice.account_name = mapped.account_name or candidate
+    invoice.account_code = mapped.account_code
+    merge_invoice_extracted_fields(
+        invoice,
+        {
+            "account_name": invoice.account_name or candidate,
+            "account_code": invoice.account_code or "",
+            "manual_sub_ledger": candidate,
+        },
+    )
+
+    lines = (
+        await session.execute(
+            select(LineItem).where(
+                LineItem.invoice_id == invoice.id,
+                LineItem.tenant_id == invoice.tenant_id,
+            )
+        )
+    ).scalars().all()
+    for line in lines:
+        apply_sub_ledger_to_line(
+            line,
+            sub_ledger=candidate,
+            source="manual",
+            reason="mobile_manual_entry",
+            parent_ledger=parent_ledger,
+        )
+    await session.flush()
+    return True
 
 
 def stamp_manual_capture_document_type(
@@ -347,6 +434,7 @@ async def finalize_manual_capture_invoice(
     stamp_manual_capture_document_type(invoice, definition)
     apply_manual_fields_to_invoice(invoice, fields)
     await apply_manual_line_items(session, invoice, list(line_items or []))
+    await lock_manual_user_sub_ledger(session, invoice)
     await stamp_employee_upload_team_expense_fields(
         session,
         tenant_id=tenant_id,

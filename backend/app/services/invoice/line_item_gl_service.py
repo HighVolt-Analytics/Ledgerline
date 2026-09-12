@@ -84,9 +84,13 @@ def _mapping_for_nested_sub(
     for sub in sub_ledgers_for_ledger(parent_ledger, list(config.chart_of_accounts or [])):
         if sub.name.strip().lower() == needle:
             sub_code = (sub.code or "").strip()
-            account_code = (
-                f"{parent.account_code}-{sub_code}" if sub_code else parent.account_code
-            )
+            parent_code = (parent.account_code or "").strip()
+            if sub_code and parent_code:
+                # Parent-sub composite for TE journals; clamp to DB column width.
+                composed = f"{parent_code}-{sub_code}"
+                account_code = composed if len(composed) <= 64 else sub_code[:64]
+            else:
+                account_code = sub_code or parent_code
             return AccountMapping(
                 account_code,
                 sub.name.strip(),

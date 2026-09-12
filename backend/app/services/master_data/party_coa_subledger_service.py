@@ -26,8 +26,8 @@ logger = structlog.get_logger(__name__)
 
 PartyKind = Literal["vendor", "customer"]
 
-# journal_entries.account_code is String(20)
-_PARTY_CODE_MAX = 20
+# journal_entries.account_code / rule-book sub-ledger codes allow up to 64 / 32
+_PARTY_CODE_MAX = 32
 
 
 def party_sub_ledger_code(slug: str) -> str:
