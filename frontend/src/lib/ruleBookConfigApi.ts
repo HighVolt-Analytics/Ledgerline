@@ -18,7 +18,7 @@ import {
   ROUTE_TARGETS,
   TEAM_EXPENSE_KINDS,
 } from "@/lib/v4RuleBookTypes";
-import { emptyDocumentClassifier, emptyDocumentTypePostTo, normalizeCounterpartyType, type DocumentTypeDefinition, type DocumentTypePostTo, type DocumentTypeSampleAnalysis, type DocumentTypeTeamExpenseKind } from "@/lib/v5DocumentTypes";
+import { emptyDocumentClassifier, emptyDocumentTypePostTo, normalizeCounterpartyType, type DocumentTypeDefinition, type DocumentTypePostTo, type DocumentTypePostToSuggestion, type DocumentTypeSampleAnalysis, type DocumentTypeTeamExpenseKind } from "@/lib/v5DocumentTypes";
 import {
   derivePostingFromKlassAndProfile,
   normalizeDocumentTypeIdentity,
@@ -195,6 +195,19 @@ function postToToApi(postTo: PurchaseRule["postTo"]) {
     sub_ledger: postTo.subLedger,
     ...(postTo.taxAccount != null ? { tax_account: postTo.taxAccount } : {}),
     ...(postTo.payableAccount != null ? { payable_account: postTo.payableAccount } : {}),
+  };
+}
+
+function mapDocumentTypePostToSuggestion(
+  raw: Record<string, unknown> | undefined
+): DocumentTypePostToSuggestion | undefined {
+  if (!raw) return undefined;
+  const ledger = String(raw.ledger ?? "").trim();
+  const subLedger = String(raw.sub_ledger ?? raw.subLedger ?? "").trim();
+  if (!ledger && !subLedger) return undefined;
+  return {
+    ledger: String(raw.ledger ?? ""),
+    subLedger: String(raw.sub_ledger ?? raw.subLedger ?? ""),
   };
 }
 
@@ -669,12 +682,44 @@ function mapDocumentType(raw: Record<string, unknown>): DocumentTypeDefinition {
       salesBundleRole: mapSalesBundleRole(raw),
       sampleAnalysis: mapSampleAnalysis(raw),
       matrixTemplateCode: String(raw.matrix_template_code ?? raw.matrixTemplateCode ?? ""),
+      sourceDictionaryCode: String(
+        raw.source_dictionary_code ?? raw.sourceDictionaryCode ?? ""
+      ),
+      createdFromDictionaryVersion:
+        raw.created_from_dictionary_version ?? raw.createdFromDictionaryVersion != null
+          ? Number(raw.created_from_dictionary_version ?? raw.createdFromDictionaryVersion)
+          : undefined,
+      compulsoryFieldsPresent: mapBoolFlag(
+        raw,
+        "compulsory_fields_present",
+        "compulsoryFieldsPresent",
+        false
+      ),
+      compulsoryFieldsSeverity: (() => {
+        const token = String(
+          raw.compulsory_fields_severity ?? raw.compulsoryFieldsSeverity ?? "NA"
+        ).trim();
+        if (token === "Block" || token === "Warn" || token === "NA") return token;
+        return "NA" as const;
+      })(),
       teamExpenseKind: mapTeamExpenseKind(raw),
       budgetControl: mapBoolFlag(raw, "budget_control", "budgetControl", false),
       advanceControl: mapBoolFlag(raw, "advance_control", "advanceControl", false),
       postTo: mapDocumentTypePostTo(
         (raw.post_to ?? raw.postTo) as Record<string, unknown> | undefined
       ),
+      postToSuggestion: mapDocumentTypePostToSuggestion(
+        (raw.post_to_suggestion ?? raw.postToSuggestion) as Record<string, unknown> | undefined
+      ),
+      extractionFieldsSuggestion: (() => {
+        const rawSuggestion =
+          raw.extraction_fields_suggestion ?? raw.extractionFieldsSuggestion;
+        if (!Array.isArray(rawSuggestion)) return undefined;
+        const rows = rawSuggestion
+          .map((row) => String(row ?? "").trim())
+          .filter(Boolean);
+        return rows.length ? rows : undefined;
+      })(),
     })
   );
 }
@@ -751,6 +796,19 @@ function documentTypeToApi(
     ...(reconciled.matrixTemplateCode
       ? { matrix_template_code: reconciled.matrixTemplateCode }
       : {}),
+    ...(reconciled.sourceDictionaryCode
+      ? { source_dictionary_code: reconciled.sourceDictionaryCode }
+      : {}),
+    ...(reconciled.createdFromDictionaryVersion != null
+      ? { created_from_dictionary_version: reconciled.createdFromDictionaryVersion }
+      : {}),
+    ...(reconciled.compulsoryFieldsPresent
+      ? { compulsory_fields_present: true }
+      : {}),
+    ...(reconciled.compulsoryFieldsSeverity &&
+    reconciled.compulsoryFieldsSeverity !== "NA"
+      ? { compulsory_fields_severity: reconciled.compulsoryFieldsSeverity }
+      : {}),
     ...(reconciled.sampleAnalysis
       ? {
           sample_analysis: {
@@ -765,6 +823,22 @@ function documentTypeToApi(
         }
       : {}),
     post_to: documentTypePostToToApi(reconciled.postTo),
+    ...(reconciled.postToSuggestion &&
+    (reconciled.postToSuggestion.ledger.trim() || reconciled.postToSuggestion.subLedger.trim())
+      ? {
+          post_to_suggestion: {
+            ledger: reconciled.postToSuggestion.ledger,
+            sub_ledger: reconciled.postToSuggestion.subLedger,
+          },
+        }
+      : {}),
+    ...(reconciled.extractionFieldsSuggestion?.length
+      ? {
+          extraction_fields_suggestion: reconciled.extractionFieldsSuggestion
+            .map((row) => String(row ?? "").trim())
+            .filter(Boolean),
+        }
+      : {}),
   };
 }
 

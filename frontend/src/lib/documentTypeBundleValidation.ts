@@ -6,7 +6,6 @@ import {
   playbookEnforcesBundle,
 } from "@/lib/documentBundleConfig";
 import { DOCUMENT_TYPE_TEMPLATES } from "@/lib/documentTypeTemplates";
-import { defaultPlaybookProfileForCode } from "@/lib/documentTypePlaybookDefaults";
 
 export type BundleConfigWarning = {
   id: string;
@@ -59,24 +58,16 @@ export function catalogueHealthWarnings(
       }
     }
 
-    const matrix = (dt.matrixTemplateCode || "").trim().toUpperCase();
-    if (!matrix) continue;
-    const template = DOCUMENT_TYPE_TEMPLATES.find((row) => row.id === matrix);
+    const dictionaryCode = (dt.sourceDictionaryCode || "").trim().toUpperCase();
+    if (!dictionaryCode) continue;
+    const template = DOCUMENT_TYPE_TEMPLATES.find((row) => row.dictionaryCode === dictionaryCode);
     if (!template || template.id === "custom") continue;
-    const shippedProfile = defaultPlaybookProfileForCode(matrix);
+    const dictionaryProfile = (template.playbookProfile || "").trim().toLowerCase();
     const profile = (dt.playbookProfile || "").trim().toLowerCase();
-    const shippedPurchase = (template.purchaseBundleRole || "").trim().toLowerCase();
-    const shippedSales = (template.salesBundleRole || "").trim().toLowerCase();
-    if (shippedProfile && profile && profile !== shippedProfile) {
+    if (dictionaryProfile && profile && profile !== dictionaryProfile) {
       warnings.push({
-        id: `matrix-drift-playbook-${code}`,
-        message: `${code} is linked to matrix ${matrix} but playbook is ${profile} (shipped ${shippedProfile}) — detach or restore.`,
-      });
-    }
-    if (purchaseRole !== shippedPurchase || salesRole !== shippedSales) {
-      warnings.push({
-        id: `matrix-drift-role-${code}`,
-        message: `${code} is linked to matrix ${matrix} but bundle role drifted from the shipped template.`,
+        id: `dictionary-drift-playbook-${code}`,
+        message: `${code} was adopted from ${dictionaryCode} but playbook is ${profile} (dictionary ${dictionaryProfile}) — review if intentional.`,
       });
     }
   }

@@ -117,8 +117,21 @@ async def stamp_team_expense_kind(
     if (invoice.route_target or "").strip() != ROUTE_TEAM:
         return None
 
+    from app.services.purchase.team_expense_advance_service import (
+        claim_wants_advance_netting,
+    )
+
     defn = definition if definition is not None else _definition_for_invoice(invoice, config)
     pinned = document_type_team_expense_kind(defn)
+    # Mobile "Adjust against advance: Yes" must net Staff Advance even when the
+    # document type is pinned to direct_payment.
+    if claim_wants_advance_netting(
+        cost_centre=getattr(invoice, "cost_centre", None),
+        billing_address=getattr(invoice, "billing_address", None),
+    ):
+        invoice.team_expense_kind = TEAM_EXPENSE_KIND_CLAIM
+        return TEAM_EXPENSE_KIND_CLAIM
+
     if pinned is not None:
         invoice.team_expense_kind = pinned
         return pinned

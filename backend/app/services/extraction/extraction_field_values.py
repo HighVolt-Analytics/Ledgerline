@@ -48,6 +48,7 @@ INVOICE_SCALAR_ATTRS: frozenset[str] = frozenset(
 EXTRACTED_ONLY_ATTRS: frozenset[str] = frozenset(
     {
         "employee_name",
+        "employee_id",
         "seller_name",
         "seller_tax_id",
         "seller_address",
@@ -61,10 +62,22 @@ EXTRACTED_ONLY_ATTRS: frozenset[str] = frozenset(
         "remittance_reference",
         "statement_reference",
         "statement_period",
+        "service_period",
         "account_code",
         "account_name",
         "bank_name",
         "bank_details",
+        "proforma_invoice_no",
+        "credit_note_no",
+        "original_invoice_reference",
+        "contract_reference",
+        "project_reference",
+        "advance_reference",
+        "claim_id",
+        "payment_method",
+        "receipt_date",
+        "delivery_date",
+        "permit_no",
     }
 )
 
@@ -111,21 +124,6 @@ def _normalized_keys_from_definition(defn: DocumentTypeDefinition) -> list[str]:
             seen.add(token)
             keys.append(token)
     return keys
-
-
-def _shipped_defaults_for_definition(defn: DocumentTypeDefinition) -> list[str]:
-    """Shipped matrix defaults for a document type (by template code or DT code)."""
-    from app.services.classification.document_type_field_defaults import default_extraction_fields
-    from app.services.classification.document_type_field_keys import normalize_extraction_field_keys
-
-    for candidate in (defn.matrix_template_code, defn.code):
-        token = (candidate or "").strip().upper()
-        if not token:
-            continue
-        defaults = default_extraction_fields(token)
-        if defaults:
-            return normalize_extraction_field_keys(defaults)
-    return []
 
 
 # Commercial header/money keys used when org DT has no extraction_fields configured.
@@ -403,6 +401,7 @@ _PRESET_EXTRACTION_LABELS: dict[str, str] = {
     "total": "Total",
     "line_items": "Line items",
     "bank_details": "Bank details",
+    "buyer_bank_details": "Buyer bank details",
     "attachment_name": "Attachment name",
     "document_heading": "Document heading",
     "document_text": "Document text (OCR body)",
@@ -476,6 +475,7 @@ _FIELD_HINT_PATTERNS: dict[str, str] = {
     "currency": "Currency symbol or ISO code (AUD, USD, etc.)",
     "line_items": "Product/service table rows with description and amounts",
     "bank_details": "BSB, Account No, IBAN, SWIFT, Bank Name",
+    "buyer_bank_details": "Customer/buyer BSB, Account No, IBAN, SWIFT, Bank Name",
     "bank_bsb": "BSB",
     "bank_account": "Account No, Account Number",
     "bank_name": "Bank Name",

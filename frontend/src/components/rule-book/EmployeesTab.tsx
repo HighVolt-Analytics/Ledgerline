@@ -111,9 +111,8 @@ export function EmployeesTab({
   const bankMasked = !revealBank;
   const toggleRevealBank = () => {
     if (!canRevealBank) return;
+    // Keep unsaved drafts — clearing them wiped in-progress employee details on Show.
     setRevealBank((current) => !current);
-    setDrafts({});
-    setDirtyIds(new Set());
   };
   const { data: posting } = useRuleBookTeamExpensePosting(!isLoading);
   const { data: coaAccounts = [] } = useChartOfAccounts(!isLoading);

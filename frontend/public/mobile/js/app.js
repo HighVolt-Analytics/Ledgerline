@@ -1149,6 +1149,7 @@
     return m.budgetAll || {
       remaining: Number(m.remaining) || 0,
       approved: Number(m.approved) || 0,
+      spent: Number(m.spent) || 0,
       leftPct: m.leftPct,
       hasBudget: !!m.hasBudget
     };
@@ -1184,6 +1185,7 @@
     var snap = currentBudgetSnapshot();
     QLL.me.remaining = Number(snap.remaining) || 0;
     QLL.me.approved = Number(snap.approved) || 0;
+    QLL.me.spent = Number(snap.spent) || 0;
     QLL.me.leftPct = snap.leftPct != null ? snap.leftPct : null;
     QLL.me.hasBudget = !!snap.hasBudget;
     syncBudgetLineBtn();
@@ -1317,8 +1319,9 @@
   function renderHomeBudget() {
     var snap = currentBudgetSnapshot();
     var rem = Number(snap.remaining) || 0;
+    var spent = Number(snap.spent) || 0;
     var approved = Number(snap.approved) || 0;
-    var hasBudget = !!snap.hasBudget || rem > 0 || approved > 0;
+    var hasBudget = !!snap.hasBudget || rem > 0 || spent > 0 || approved > 0;
     var leftPct = snap.leftPct != null && isFinite(Number(snap.leftPct))
       ? Math.max(0, Math.min(1, Number(snap.leftPct)))
       : null;
@@ -1331,13 +1334,13 @@
 
     if (!hasBudget) {
       remEl.textContent = '—';
-      appEl.textContent = approved ? fmtTenant(approved) : '—';
+      appEl.textContent = spent ? fmtTenant(spent) : '—';
       ring(ringEl, 0, 'accent', 'n/a');
       return;
     }
 
     remEl.textContent = fmtTenant(Math.max(rem, 0));
-    appEl.textContent = fmtTenant(approved);
+    appEl.textContent = fmtTenant(spent);
     if (leftPct == null) {
       ring(ringEl, 0, 'accent', 'n/a');
     } else {
@@ -1379,7 +1382,9 @@
     }
     if (meta) {
       meta.textContent =
-        (acquitted ? fmtTenant(acquitted) + ' used' : 'No claims against advance yet') +
+        (acquitted
+          ? fmtTenant(acquitted) + (Number(a.pending) > 0 ? ' used / reserved' : ' used')
+          : 'No claims against advance yet') +
         (a.issued ? ' · issued ' + a.issued : '');
     }
     if (barWrap && bar) {
@@ -1487,8 +1492,9 @@
     if (teamHost) {
       var snap = currentBudgetSnapshot();
       var rem = Number(snap.remaining) || 0;
+      var spent = Number(snap.spent) || 0;
       var approved = Number(snap.approved) || 0;
-      var hasBudget = !!snap.hasBudget || rem > 0 || approved > 0;
+      var hasBudget = !!snap.hasBudget || rem > 0 || spent > 0 || approved > 0;
       var leftPct = snap.leftPct != null && isFinite(Number(snap.leftPct))
         ? Math.max(0, Math.min(1, Number(snap.leftPct)))
         : null;
@@ -1506,7 +1512,7 @@
           '<div class="bar" style="width:100%"><i class="' + tone + '" style="width:' + (barPct * 100) + '%"></i></div>' +
           '<div style="display:flex;width:100%;gap:8px"><span class="s" style="margin:0;flex:1">' +
           esc(QLL.me.dept || QLL.me.role || '') + '</span>' +
-          '<span class="chip ' + tone + '">Spent ' + fmtTenant(approved) + '</span></div></div>';
+          '<span class="chip ' + tone + '">Spent ' + fmtTenant(spent) + '</span></div></div>';
       } else {
         teamHost.innerHTML =
           '<div class="empty" style="padding:16px;font-size:13px;color:var(--ink-3)">No budget data for your employee profile.</div>';
@@ -1522,6 +1528,7 @@
       QLL.me.budgetAll = fin.all || {
         remaining: Number(fin.remaining) || 0,
         approved: Number(fin.approved) || 0,
+        spent: Number(fin.spent) || 0,
         leftPct: fin.leftPct != null ? fin.leftPct : null,
         hasBudget: !!fin.hasBudget
       };
@@ -1540,13 +1547,14 @@
       renderHomeAdvance();
       if (state.role === 'approver') renderHome();
     } catch (err) {
-      QLL.me.budgetAll = { remaining: 0, approved: 0, leftPct: null, hasBudget: false };
+      QLL.me.budgetAll = { remaining: 0, approved: 0, spent: 0, leftPct: null, hasBudget: false };
       QLL.me.budgetLines = [];
       QLL.me.budgetTree = [];
       QLL.me.coaParentChildren = {};
       QLL.me.budgetLineKey = 'all';
       QLL.me.remaining = 0;
       QLL.me.approved = 0;
+      QLL.me.spent = 0;
       QLL.me.leftPct = null;
       QLL.me.hasBudget = false;
       QLL.me.advance = null;

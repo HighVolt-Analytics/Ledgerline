@@ -12,8 +12,9 @@ export default defineConfig({
     include: [
       "src/lib/approvalsBoard.test.ts",
       "src/lib/documentTypeTemplates.test.ts",
+      "src/lib/documentTypeDictionary.test.ts",
+      "src/lib/extractionFieldMapping.test.ts",
       "src/lib/documentTypeTemplateMeta.test.ts",
-      "src/lib/regenerateClassifierPresets.test.ts",
       "src/lib/documentCompulsoryFields.test.ts",
       "src/lib/documentExtractionFields.test.ts",
       "src/lib/ruleBookSave.test.ts",

@@ -18,6 +18,7 @@ from app.models.collection import Collection
 from app.models.connected_mailbox import ConnectedMailbox
 from app.models.customer import CustomerRegistry
 from app.models.customer_master import CustomerMasterRecord
+from app.models.document_type_adoption_lineage import DocumentTypeAdoptionLineage
 from app.models.delivery_note import DeliveryNote
 from app.models.delivery_note_line import DeliveryNoteLine
 from app.models.connected_viber import ConnectedViberAccount
@@ -117,6 +118,7 @@ __all__ = [
     "CustomerRegistry",
     "DeliveryNote",
     "DeliveryNoteLine",
+    "DocumentTypeAdoptionLineage",
     "ConnectedMailbox",
     "ConnectedViberAccount",
     "ConnectedWhatsapp",

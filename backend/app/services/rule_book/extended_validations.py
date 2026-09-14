@@ -162,10 +162,16 @@ def vr12_counterparty_master(
     data: InvoiceData,
     *,
     route_target: str | None,
+    counterparty_type: str | None = None,
     vendor_masters: list[VendorMaster],
     customer_masters: list[CustomerMaster],
 ) -> ValidationResult:
-    if (route_target or "").strip() == ROUTE_SALES:
+    token = (counterparty_type or "").strip().lower()
+    if token == "none":
+        return ValidationResult("VR12", True, "Counterparty master check skipped (none)", skipped=True)
+    if token == "employee":
+        return ValidationResult("VR12", True, "Employee counterparty — vendor/customer master N/A", skipped=True)
+    if token == "customer" or (route_target or "").strip() == ROUTE_SALES:
         return vr12_customer_master(data, customer_masters=customer_masters)
     return vr12_vendor_master(data, vendor_masters=vendor_masters)
 
@@ -181,6 +187,7 @@ def vr13_bank_details_match(
     data: InvoiceData,
     *,
     vendor_masters: list[VendorMaster],
+    counterparty_type: str | None = None,
 ) -> ValidationResult:
     """Invoice pay-to bank details must match the vendor master on file.
 
@@ -189,6 +196,15 @@ def vr13_bank_details_match(
     details diverge from the master — a classic invoice-redirection /
     business-email-compromise pattern — must not post untouched.
     """
+    token = (counterparty_type or "").strip().lower()
+    if token in {"none", "employee", "customer"}:
+        return ValidationResult(
+            "VR13",
+            True,
+            f"Bank details check skipped ({token})",
+            skipped=True,
+        )
+
     invoice_bsb = _normalize_bank_token(data.bank_bsb)
     invoice_acct = _normalize_bank_token(data.bank_account)
 
@@ -243,6 +259,22 @@ def vr13_bank_details_match(
     return ValidationResult("VR13", True, f"Bank details match vendor master ({master.name})")
 
 
+def _counterparty_type_for_validation(
+    document_type_code: str | None,
+    document_types: list | None,
+    route_target: str | None,
+) -> str | None:
+    if not document_type_code or not document_types:
+        return None
+    from app.schemas.document_type import resolved_counterparty_type
+    from app.services.classification.document_type_catalog import get_document_type_definition
+
+    defn = get_document_type_definition(document_type_code, document_types=document_types)
+    if defn is None:
+        return None
+    return resolved_counterparty_type(defn, route_target=route_target)
+
+
 async def run_extended_validations(
     code: str,
     data: InvoiceData,
@@ -261,6 +293,12 @@ async def run_extended_validations(
 
     rule_config = await load_config_for_tenant(session, tenant_id) if config is None else config
     rule_config = await classification_config_with_db_masters(session, tenant_id, rule_config)
+    effective_route = route_target or (invoice.route_target if invoice is not None else None)
+    counterparty_type = _counterparty_type_for_validation(
+        document_type_code,
+        document_types,
+        effective_route,
+    )
 
     if code == "VR09":
         return vr09_line_arithmetic(data)
@@ -272,13 +310,17 @@ async def run_extended_validations(
         return vr11_date_sanity(data, today=tenant_today(tenant))
     if code == "VR12":
         customer_masters = await list_customer_masters(session, tenant_id)
-        effective_route = route_target or (invoice.route_target if invoice is not None else None)
         return vr12_counterparty_master(
             data,
             route_target=effective_route,
+            counterparty_type=counterparty_type,
             vendor_masters=rule_config.vendor_masters,
             customer_masters=customer_masters,
         )
     if code == "VR13":
-        return vr13_bank_details_match(data, vendor_masters=rule_config.vendor_masters)
+        return vr13_bank_details_match(
+            data,
+            vendor_masters=rule_config.vendor_masters,
+            counterparty_type=counterparty_type,
+        )
     return None

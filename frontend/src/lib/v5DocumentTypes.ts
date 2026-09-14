@@ -51,6 +51,16 @@ export type DocumentTypePostTo = {
   receivableAccount?: string;
 };
 
+/** Read-only dictionary guidance — never copied into postTo ledger selectors. */
+export type DocumentTypePostToSuggestion = {
+  ledger: string;
+  subLedger: string;
+};
+
+export function emptyDocumentTypePostToSuggestion(): DocumentTypePostToSuggestion {
+  return { ledger: "", subLedger: "" };
+}
+
 export function emptyDocumentTypePostTo(): DocumentTypePostTo {
   return {
     ledger: "",
@@ -63,10 +73,13 @@ export function emptyDocumentTypePostTo(): DocumentTypePostTo {
 
 export type RecognitionMode = "signals" | "prompt";
 
-export type CounterpartyType = "vendor" | "customer";
+export type CounterpartyType = "vendor" | "customer" | "employee" | "none";
 
 export function defaultCounterpartyTypeForRoute(routeTarget?: string | null): CounterpartyType {
-  return (routeTarget || "").trim() === "Sales Management" ? "customer" : "vendor";
+  const route = (routeTarget || "").trim();
+  if (route === "Sales Management") return "customer";
+  if (route === "Team Expenses") return "employee";
+  return "vendor";
 }
 
 export function normalizeCounterpartyType(
@@ -74,7 +87,9 @@ export function normalizeCounterpartyType(
   routeTarget?: string | null
 ): CounterpartyType {
   const token = String(value ?? "").trim().toLowerCase();
-  if (token === "vendor" || token === "customer") return token;
+  if (token === "vendor" || token === "customer" || token === "employee" || token === "none") {
+    return token;
+  }
   return defaultCounterpartyTypeForRoute(routeTarget);
 }
 
@@ -120,12 +135,23 @@ export type V5DocumentType = {
   sampleAnalysis?: DocumentTypeSampleAnalysis;
   /** Shipped matrix template this org type was created from (e.g. DT-07). Org code is separate. */
   matrixTemplateCode?: string;
+  /** Dictionary code this org type was adopted from (e.g. LIB-001). Read-only provenance. */
+  sourceDictionaryCode?: string;
+  /** Dictionary version at adopt time. Read-only provenance. */
+  createdFromDictionaryVersion?: number;
+  /** Document-level compulsory flag from dictionary adopt (not the starred field list). */
+  compulsoryFieldsPresent?: boolean;
+  compulsoryFieldsSeverity?: "Block" | "Warn" | "NA";
   teamExpenseKind: DocumentTypeTeamExpenseKind;
   /** When true, enforce employee-level budget availability for this DT. */
   budgetControl: boolean;
   /** When true, enforce employee-level advance availability for this DT. */
   advanceControl: boolean;
   postTo: DocumentTypePostTo;
+  /** Dictionary adopt hint for Post to — not a tenant GL account. */
+  postToSuggestion?: DocumentTypePostToSuggestion;
+  /** Dictionary adopt hint for extraction — original prose, not field keys. */
+  extractionFieldsSuggestion?: string[];
 };
 
 export type DocumentTypeDefinition = V5DocumentType;

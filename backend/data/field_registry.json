@@ -9,15 +9,15 @@
       "posting_critical": true,
       "grounding_required": true,
       "synonyms": [
-        "ABN",
-        "GST",
+        "Business registration number",
+        "GSTIN",
         "VAT",
         "Tax ID",
-        "Company Reg",
-        "Business registration number"
+        "ABN",
+        "Company Reg"
       ],
       "extraction_hint": "Business registration number, GSTIN, VAT, Tax ID, ABN, Company Reg",
-      "finance_role": "Supplier business registration number (GSTIN, VAT, ABN, etc.)",
+      "finance_role": "Supplier tax ID (ABN, GST, VAT of the vendor)",
       "do_not_confuse_with": [
         "buyer_tax_id",
         "invoice_no"
@@ -88,6 +88,24 @@
         "Account Name"
       ],
       "extraction_hint": "Account Name",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "advance_reference",
+      "label": "Advance Reference",
+      "data_type": "string",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [],
+      "extraction_hint": "Look for advance reference in document header or labeled fields",
       "finance_role": "",
       "do_not_confuse_with": [],
       "source_priority": [
@@ -170,7 +188,7 @@
       "posting_critical": true,
       "grounding_required": true,
       "synonyms": [],
-      "extraction_hint": "Look for buyer business registration number in document header or labeled fields",
+      "extraction_hint": "Look for buyer abn in document header or labeled fields",
       "finance_role": "",
       "do_not_confuse_with": [],
       "source_priority": [
@@ -220,6 +238,30 @@
         "Ship To address"
       ],
       "extraction_hint": "Buyer, Bill To, Ship To address",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "buyer_bank_details",
+      "label": "Buyer bank details",
+      "data_type": "bank",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [
+        "Customer/buyer BSB",
+        "Account No",
+        "IBAN",
+        "SWIFT",
+        "Bank Name"
+      ],
+      "extraction_hint": "Customer/buyer BSB, Account No, IBAN, SWIFT, Bank Name",
       "finance_role": "",
       "do_not_confuse_with": [],
       "source_priority": [
@@ -299,28 +341,39 @@
       }
     },
     {
-      "key": "currency",
-      "label": "Currency",
+      "key": "claim_id",
+      "label": "Claim Id",
       "data_type": "string",
-      "category": "amount",
+      "category": "general",
       "posting_critical": false,
       "grounding_required": true,
-      "synonyms": [
-        "Currency",
-        "CCY",
-        "Curr"
-      ],
-      "extraction_hint": "Currency, CCY, Curr (ISO code e.g. AUD, USD)",
-      "finance_role": "Document currency ISO code",
-      "do_not_confuse_with": [
-        "total",
-        "subtotal"
-      ],
+      "synonyms": [],
+      "extraction_hint": "Look for claim id in document header or labeled fields",
+      "finance_role": "",
+      "do_not_confuse_with": [],
       "source_priority": [
+        "llm",
         "azure_di",
         "layout_kv",
-        "regex",
-        "llm"
+        "regex"
+      ]
+    },
+    {
+      "key": "contract_reference",
+      "label": "Contract Reference",
+      "data_type": "string",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [],
+      "extraction_hint": "Look for contract reference in document header or labeled fields",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
       ]
     },
     {
@@ -340,6 +393,64 @@
       "do_not_confuse_with": [
         "po_reference"
       ],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "credit_note_no",
+      "label": "Credit Note No",
+      "data_type": "string",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [],
+      "extraction_hint": "Look for credit note no in document header or labeled fields",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "currency",
+      "label": "Currency",
+      "data_type": "string",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [
+        "Currency symbol or ISO code (AUD",
+        "USD",
+        "etc.)"
+      ],
+      "extraction_hint": "Currency symbol or ISO code (AUD, USD, etc.)",
+      "finance_role": "ISO 4217 currency code from the document",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "delivery_date",
+      "label": "Delivery Date",
+      "data_type": "string",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [],
+      "extraction_hint": "Look for delivery date in document header or labeled fields",
+      "finance_role": "",
+      "do_not_confuse_with": [],
       "source_priority": [
         "llm",
         "azure_di",
@@ -411,6 +522,24 @@
       ]
     },
     {
+      "key": "email_sender",
+      "label": "Sender (email or mobile)",
+      "data_type": "string",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [],
+      "extraction_hint": "Look for email sender in document header or labeled fields",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
       "key": "email_subject",
       "label": "Email subject",
       "data_type": "text",
@@ -419,6 +548,68 @@
       "grounding_required": false,
       "synonyms": [],
       "extraction_hint": "Look for email subject in document header or labeled fields",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "employee_id",
+      "label": "Employee Id",
+      "data_type": "string",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [],
+      "extraction_hint": "Look for employee id in document header or labeled fields",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "employee_name",
+      "label": "Employee name",
+      "data_type": "string",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [
+        "Employee Name",
+        "Claimant",
+        "Staff Name",
+        "Submitted By",
+        "Employee"
+      ],
+      "extraction_hint": "Employee Name, Claimant, Staff Name, Submitted By, Employee",
+      "finance_role": "Employee / claimant submitting a team expense (not the merchant)",
+      "do_not_confuse_with": [
+        "vendor"
+      ],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "grn_reference",
+      "label": "Grn Reference",
+      "data_type": "string",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [],
+      "extraction_hint": "Look for grn reference in document header or labeled fields",
       "finance_role": "",
       "do_not_confuse_with": [],
       "source_priority": [
@@ -490,7 +681,8 @@
       "extraction_hint": "Invoice Date, Date, Tax Invoice Date",
       "finance_role": "Date the invoice was issued",
       "do_not_confuse_with": [
-        "due_date"
+        "due_date",
+        "delivery_date"
       ],
       "source_priority": [
         "llm",
@@ -517,13 +709,6 @@
       "do_not_confuse_with": [
         "po_reference"
       ],
-      "deprioritized_label_qualifiers": [
-        "proforma",
-        "pro-forma",
-        "draft",
-        "quotation",
-        "estimate"
-      ],
       "source_priority": [
         "llm",
         "azure_di",
@@ -539,13 +724,63 @@
       "posting_critical": true,
       "grounding_required": true,
       "synonyms": [
-        "Product/service table rows with description and amounts",
-        "Line items with description, qty, unit price, amount, tax",
-        "Qty-only table rows (Name/Description + Accepted/Recd/PO Qty)",
-        "Purchase order product Name/QTY/UNIT PRICE/AMOUNT rows",
-        "GRN accepted quantity rows without unit price"
+        "Product/service table rows with description and amounts"
       ],
-      "extraction_hint": "Extract printed product/service rows only. Money tables: description/Name, qty, unit price, amount, tax when printed. Qty-only tables (GRN/packing): description/Name plus Accepted/Received/PO Qty; leave unit_price and amount null when not printed. Never invent amounts via qty×price.",
+      "extraction_hint": "Product/service table rows with description and amounts",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "original_invoice_reference",
+      "label": "Original Invoice Reference",
+      "data_type": "string",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [],
+      "extraction_hint": "Look for original invoice reference in document header or labeled fields",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "payment_method",
+      "label": "Payment Method",
+      "data_type": "string",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [],
+      "extraction_hint": "Look for payment method in document header or labeled fields",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "permit_no",
+      "label": "Permit No",
+      "data_type": "string",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [],
+      "extraction_hint": "Look for permit no in document header or labeled fields",
       "finance_role": "",
       "do_not_confuse_with": [],
       "source_priority": [
@@ -581,6 +816,78 @@
       ]
     },
     {
+      "key": "proforma_invoice_no",
+      "label": "Proforma Invoice No",
+      "data_type": "string",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [],
+      "extraction_hint": "Look for proforma invoice no in document header or labeled fields",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "project_reference",
+      "label": "Project Reference",
+      "data_type": "string",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [],
+      "extraction_hint": "Look for project reference in document header or labeled fields",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "receipt_date",
+      "label": "Receipt Date",
+      "data_type": "string",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [],
+      "extraction_hint": "Look for receipt date in document header or labeled fields",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "remittance_reference",
+      "label": "Remittance Reference",
+      "data_type": "string",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [],
+      "extraction_hint": "Look for remittance reference in document header or labeled fields",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
       "key": "seller_abn",
       "label": "Seller business registration number",
       "data_type": "string",
@@ -588,7 +895,7 @@
       "posting_critical": true,
       "grounding_required": true,
       "synonyms": [],
-      "extraction_hint": "Look for seller business registration number in document header or labeled fields",
+      "extraction_hint": "Look for seller abn in document header or labeled fields",
       "finance_role": "",
       "do_not_confuse_with": [],
       "source_priority": [
@@ -717,6 +1024,24 @@
       }
     },
     {
+      "key": "service_period",
+      "label": "Service Period",
+      "data_type": "string",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [],
+      "extraction_hint": "Look for service period in document header or labeled fields",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
       "key": "so_reference",
       "label": "SO reference",
       "data_type": "string",
@@ -734,6 +1059,42 @@
         "po_reference",
         "invoice_no"
       ],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "statement_period",
+      "label": "Statement Period",
+      "data_type": "string",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [],
+      "extraction_hint": "Look for statement period in document header or labeled fields",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "statement_reference",
+      "label": "Statement Reference",
+      "data_type": "string",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [],
+      "extraction_hint": "Look for statement reference in document header or labeled fields",
+      "finance_role": "",
+      "do_not_confuse_with": [],
       "source_priority": [
         "llm",
         "azure_di",

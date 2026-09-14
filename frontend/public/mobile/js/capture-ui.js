@@ -773,8 +773,13 @@
     var parentLedger = String(
       ($('#claimParentLedger') && $('#claimParentLedger').value) || ''
     ).trim();
-    var adjBtn = $('#claimAdjAdvance button.active');
-    var adjustAdvance = !!(adjBtn && adjBtn.getAttribute('data-adj') === '1');
+    var adjGroup = $('#claimAdjAdvance');
+    // Tri-state: null when control hidden; true/false when user can choose Yes/No.
+    var adjustAdvance = null;
+    if (adjGroup) {
+      var activeAdj = $('.active', adjGroup);
+      adjustAdvance = !!(activeAdj && activeAdj.getAttribute('data-adj') === '1');
+    }
     var spentBtn = $('#claimSpentFor button.active');
     var spentChoice = spentBtn ? String(spentBtn.getAttribute('data-spent') || 'Myself') : 'Myself';
     var spentOther = String(($('#claimSpentForOther') && $('#claimSpentForOther').value) || '').trim();
@@ -992,7 +997,8 @@
   function claimFieldsToPatch(details) {
     var remarksParts = [];
     if (details.spentFor) remarksParts.push('Spent for: ' + details.spentFor);
-    if (details.adjustAdvance) remarksParts.push('Adjust against advance: Yes');
+    if (details.adjustAdvance === true) remarksParts.push('Adjust against advance: Yes');
+    else if (details.adjustAdvance === false) remarksParts.push('Adjust against advance: No');
     if (details.remarks) remarksParts.push(details.remarks);
     var patch = Object.assign({}, details.detailValues || {});
     if (details.parentLedger || details.expenseType) {
@@ -1003,6 +1009,11 @@
     if (docName) {
       patch.document_heading = docName;
       if (!patch.vendor) patch.vendor = docName;
+    }
+    if (details.adjustAdvance === true) {
+      patch.cost_centre = 'Adjust against advance';
+    } else if (details.adjustAdvance === false && patch.cost_centre === 'Adjust against advance') {
+      patch.cost_centre = '';
     }
     if (remarksParts.length) {
       patch.billing_address = remarksParts.join('\n');
@@ -1022,7 +1033,8 @@
     }
     var remarkParts = [];
     if (spent) remarkParts.push('Spent for: ' + spent);
-    if (details.adjustAdvance) remarkParts.push('Adjust against advance: Yes');
+    if (details.adjustAdvance === true) remarkParts.push('Adjust against advance: Yes');
+    else if (details.adjustAdvance === false) remarkParts.push('Adjust against advance: No');
     if (details.remarks) remarkParts.push(details.remarks);
     var fields = Object.assign({}, details.detailValues || {}, {
       vendor: vendorTitle,
@@ -1030,7 +1042,7 @@
       account_name: ledger,
       category: ledger,
       document_heading: docName || vendorTitle,
-      cost_centre: details.adjustAdvance
+      cost_centre: details.adjustAdvance === true
         ? 'Adjust against advance'
         : (details.detailValues && details.detailValues.cost_centre) || '',
       billing_address: remarkParts.join('\n'),
@@ -1049,6 +1061,17 @@
       ]
     });
     return fields;
+  }
+
+  /** When Yes, force expense_claim so journals can net Staff Advance (not direct_payment). */
+  async function applyAdvanceAdjustPreference(invoice, adjustAdvance) {
+    if (!invoice || !invoice.id || adjustAdvance !== true) return invoice;
+    if (!LLCaptureApi.setTeamExpenseKind) return invoice;
+    try {
+      return await LLCaptureApi.setTeamExpenseKind(invoice.id, 'expense_claim');
+    } catch (e) {
+      return invoice;
+    }
   }
 
   async function resolvePreferredDocumentTypeCode() {
@@ -1198,7 +1221,7 @@
       dtCode,
       claimFieldsToManualFields(details)
     );
-    var after = created.invoice;
+    var after = await applyAdvanceAdjustPreference(created.invoice, details.adjustAdvance);
     var status = String(after.status || '');
     if (status === 'exception' || status === 'duplicate_skipped' || status === 'rejected') {
       after = await LLCaptureApi.confirmProcess(after.id);
@@ -1218,7 +1241,7 @@
       dtCode,
       claimFieldsToManualFields(details)
     );
-    var after = created.invoice;
+    var after = await applyAdvanceAdjustPreference(created.invoice, details.adjustAdvance);
     var status = String(after.status || '');
     if (status === 'exception' || status === 'duplicate_skipped' || status === 'rejected') {
       after = await LLCaptureApi.confirmProcess(after.id);
@@ -1255,6 +1278,7 @@
         } else {
           after = await LLCaptureApi.getInvoice(cfg.invoice.id);
         }
+        after = await applyAdvanceAdjustPreference(after, details.adjustAdvance);
         var st = String(after.status || '');
         if (st === 'exception' || st === 'duplicate_skipped' || st === 'rejected' || st === 'pending' || st === 'approved') {
           try {

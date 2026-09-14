@@ -1,11 +1,14 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { FileText, Search, X } from "lucide-react";
+import { ChevronDown, ChevronRight, FilePlus2, FileText, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select, toSelectOptions } from "@/components/ui/select";
 import { cn } from "@/lib/cn";
+import { playbookProfileLabel } from "@/lib/documentPlaybookConfig";
 import {
   DOCUMENT_TYPE_TEMPLATES,
+  dictionaryIndustries,
   type DocumentTypeTemplate,
   type DocumentTypeTemplateId,
 } from "@/lib/documentTypeTemplates";
@@ -17,48 +20,117 @@ type DocumentTypeTemplateDialogProps = {
   onSelect: (templateId: DocumentTypeTemplateId) => void;
 };
 
-const KLASS_FILTERS: Array<{ value: "all" | DocumentTypeClass; label: string }> = [
-  { value: "all", label: "All" },
+const DICTIONARY_TEMPLATES = DOCUMENT_TYPE_TEMPLATES.filter((row) => row.id !== "custom");
+const CUSTOM_TEMPLATE = DOCUMENT_TYPE_TEMPLATES.find((row) => row.id === "custom")!;
+const TOTAL_DICTIONARY_COUNT = DICTIONARY_TEMPLATES.length;
+
+const ROUTE_TARGETS = [
+  "Purchase Management",
+  "Sales Management",
+  "Expenses Management",
+  "Team Expenses",
+  "Vault",
+] as const;
+
+const KLASS_OPTIONS: Array<{ value: "all" | DocumentTypeClass; label: string }> = [
+  { value: "all", label: "All classes" },
   { value: "Transactional", label: "Transactional" },
   { value: "Non-transactional", label: "Non-transactional" },
 ];
 
-function TemplateCard({
+function postingDotClass(posting: string): string {
+  const token = posting.trim().toLowerCase();
+  if (token === "yes") return "bg-[hsl(var(--success))]";
+  if (token === "conditional") return "bg-[hsl(var(--warning))]";
+  return "bg-muted-foreground/45";
+}
+
+function postingDotTitle(posting: string): string {
+  const token = posting.trim().toLowerCase();
+  if (token === "yes") return "Posts to GL";
+  if (token === "conditional") return "Conditional posting";
+  return "Does not post to GL";
+}
+
+function TemplateRow({
   template,
-  onSelect,
+  expanded,
+  onToggleExpand,
+  onAdopt,
 }: {
   template: DocumentTypeTemplate;
-  onSelect: () => void;
+  expanded: boolean;
+  onToggleExpand: () => void;
+  onAdopt: () => void;
 }) {
+  const codeLabel = template.dictionaryCode || "custom";
+  const subtitleParts = [codeLabel, template.industry, template.routeTarget].filter(Boolean);
+
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={cn(
-        "flex flex-col rounded-xl border border-border bg-card p-4 text-left transition",
-        "hover:-translate-y-px hover:border-primary/40 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      )}
-      data-testid={`template-${template.id}`}
-    >
-      <div className="flex items-start gap-2">
-        <FileText className="h-4 w-4 shrink-0 text-primary mt-0.5" />
-        <div className="min-w-0">
-          <div className="text-sm font-semibold text-foreground">{template.label}</div>
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{template.description}</p>
+    <div className="border-b border-border last:border-b-0" data-testid={`template-${template.id}`}>
+      <div className="flex items-center gap-2.5 px-3 py-2 hover:bg-muted/30 transition-colors">
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+          onClick={onToggleExpand}
+          aria-expanded={expanded}
+        >
+          {expanded ? (
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          )}
+          <span
+            className={cn("h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-background", postingDotClass(template.posting))}
+            title={postingDotTitle(template.posting)}
+            aria-hidden
+          />
+          {template.id === "custom" ? (
+            <FilePlus2 className="h-4 w-4 shrink-0 text-primary" />
+          ) : (
+            <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+          )}
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-medium text-foreground">{template.label}</span>
+            <span className="block truncate text-xs text-muted-foreground">
+              {subtitleParts.join(" · ")}
+            </span>
+          </span>
+        </button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="shrink-0"
+          onClick={(event) => {
+            event.stopPropagation();
+            onAdopt();
+          }}
+        >
+          Use template
+        </Button>
+      </div>
+      {expanded ? (
+        <div className="space-y-2 border-t border-border bg-muted/20 px-3 py-2.5 text-xs">
+          <div>
+            <span className="font-medium text-foreground">Playbook</span>
+            <p className="mt-0.5 text-muted-foreground">
+              {playbookProfileLabel(template.playbookProfile)}
+            </p>
+          </div>
+          {template.llmPrompt.trim() ? (
+            <div>
+              <span className="font-medium text-foreground">Recognition prompt</span>
+              <p className="mt-0.5 leading-relaxed text-muted-foreground whitespace-pre-wrap">
+                {template.llmPrompt}
+              </p>
+            </div>
+          ) : (
+            <p className="text-muted-foreground">Blank type — configure recognition in the editor.</p>
+          )}
         </div>
-      </div>
-      <div className="mt-3 flex flex-wrap gap-1.5">
-        <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground">
-          {template.routeTarget}
-        </span>
-        <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground">
-          {template.klass}
-        </span>
-        <span className="rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[10px] text-primary">
-          Match rules
-        </span>
-      </div>
-    </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -68,20 +140,54 @@ function DocumentTypeTemplateDialog({
   onSelect,
 }: DocumentTypeTemplateDialogProps) {
   const [query, setQuery] = useState("");
+  const [industryFilter, setIndustryFilter] = useState("all");
   const [klassFilter, setKlassFilter] = useState<"all" | DocumentTypeClass>("all");
+  const [routeFilter, setRouteFilter] = useState("all");
+  const [expandedId, setExpandedId] = useState<DocumentTypeTemplateId | null>(null);
 
-  const templates = useMemo(() => {
-    const base = DOCUMENT_TYPE_TEMPLATES.filter((template) => template.id !== "custom");
+  const industries = useMemo(() => dictionaryIndustries(), []);
+
+  useEffect(() => {
+    if (!open) {
+      setQuery("");
+      setIndustryFilter("all");
+      setKlassFilter("all");
+      setRouteFilter("all");
+      setExpandedId(null);
+    }
+  }, [open]);
+
+  const filteredTemplates = useMemo(() => {
     const normalized = query.trim().toLowerCase();
-    return base.filter((template) => {
+    return DICTIONARY_TEMPLATES.filter((template) => {
+      if (industryFilter !== "all" && template.industry !== industryFilter) return false;
       if (klassFilter !== "all" && template.klass !== klassFilter) return false;
+      if (routeFilter !== "all" && template.routeTarget !== routeFilter) return false;
       if (!normalized) return true;
-      const haystack = [template.label, template.description, template.routeTarget, template.klass]
+      const haystack = [
+        template.label,
+        template.industry,
+        template.routeTarget,
+        template.dictionaryCode,
+      ]
         .join(" ")
         .toLowerCase();
       return haystack.includes(normalized);
     });
-  }, [query, klassFilter]);
+  }, [query, industryFilter, klassFilter, routeFilter]);
+
+  const industryOptions = useMemo(
+    () => [{ value: "all", label: "All industries" }, ...toSelectOptions(industries)],
+    [industries]
+  );
+
+  const routeOptions = useMemo(
+    () => [
+      { value: "all", label: "All routes" },
+      ...ROUTE_TARGETS.map((route) => ({ value: route, label: route })),
+    ],
+    []
+  );
 
   if (!open) return null;
 
@@ -97,82 +203,107 @@ function DocumentTypeTemplateDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="dt-template-title"
-        className="v5-dialog-content max-w-4xl"
+        className="v5-dialog-content max-w-3xl p-0 gap-0 overflow-hidden flex flex-col max-h-[min(85vh,720px)]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
+        <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4 shrink-0">
           <div>
             <h2 id="dt-template-title" className="text-lg font-semibold tracking-tight">
               Add document type
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Pick a shipped template to pre-fill playbook, extraction, and match rules — then
-              adjust in the editor before saving.
+              Pick a dictionary template to pre-fill recognition, playbook, extraction, and
+              validation — then adjust in the editor before saving.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-sm p-1 opacity-70 hover:opacity-100"
-            aria-label="Close"
-          >
+          <Button type="button" variant="ghost" size="icon" onClick={onClose} aria-label="Close">
             <X className="h-4 w-4" />
-          </button>
+          </Button>
         </div>
 
-        <div className="space-y-3 border-b border-border px-5 py-3">
+        <div className="space-y-3 border-b border-border px-5 py-3 shrink-0">
           <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search by name or route…"
-              className="pl-8 h-9"
+              placeholder="Search by name, industry, or route…"
+              className="h-9 pl-8"
               data-testid="template-search"
             />
           </div>
-          <div className="flex flex-wrap gap-1.5">
-            {KLASS_FILTERS.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                onClick={() => setKlassFilter(option.value)}
-                className={cn(
-                  "rounded-full border px-2.5 py-1 text-[11px] transition",
-                  klassFilter === option.value
-                    ? "border-primary bg-primary/10 text-primary"
-                    : "border-border text-muted-foreground hover:border-primary/40"
-                )}
-              >
-                {option.label}
-              </button>
-            ))}
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <Select
+              value={industryFilter}
+              onValueChange={setIndustryFilter}
+              options={industryOptions}
+              placeholder="Industry"
+              size="md"
+              className="w-full"
+              data-testid="template-filter-industry"
+            />
+            <Select
+              value={klassFilter}
+              onValueChange={(value) => setKlassFilter(value as "all" | DocumentTypeClass)}
+              options={KLASS_OPTIONS.map((row) => ({ value: row.value, label: row.label }))}
+              placeholder="Class"
+              size="md"
+              className="w-full"
+              data-testid="template-filter-class"
+            />
+            <Select
+              value={routeFilter}
+              onValueChange={setRouteFilter}
+              options={routeOptions}
+              placeholder="Route"
+              size="md"
+              className="w-full"
+              data-testid="template-filter-route"
+            />
           </div>
         </div>
 
-        <div className="grid gap-3 p-5 sm:grid-cols-2 max-h-[min(65vh,560px)] overflow-y-auto">
-          {templates.length === 0 ? (
-            <p className="col-span-full py-8 text-center text-sm text-muted-foreground">
-              No templates match your search.
-            </p>
-          ) : (
-            templates.map((template) => (
-              <TemplateCard
-                key={template.id}
-                template={template}
-                onSelect={() => onSelect(template.id)}
-              />
-            ))
-          )}
+        <div className="px-5 pt-3 shrink-0">
+          <p className="text-xs text-muted-foreground" data-testid="template-result-count">
+            {filteredTemplates.length} of {TOTAL_DICTIONARY_COUNT} templates
+          </p>
         </div>
 
-        <div className="flex items-center justify-between gap-2 border-t border-border px-5 py-3">
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-4 pt-2">
+          <div className="overflow-hidden rounded-md border border-border">
+            <TemplateRow
+              template={CUSTOM_TEMPLATE}
+              expanded={expandedId === "custom"}
+              onToggleExpand={() =>
+                setExpandedId((current) => (current === "custom" ? null : "custom"))
+              }
+              onAdopt={() => onSelect("custom")}
+            />
+            {filteredTemplates.length === 0 ? (
+              <div className="border-t border-border px-3 py-8 text-center text-sm text-muted-foreground">
+                No templates match your filters.
+              </div>
+            ) : (
+              filteredTemplates.map((template) => (
+                <TemplateRow
+                  key={template.id}
+                  template={template}
+                  expanded={expandedId === template.id}
+                  onToggleExpand={() =>
+                    setExpandedId((current) => (current === template.id ? null : template.id))
+                  }
+                  onAdopt={() => onSelect(template.id)}
+                />
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="border-t border-border px-5 py-3 shrink-0">
           <p className="text-xs text-muted-foreground">
-            Org codes are assigned automatically (DT-01, DT-02, …).
+            Org codes are assigned automatically (DT-01, DT-02, …). Green dot = posts to GL;
+            amber = conditional; gray = no posting.
           </p>
-          <Button type="button" size="sm" variant="ghost" onClick={() => onSelect("custom")}>
-            Blank type (match rules)
-          </Button>
         </div>
       </div>
     </div>,

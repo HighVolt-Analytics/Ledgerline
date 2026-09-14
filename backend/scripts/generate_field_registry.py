@@ -37,7 +37,7 @@ def _data_type(key: str) -> str:
         return "date"
     if key == "line_items":
         return "line_items"
-    if key == "bank_details":
+    if key in {"bank_details", "buyer_bank_details"}:
         return "bank"
     if key in {"document_text", "attachment_name", "document_heading", "email_subject"}:
         return "text"

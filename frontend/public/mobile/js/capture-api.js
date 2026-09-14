@@ -306,6 +306,20 @@
     return result.data;
   }
 
+  /** Pin Team Expenses journal kind before confirm/process (advance netting needs expense_claim). */
+  async function setTeamExpenseKind(id, kind, linkedAdvanceInvoiceId) {
+    var body = { team_expense_kind: String(kind || '').trim().toLowerCase() };
+    if (linkedAdvanceInvoiceId != null) {
+      body.linked_advance_invoice_id = linkedAdvanceInvoiceId;
+    }
+    var result = await apiFetch('/api/invoices/' + id + '/team-expense-kind', {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body)
+    });
+    return result.data;
+  }
+
   async function confirmProcess(id) {
     var result = await apiFetch('/api/invoices/' + id + '/confirm-process', {
       method: 'POST',
@@ -963,7 +977,16 @@
       }
       if (existing) {
         existing.approved = Number(spend.approved) || 0;
-        if (existing.approved > 0 || (Number(spend.spent) || 0) > 0) {
+        var spendAmt = Number(spend.spent) || 0;
+        if (spendAmt > 0) {
+          existing.spent = spendAmt;
+          var budgetAmt = Number(existing.budgetAmt) || 0;
+          if (budgetAmt > 0) {
+            existing.remaining = Math.max(0, budgetAmt - spendAmt);
+            existing.leftPct = leftPctFromBudget(budgetAmt, spendAmt);
+          }
+        }
+        if (existing.approved > 0 || spendAmt > 0) {
           existing.hasBudget = true;
         }
       } else if (spend.hasBudget) {
@@ -1022,7 +1045,7 @@
       leftPct: leftPctFromBudget(budgetAmt, spent),
       budgetAmt: budgetAmt,
       spent: spent,
-      hasBudget: !!hasBudget || remaining > 0 || approved > 0
+      hasBudget: !!hasBudget || remaining > 0 || approved > 0 || spent > 0
     };
   }
 
@@ -1184,9 +1207,10 @@
     var out = {
       remaining: 0,
       approved: 0,
+      spent: 0,
       leftPct: null,
       hasBudget: false,
-      all: { remaining: 0, approved: 0, leftPct: null, hasBudget: false },
+      all: { remaining: 0, approved: 0, spent: 0, leftPct: null, hasBudget: false },
       lines: [],
       tree: [],
       coaParentChildren: {},
@@ -1231,6 +1255,7 @@
     out.all = built.all;
     out.remaining = out.all.remaining;
     out.approved = out.all.approved;
+    out.spent = out.all.spent;
     out.leftPct = out.all.leftPct;
     out.hasBudget = out.all.hasBudget;
 
@@ -1238,16 +1263,21 @@
     if (advRow) {
       var taken = Number(advRow.advance_taken) || 0;
       var used = Number(advRow.advance_used) || 0;
+      var pending = Number(advRow.pending_against_advance) || 0;
+      var ledger = Number(advRow.advance_ledger_balance) || 0;
+      // Prefer available (ledger − open claims) so Yes-adjust claims reduce the home card immediately.
       var outstanding =
-        Number(advRow.advance_ledger_balance) ||
-        Number(advRow.available_advance) ||
-        Math.max(taken - used, 0);
-      if (outstanding > 0 || taken > 0) {
+        advRow.available_advance != null && isFinite(Number(advRow.available_advance))
+          ? Math.max(0, Number(advRow.available_advance))
+          : Math.max(0, ledger - pending || Math.max(taken - used, 0));
+      var acquitted = used + pending;
+      if (outstanding > 0 || taken > 0 || acquitted > 0) {
         out.advance = {
           amount: outstanding > 0 ? outstanding : taken,
-          taken: taken,
-          acquitted: used,
+          taken: taken > 0 ? taken : Math.max(ledger, outstanding + acquitted),
+          acquitted: acquitted,
           outstanding: outstanding,
+          pending: pending,
           purpose: String(advRow.department || advRow.name || 'Staff advance').trim(),
           ref: String(advRow.advance_sub_ledger || advRow.employee_id || '').trim() || 'Advance',
           issued: '',
@@ -1322,6 +1352,7 @@
     createWithoutDocument: createWithoutDocument,
     getInvoice: getInvoice,
     updateInvoice: updateInvoice,
+    setTeamExpenseKind: setTeamExpenseKind,
     confirmProcess: confirmProcess,
     listRecentInvoices: listRecentInvoices,
     listMyInvoices: listMyInvoices,

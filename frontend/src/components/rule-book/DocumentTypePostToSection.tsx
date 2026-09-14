@@ -9,6 +9,10 @@ import {
   suggestedLedgerForPlaybookProfile,
 } from "@/lib/documentTypeGlDefaults";
 import {
+  formatPostToSuggestionHint,
+  resolvePostToSuggestionForDocumentType,
+} from "@/lib/documentTypeTemplates";
+import {
   documentTypeRequiresPostTo,
   postToConfigWarnings,
 } from "@/lib/documentTypePostToValidation";
@@ -74,6 +78,7 @@ export function DocumentTypePostToEditor({
 
   const warnings = postToConfigWarnings(draft, allAccounts);
   const suggested = suggestedLedgerForPlaybookProfile(draft.playbookProfile);
+  const dictionaryHint = formatPostToSuggestionHint(resolvePostToSuggestionForDocumentType(draft));
   const postTo = draft.postTo;
   const defaultAppliedRef = useRef(false);
   const onChangeRef = useRef(onChange);
@@ -155,7 +160,13 @@ export function DocumentTypePostToEditor({
 
       {!isAdvanceRequisition ? (
         <>
-          {suggested && !postTo.ledger.trim() ? (
+          {dictionaryHint && !postTo.ledger.trim() ? (
+            <p className="text-[11px] text-muted-foreground" data-testid="dt-post-to-dictionary-hint">
+              Suggested: <span className="font-medium text-foreground">{dictionaryHint}</span>
+            </p>
+          ) : null}
+
+          {suggested && !postTo.ledger.trim() && !dictionaryHint ? (
             <p className="text-[11px] text-muted-foreground">
               Suggested: <span className="font-medium text-foreground">{suggested}</span>
             </p>

@@ -11,22 +11,33 @@ from app.services.classification.document_type_catalog import (
 from app.services.extraction.llm_catalogue_rows import build_llm_catalogue_rows
 
 
-def test_dt_catalog_entry_has_hints() -> None:
+def test_dt_catalog_entry_without_org_definition_is_empty() -> None:
     entry = get_dt_catalog_entry("DT-01")
     assert entry.code == "DT-01"
-    assert entry.classification_hints
-    assert entry.azure_di_profile == "prebuilt-invoice"
+    assert entry.classification_hints == ()
+    assert entry.azure_di_profile == ""
 
 
-def test_classification_hints_helpers() -> None:
-    positive, negative = classification_hints_for_dt("DT-01")
-    assert positive
-    assert isinstance(negative, list)
+def test_classification_hints_helpers_use_org_titles() -> None:
+    defn = DocumentTypeDefinition.model_validate(
+        {
+            "code": "DT-01",
+            "title": "Vendor tax invoice",
+            "shortTitle": "Tax invoice",
+            "klass": "Transactional",
+            "posting": "Yes",
+            "routeTarget": "Purchase Management",
+            "enabled": True,
+        }
+    )
+    positive, negative = classification_hints_for_dt("DT-01", dt_definition=defn)
+    assert positive == ["Vendor tax invoice", "Tax invoice"]
+    assert negative == []
 
 
-def test_cross_field_rules_for_invoice_types() -> None:
+def test_cross_field_rules_are_org_only() -> None:
     rules = cross_field_rules_for_dt("DT-01")
-    assert any("subtotal" in rule for rule in rules)
+    assert rules == []
 
 
 def test_org_repurposed_dt_does_not_inherit_shipped_reconciliation_profile() -> None:

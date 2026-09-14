@@ -34,19 +34,8 @@ def azure_di_profile_for_dt(
     confirmed_dt: str,
     dt_definition: DocumentTypeDefinition | None,
 ) -> str:
-    """Resolve azure_di_profile only when org still matches shipped template metadata."""
-    from app.services.classification.document_type_catalog import (
-        _org_uses_shipped_classification_metadata,
-        _shipped_defaults_lookup_code,
-        get_dt_catalog_entry,
-    )
-
-    if dt_definition is not None:
-        shipped_lookup = _shipped_defaults_lookup_code(confirmed_dt or "", dt_definition)
-        if not _org_uses_shipped_classification_metadata(dt_definition, shipped_lookup):
-            return ""
-    entry = get_dt_catalog_entry(confirmed_dt or "", dt_definition=dt_definition)
-    return (entry.azure_di_profile or "").strip().lower()
+    """Org records do not carry azure_di_profile — routing uses playbook/bundle roles."""
+    return ""
 
 
 def route_from_bundle_roles(

@@ -177,7 +177,15 @@ def _team_expense_entries(
 
     net_advance = claim_advance_net_amount(total, advance_available)
     if kind == TEAM_EXPENSE_KIND_DIRECT:
-        net_advance = Decimal("0")
+        from app.services.purchase.team_expense_advance_service import (
+            claim_wants_advance_netting,
+        )
+
+        if not claim_wants_advance_netting(
+            cost_centre=getattr(invoice, "cost_centre", None),
+            billing_address=getattr(invoice, "billing_address", None),
+        ):
+            net_advance = Decimal("0")
     settle_credit = _quantize_money(total - net_advance)
     if net_advance > 0:
         lines.append(

@@ -62,7 +62,12 @@ def _target_for(key: str) -> tuple[bool, str]:
 def _type_for(key: str) -> FieldType:
     if key in {"subtotal", "gst", "gst_rate", "total", "amount_due"}:
         return FieldType.AMOUNT
-    if key in {"invoice_date", "due_date"}:
+    if key in {
+        "invoice_date",
+        "due_date",
+        "receipt_date",
+        "delivery_date",
+    }:
         return FieldType.DATE
     if key == "currency":
         return FieldType.CURRENCY
@@ -72,6 +77,9 @@ def _type_for(key: str) -> FieldType:
         return FieldType.PARTY
     if key in {
         "invoice_no",
+        "proforma_invoice_no",
+        "credit_note_no",
+        "original_invoice_reference",
         "po_reference",
         "so_reference",
         "grn_reference",
@@ -81,11 +89,25 @@ def _type_for(key: str) -> FieldType:
         "abn",
         "seller_abn",
         "buyer_abn",
+        "seller_tax_id",
+        "buyer_tax_id",
+        "claim_id",
+        "employee_id",
+        "advance_reference",
+        "contract_reference",
+        "project_reference",
     }:
         return FieldType.IDENTIFIER
     if key in {"bank_bsb", "bank_account", "bank_name", "bank_details"}:
         return FieldType.BANK
-    if key in {"document_text", "document_heading", "attachment_name"}:
+    if key in {
+        "document_text",
+        "document_heading",
+        "attachment_name",
+        "service_period",
+        "statement_period",
+        "payment_method",
+    }:
         return FieldType.TEXT
     if key not in INVOICE_SCALAR_ATTRS and key not in EXTRACTED_ONLY_ATTRS:
         return FieldType.CUSTOM
@@ -101,8 +123,15 @@ def _sources_for(key: str) -> tuple[FieldSource, ...]:
         "remittance_reference",
         "statement_reference",
         "statement_period",
+        "service_period",
         "grn_reference",
         "so_reference",
+        "claim_id",
+        "contract_reference",
+        "project_reference",
+        "advance_reference",
+        "credit_note_no",
+        "original_invoice_reference",
     }:
         return _LAYOUT_FIRST
     if _type_for(key) == FieldType.CUSTOM:
@@ -151,6 +180,14 @@ def build_field_template(key: str, *, required: bool = False) -> ExtractionField
         aliases = ("currency", "ccy")
     elif token == "abn":
         aliases = ("abn", "tax id", "gstin")
+    elif token == "seller_tax_id":
+        aliases = ("tax id", "supplier tax id", "seller tax id", "gstin")
+    elif token == "remittance_reference":
+        aliases = ("payment reference", "remittance", "payment ref")
+    elif token == "service_period":
+        aliases = ("service period", "billing period", "coverage period")
+    elif token == "buyer_name":
+        aliases = ("customer", "customer name", "buyer")
 
     return ExtractionFieldContract(
         key=token,

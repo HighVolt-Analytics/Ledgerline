@@ -62,43 +62,8 @@ def _parse_catalog_items(raw: object) -> list[DocumentTypeDefinition]:
 
 
 def load_shipped_default_document_types() -> list[DocumentTypeDefinition]:
-    """Reference catalogue for tests and export scripts — not used for org rule book backfill."""
-    from app.services.classification.document_type_field_defaults import (
-        default_absent_fields,
-        default_extraction_fields,
-        default_min_route_confidence,
-        default_required_fields,
-        default_validation_profile,
-    )
-
-    path = _catalog_path()
-    items = _parse_catalog_items(json.loads(path.read_text(encoding="utf-8")))
-    seeded: list[DocumentTypeDefinition] = []
-    for item in items:
-        route = DEFAULT_DOCUMENT_TYPE_ROUTE_TARGETS.get(item.code.upper(), ROUTE_VAULT)
-        code = item.code.upper()
-        seeded.append(
-            item.model_copy(
-                update={
-                    "route_target": route,
-                    "enabled": True,
-                    "required_fields": default_required_fields(code),
-                    "absent_fields": default_absent_fields(code),
-                    "extraction_fields": default_extraction_fields(code),
-                    "min_route_confidence": default_min_route_confidence(code),
-                    "validation_profile": default_validation_profile(code),
-                    "bundle_mandatory": list(item.bundle_mandatory),
-                    "bundle_conditional": list(item.bundle_conditional),
-                    "extraction": [],
-                    "checks": [],
-                    "match": [],
-                    "approval": [],
-                    "accounting": [],
-                    "special": [],
-                }
-            )
-        )
-    return seeded
+    """Legacy DT-xx shipped catalogue removed — org rule book rows are self-contained."""
+    return []
 
 
 @lru_cache
@@ -309,44 +274,19 @@ def get_dt_catalog_entry(
     *,
     dt_definition: DocumentTypeDefinition | None = None,
 ) -> DtCatalogEntry:
-    """Machine catalog metadata for a document type code.
-
-    When ``dt_definition`` is supplied (org rule book row), classification hints
-    are derived from the org title/short title — not shipped template prose.
-    Shipped defaults are used only for technical metadata (cross-field rules,
-    DI profile) and only when the org row still matches its shipped template.
-    """
-    from app.services.classification.document_type_field_defaults import (
-        default_azure_di_profile,
-        default_classification_hints,
-        default_cross_field_rules,
-        default_fallback_if_unknown_subtype,
-        default_field_overrides,
-        default_negative_hints,
-    )
-
+    """Machine catalog metadata for a document type code (org record only)."""
     token = (code or "").strip().upper()
-    shipped_lookup = _shipped_defaults_lookup_code(token, dt_definition)
-
-    if dt_definition is not None:
-        classification_hints = _org_classification_hints(dt_definition)
-        negative_hints = (
-            tuple(default_negative_hints(shipped_lookup))
-            if _org_uses_shipped_classification_metadata(dt_definition, shipped_lookup)
-            else ()
-        )
-    else:
-        classification_hints = tuple(default_classification_hints(shipped_lookup))
-        negative_hints = tuple(default_negative_hints(shipped_lookup))
-
+    classification_hints = (
+        _org_classification_hints(dt_definition) if dt_definition is not None else ()
+    )
     return DtCatalogEntry(
         code=token,
         classification_hints=classification_hints,
-        negative_hints=negative_hints,
-        cross_field_rules=tuple(default_cross_field_rules(shipped_lookup)),
-        field_overrides=default_field_overrides(shipped_lookup),
-        azure_di_profile=default_azure_di_profile(shipped_lookup),
-        fallback_if_unknown_subtype=default_fallback_if_unknown_subtype(shipped_lookup),
+        negative_hints=(),
+        cross_field_rules=(),
+        field_overrides={},
+        azure_di_profile="",
+        fallback_if_unknown_subtype="",
     )
 
 
@@ -422,29 +362,13 @@ def _org_uses_shipped_classification_metadata(
 
 
 def playbook_profile_for_dt(defn: DocumentTypeDefinition) -> str:
-    """Org playbook profile; shipped defaults only when org row matches shipped template."""
-    explicit = (defn.playbook_profile or "").strip().lower()
-    if explicit:
-        return explicit
-    shipped_lookup = _shipped_defaults_lookup_code(defn.code, defn)
-    if _org_uses_shipped_classification_metadata(defn, shipped_lookup):
-        from app.services.classification.document_type_field_defaults import default_playbook_profile
-
-        return default_playbook_profile(shipped_lookup)
-    return ""
+    """Org playbook profile only — no runtime fallback to shipped catalogue."""
+    return (defn.playbook_profile or "").strip().lower()
 
 
 def extraction_fields_for_dt(defn: DocumentTypeDefinition) -> list[str]:
-    """Org extraction fields; shipped defaults only when org row matches shipped template."""
-    org_fields = [str(key).strip().lower() for key in (defn.extraction_fields or []) if str(key).strip()]
-    if org_fields:
-        return org_fields
-    shipped_lookup = _shipped_defaults_lookup_code(defn.code, defn)
-    if _org_uses_shipped_classification_metadata(defn, shipped_lookup):
-        from app.services.classification.document_type_field_defaults import default_extraction_fields
-
-        return list(default_extraction_fields(shipped_lookup))
-    return []
+    """Org extraction fields only — no runtime fallback to shipped catalogue."""
+    return [str(key).strip().lower() for key in (defn.extraction_fields or []) if str(key).strip()]
 
 
 def classification_hints_for_dt(

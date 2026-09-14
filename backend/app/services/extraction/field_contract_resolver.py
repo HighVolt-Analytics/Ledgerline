@@ -5,12 +5,7 @@ from __future__ import annotations
 from typing import Sequence
 
 from app.schemas.document_type import DocumentTypeDefinition
-from app.services.classification.document_type_catalog import (
-    _org_uses_shipped_classification_metadata,
-    _shipped_defaults_lookup_code,
-    extraction_fields_for_dt,
-)
-from app.services.classification.document_type_field_defaults import default_extraction_fields
+from app.services.classification.document_type_catalog import extraction_fields_for_dt
 from app.services.classification.document_type_field_keys import (
     is_valid_extraction_field_key,
     normalize_extraction_field_keys,
@@ -76,14 +71,6 @@ def _org_extraction_keys(defn: DocumentTypeDefinition) -> list[str]:
     # required-only when extraction_fields empty but required present
     required = [str(k).strip().lower() for k in (defn.required_fields or []) if str(k or "").strip()]
     return normalize_extraction_field_keys(required) if required else []
-
-
-def _shipped_keys(defn: DocumentTypeDefinition) -> list[str]:
-    shipped_lookup = _shipped_defaults_lookup_code(defn.code, defn)
-    if not _org_uses_shipped_classification_metadata(defn, shipped_lookup):
-        return []
-    defaults = default_extraction_fields(shipped_lookup)
-    return normalize_extraction_field_keys(defaults) if defaults else []
 
 
 def _playbook_keys(defn: DocumentTypeDefinition, route: ExtractionRoute) -> list[str]:
@@ -155,16 +142,14 @@ def resolve_extraction_field_contracts_for_dt(
     ]
     required = _org_required_keys(defn)
     route_keys = _route_default_keys(extraction_route)
-    shipped = _shipped_keys(defn)
     playbook = _playbook_keys(defn, extraction_route)
-    # Catalog helper may return shipped defaults when org list empty
     catalog_keys = _org_extraction_keys(defn)
 
     # Explicit org extraction_fields wins as the universe.
     if explicit_org:
         key_list = _uniq_keys(explicit_org, list(required))
     else:
-        key_list = _uniq_keys(catalog_keys, shipped, playbook, route_keys, list(required))
+        key_list = _uniq_keys(catalog_keys, playbook, route_keys, list(required))
         if not key_list and extraction_route in TRANSACTIONAL_EXTRACTION_ROUTES:
             profile = (effective_playbook_profile(defn) or "").strip().lower()
             if profile not in _NON_TRANSACTIONAL_PLAYBOOKS:

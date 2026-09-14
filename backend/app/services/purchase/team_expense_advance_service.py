@@ -13,6 +13,7 @@ from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import JournalEntry
 from app.schemas.rule_book_config import (
     TEAM_EXPENSE_KIND_CLAIM,
+    TEAM_EXPENSE_KIND_DIRECT,
     RuleBookConfigPayload,
     normalize_team_expense_kind,
 )
@@ -170,6 +171,38 @@ def _is_claim_kind(raw_kind: str | None) -> bool:
     return normalize_team_expense_kind(cleaned) == TEAM_EXPENSE_KIND_CLAIM
 
 
+def claim_opts_out_of_advance_netting(
+    *,
+    cost_centre: str | None = None,
+    billing_address: str | None = None,
+) -> bool:
+    """True when the employee explicitly declined 'Adjust against advance' (mobile Yes/No).
+
+    Explicit Yes (cost centre marker or remark line) never opts out. Unset keeps
+    auto-netting for email/desktop claims.
+    """
+    centre = (cost_centre or "").strip().lower()
+    blob = (billing_address or "").replace("\r\n", "\n").lower()
+    if "adjust against advance: yes" in blob or centre == "adjust against advance":
+        return False
+    if "adjust against advance: no" in blob:
+        return True
+    return False
+
+
+def claim_wants_advance_netting(
+    *,
+    cost_centre: str | None = None,
+    billing_address: str | None = None,
+) -> bool:
+    """True when mobile explicitly selected Adjust against advance = Yes."""
+    centre = (cost_centre or "").strip().lower()
+    blob = (billing_address or "").replace("\r\n", "\n").lower()
+    if "adjust against advance: no" in blob:
+        return False
+    return "adjust against advance: yes" in blob or centre == "adjust against advance"
+
+
 async def pending_claim_advance_reservations_by_employees(
     session: AsyncSession,
     tenant_id: uuid.UUID,
@@ -196,6 +229,8 @@ async def pending_claim_advance_reservations_by_employees(
         Invoice.email_sender,
         Invoice.employee_email,
         Invoice.team_expense_kind,
+        Invoice.cost_centre,
+        Invoice.billing_address,
     ).where(
         Invoice.tenant_id == tenant_id,
         Invoice.route_target == ROUTE_TEAM,
@@ -203,6 +238,7 @@ async def pending_claim_advance_reservations_by_employees(
         or_(
             Invoice.team_expense_kind == TEAM_EXPENSE_KIND_CLAIM,
             Invoice.team_expense_kind == _LEGACY_AGAINST_ADVANCE,
+            Invoice.team_expense_kind == TEAM_EXPENSE_KIND_DIRECT,
             Invoice.team_expense_kind.is_(None),
             Invoice.team_expense_kind == "",
         ),
@@ -210,8 +246,28 @@ async def pending_claim_advance_reservations_by_employees(
     if exclude_invoice_id is not None:
         stmt = stmt.where(Invoice.id != exclude_invoice_id)
 
-    for _inv_id, amount, sender, emp_email, kind in (await session.execute(stmt)).all():
-        if not _is_claim_kind(kind):
+    for (
+        _inv_id,
+        amount,
+        sender,
+        emp_email,
+        kind,
+        cost_centre,
+        billing_address,
+    ) in (await session.execute(stmt)).all():
+        normalized = normalize_team_expense_kind(kind)
+        if normalized == TEAM_EXPENSE_KIND_DIRECT:
+            if not claim_wants_advance_netting(
+                cost_centre=cost_centre,
+                billing_address=billing_address,
+            ):
+                continue
+        elif not _is_claim_kind(kind):
+            continue
+        if claim_opts_out_of_advance_netting(
+            cost_centre=cost_centre,
+            billing_address=billing_address,
+        ):
             continue
         identity = normalize_employee_email(emp_email) or sender
         matched = find_employee_by_sender(employees_list, identity)
@@ -298,10 +354,20 @@ async def resolve_claim_advance_available(
     kind = normalize_team_expense_kind(invoice.team_expense_kind)
     if kind == TEAM_EXPENSE_KIND_ADVANCE:
         return None
-    if kind == TEAM_EXPENSE_KIND_DIRECT:
+    wants_net = claim_wants_advance_netting(
+        cost_centre=getattr(invoice, "cost_centre", None),
+        billing_address=getattr(invoice, "billing_address", None),
+    )
+    if kind == TEAM_EXPENSE_KIND_DIRECT and not wants_net:
         return Decimal("0")
     if (invoice.route_target or "").strip() != ROUTE_TEAM:
         return None
+
+    if claim_opts_out_of_advance_netting(
+        cost_centre=getattr(invoice, "cost_centre", None),
+        billing_address=getattr(invoice, "billing_address", None),
+    ):
+        return Decimal("0")
 
     employee = await resolve_employee_for_sender(
         session,

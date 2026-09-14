@@ -163,6 +163,17 @@ async def _commit_rule_book_db_side_effects(
 ) -> None:
     await save_rule_book_config(session, pending.payload, pending.tenant_id)
 
+    from app.services.rule_book.document_type_adoption_lineage_service import (
+        record_document_type_adoptions,
+    )
+
+    await record_document_type_adoptions(
+        session,
+        tenant_id=pending.tenant_id,
+        before_raw=pending.before_raw,
+        after_raw=pending.after_raw,
+    )
+
     if rule_book_changes_are_auditable(
         changes,
         before=before_norm,

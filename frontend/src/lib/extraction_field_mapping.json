@@ -1,0 +1,3336 @@
+{
+  "note": "Tier 1 keys are confirmed field names from conversation. Tier 2 keys are inferred candidates from recurring source phrases \u2014 validate every Tier 2 key against document_type_field_keys.py before merging; rename or drop any that do not exist.",
+  "tier1ConfirmedKeys": [
+    "currency",
+    "gst",
+    "invoice_no",
+    "line_items",
+    "po_reference",
+    "so_reference",
+    "subtotal",
+    "total",
+    "vendor"
+  ],
+  "entries": [
+    {
+      "code": "LIB-001",
+      "title": "Supplier Invoice",
+      "industry": "Professional Services",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "invoice_date",
+        "payment_reference",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-002",
+      "title": "Expense Claim",
+      "industry": "Professional Services",
+      "candidateExtractionFields": [
+        "advance_reference",
+        "business_purpose",
+        "claim_id",
+        "cost_centre",
+        "currency",
+        "employee_id",
+        "payment_method",
+        "total"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "total"
+      ],
+      "candidateFieldsTier2Draft": [
+        "advance_reference",
+        "business_purpose",
+        "claim_id",
+        "cost_centre",
+        "employee_id",
+        "payment_method"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-003",
+      "title": "Customer Invoice",
+      "industry": "Professional Services",
+      "candidateExtractionFields": [
+        "billing_milestone",
+        "contract_reference",
+        "currency",
+        "customer",
+        "customer_id",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "subtotal",
+        "total"
+      ],
+      "candidateFieldsTier2Draft": [
+        "billing_milestone",
+        "contract_reference",
+        "customer",
+        "customer_id",
+        "due_date",
+        "invoice_date",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-004",
+      "title": "Credit Note",
+      "industry": "Professional Services",
+      "candidateExtractionFields": [
+        "credit_note_no",
+        "currency",
+        "customer_id",
+        "dispute_reference",
+        "original_invoice_reference",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "credit_note_no",
+        "customer_id",
+        "dispute_reference",
+        "original_invoice_reference"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-005",
+      "title": "Purchase Order",
+      "industry": "Professional Services",
+      "candidateExtractionFields": [
+        "budget_reference",
+        "cost_centre",
+        "currency",
+        "delivery_date",
+        "line_items",
+        "po_reference",
+        "requester",
+        "service_period",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "line_items",
+        "po_reference",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "budget_reference",
+        "cost_centre",
+        "delivery_date",
+        "requester",
+        "service_period"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-006",
+      "title": "Timesheet",
+      "industry": "Professional Services",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "employee_id"
+      ],
+      "candidateFieldsTier1Confirmed": [],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "employee_id"
+      ],
+      "unresolvedPhrases": [
+        "employee or contractor status",
+        "timesheet period",
+        "dates/hours",
+        "pay/bill rates if supplied",
+        "supervisor approval",
+        "payroll/invoice reference."
+      ]
+    },
+    {
+      "code": "LIB-007",
+      "title": "Subcontractor Invoice",
+      "industry": "Construction",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "retention",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "variation_reference",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "invoice_date",
+        "payment_reference",
+        "retention",
+        "service_period",
+        "tax_id",
+        "variation_reference"
+      ],
+      "unresolvedPhrases": [
+        "current/cumulative claim",
+        "prior claims."
+      ]
+    },
+    {
+      "code": "LIB-008",
+      "title": "Progress Claim",
+      "industry": "Construction",
+      "candidateExtractionFields": [
+        "claim_id",
+        "contract_reference",
+        "retention",
+        "variation_reference",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "claim_id",
+        "contract_reference",
+        "retention",
+        "variation_reference"
+      ],
+      "unresolvedPhrases": [
+        "work period",
+        "certified progress",
+        "cumulative value",
+        "prior claims",
+        "tax and net payable."
+      ]
+    },
+    {
+      "code": "LIB-009",
+      "title": "Purchase Order",
+      "industry": "Construction",
+      "candidateExtractionFields": [
+        "budget_reference",
+        "cost_centre",
+        "currency",
+        "delivery_date",
+        "line_items",
+        "po_reference",
+        "requester",
+        "service_period",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "line_items",
+        "po_reference",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "budget_reference",
+        "cost_centre",
+        "delivery_date",
+        "requester",
+        "service_period"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-010",
+      "title": "Variation Order",
+      "industry": "Construction",
+      "candidateExtractionFields": [
+        "variation_reference"
+      ],
+      "candidateFieldsTier1Confirmed": [],
+      "candidateFieldsTier2Draft": [
+        "variation_reference"
+      ],
+      "unresolvedPhrases": [
+        "Tenant/counterparty",
+        "original contract",
+        "changed scope, quantities/rates and price",
+        "effective date",
+        "revised programme",
+        "approvals",
+        "tax if quoted."
+      ]
+    },
+    {
+      "code": "LIB-011",
+      "title": "Retention Claim",
+      "industry": "Construction",
+      "candidateExtractionFields": [
+        "claim_id",
+        "contract_reference",
+        "due_date",
+        "retention",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "claim_id",
+        "contract_reference",
+        "due_date",
+        "retention"
+      ],
+      "unresolvedPhrases": [
+        "original invoices",
+        "amount held and release requested",
+        "defects/completion certificate",
+        "prior releases",
+        "tax history."
+      ]
+    },
+    {
+      "code": "LIB-012",
+      "title": "Equipment Hire Invoice",
+      "industry": "Construction",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "invoice_date",
+        "payment_reference",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": [
+        "lease/hire dates",
+        "contract ID",
+        "payment frequency",
+        "index/rate changes",
+        "service components",
+        "lease schedule reference."
+      ]
+    },
+    {
+      "code": "LIB-013",
+      "title": "Supplier Invoice",
+      "industry": "Retail",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "received_quantity",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "invoice_date",
+        "payment_reference",
+        "received_quantity",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": [
+        "GRN reference."
+      ]
+    },
+    {
+      "code": "LIB-014",
+      "title": "Purchase Order",
+      "industry": "Retail",
+      "candidateExtractionFields": [
+        "budget_reference",
+        "cost_centre",
+        "currency",
+        "delivery_date",
+        "line_items",
+        "po_reference",
+        "requester",
+        "service_period",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "line_items",
+        "po_reference",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "budget_reference",
+        "cost_centre",
+        "delivery_date",
+        "requester",
+        "service_period"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-015",
+      "title": "Goods Receipt",
+      "industry": "Retail",
+      "candidateExtractionFields": [
+        "po_reference",
+        "serial_number",
+        "settlement_id"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "po_reference"
+      ],
+      "candidateFieldsTier2Draft": [
+        "serial_number",
+        "settlement_id"
+      ],
+      "unresolvedPhrases": [
+        "Tenant",
+        "supplier",
+        "GRN number/date",
+        "item/SKU",
+        "quantities accepted/rejected",
+        "units",
+        "receiver"
+      ]
+    },
+    {
+      "code": "LIB-016",
+      "title": "POS Settlement",
+      "industry": "Retail",
+      "candidateExtractionFields": [
+        "bank_details",
+        "currency",
+        "linked_sales_batches",
+        "merchant_id",
+        "settlement_id",
+        "total"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "total"
+      ],
+      "candidateFieldsTier2Draft": [
+        "bank_details",
+        "linked_sales_batches",
+        "merchant_id",
+        "settlement_id"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-017",
+      "title": "Merchant Settlement",
+      "industry": "Retail",
+      "candidateExtractionFields": [
+        "bank_details",
+        "currency",
+        "linked_sales_batches",
+        "merchant_id",
+        "settlement_id",
+        "total"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "total"
+      ],
+      "candidateFieldsTier2Draft": [
+        "bank_details",
+        "linked_sales_batches",
+        "merchant_id",
+        "settlement_id"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-018",
+      "title": "Credit Note",
+      "industry": "Retail",
+      "candidateExtractionFields": [
+        "credit_note_no",
+        "currency",
+        "customer_id",
+        "dispute_reference",
+        "original_invoice_reference",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "credit_note_no",
+        "customer_id",
+        "dispute_reference",
+        "original_invoice_reference"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-019",
+      "title": "Raw Material Invoice",
+      "industry": "Manufacturing",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "received_quantity",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "invoice_date",
+        "payment_reference",
+        "received_quantity",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": [
+        "GRN reference."
+      ]
+    },
+    {
+      "code": "LIB-020",
+      "title": "Purchase Order",
+      "industry": "Manufacturing",
+      "candidateExtractionFields": [
+        "budget_reference",
+        "cost_centre",
+        "currency",
+        "delivery_date",
+        "line_items",
+        "po_reference",
+        "requester",
+        "service_period",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "line_items",
+        "po_reference",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "budget_reference",
+        "cost_centre",
+        "delivery_date",
+        "requester",
+        "service_period"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-021",
+      "title": "Goods Received Note",
+      "industry": "Manufacturing",
+      "candidateExtractionFields": [
+        "po_reference",
+        "serial_number",
+        "settlement_id"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "po_reference"
+      ],
+      "candidateFieldsTier2Draft": [
+        "serial_number",
+        "settlement_id"
+      ],
+      "unresolvedPhrases": [
+        "Tenant",
+        "supplier",
+        "GRN number/date",
+        "item/SKU",
+        "quantities accepted/rejected",
+        "units",
+        "receiver"
+      ]
+    },
+    {
+      "code": "LIB-022",
+      "title": "Freight Invoice",
+      "industry": "Manufacturing",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "freight_allocation",
+        "import_declaration",
+        "incoterms",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "service_period",
+        "subtotal",
+        "surcharges",
+        "tax_id",
+        "total",
+        "vendor",
+        "weight_volume"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "freight_allocation",
+        "import_declaration",
+        "incoterms",
+        "invoice_date",
+        "payment_reference",
+        "service_period",
+        "surcharges",
+        "tax_id",
+        "weight_volume"
+      ],
+      "unresolvedPhrases": [
+        "route"
+      ]
+    },
+    {
+      "code": "LIB-023",
+      "title": "Utility Invoice",
+      "industry": "Manufacturing",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "meter_id",
+        "payment_reference",
+        "po_reference",
+        "prior_period_adjustment",
+        "service_account",
+        "service_period",
+        "subtotal",
+        "tariff_plan",
+        "tax_id",
+        "total",
+        "usage",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "invoice_date",
+        "meter_id",
+        "payment_reference",
+        "prior_period_adjustment",
+        "service_account",
+        "service_period",
+        "tariff_plan",
+        "tax_id",
+        "usage"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-024",
+      "title": "Capex Invoice",
+      "industry": "Manufacturing",
+      "candidateExtractionFields": [
+        "available_for_use_date",
+        "capex_approval",
+        "cost_centre",
+        "currency",
+        "due_date",
+        "installation_costs",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "project_reference",
+        "receipt_date",
+        "serial_number",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "available_for_use_date",
+        "capex_approval",
+        "cost_centre",
+        "due_date",
+        "installation_costs",
+        "invoice_date",
+        "payment_reference",
+        "project_reference",
+        "receipt_date",
+        "serial_number",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-025",
+      "title": "Freight Invoice",
+      "industry": "Logistics / Transport",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "freight_allocation",
+        "import_declaration",
+        "incoterms",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "service_period",
+        "subtotal",
+        "surcharges",
+        "tax_id",
+        "total",
+        "vendor",
+        "weight_volume"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "freight_allocation",
+        "import_declaration",
+        "incoterms",
+        "invoice_date",
+        "payment_reference",
+        "service_period",
+        "surcharges",
+        "tax_id",
+        "weight_volume"
+      ],
+      "unresolvedPhrases": [
+        "route"
+      ]
+    },
+    {
+      "code": "LIB-026",
+      "title": "Fuel Invoice",
+      "industry": "Logistics / Transport",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "invoice_date",
+        "payment_reference",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": [
+        "fuel card",
+        "litres/unit rate",
+        "purchase site",
+        "business-use allocation."
+      ]
+    },
+    {
+      "code": "LIB-027",
+      "title": "Toll Statement",
+      "industry": "Logistics / Transport",
+      "candidateExtractionFields": [
+        "total"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "total"
+      ],
+      "candidateFieldsTier2Draft": [],
+      "unresolvedPhrases": [
+        "Toll operator and tenant",
+        "account/statement ID and period",
+        "vehicle/tag",
+        "trip dates/routes",
+        "prior balance",
+        "payments/credits",
+        "linked invoice and bank reference."
+      ]
+    },
+    {
+      "code": "LIB-028",
+      "title": "Driver Expense",
+      "industry": "Logistics / Transport",
+      "candidateExtractionFields": [
+        "advance_reference",
+        "business_purpose",
+        "claim_id",
+        "cost_centre",
+        "currency",
+        "employee_id",
+        "payment_method",
+        "total"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "total"
+      ],
+      "candidateFieldsTier2Draft": [
+        "advance_reference",
+        "business_purpose",
+        "claim_id",
+        "cost_centre",
+        "employee_id",
+        "payment_method"
+      ],
+      "unresolvedPhrases": [
+        "vehicle",
+        "travel dates."
+      ]
+    },
+    {
+      "code": "LIB-029",
+      "title": "Customer Freight Invoice",
+      "industry": "Logistics / Transport",
+      "candidateExtractionFields": [
+        "billing_milestone",
+        "contract_reference",
+        "currency",
+        "customer",
+        "customer_id",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "subtotal",
+        "total"
+      ],
+      "candidateFieldsTier2Draft": [
+        "billing_milestone",
+        "contract_reference",
+        "customer",
+        "customer_id",
+        "due_date",
+        "invoice_date",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-030",
+      "title": "Vehicle Repair Invoice",
+      "industry": "Logistics / Transport",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "invoice_date",
+        "payment_reference",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": [
+        "work order",
+        "repair description",
+        "parts/labour",
+        "completion date."
+      ]
+    },
+    {
+      "code": "LIB-031",
+      "title": "Medical Supply Invoice",
+      "industry": "Healthcare",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "received_quantity",
+        "service_period",
+        "settlement_id",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "invoice_date",
+        "payment_reference",
+        "received_quantity",
+        "service_period",
+        "settlement_id",
+        "tax_id"
+      ],
+      "unresolvedPhrases": [
+        "GRN reference. Medical item"
+      ]
+    },
+    {
+      "code": "LIB-032",
+      "title": "Pharmacy Invoice",
+      "industry": "Healthcare",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "received_quantity",
+        "service_period",
+        "settlement_id",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "invoice_date",
+        "payment_reference",
+        "received_quantity",
+        "service_period",
+        "settlement_id",
+        "tax_id"
+      ],
+      "unresolvedPhrases": [
+        "GRN reference. Medicine/product identifier"
+      ]
+    },
+    {
+      "code": "LIB-033",
+      "title": "Contractor Invoice",
+      "industry": "Healthcare",
+      "candidateExtractionFields": [
+        "approved_hours",
+        "cost_centre",
+        "currency",
+        "deliverable_acceptance",
+        "due_date",
+        "engagement_id",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor",
+        "worker_status"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "approved_hours",
+        "cost_centre",
+        "deliverable_acceptance",
+        "due_date",
+        "engagement_id",
+        "invoice_date",
+        "payment_reference",
+        "service_period",
+        "tax_id",
+        "worker_status"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-034",
+      "title": "Patient Invoice",
+      "industry": "Healthcare",
+      "candidateExtractionFields": [
+        "billing_milestone",
+        "contract_reference",
+        "currency",
+        "customer",
+        "customer_id",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "subtotal",
+        "total"
+      ],
+      "candidateFieldsTier2Draft": [
+        "billing_milestone",
+        "contract_reference",
+        "customer",
+        "customer_id",
+        "due_date",
+        "invoice_date",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": [
+        "service codes",
+        "patient contribution/insurance allocation."
+      ]
+    },
+    {
+      "code": "LIB-035",
+      "title": "Insurance Claim",
+      "industry": "Healthcare",
+      "candidateExtractionFields": [
+        "claim_id",
+        "customer_id"
+      ],
+      "candidateFieldsTier1Confirmed": [],
+      "candidateFieldsTier2Draft": [
+        "claim_id",
+        "customer_id"
+      ],
+      "unresolvedPhrases": [
+        "insurer/payer",
+        "service date/code",
+        "authorisation if applicable",
+        "underlying patient invoice",
+        "billed/eligible amount",
+        "patient contribution",
+        "tax",
+        "claim status."
+      ]
+    },
+    {
+      "code": "LIB-036",
+      "title": "Equipment Purchase Invoice",
+      "industry": "Healthcare",
+      "candidateExtractionFields": [
+        "available_for_use_date",
+        "capex_approval",
+        "cost_centre",
+        "currency",
+        "due_date",
+        "installation_costs",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "project_reference",
+        "receipt_date",
+        "serial_number",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "available_for_use_date",
+        "capex_approval",
+        "cost_centre",
+        "due_date",
+        "installation_costs",
+        "invoice_date",
+        "payment_reference",
+        "project_reference",
+        "receipt_date",
+        "serial_number",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-037",
+      "title": "Supplier Invoice",
+      "industry": "Aged Care / NDIS",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "invoice_date",
+        "payment_reference",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-038",
+      "title": "Contractor Invoice",
+      "industry": "Aged Care / NDIS",
+      "candidateExtractionFields": [
+        "approved_hours",
+        "cost_centre",
+        "currency",
+        "deliverable_acceptance",
+        "due_date",
+        "engagement_id",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor",
+        "worker_status"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "approved_hours",
+        "cost_centre",
+        "deliverable_acceptance",
+        "due_date",
+        "engagement_id",
+        "invoice_date",
+        "payment_reference",
+        "service_period",
+        "tax_id",
+        "worker_status"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-039",
+      "title": "Client Service Claim",
+      "industry": "Aged Care / NDIS",
+      "candidateExtractionFields": [
+        "claim_id"
+      ],
+      "candidateFieldsTier1Confirmed": [],
+      "candidateFieldsTier2Draft": [
+        "claim_id"
+      ],
+      "unresolvedPhrases": [
+        "Provider, client/participant and payer IDs",
+        "service agreement",
+        "support/service code",
+        "service dates/units/rates",
+        "eligible amount",
+        "tax status",
+        "prior claims",
+        "service approval."
+      ]
+    },
+    {
+      "code": "LIB-040",
+      "title": "Government Funding Claim",
+      "industry": "Aged Care / NDIS",
+      "candidateExtractionFields": [
+        "approved_hours",
+        "claim_id",
+        "currency"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency"
+      ],
+      "candidateFieldsTier2Draft": [
+        "approved_hours",
+        "claim_id"
+      ],
+      "unresolvedPhrases": [
+        "Entity and funder",
+        "scheme/contract ID",
+        "eligible cost/service schedule",
+        "previously claimed/received amount",
+        "conditions/refund obligations",
+        "tax if applicable."
+      ]
+    },
+    {
+      "code": "LIB-041",
+      "title": "Employee Expense",
+      "industry": "Aged Care / NDIS",
+      "candidateExtractionFields": [
+        "advance_reference",
+        "business_purpose",
+        "claim_id",
+        "cost_centre",
+        "currency",
+        "employee_id",
+        "payment_method",
+        "total"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "total"
+      ],
+      "candidateFieldsTier2Draft": [
+        "advance_reference",
+        "business_purpose",
+        "claim_id",
+        "cost_centre",
+        "employee_id",
+        "payment_method"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-042",
+      "title": "Facility Cost Invoice",
+      "industry": "Aged Care / NDIS",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "serial_number",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "invoice_date",
+        "payment_reference",
+        "serial_number",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": [
+        "occupancy/service period",
+        "allocation key",
+        "work order if used."
+      ]
+    },
+    {
+      "code": "LIB-043",
+      "title": "Food Supplier Invoice",
+      "industry": "Hospitality",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "received_quantity",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "invoice_date",
+        "payment_reference",
+        "received_quantity",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": [
+        "GRN reference. Perishable item",
+        "delivery/expiry where relevant."
+      ]
+    },
+    {
+      "code": "LIB-044",
+      "title": "Beverage Invoice",
+      "industry": "Hospitality",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "received_quantity",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "invoice_date",
+        "payment_reference",
+        "received_quantity",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": [
+        "GRN reference. Beverage category",
+        "units/cases",
+        "deposit/returnable-container lines."
+      ]
+    },
+    {
+      "code": "LIB-045",
+      "title": "Utility Invoice",
+      "industry": "Hospitality",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "meter_id",
+        "payment_reference",
+        "po_reference",
+        "prior_period_adjustment",
+        "service_account",
+        "service_period",
+        "subtotal",
+        "tariff_plan",
+        "tax_id",
+        "total",
+        "usage",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "invoice_date",
+        "meter_id",
+        "payment_reference",
+        "prior_period_adjustment",
+        "service_account",
+        "service_period",
+        "tariff_plan",
+        "tax_id",
+        "usage"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-046",
+      "title": "POS Settlement",
+      "industry": "Hospitality",
+      "candidateExtractionFields": [
+        "bank_details",
+        "currency",
+        "linked_sales_batches",
+        "merchant_id",
+        "settlement_id",
+        "total"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "total"
+      ],
+      "candidateFieldsTier2Draft": [
+        "bank_details",
+        "linked_sales_batches",
+        "merchant_id",
+        "settlement_id"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-047",
+      "title": "Merchant Settlement",
+      "industry": "Hospitality",
+      "candidateExtractionFields": [
+        "bank_details",
+        "currency",
+        "linked_sales_batches",
+        "merchant_id",
+        "settlement_id",
+        "total"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "total"
+      ],
+      "candidateFieldsTier2Draft": [
+        "bank_details",
+        "linked_sales_batches",
+        "merchant_id",
+        "settlement_id"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-048",
+      "title": "Employee Reimbursement",
+      "industry": "Hospitality",
+      "candidateExtractionFields": [
+        "advance_reference",
+        "business_purpose",
+        "claim_id",
+        "cost_centre",
+        "currency",
+        "employee_id",
+        "payment_method",
+        "total"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "total"
+      ],
+      "candidateFieldsTier2Draft": [
+        "advance_reference",
+        "business_purpose",
+        "claim_id",
+        "cost_centre",
+        "employee_id",
+        "payment_method"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-049",
+      "title": "Contractor Invoice",
+      "industry": "Property / Real Estate",
+      "candidateExtractionFields": [
+        "approved_hours",
+        "cost_centre",
+        "currency",
+        "deliverable_acceptance",
+        "due_date",
+        "engagement_id",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor",
+        "worker_status"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "approved_hours",
+        "cost_centre",
+        "deliverable_acceptance",
+        "due_date",
+        "engagement_id",
+        "invoice_date",
+        "payment_reference",
+        "service_period",
+        "tax_id",
+        "worker_status"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-050",
+      "title": "Maintenance Invoice",
+      "industry": "Property / Real Estate",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "invoice_date",
+        "payment_reference",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": [
+        "work order",
+        "repair description",
+        "parts/labour",
+        "completion date."
+      ]
+    },
+    {
+      "code": "LIB-051",
+      "title": "Rent Invoice",
+      "industry": "Property / Real Estate",
+      "candidateExtractionFields": [
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "total"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "invoice_no",
+        "total"
+      ],
+      "candidateFieldsTier2Draft": [
+        "due_date",
+        "invoice_date"
+      ],
+      "unresolvedPhrases": [
+        "Landlord/tenant and property",
+        "lease ID",
+        "rental period",
+        "base rent/outgoings/other charges",
+        "tax",
+        "bond/deposit if separately billed."
+      ]
+    },
+    {
+      "code": "LIB-052",
+      "title": "Utility Bill",
+      "industry": "Property / Real Estate",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "meter_id",
+        "payment_reference",
+        "po_reference",
+        "prior_period_adjustment",
+        "service_account",
+        "service_period",
+        "subtotal",
+        "tariff_plan",
+        "tax_id",
+        "total",
+        "usage",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "invoice_date",
+        "meter_id",
+        "payment_reference",
+        "prior_period_adjustment",
+        "service_account",
+        "service_period",
+        "tariff_plan",
+        "tax_id",
+        "usage"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-053",
+      "title": "Property Management Fee",
+      "industry": "Property / Real Estate",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "invoice_date",
+        "payment_reference",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": [
+        "management agreement",
+        "fee basis/rate",
+        "rent collected or other calculation base",
+        "trust disbursement reference."
+      ]
+    },
+    {
+      "code": "LIB-054",
+      "title": "Capital Works Invoice",
+      "industry": "Property / Real Estate",
+      "candidateExtractionFields": [
+        "available_for_use_date",
+        "capex_approval",
+        "cost_centre",
+        "currency",
+        "due_date",
+        "installation_costs",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "project_reference",
+        "receipt_date",
+        "serial_number",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "available_for_use_date",
+        "capex_approval",
+        "cost_centre",
+        "due_date",
+        "installation_costs",
+        "invoice_date",
+        "payment_reference",
+        "project_reference",
+        "receipt_date",
+        "serial_number",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-055",
+      "title": "Supplier Invoice",
+      "industry": "Education",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "invoice_date",
+        "payment_reference",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-056",
+      "title": "Student Fee Invoice",
+      "industry": "Education",
+      "candidateExtractionFields": [
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "meter_id",
+        "total"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "invoice_no",
+        "total"
+      ],
+      "candidateFieldsTier2Draft": [
+        "due_date",
+        "invoice_date",
+        "meter_id"
+      ],
+      "unresolvedPhrases": [
+        "Tenant/customer/student",
+        "course/service start/end",
+        "billing period",
+        "units/rates",
+        "discounts",
+        "cancellation/refund terms."
+      ]
+    },
+    {
+      "code": "LIB-057",
+      "title": "Refund Request",
+      "industry": "Education",
+      "candidateExtractionFields": [
+        "currency",
+        "original_invoice_reference",
+        "payment_method",
+        "requester"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency"
+      ],
+      "candidateFieldsTier2Draft": [
+        "original_invoice_reference",
+        "payment_method",
+        "requester"
+      ],
+      "unresolvedPhrases": [
+        "refund request ID/date",
+        "reason",
+        "policy/contract basis",
+        "approval",
+        "related credit note."
+      ]
+    },
+    {
+      "code": "LIB-058",
+      "title": "Agent Commission Invoice",
+      "industry": "Education",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "invoice_date",
+        "payment_reference",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": [
+        "student/customer/deal ID",
+        "eligible fee base",
+        "agreed commission rate",
+        "trigger milestone",
+        "clawback/refund conditions."
+      ]
+    },
+    {
+      "code": "LIB-059",
+      "title": "Employee Expense",
+      "industry": "Education",
+      "candidateExtractionFields": [
+        "advance_reference",
+        "business_purpose",
+        "claim_id",
+        "cost_centre",
+        "currency",
+        "employee_id",
+        "payment_method",
+        "total"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "total"
+      ],
+      "candidateFieldsTier2Draft": [
+        "advance_reference",
+        "business_purpose",
+        "claim_id",
+        "cost_centre",
+        "employee_id",
+        "payment_method"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-060",
+      "title": "Facility Invoice",
+      "industry": "Education",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "serial_number",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "invoice_date",
+        "payment_reference",
+        "serial_number",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": [
+        "occupancy/service period",
+        "allocation key",
+        "work order if used."
+      ]
+    },
+    {
+      "code": "LIB-061",
+      "title": "Software Subscription Invoice",
+      "industry": "Technology / SaaS",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "meter_id",
+        "payment_reference",
+        "po_reference",
+        "prior_period_adjustment",
+        "service_account",
+        "service_period",
+        "subtotal",
+        "tariff_plan",
+        "tax_id",
+        "total",
+        "usage",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "invoice_date",
+        "meter_id",
+        "payment_reference",
+        "prior_period_adjustment",
+        "service_account",
+        "service_period",
+        "tariff_plan",
+        "tax_id",
+        "usage"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-062",
+      "title": "Cloud Invoice",
+      "industry": "Technology / SaaS",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "meter_id",
+        "payment_reference",
+        "po_reference",
+        "prior_period_adjustment",
+        "service_account",
+        "service_period",
+        "subtotal",
+        "tariff_plan",
+        "tax_id",
+        "total",
+        "usage",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "invoice_date",
+        "meter_id",
+        "payment_reference",
+        "prior_period_adjustment",
+        "service_account",
+        "service_period",
+        "tariff_plan",
+        "tax_id",
+        "usage"
+      ],
+      "unresolvedPhrases": [
+        "resource/service tags",
+        "usage units",
+        "credits",
+        "project allocation."
+      ]
+    },
+    {
+      "code": "LIB-063",
+      "title": "Contractor Invoice",
+      "industry": "Technology / SaaS",
+      "candidateExtractionFields": [
+        "approved_hours",
+        "cost_centre",
+        "currency",
+        "deliverable_acceptance",
+        "due_date",
+        "engagement_id",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor",
+        "worker_status"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "approved_hours",
+        "cost_centre",
+        "deliverable_acceptance",
+        "due_date",
+        "engagement_id",
+        "invoice_date",
+        "payment_reference",
+        "service_period",
+        "tax_id",
+        "worker_status"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-064",
+      "title": "Customer Subscription Invoice",
+      "industry": "Technology / SaaS",
+      "candidateExtractionFields": [
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "meter_id",
+        "total"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "invoice_no",
+        "total"
+      ],
+      "candidateFieldsTier2Draft": [
+        "due_date",
+        "invoice_date",
+        "meter_id"
+      ],
+      "unresolvedPhrases": [
+        "Tenant/customer/student",
+        "course/service start/end",
+        "billing period",
+        "units/rates",
+        "discounts",
+        "cancellation/refund terms."
+      ]
+    },
+    {
+      "code": "LIB-065",
+      "title": "Employee Expense",
+      "industry": "Technology / SaaS",
+      "candidateExtractionFields": [
+        "advance_reference",
+        "business_purpose",
+        "claim_id",
+        "cost_centre",
+        "currency",
+        "employee_id",
+        "payment_method",
+        "total"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "total"
+      ],
+      "candidateFieldsTier2Draft": [
+        "advance_reference",
+        "business_purpose",
+        "claim_id",
+        "cost_centre",
+        "employee_id",
+        "payment_method"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-066",
+      "title": "Hardware Purchase",
+      "industry": "Technology / SaaS",
+      "candidateExtractionFields": [
+        "available_for_use_date",
+        "capex_approval",
+        "cost_centre",
+        "currency",
+        "due_date",
+        "installation_costs",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "project_reference",
+        "receipt_date",
+        "serial_number",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "available_for_use_date",
+        "capex_approval",
+        "cost_centre",
+        "due_date",
+        "installation_costs",
+        "invoice_date",
+        "payment_reference",
+        "project_reference",
+        "receipt_date",
+        "serial_number",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-067",
+      "title": "Professional Fee Invoice",
+      "industry": "Financial Services",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "engagement_id",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "engagement_id",
+        "invoice_date",
+        "payment_reference",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": [
+        "asset/transaction value used",
+        "rate basis",
+        "fee period",
+        "transaction-linked charge flag."
+      ]
+    },
+    {
+      "code": "LIB-068",
+      "title": "Custodian Fee",
+      "industry": "Financial Services",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "engagement_id",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "engagement_id",
+        "invoice_date",
+        "payment_reference",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": [
+        "asset/transaction value used",
+        "rate basis",
+        "fee period",
+        "transaction-linked charge flag."
+      ]
+    },
+    {
+      "code": "LIB-069",
+      "title": "Brokerage Statement",
+      "industry": "Financial Services",
+      "candidateExtractionFields": [],
+      "candidateFieldsTier1Confirmed": [],
+      "candidateFieldsTier2Draft": [],
+      "unresolvedPhrases": [
+        "Entity/broker/account",
+        "statement ID and period",
+        "trade IDs and dates",
+        "security identifier",
+        "units/prices",
+        "trade and settlement amounts",
+        "fees",
+        "distributions/interest",
+        "tax",
+        "opening/closing holdings and cash."
+      ]
+    },
+    {
+      "code": "LIB-070",
+      "title": "Bank Statement",
+      "industry": "Financial Services",
+      "candidateExtractionFields": [
+        "currency"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency"
+      ],
+      "candidateFieldsTier2Draft": [],
+      "unresolvedPhrases": [
+        "Bank and entity/account ID",
+        "statement number/period",
+        "opening/closing balance",
+        "payment/receipt references."
+      ]
+    },
+    {
+      "code": "LIB-071",
+      "title": "Expense Claim",
+      "industry": "Financial Services",
+      "candidateExtractionFields": [
+        "advance_reference",
+        "business_purpose",
+        "claim_id",
+        "cost_centre",
+        "currency",
+        "employee_id",
+        "payment_method",
+        "total"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "total"
+      ],
+      "candidateFieldsTier2Draft": [
+        "advance_reference",
+        "business_purpose",
+        "claim_id",
+        "cost_centre",
+        "employee_id",
+        "payment_method"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-072",
+      "title": "Client Fee Invoice",
+      "industry": "Financial Services",
+      "candidateExtractionFields": [
+        "billing_milestone",
+        "contract_reference",
+        "currency",
+        "customer",
+        "customer_id",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "subtotal",
+        "total"
+      ],
+      "candidateFieldsTier2Draft": [
+        "billing_milestone",
+        "contract_reference",
+        "customer",
+        "customer_id",
+        "due_date",
+        "invoice_date",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-073",
+      "title": "Contractor Invoice",
+      "industry": "Mining / Resources",
+      "candidateExtractionFields": [
+        "approved_hours",
+        "cost_centre",
+        "currency",
+        "deliverable_acceptance",
+        "due_date",
+        "engagement_id",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor",
+        "worker_status"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "approved_hours",
+        "cost_centre",
+        "deliverable_acceptance",
+        "due_date",
+        "engagement_id",
+        "invoice_date",
+        "payment_reference",
+        "service_period",
+        "tax_id",
+        "worker_status"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-074",
+      "title": "Equipment Invoice",
+      "industry": "Mining / Resources",
+      "candidateExtractionFields": [
+        "available_for_use_date",
+        "capex_approval",
+        "cost_centre",
+        "currency",
+        "due_date",
+        "installation_costs",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "project_reference",
+        "receipt_date",
+        "serial_number",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "available_for_use_date",
+        "capex_approval",
+        "cost_centre",
+        "due_date",
+        "installation_costs",
+        "invoice_date",
+        "payment_reference",
+        "project_reference",
+        "receipt_date",
+        "serial_number",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-075",
+      "title": "Fuel Invoice",
+      "industry": "Mining / Resources",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "invoice_date",
+        "payment_reference",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": [
+        "fuel card",
+        "litres/unit rate",
+        "purchase site",
+        "business-use allocation."
+      ]
+    },
+    {
+      "code": "LIB-076",
+      "title": "Freight Invoice",
+      "industry": "Mining / Resources",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "freight_allocation",
+        "import_declaration",
+        "incoterms",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "service_period",
+        "subtotal",
+        "surcharges",
+        "tax_id",
+        "total",
+        "vendor",
+        "weight_volume"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "freight_allocation",
+        "import_declaration",
+        "incoterms",
+        "invoice_date",
+        "payment_reference",
+        "service_period",
+        "surcharges",
+        "tax_id",
+        "weight_volume"
+      ],
+      "unresolvedPhrases": [
+        "route"
+      ]
+    },
+    {
+      "code": "LIB-077",
+      "title": "Purchase Order",
+      "industry": "Mining / Resources",
+      "candidateExtractionFields": [
+        "budget_reference",
+        "cost_centre",
+        "currency",
+        "delivery_date",
+        "line_items",
+        "po_reference",
+        "requester",
+        "service_period",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "line_items",
+        "po_reference",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "budget_reference",
+        "cost_centre",
+        "delivery_date",
+        "requester",
+        "service_period"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-078",
+      "title": "Royalty Statement",
+      "industry": "Mining / Resources",
+      "candidateExtractionFields": [
+        "due_date"
+      ],
+      "candidateFieldsTier1Confirmed": [],
+      "candidateFieldsTier2Draft": [
+        "due_date"
+      ],
+      "unresolvedPhrases": [
+        "Payer/payee or authority",
+        "licence/tenement",
+        "statement/assessment ID",
+        "period",
+        "production/sales/price base",
+        "contractual/statutory rate",
+        "deductions",
+        "amount due",
+        "tax",
+        "prior accrual/payment."
+      ]
+    },
+    {
+      "code": "LIB-079",
+      "title": "Network Vendor Invoice",
+      "industry": "Telecommunications",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "invoice_date",
+        "payment_reference",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": [
+        "site/network asset",
+        "project",
+        "hardware serials",
+        "licence/service term",
+        "commissioning evidence."
+      ]
+    },
+    {
+      "code": "LIB-080",
+      "title": "Tower Lease Invoice",
+      "industry": "Telecommunications",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "invoice_date",
+        "payment_reference",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": [
+        "lease/hire dates",
+        "contract ID",
+        "payment frequency",
+        "index/rate changes",
+        "service components",
+        "lease schedule reference."
+      ]
+    },
+    {
+      "code": "LIB-081",
+      "title": "Customer Billing",
+      "industry": "Telecommunications",
+      "candidateExtractionFields": [
+        "billing_milestone",
+        "contract_reference",
+        "currency",
+        "customer",
+        "customer_id",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "subtotal",
+        "total"
+      ],
+      "candidateFieldsTier2Draft": [
+        "billing_milestone",
+        "contract_reference",
+        "customer",
+        "customer_id",
+        "due_date",
+        "invoice_date",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-082",
+      "title": "Equipment Invoice",
+      "industry": "Telecommunications",
+      "candidateExtractionFields": [
+        "available_for_use_date",
+        "capex_approval",
+        "cost_centre",
+        "currency",
+        "due_date",
+        "installation_costs",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "project_reference",
+        "receipt_date",
+        "serial_number",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "available_for_use_date",
+        "capex_approval",
+        "cost_centre",
+        "due_date",
+        "installation_costs",
+        "invoice_date",
+        "payment_reference",
+        "project_reference",
+        "receipt_date",
+        "serial_number",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-083",
+      "title": "Contractor Invoice",
+      "industry": "Telecommunications",
+      "candidateExtractionFields": [
+        "approved_hours",
+        "cost_centre",
+        "currency",
+        "deliverable_acceptance",
+        "due_date",
+        "engagement_id",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor",
+        "worker_status"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "approved_hours",
+        "cost_centre",
+        "deliverable_acceptance",
+        "due_date",
+        "engagement_id",
+        "invoice_date",
+        "payment_reference",
+        "service_period",
+        "tax_id",
+        "worker_status"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-084",
+      "title": "Utility Invoice",
+      "industry": "Telecommunications",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "meter_id",
+        "payment_reference",
+        "po_reference",
+        "prior_period_adjustment",
+        "service_account",
+        "service_period",
+        "subtotal",
+        "tariff_plan",
+        "tax_id",
+        "total",
+        "usage",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "invoice_date",
+        "meter_id",
+        "payment_reference",
+        "prior_period_adjustment",
+        "service_account",
+        "service_period",
+        "tariff_plan",
+        "tax_id",
+        "usage"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-085",
+      "title": "Supplier Invoice",
+      "industry": "Government / Public Sector",
+      "candidateExtractionFields": [
+        "cost_centre",
+        "currency",
+        "due_date",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "cost_centre",
+        "due_date",
+        "invoice_date",
+        "payment_reference",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-086",
+      "title": "Purchase Order",
+      "industry": "Government / Public Sector",
+      "candidateExtractionFields": [
+        "budget_reference",
+        "cost_centre",
+        "currency",
+        "delivery_date",
+        "line_items",
+        "po_reference",
+        "requester",
+        "service_period",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "line_items",
+        "po_reference",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "budget_reference",
+        "cost_centre",
+        "delivery_date",
+        "requester",
+        "service_period"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-087",
+      "title": "Grant Payment",
+      "industry": "Government / Public Sector",
+      "candidateExtractionFields": [
+        "advance_reference",
+        "currency"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency"
+      ],
+      "candidateFieldsTier2Draft": [
+        "advance_reference"
+      ],
+      "unresolvedPhrases": [
+        "Grantor and recipient verified identity",
+        "scheme/award",
+        "payment ID/date",
+        "milestone/conditions",
+        "authorised bank destination",
+        "executed bank status."
+      ]
+    },
+    {
+      "code": "LIB-088",
+      "title": "Employee Expense",
+      "industry": "Government / Public Sector",
+      "candidateExtractionFields": [
+        "advance_reference",
+        "business_purpose",
+        "claim_id",
+        "cost_centre",
+        "currency",
+        "employee_id",
+        "payment_method",
+        "total"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "total"
+      ],
+      "candidateFieldsTier2Draft": [
+        "advance_reference",
+        "business_purpose",
+        "claim_id",
+        "cost_centre",
+        "employee_id",
+        "payment_method"
+      ],
+      "unresolvedPhrases": []
+    },
+    {
+      "code": "LIB-089",
+      "title": "Funding Claim",
+      "industry": "Government / Public Sector",
+      "candidateExtractionFields": [
+        "approved_hours",
+        "claim_id",
+        "currency"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency"
+      ],
+      "candidateFieldsTier2Draft": [
+        "approved_hours",
+        "claim_id"
+      ],
+      "unresolvedPhrases": [
+        "Entity and funder",
+        "scheme/contract ID",
+        "eligible cost/service schedule",
+        "previously claimed/received amount",
+        "conditions/refund obligations",
+        "tax if applicable."
+      ]
+    },
+    {
+      "code": "LIB-090",
+      "title": "Capital Invoice",
+      "industry": "Government / Public Sector",
+      "candidateExtractionFields": [
+        "available_for_use_date",
+        "capex_approval",
+        "cost_centre",
+        "currency",
+        "due_date",
+        "installation_costs",
+        "invoice_date",
+        "invoice_no",
+        "line_items",
+        "payment_reference",
+        "po_reference",
+        "project_reference",
+        "receipt_date",
+        "serial_number",
+        "service_period",
+        "subtotal",
+        "tax_id",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier1Confirmed": [
+        "currency",
+        "invoice_no",
+        "line_items",
+        "po_reference",
+        "subtotal",
+        "total",
+        "vendor"
+      ],
+      "candidateFieldsTier2Draft": [
+        "available_for_use_date",
+        "capex_approval",
+        "cost_centre",
+        "due_date",
+        "installation_costs",
+        "invoice_date",
+        "payment_reference",
+        "project_reference",
+        "receipt_date",
+        "serial_number",
+        "service_period",
+        "tax_id"
+      ],
+      "unresolvedPhrases": []
+    }
+  ]
+}

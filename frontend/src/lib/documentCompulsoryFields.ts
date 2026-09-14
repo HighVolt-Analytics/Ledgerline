@@ -1,15 +1,8 @@
-import shippedDefaults from "@/lib/documentTypeDefaults.json";
 import { normalizeExtractionFieldKeys } from "@/lib/documentExtractionFields";
 import {
   effectiveValidationRules,
   type ValidationRuleConfig,
 } from "@/lib/documentValidationChecks";
-
-type DefaultsRow = {
-  required_fields?: string[];
-};
-
-const DEFAULTS_INDEX = shippedDefaults as Record<string, DefaultsRow>;
 
 /** Keys that block GL posting when absent (subset of compulsory). */
 export const POSTING_CRITICAL_FIELD_KEYS = new Set([
@@ -71,9 +64,8 @@ export function ensureExtractionSuperset(
   return out;
 }
 
-export function defaultCompulsoryForTemplate(matrixCode: string): string[] {
-  const row = DEFAULTS_INDEX[matrixCode.trim().toUpperCase()];
-  return normalizeExtractionFieldKeys(row?.required_fields ?? []);
+export function defaultCompulsoryForTemplate(_matrixCode: string): string[] {
+  return [];
 }
 
 export function optionalExtractionFields(

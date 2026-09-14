@@ -128,9 +128,8 @@ export function VendorsTab({
 
   const toggleRevealBank = () => {
     if (!canRevealBank) return;
+    // Keep unsaved drafts — clearing them wiped in-progress vendor details on Show.
     setRevealBank((current) => !current);
-    setDrafts({});
-    setDirtyIds(new Set());
   };
 
   const sendVendorConfirmation = (vendor: VendorMaster) => {

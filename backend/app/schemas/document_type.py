@@ -19,6 +19,15 @@ from app.schemas.playbook_policy import (
 from app.schemas.validation_rule import ValidationRuleConfig, normalize_validation_rules
 
 
+class DocumentTypePostToSuggestion(BaseModel):
+    """Read-only dictionary guidance for Post to — not tenant GL account codes."""
+
+    ledger: str = ""
+    sub_ledger: str = Field(default="", alias="subLedger")
+
+    model_config = {"populate_by_name": True}
+
+
 class DocumentTypePostTo(BaseModel):
     """GL posting targets per document type; ledger may be empty until configured."""
 
@@ -67,14 +76,16 @@ TEAM_EXPENSE_KIND_CHOICES = frozenset(
 )
 RecognitionMode = Literal["signals", "prompt"]
 CounterpartySource = Literal["letterhead", "consignee", "applicant", "bill_to"]
-CounterpartyType = Literal["vendor", "customer"]
-COUNTERPARTY_TYPE_CHOICES = frozenset({"vendor", "customer"})
+CounterpartyType = Literal["vendor", "customer", "employee", "none"]
+COUNTERPARTY_TYPE_CHOICES = frozenset({"vendor", "customer", "employee", "none"})
 
 
 def default_counterparty_type_for_route(route_target: str | None) -> CounterpartyType:
     route = (route_target or "").strip()
     if route == "Sales Management":
         return "customer"
+    if route == "Team Expenses":
+        return "employee"
     return "vendor"
 
 
@@ -140,7 +151,7 @@ class DocumentTypeDefinition(BaseModel):
     counterparty_type: CounterpartyType = Field(
         default="vendor",
         alias="counterpartyType",
-        description="QBO/Xero party kind for the extracted name: vendor or customer.",
+        description="Party kind for extracted name: vendor, customer, employee, or none.",
     )
     enabled: bool = True
     classifier: DocumentTypeClassifier = Field(default_factory=DocumentTypeClassifier)
@@ -149,6 +160,25 @@ class DocumentTypeDefinition(BaseModel):
         max_length=16,
         alias="matrixTemplateCode",
         description="Shipped matrix template id (e.g. DT-07); org code is assigned separately.",
+    )
+    source_dictionary_code: str = Field(
+        default="",
+        max_length=16,
+        alias="sourceDictionaryCode",
+        description="Dictionary code adopted from (e.g. LIB-001); read-only provenance.",
+    )
+    created_from_dictionary_version: int | None = Field(
+        default=None,
+        alias="createdFromDictionaryVersion",
+        description="Dictionary version at adopt time.",
+    )
+    compulsory_fields_present: bool = Field(
+        default=False,
+        alias="compulsoryFieldsPresent",
+    )
+    compulsory_fields_severity: str = Field(
+        default="NA",
+        alias="compulsoryFieldsSeverity",
     )
     required_fields: list[str] = Field(default_factory=list, alias="requiredFields")
     absent_fields: list[str] = Field(default_factory=list, alias="absentFields")
@@ -205,6 +235,16 @@ class DocumentTypeDefinition(BaseModel):
         alias="sampleAnalysis",
     )
     post_to: DocumentTypePostTo = Field(default_factory=DocumentTypePostTo, alias="postTo")
+    post_to_suggestion: DocumentTypePostToSuggestion | None = Field(
+        default=None,
+        alias="postToSuggestion",
+        description="Dictionary adopt hint for Post to — never auto-applied to post_to.",
+    )
+    extraction_fields_suggestion: list[str] = Field(
+        default_factory=list,
+        alias="extractionFieldsSuggestion",
+        description="Dictionary adopt hint for extraction — original prose, not field keys.",
+    )
 
     model_config = {"populate_by_name": True}
 

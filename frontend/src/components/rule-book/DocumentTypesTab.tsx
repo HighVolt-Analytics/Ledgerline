@@ -57,6 +57,7 @@ import {
 } from "@/lib/documentCompulsoryFields";
 import {
   documentTypeFromTemplate,
+  resolveExtractionFieldsSuggestionForDocumentType,
 } from "@/lib/documentTypeTemplates";
 import { bundleConfigWarnings, catalogueHealthWarnings } from "@/lib/documentTypeBundleValidation";
 import { normalizeBundleConditional } from "@/lib/documentBundleConfig";
@@ -308,6 +309,7 @@ function ExtractionFieldsPicker({
   routeTarget,
   extractionFields,
   requiredFields,
+  extractionFieldsSuggestion,
   routePruneNotice,
   transactional,
   onChange,
@@ -316,6 +318,7 @@ function ExtractionFieldsPicker({
   routeTarget: string;
   extractionFields: string[];
   requiredFields: string[];
+  extractionFieldsSuggestion?: string[];
   routePruneNotice?: string | null;
   transactional: boolean;
   onChange: (next: { extractionFields: string[]; requiredFields: string[] }) => void;
@@ -328,6 +331,9 @@ function ExtractionFieldsPicker({
   const { standard: selectedStandard, custom: selectedCustom } = splitExtractionFields(normalized);
   const routeStandardKeys = standardExtractionFieldsForRoute(routeTarget);
   const routeBaselineHint = routeCompulsoryBaselineHint(routeTarget);
+  const dictionaryHints = (extractionFieldsSuggestion ?? [])
+    .map((row) => String(row ?? "").trim())
+    .filter(Boolean);
   const routeRecommended = new Set<string>(
     transactional ? routeCompulsoryBaseline(routeTarget) : []
   );
@@ -444,6 +450,21 @@ function ExtractionFieldsPicker({
           </p>
           {routeBaselineHint ? (
             <p className="mt-1 text-[11px] text-muted-foreground">{routeBaselineHint}</p>
+          ) : null}
+          {dictionaryHints.length > 0 ? (
+            <div
+              className="mt-2 rounded-md border border-border bg-muted/20 px-2.5 py-2"
+              data-testid="dt-extraction-dictionary-hint"
+            >
+              <p className="text-[11px] font-medium text-foreground">
+                Dictionary guidance (not field keys)
+              </p>
+              <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[11px] text-muted-foreground">
+                {dictionaryHints.map((hint) => (
+                  <li key={hint}>{hint}</li>
+                ))}
+              </ul>
+            </div>
           ) : null}
           {missingRecommended.length > 0 ? (
             <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -959,6 +980,8 @@ function DocumentTypeEditDialog({
                 >
                   <option value="vendor">Vendor</option>
                   <option value="customer">Customer</option>
+                  <option value="employee">Employee</option>
+                  <option value="none">None</option>
                 </select>
               </div>
               <div className="space-y-1.5">
@@ -1095,6 +1118,7 @@ function DocumentTypeEditDialog({
               routeTarget={draft.routeTarget}
               extractionFields={draft.extractionFields}
               requiredFields={draft.requiredFields}
+              extractionFieldsSuggestion={resolveExtractionFieldsSuggestionForDocumentType(draft)}
               routePruneNotice={routePruneNotice}
               transactional={isTransactionalForRouteCompulsory({
                 posting: draft.posting,

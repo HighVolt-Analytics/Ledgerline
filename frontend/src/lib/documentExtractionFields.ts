@@ -12,14 +12,26 @@ export type ExtractionFieldOption = { key: string; label: string };
 export const EXTRACTION_FIELD_OPTIONS = [
   { key: "vendor", label: "Vendor" },
   { key: "employee_name", label: "Employee name" },
+  { key: "employee_id", label: "Employee ID" },
   { key: "abn", label: "Business registration number" },
   { key: "invoice_no", label: "Invoice number" },
   { key: "proforma_invoice_no", label: "Proforma invoice number" },
+  { key: "credit_note_no", label: "Credit note number" },
+  { key: "original_invoice_reference", label: "Original invoice reference" },
   { key: "invoice_date", label: "Invoice date" },
   { key: "due_date", label: "Due date" },
+  { key: "receipt_date", label: "Receipt date" },
+  { key: "delivery_date", label: "Delivery date" },
   { key: "po_reference", label: "PO reference" },
   { key: "so_reference", label: "SO reference" },
+  { key: "contract_reference", label: "Contract reference" },
+  { key: "project_reference", label: "Project reference" },
+  { key: "advance_reference", label: "Advance reference" },
+  { key: "claim_id", label: "Claim ID" },
+  { key: "remittance_reference", label: "Payment / remittance reference" },
+  { key: "payment_method", label: "Payment method" },
   { key: "cost_centre", label: "Cost centre" },
+  { key: "service_period", label: "Service period" },
   { key: "currency", label: "Currency" },
   { key: "subtotal", label: "Subtotal" },
   { key: "gst", label: "Tax (GST/VAT)" },
@@ -27,6 +39,7 @@ export const EXTRACTION_FIELD_OPTIONS = [
   { key: "total", label: "Total" },
   { key: "line_items", label: "Line items" },
   { key: "bank_details", label: "Bank details" },
+  { key: "buyer_bank_details", label: "Buyer bank details" },
   { key: "attachment_name", label: "Attachment name" },
   { key: "document_heading", label: "Document heading" },
   { key: "document_text", label: "Document text (OCR body)" },
@@ -143,8 +156,13 @@ const STANDARD_EXTRACTION_FIELDS_BY_ROUTE: Record<RouteTarget, ExtractionFieldKe
     "invoice_no",
     "invoice_date",
     "due_date",
+    "delivery_date",
     "po_reference",
+    "contract_reference",
+    "project_reference",
     "cost_centre",
+    "service_period",
+    "remittance_reference",
     "currency",
     "subtotal",
     "gst",
@@ -153,6 +171,9 @@ const STANDARD_EXTRACTION_FIELDS_BY_ROUTE: Record<RouteTarget, ExtractionFieldKe
     "line_items",
     "billing_address",
     "bank_details",
+    "seller_tax_id",
+    "credit_note_no",
+    "original_invoice_reference",
   ]),
   "Sales Management": withLinkingStandardFields([
     "vendor",
@@ -160,7 +181,13 @@ const STANDARD_EXTRACTION_FIELDS_BY_ROUTE: Record<RouteTarget, ExtractionFieldKe
     "invoice_no",
     "invoice_date",
     "due_date",
+    "delivery_date",
     "so_reference",
+    "contract_reference",
+    "project_reference",
+    "cost_centre",
+    "service_period",
+    "remittance_reference",
     "currency",
     "subtotal",
     "gst",
@@ -173,8 +200,11 @@ const STANDARD_EXTRACTION_FIELDS_BY_ROUTE: Record<RouteTarget, ExtractionFieldKe
     "buyer_name",
     "buyer_tax_id",
     "buyer_address",
+    "buyer_bank_details",
     "billing_address",
     "bank_details",
+    "credit_note_no",
+    "original_invoice_reference",
   ]),
   "Expenses Management": withLinkingStandardFields([
     "vendor",
@@ -182,7 +212,11 @@ const STANDARD_EXTRACTION_FIELDS_BY_ROUTE: Record<RouteTarget, ExtractionFieldKe
     "invoice_no",
     "invoice_date",
     "due_date",
+    "receipt_date",
     "cost_centre",
+    "service_period",
+    "payment_method",
+    "remittance_reference",
     "currency",
     "subtotal",
     "gst",
@@ -193,11 +227,16 @@ const STANDARD_EXTRACTION_FIELDS_BY_ROUTE: Record<RouteTarget, ExtractionFieldKe
   "Team Expenses": withLinkingStandardFields([
     "email_sender",
     "employee_name",
+    "employee_id",
     "abn",
     "invoice_no",
     "invoice_date",
     "due_date",
+    "receipt_date",
     "cost_centre",
+    "claim_id",
+    "advance_reference",
+    "payment_method",
     "currency",
     "subtotal",
     "gst",
@@ -293,6 +332,37 @@ export function normalizeExtractionFieldKeys(values: string[] | null | undefined
     if (!key || seen.has(key)) continue;
     seen.add(key);
     out.push(key);
+  }
+  return out;
+}
+
+/**
+ * Dictionary adopt: keep only exact / near-exact standard catalogue keys.
+ * Prose guidance (e.g. "invoice number/date") is not snake-cased into custom keys.
+ */
+export function standardCatalogueKeysFromDictionaryHints(
+  values: string[] | null | undefined
+): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of values ?? []) {
+    const trimmed = String(raw ?? "").trim();
+    if (!trimmed) continue;
+    // Exact catalogue key (already snake_case).
+    const exact = trimmed.toLowerCase();
+    if (isPresetExtractionFieldKey(exact)) {
+      if (!seen.has(exact)) {
+        seen.add(exact);
+        out.push(exact);
+      }
+      continue;
+    }
+    // Near-exact: spaces/hyphens → underscores, only if result is a preset key.
+    const normalized = sanitizeExtractionFieldKey(trimmed);
+    if (normalized && isPresetExtractionFieldKey(normalized) && !seen.has(normalized)) {
+      seen.add(normalized);
+      out.push(normalized);
+    }
   }
   return out;
 }

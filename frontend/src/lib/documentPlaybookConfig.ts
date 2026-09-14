@@ -12,7 +12,6 @@ import {
   derivePostingFromKlassAndProfile,
   isTransPosting,
 } from "@/lib/documentTypeKlass";
-import { defaultPlaybookProfileForCode as shippedDefaultPlaybookProfileForCode } from "@/lib/documentTypePlaybookDefaults";
 import { reconcileTeamExpenseKindForDocumentType } from "@/lib/teamExpenseKind";
 
 export type PlaybookProfile =
@@ -191,11 +190,6 @@ export function inferPlaybookProfileFromDefinition(
   if (salesRole === "so" || salesRole === "dn") return "supporting";
   const explicit = (docType.playbookProfile || "").trim().toLowerCase() as PlaybookProfile;
   if (explicit) return explicit;
-  const catalogueCode = (docType.matrixTemplateCode || docType.code || "").trim().toUpperCase();
-  if (catalogueCode) {
-    const defaultProfile = shippedDefaultPlaybookProfileForCode(catalogueCode);
-    if (defaultProfile !== "standard_transactional") return defaultProfile;
-  }
   const posting = derivePostingFromKlassAndProfile(
     docType.klass,
     docType.playbookProfile,
@@ -320,8 +314,7 @@ export function defaultPlaybookProfileForCode(
     "klass" | "posting" | "purchaseBundleRole" | "salesBundleRole" | "playbookProfile"
   >
 ): PlaybookProfile {
-  if (docType) return inferPlaybookProfileFromDefinition({ ...docType, code });
-  return shippedDefaultPlaybookProfileForCode(code);
+  return inferPlaybookProfileFromDefinition({ ...(docType ?? {}), code });
 }
 
 export function effectivePlaybookProfile(docType: DocumentTypeDefinition): PlaybookProfile {
