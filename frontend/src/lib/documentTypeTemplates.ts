@@ -38,6 +38,12 @@ export {
   getDocumentTypeTemplate,
 };
 
+export type { RouteConfidencePreset } from "@/lib/documentTypeTemplateMeta";
+export {
+  ROUTE_CONFIDENCE_VALUES,
+  routeConfidencePreset,
+} from "@/lib/documentTypeTemplateMeta";
+
 /** Org catalogue codes always follow the org sequence — never the dictionary code. */
 function orgCodeForNewType(existing: DocumentTypeDefinition[]): string {
   return nextOrgDocumentTypeCode(existing);

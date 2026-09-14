@@ -10,7 +10,11 @@ import {
   type DocumentTypeTemplateId,
   type RouteConfidencePreset,
 } from "@/lib/documentTypeTemplates";
-import { allRecognitionSignalOptions } from "@/lib/documentTypeTemplateMeta";
+import {
+  allRecognitionSignalOptions,
+  templateSignalMetaForCode,
+  type RecognitionSignalOption,
+} from "@/lib/documentTypeTemplateMeta";
 import type { RecognitionSignalId } from "@/lib/documentClassifierBuilder";
 import { applyRecognitionSignalIds } from "@/lib/documentTypeRecognition";
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
@@ -35,18 +39,32 @@ export function SimpleClassifierSection({
   onOpenAdvanced,
 }: SimpleClassifierSectionProps) {
   const template = getDocumentTypeTemplate(templateId);
+  const signalMeta = useMemo(() => {
+    const code =
+      (draft.matrixTemplateCode || "").trim() ||
+      template.dictionaryCode ||
+      String(templateId);
+    return templateSignalMetaForCode(code);
+  }, [draft.matrixTemplateCode, template.dictionaryCode, templateId]);
   const signalOptions = useMemo(
-    () => (template.signals.length > 0 ? template.signals : allRecognitionSignalOptions()),
-    [template]
+    () =>
+      signalMeta && signalMeta.signals.length > 0
+        ? signalMeta.signals
+        : allRecognitionSignalOptions(),
+    [signalMeta]
   );
-  const allowedIds = useMemo(() => signalOptions.map((s) => s.id), [signalOptions]);
+  const classifierLayout = signalMeta?.classifierLayout ?? "any_signal";
+  const allowedIds = useMemo(
+    () => signalOptions.map((s: RecognitionSignalOption) => s.id),
+    [signalOptions]
+  );
 
   const selectedSignals = useMemo(
     () => draft.recognitionSignals as RecognitionSignalId[],
     [draft.recognitionSignals]
   );
 
-  const confidencePreset = routeConfidencePreset(draft.minRouteConfidence);
+  const confidencePreset = routeConfidencePreset(draft.minRouteConfidence ?? 0.65);
 
   const toggleSignal = (signalId: RecognitionSignalId, checked: boolean) => {
     const nextSet = new Set(selectedSignals);
@@ -92,9 +110,9 @@ export function SimpleClassifierSection({
             <p className="text-xs font-medium text-foreground">How we spot this document</p>
             <p className="text-xs text-muted-foreground">
               Tick every signal that usually appears. A match on <strong>any</strong> ticked signal
-              {template.classifierLayout === "all_signals"
+              {classifierLayout === "all_signals"
                 ? " is not enough — all ticked signals must match."
-                : template.classifierLayout === "supporting_doc"
+                : classifierLayout === "supporting_doc"
                   ? " is enough, and the document must not look like a tax invoice."
                   : " is enough to classify."}
             </p>
@@ -104,7 +122,7 @@ export function SimpleClassifierSection({
               </p>
             ) : (
               <ul className="space-y-2 rounded-md border border-border bg-muted/20 p-3">
-                {signalOptions.map((signal) => {
+                {signalOptions.map((signal: RecognitionSignalOption) => {
                   const checked = selectedSignals.includes(signal.id);
                   return (
                     <li key={signal.id}>
@@ -113,7 +131,9 @@ export function SimpleClassifierSection({
                           type="checkbox"
                           className="mt-0.5 h-4 w-4 rounded border-input"
                           checked={checked}
-                          onChange={(e) => toggleSignal(signal.id, e.target.checked)}
+                          onChange={(e) =>
+                            toggleSignal(signal.id as RecognitionSignalId, e.target.checked)
+                          }
                           data-testid={`signal-${signal.id}`}
                         />
                         <span className="min-w-0">
@@ -126,7 +146,7 @@ export function SimpleClassifierSection({
                 })}
               </ul>
             )}
-            {selectedSignals.length === 0 && template.signals.length > 0 ? (
+            {selectedSignals.length === 0 && (signalMeta?.signals.length ?? 0) > 0 ? (
               <p className="text-xs ds-warning-text">
                 Select at least one signal or this type will never match.
               </p>

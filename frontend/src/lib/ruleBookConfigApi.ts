@@ -744,7 +744,10 @@ function documentTypeToApi(
     recognition_signals: reconciled.recognitionSignals,
     llm_prompt: reconciled.llmPrompt,
     route_target: reconciled.routeTarget,
-    counterparty_type: reconciled.counterpartyType,
+    counterparty_type:
+      reconciled.counterpartyType === "none"
+        ? undefined
+        : reconciled.counterpartyType,
     enabled: reconciled.enabled,
     classifier: {
       enabled: reconciled.classifier.enabled,

@@ -173,16 +173,15 @@ export function clampApprovalModeForRoute(
 }
 
 export function inferPlaybookProfileFromDefinition(
-  docType: Pick<
-    DocumentTypeDefinition,
-    | "code"
-    | "klass"
-    | "posting"
-    | "purchaseBundleRole"
-    | "salesBundleRole"
-    | "playbookProfile"
-    | "matrixTemplateCode"
-  >
+  docType: {
+    code: string;
+    klass?: DocumentTypeDefinition["klass"];
+    posting?: DocumentTypeDefinition["posting"];
+    purchaseBundleRole?: DocumentTypeDefinition["purchaseBundleRole"];
+    salesBundleRole?: DocumentTypeDefinition["salesBundleRole"];
+    playbookProfile?: DocumentTypeDefinition["playbookProfile"];
+    matrixTemplateCode?: DocumentTypeDefinition["matrixTemplateCode"];
+  }
 ): PlaybookProfile {
   const purchaseRole = (docType.purchaseBundleRole || "").trim().toLowerCase();
   if (purchaseRole === "po" || purchaseRole === "grn") return "supporting";

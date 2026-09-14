@@ -2688,7 +2688,7 @@ export interface RuleBookConfig {
     purchase_bundle_role?: string;
     sales_bundle_role?: string;
     team_expense_kind?: string;
-    counterparty_type?: "vendor" | "customer";
+    counterparty_type?: "vendor" | "customer" | "employee" | "none";
     budget_control?: boolean;
     advance_control?: boolean;
     matrix_template_code?: string;

@@ -9,6 +9,24 @@ export type RecognitionSignalId = string;
 
 export type RouteConfidencePreset = "flexible" | "standard" | "strict";
 
+export const ROUTE_CONFIDENCE_VALUES: Record<RouteConfidencePreset, number> = {
+  flexible: 0.55,
+  standard: 0.65,
+  strict: 0.75,
+};
+
+function routeConfidenceFromValue(value: number | undefined): RouteConfidencePreset {
+  if (value === undefined) return "standard";
+  if (value <= 0.58) return "flexible";
+  if (value >= 0.72) return "strict";
+  return "standard";
+}
+
+/** Map a numeric minRouteConfidence to the nearest simple-mode preset. */
+export function routeConfidencePreset(value: number): RouteConfidencePreset {
+  return routeConfidenceFromValue(value);
+}
+
 export type RecognitionSignalOption = {
   id: RecognitionSignalId;
   label: string;
