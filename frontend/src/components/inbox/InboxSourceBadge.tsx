@@ -1,16 +1,16 @@
-import { Badge } from "@/components/ui/badge";
+import { CaptureSourceLogo } from "@/components/upload/CaptureSourceLogo";
 import type { InvoiceSource } from "@/lib/invoice";
 import { invoiceSourceLabel } from "@/lib/invoice";
 
 export function InboxSourceBadge({ kind }: { kind: InvoiceSource }) {
   const label = invoiceSourceLabel(kind);
   return (
-    <Badge
-      variant="outline"
-      className="text-[10px] font-normal border-border text-muted-foreground max-w-full min-w-0 truncate"
+    <span
+      className="inline-flex h-4 w-4 shrink-0 items-center justify-center"
       title={label}
+      aria-label={label}
     >
-      {label}
-    </Badge>
+      <CaptureSourceLogo source={kind} />
+    </span>
   );
 }

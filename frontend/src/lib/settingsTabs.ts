@@ -3,7 +3,6 @@ export const SETTINGS_TABS = [
   { id: "ai-documents", label: "AI & documents", testid: "tab-ai-documents" },
   { id: "team", label: "Team", testid: "tab-team" },
   { id: "policy", label: "Policy & privileges", testid: "tab-policy" },
-  { id: "mobile", label: "Mobile", testid: "tab-mobile" },
   { id: "coa", label: "Chart of accounts", testid: "tab-coa" },
   { id: "gl-budget", label: "GL Budget", testid: "tab-gl-budget" },
   { id: "tax-rates", label: "Tax rates", testid: "tab-tax-rates" },

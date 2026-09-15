@@ -68,7 +68,8 @@
     ) {
       params.set('team_expense_intent', intent);
     }
-    var q = params.toString() ? ('?' + params.toString()) : '';
+    params.set('capture_source', 'app');
+    var q = '?' + params.toString();
     var res = await fetch(apiBase() + '/api/invoices/upload' + q, {
       method: 'POST',
       body: fd,

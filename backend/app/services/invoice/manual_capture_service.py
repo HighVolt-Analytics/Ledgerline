@@ -501,7 +501,7 @@ async def create_without_document_invoice(
         status=InvoiceStatus.PENDING,
         currency=field_currency or books_currency,
         document_ref=document_ref,
-        capture_source="upload",
+        capture_source="app",
         uploaded_by_name=(actor_name or "").strip() or None,
         uploaded_by_email=(actor_email or "").strip() or None,
         duplicate_review_suggested=False,
@@ -541,7 +541,7 @@ async def create_without_document_invoice(
         detail={
             "without_document": True,
             "document_type_code": (definition.code or "").strip().upper(),
-            "capture_source": "upload",
+            "capture_source": "app",
         },
         actor_name=actor_name,
         actor_email=actor_email,

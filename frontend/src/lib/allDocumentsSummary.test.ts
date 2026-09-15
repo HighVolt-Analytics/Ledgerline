@@ -102,6 +102,8 @@ describe("parseUploadChannelTab", () => {
   it("accepts known channel values", () => {
     expect(parseUploadChannelTab("all")).toBe("all");
     expect(parseUploadChannelTab("upload")).toBe("upload");
+    expect(parseUploadChannelTab("app")).toBe("app");
+    expect(parseUploadChannelTab("mobile")).toBe("app");
     expect(parseUploadChannelTab("email")).toBe("email");
     expect(parseUploadChannelTab("whatsapp")).toBe("whatsapp");
     expect(parseUploadChannelTab("viber")).toBe("viber");
@@ -147,16 +149,10 @@ describe("formatUploadedAt", () => {
     expect(formatUploadedAt("not-a-date")).toBe("not-a-date");
   });
 
-  it("formats an ISO instant as DD MMM YY, HH:MM in local time", () => {
+  it("formats an ISO instant as dd/mm/yy/hh:mm in local time", () => {
     const iso = "2026-08-26T11:49:00.000Z";
     const dt = new Date(iso);
-    const expected = `${String(dt.getDate()).padStart(2, "0")} ${
-      ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][
-        dt.getMonth()
-      ]
-    } ${String(dt.getFullYear()).slice(-2)}, ${String(dt.getHours()).padStart(2, "0")}:${String(
-      dt.getMinutes()
-    ).padStart(2, "0")}`;
+    const expected = `${String(dt.getDate()).padStart(2, "0")}/${String(dt.getMonth() + 1).padStart(2, "0")}/${String(dt.getFullYear()).slice(-2)}/${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}`;
     expect(formatUploadedAt(iso)).toBe(expected);
   });
 });

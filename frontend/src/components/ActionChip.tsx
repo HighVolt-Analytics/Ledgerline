@@ -56,7 +56,8 @@ export function ActionChip({
         toneClass,
         variant === "outline" && "approvals-action-chip--outline",
         isStatic && "approvals-action-chip--static",
-        iconOnly && "approvals-action-chip--icon-only px-1.5",
+        iconOnly && "approvals-action-chip--icon-only",
+        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
         className
       )}
       disabled={disabled || busy}

@@ -1,4 +1,4 @@
-import { api } from "@/api/client";
+import { ApiError, api } from "@/api/client";
 import type { AuthUser } from "@/api/types";
 import { fetchMyMemberships, type TenantAccountSummary } from "@/lib/authApi";
 import {
@@ -50,6 +50,10 @@ export async function hydrateUserAndMemberships(
       return await api.me();
     } catch (err) {
       if (!fallbackToTokenOnMeFailure) throw err;
+      // Dead/expired session must not keep a JWT-only user — that storms 401s.
+      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+        throw err;
+      }
       const fallback = userFromToken(access);
       if (!fallback) throw err;
       return fallback;

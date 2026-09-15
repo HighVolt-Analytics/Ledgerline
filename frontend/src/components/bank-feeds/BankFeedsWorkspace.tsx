@@ -239,7 +239,7 @@ export function BankFeedsWorkspace({
           ))}
         </select>
         <Link
-          to="/creations?tab=banks&banksSection=list"
+          to="/upload?channel=bank-feeds&view=setup&banksSection=list"
           className="text-xs text-muted-foreground underline hover:text-foreground"
           data-testid="bf-manage-accounts-link"
         >
@@ -274,14 +274,14 @@ export function BankFeedsWorkspace({
         ) : accountId == null ? (
           <EmptyState
             title="No bank account selected"
-            hint="Add or manage accounts in Contacts → Banks, then import a statement here."
+            hint="Add or manage accounts in Bank feeds → Setup, then import a statement here."
             action={
               <Link
-                to="/creations?tab=banks&banksSection=list"
+                to="/upload?channel=bank-feeds&view=setup&banksSection=list"
                 className="text-sm underline"
                 data-testid="bf-manage-banks-link"
               >
-                Open Contacts → Banks
+                Open bank setup
               </Link>
             }
           />

@@ -1,11 +1,10 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useSearchParams } from "react-router-dom";
+import { Navigate, useSearchParams } from "react-router-dom";
 import { api } from "@/api/client";
 import { RuleBookDocumentTypesSection } from "@/components/rule-book/RuleBookDocumentTypesSection";
 import { ApprovalPolicyPrivileges } from "@/components/settings/ApprovalPolicyPrivileges";
 import { ChartOfAccountsPanel } from "@/components/settings/ChartOfAccountsPanel";
-import { MobileQuickActionsPanel } from "@/components/settings/MobileQuickActionsPanel";
 import { TaxRatesPanel } from "@/components/settings/TaxRatesPanel";
 import { OrgAiBriefPanel } from "@/components/settings/OrgAiBriefPanel";
 import { TenantMembersSection } from "@/components/settings/TenantMembersSection";
@@ -241,6 +240,10 @@ export function SettingsPage() {
     }
   };
 
+  if (tabParam === "mobile") {
+    return <Navigate to="/upload?channel=app&view=setup" replace />;
+  }
+
   return (
     <div>
       {saved && (
@@ -445,7 +448,6 @@ export function SettingsPage() {
 
       {tab === "team" && <TenantMembersSection />}
       {tab === "policy" && <ApprovalPolicyPrivileges />}
-      {tab === "mobile" && <MobileQuickActionsPanel canEdit={canEditAdmin} />}
       {tab === "coa" && (
         <ChartOfAccountsPanel canEdit={canEditAdmin} onSaved={() => setCoaSaved(true)} />
       )}

@@ -38,13 +38,13 @@ export function UploadCellClip({
 }
 
 export const UPLOAD_DETAILED_TABLE_WIDTH_REM = 128.5;
-export const UPLOAD_DETAILED_TABLE_WIDTH_WITH_SOURCE_REM = 136;
+export const UPLOAD_DETAILED_TABLE_WIDTH_WITH_SOURCE_REM = 132.25;
 
 export function UploadDetailedColGroup({ showSource }: { showSource: boolean }) {
   return (
     <colgroup>
       <col style={{ width: "6.5rem" }} />
-      {showSource ? <col style={{ width: "7.5rem" }} /> : null}
+      {showSource ? <col style={{ width: "3.75rem" }} /> : null}
       <col style={{ width: "7.5rem" }} />
       <col style={{ width: "9.5rem" }} />
       <col style={{ width: "9.5rem" }} />

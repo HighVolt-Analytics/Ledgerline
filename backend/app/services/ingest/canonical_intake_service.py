@@ -23,6 +23,9 @@ from app.services.master_data.vendor_resolver import UNKNOWN_SLUG
 _ALLOWED_SUFFIXES = frozenset({".pdf", ".jpg", ".jpeg", ".png", ".docx", ".webp"})
 _CHANNEL_ALIASES = {
     "upload": "upload",
+    "app": "upload",
+    "mobile": "upload",
+    "mob": "upload",
     "email": "email",
     "mailbox": "email",
     "graph": "email",

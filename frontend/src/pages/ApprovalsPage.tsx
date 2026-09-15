@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, Check, Pencil, RefreshCw, Send, Trash2, X } from "lucide-react";
+import { ArrowUpRight, Check, RefreshCw, Send, Trash2, X } from "lucide-react";
 import { api, ApiError, clearGetCache } from "@/api/client";
 import type { ApiEnvelope, Invoice } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
@@ -10,10 +10,12 @@ import { ListSearchInput } from "@/components/ListSearchInput";
 import { PageHeader } from "@/components/PageHeader";
 import { PageLoader } from "@/components/PageLoader";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { Card } from "@/components/ui/card";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
-import { documentDisplayRef } from "@/lib/format";
-import { approvalChainProgressLabel } from "@/lib/approvalQuorum";
+import { documentDisplayRef, invoiceMoney } from "@/lib/format";
+import { formatDocDate } from "@/lib/allDocumentsSummary";
+import { approvalChainCurrentStepRole, approvalChainProgressLabel, approvalChainRecorded, approvalChainRequired } from "@/lib/approvalQuorum";
 import { fetchApprovalsBoard } from "@/lib/invoices";
 import {
   approveAndProcess,
@@ -26,13 +28,10 @@ import {
 } from "@/lib/invoiceActions";
 import { useRuleBookDocumentTypes } from "@/hooks/useRuleBookConfig";
 import { invoiceCanPublishToLedger } from "@/lib/invoice";
+import { documentTypeLabelForCode, invoiceDocumentTypeDisplayLabel, storedDocumentTypeCode } from "@/lib/documentTypeResolve";
+import { kpiStatusChipClass, needsReviewStatusChipClass } from "@/lib/kpiModuleColors";
 import { invoiceMatchesListSearch } from "@/lib/listSearch";
-import {
-  MappedDocumentTypeBadge,
-  VisionHeadingBadge,
-} from "@/components/inbox/DocumentTypeDisplay";
-import { EvaluationStatusBadge } from "@/components/inbox/EvaluationStatusBadge";
-import { StageBadge, invoiceStageBadgeProps } from "@/components/StageBadge";
+import { DocumentTypeChip } from "@/components/inbox/DocumentTypeChip";
 import { UploadColumnProcessingIndicator } from "@/components/upload/UploadColumnCell";
 import {
   APPROVABLE_STATUSES,
@@ -42,10 +41,9 @@ import {
   canShowApproveOnBoard,
   canShowConfirmOnBoard,
   canShowRejectOnApprovedBoard,
-  canShowReprocessOnBoard,
   columnForInvoice,
   filterApprovedBoardRows,
-  isSystemFiledVaultTerminal,
+  isPendingApprovalInvoice,
   mergeBoardRowWithLocal,
   PERMANENTLY_DELETABLE,
   needsReviewQueueCount,
@@ -75,10 +73,107 @@ const KANBAN_COLUMNS: { key: ApprovalBoardColumnKey; label: string }[] = [
   { key: "rejected", label: "Rejected" },
 ];
 
+const APPROVED_KIND_OPTIONS = [
+  { value: "all", label: "All" },
+  { value: "posted", label: "Posted" },
+  { value: "system_filed", label: "System filed" },
+] as const;
+
 function upsertInvoice(rows: Invoice[], row: Invoice): Invoice[] {
   const byId = new Map(rows.map((inv) => [inv.id, inv]));
   byId.set(row.id, row);
   return [...byId.values()];
+}
+
+function fieldText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function formatSpentForValue(raw: string): string {
+  const value = raw.replace(/^spent\s+for:?\s*/i, "").trim();
+  if (!value) return "";
+  const display = /^myself$/i.test(value) ? "Me" : value;
+  return `Spent for ${display}`;
+}
+
+function invoiceSpentForLabel(inv: Invoice): string | null {
+  const fields = inv.extracted_fields ?? {};
+  for (const key of ["spent_for", "spentFor", "spent_choice", "spentChoice"] as const) {
+    const text = fieldText(fields[key]);
+    if (text) return formatSpentForValue(text);
+  }
+  const blobs = [
+    inv.billing_address,
+    fieldText(fields.billing_address),
+    fieldText(fields.remarks),
+  ];
+  for (const blob of blobs) {
+    if (!blob) continue;
+    const match = blob.match(/Spent for:\s*(.+)/i);
+    if (match?.[1]) return formatSpentForValue(match[1].split(/[\n\r]/)[0].trim());
+  }
+  return null;
+}
+
+function approvalCardTitle(
+  inv: Invoice,
+  documentTypes: Parameters<typeof invoiceDocumentTypeDisplayLabel>[1]
+): string {
+  const vendor = inv.vendor?.trim();
+  if (vendor) return vendor;
+  return invoiceDocumentTypeDisplayLabel(inv, documentTypes);
+}
+
+function approvalCardStepper(
+  inv: Invoice,
+  column: ApprovalBoardColumnKey
+): { required: number; recorded: number; label: string } | null {
+  let required = approvalChainRequired(inv.approval_chain);
+  let recorded = approvalChainRecorded(inv.approval_chain);
+  if (required <= 0 && column === "awaiting") {
+    required = 2;
+    recorded = isPendingApprovalInvoice(inv) ? 1 : 0;
+  }
+  if (required <= 0) return null;
+  const done = Math.min(Math.max(recorded, 0), required);
+  return {
+    required,
+    recorded: done,
+    label: `${done} of ${required} approved`,
+  };
+}
+
+function approvalCardTypeChip(
+  inv: Invoice,
+  documentTypes: Parameters<typeof invoiceDocumentTypeDisplayLabel>[1]
+) {
+  const code = storedDocumentTypeCode(inv);
+  const label = documentTypeLabelForCode(documentTypes ?? [], code) || code || "Not classified";
+  return { code: code || undefined, label };
+}
+
+function invoiceCardTotal(inv: Invoice): string | number | null {
+  if (inv.total != null && String(inv.total).trim() !== "") return inv.total;
+  const extracted = inv.extracted_fields?.total;
+  if (typeof extracted === "number" && Number.isFinite(extracted)) return extracted;
+  return fieldText(extracted) || null;
+}
+
+function approvalCardDueLabel(inv: Invoice): string {
+  const raw = (inv.due_date ?? "").trim() || fieldText(inv.extracted_fields?.due_date);
+  const formatted = formatDocDate(raw);
+  if (!formatted || formatted === "—") return "Due —";
+  const compact = formatted.replace(/\s+\d{2}$/, "");
+  return `Due ${compact}`;
+}
+
+function approvalCardAwaitingLabel(inv: Invoice): string | null {
+  const role = approvalChainCurrentStepRole(inv.approval_chain);
+  return role ? `${role} approval` : null;
+}
+
+function approvalCardMeta(inv: Invoice): string {
+  return `${documentDisplayRef(inv)} · ${approvalCardDueLabel(inv)}`;
 }
 
 export function ApprovalsPage() {
@@ -685,62 +780,56 @@ export function ApprovalsPage() {
           return (
             <section
               key={col.key}
-              className="approvals-kanban-column"
+              className={cn("approvals-kanban-column", `approvals-kanban-column--${col.key}`)}
               data-testid={`col-${col.key}`}
             >
               <header className="approvals-kanban-column__header">
-                <h3 className="approvals-kanban-column__title">{col.label}</h3>
-                <span className="approvals-kanban-column__count">
-                  {columnCount} {columnCount === 1 ? "Task" : "Tasks"}
-                </span>
+                <div className="approvals-kanban-column__heading">
+                  <h3 className="approvals-kanban-column__title">{col.label}</h3>
+                  <span className="approvals-kanban-column__count">
+                    {columnCount} {columnCount === 1 ? "Task" : "Tasks"}
+                  </span>
+                </div>
                 {col.key === "approved" ? (
                   <div
-                    className="flex flex-wrap items-center gap-1 mt-1 w-full"
+                    className="approvals-kanban-column__filters"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    {(
-                      [
-                        ["all", "All"],
-                        ["posted", "Posted"],
-                        ["system_filed", "System filed"],
-                      ] as const
-                    ).map(([key, label]) => (
-                      <Button
-                        key={key}
-                        type="button"
-                        size="sm"
-                        variant={approvedKind === key ? "surface" : "outline"}
-                        className="h-6 px-2 text-[10px]"
-                        onClick={() => {
-                          setApprovedKind(key);
-                          if (key !== "system_filed") setApprovedDt("");
-                        }}
-                        data-testid={`filter-approved-${key}`}
-                      >
-                        {label}
-                      </Button>
-                    ))}
+                    <Select
+                      size="sm"
+                      value={approvedKind}
+                      onValueChange={(value) => {
+                        setApprovedKind(value as ApprovedKindFilter);
+                        if (value !== "system_filed") setApprovedDt("");
+                      }}
+                      options={[...APPROVED_KIND_OPTIONS]}
+                      className="approvals-kanban-column__filter-select"
+                      data-testid="filter-approved-kind"
+                    />
                     {approvedKind === "system_filed" && systemFiledDtOptions.length > 0 ? (
-                      <select
-                        className="h-6 max-w-[9rem] rounded-md border border-border bg-background px-1 text-[10px]"
+                      <Select
+                        size="sm"
                         value={approvedDt}
-                        onChange={(e) => setApprovedDt(e.target.value)}
+                        onValueChange={setApprovedDt}
+                        options={[
+                          { value: "", label: "All types" },
+                          ...systemFiledDtOptions.map((dt) => ({ value: dt, label: dt })),
+                        ]}
+                        className="approvals-kanban-column__filter-select"
                         data-testid="filter-approved-dt"
-                        aria-label="System filed document type"
-                      >
-                        <option value="">All types</option>
-                        {systemFiledDtOptions.map((dt) => (
-                          <option key={dt} value={dt}>
-                            {dt}
-                          </option>
-                        ))}
-                      </select>
+                      />
                     ) : null}
                   </div>
                 ) : null}
               </header>
               <div className="approvals-kanban-column__cards">
                 {cards.map((inv) => {
+                  const title = approvalCardTitle(inv, documentTypes);
+                  const spentFor = invoiceSpentForLabel(inv);
+                  const typeChip = approvalCardTypeChip(inv, documentTypes);
+                  const stepper = approvalCardStepper(inv, col.key);
+                  const awaiting = approvalCardAwaitingLabel(inv);
+                  const busy = busyId === inv.id;
                   return (
                   <article
                     key={inv.id}
@@ -755,86 +844,76 @@ export function ApprovalsPage() {
                         openDrawer(inv);
                       }
                     }}
-                    aria-label={`Open ${inv.vendor ?? "document"} ${documentDisplayRef(inv)}`}
+                    aria-label={`Open ${title} ${documentDisplayRef(inv)}`}
                   >
                     <div className="approvals-kanban-card__body">
-                      <div className="approvals-kanban-card__top">
-                        <span className="approvals-kanban-card__vendor inline-flex items-center gap-1.5 min-w-0">
+                      <div className="approvals-kanban-card__heading">
+                        <span className="approvals-kanban-card__title" title={title}>
                           {processingIds.has(inv.id) ? <UploadColumnProcessingIndicator /> : null}
-                          <span className="truncate">{inv.vendor ?? "—"}</span>
+                          <span className="approvals-kanban-card__title-text">{title}</span>
                         </span>
-                        <div className="flex flex-wrap items-center justify-end gap-1">
-                          <VisionHeadingBadge inv={inv} className="approvals-kanban-card__type-chip" />
-                          <MappedDocumentTypeBadge
-                            inv={inv}
+                        {spentFor ? (
+                          <span
+                            className={cn(kpiStatusChipClass("rust"), "approvals-kanban-card__tag")}
+                            title={spentFor}
+                          >
+                            {spentFor}
+                          </span>
+                        ) : inv.duplicate_review_suggested ? (
+                          <span
+                            className={cn(needsReviewStatusChipClass(), "approvals-kanban-card__tag")}
+                            data-testid={`card-duplicate-review-${inv.id}`}
+                            title="Duplicate"
+                          >
+                            Duplicate
+                          </span>
+                        ) : (
+                          <DocumentTypeChip
+                            code={typeChip.code}
+                            label={typeChip.label}
+                            purchaseKind={inv.purchase_document_type}
                             documentTypes={documentTypes}
-                            className="approvals-kanban-card__type-chip"
+                            className="approvals-kanban-card__tag"
                           />
-                          {col.key === "approved" ? (
-                            isSystemFiledVaultTerminal(inv) ? (
-                              <EvaluationStatusBadge
-                                status={inv.evaluation_status}
-                                invoice={inv}
-                              />
-                            ) : (
-                              <StageBadge {...invoiceStageBadgeProps(inv)} />
-                            )
-                          ) : null}
-                        </div>
+                        )}
                       </div>
-                      {inv.duplicate_review_suggested ? (
-                        <p
-                          className="text-[10px] text-amber-800 dark:text-amber-200 leading-tight mt-1"
-                          data-testid={`card-duplicate-review-${inv.id}`}
-                        >
-                          Possible duplicate — review suggested
-                        </p>
+                      <p className="approvals-kanban-card__amount tnum">
+                        {invoiceMoney(invoiceCardTotal(inv), inv)}
+                      </p>
+                      <p className="approvals-kanban-card__meta tnum">{approvalCardMeta(inv)}</p>
+                      {awaiting ? (
+                        <p className="approvals-kanban-card__awaiting">{awaiting}</p>
                       ) : null}
-                      {approvalChainProgressLabel(inv.approval_chain) ? (
-                        <p
-                          className="text-[10px] text-muted-foreground leading-tight mt-1"
+                      {stepper ? (
+                        <div
+                          className="approvals-kanban-card__progress"
                           data-testid={`card-quorum-${inv.id}`}
                         >
-                          {approvalChainProgressLabel(inv.approval_chain)}
-                        </p>
+                          <span className="approvals-kanban-card__dots" aria-hidden>
+                            {Array.from({ length: stepper.required }).map((_, index) => (
+                              <span key={index} className="approvals-kanban-card__dot-wrap">
+                                {index > 0 ? <span className="approvals-kanban-card__dot-line" /> : null}
+                                <span
+                                  className={cn(
+                                    "approvals-kanban-card__dot",
+                                    index < stepper.recorded && "approvals-kanban-card__dot--filled"
+                                  )}
+                                />
+                              </span>
+                            ))}
+                          </span>
+                          <span className="approvals-kanban-card__quorum tnum">{stepper.label}</span>
+                        </div>
                       ) : null}
-                      <div className="approvals-kanban-card__subline-row">
-                        <span className="approvals-kanban-card__meta tnum">
-                          {documentDisplayRef(inv)}
-                        </span>
-                      </div>
                     </div>
                     <div className="approvals-kanban-card__actions">
-                      {canShowReprocessOnBoard(inv, col.key) && (
-                        <ActionChip
-                          tone="reprocess"
-                          icon={RefreshCw}
-                          label={busyId === inv.id ? "…" : "Reprocess"}
-                          disabled={busyId === inv.id}
-                          onClick={() => void reprocessInvoice(inv.id)}
-                          testId={`reprocess-${inv.id}`}
-                        />
-                      )}
-                      {col.key === "rejected" && inv.status === "duplicate_skipped" && (
-                        <span className="text-[10px] text-muted-foreground leading-tight">
-                          Duplicate — no file stored
-                        </span>
-                      )}
-                      {col.key === "pending" && APPROVABLE_STATUSES.has(inv.status) && (
-                        <ActionChip
-                          tone="edit"
-                          icon={Pencil}
-                          label="Edit"
-                          onClick={() => openDrawer(inv, true)}
-                          testId={`edit-${inv.id}`}
-                        />
-                      )}
                       {canShowConfirmOnBoard(inv, col.key) && (
                         <ActionChip
                           tone="approve"
-                          icon={Send}
-                          label={busyId === inv.id ? "…" : "Confirm"}
-                          disabled={busyId === inv.id}
+                          icon={Check}
+                          label="Confirm"
+                          iconOnly
+                          busy={busy}
                           onClick={() => void confirmInvoice(inv.id)}
                           testId={`confirm-${inv.id}`}
                         />
@@ -843,47 +922,47 @@ export function ApprovalsPage() {
                         <ActionChip
                           tone="approve"
                           icon={Check}
-                          label={busyId === inv.id ? "…" : "Approve"}
-                          disabled={busyId === inv.id}
+                          label="Approve"
+                          iconOnly
+                          busy={busy}
                           onClick={() => void approveInvoice(inv.id)}
                           testId={`approve-${inv.id}`}
                         />
                       )}
+                      {((col.key === "pending" || col.key === "awaiting") &&
+                        (inv.status === "exception" || inv.status === "processed")) ||
+                      (col.key === "approved" && canShowRejectOnApprovedBoard(inv)) ? (
+                        <ActionChip
+                          tone="reject"
+                          icon={X}
+                          label="Reject"
+                          iconOnly
+                          busy={busy}
+                          disabled={!canReject}
+                          title={
+                            canReject
+                              ? "Reject"
+                              : "Your role does not have permission to reject documents"
+                          }
+                          onClick={() => void rejectInvoice(inv.id)}
+                          testId={`reject-${inv.id}`}
+                        />
+                      ) : null}
                       {col.key === "pending" && inv.status === "exception" && (
                         <ActionChip
                           tone="edit"
                           icon={ArrowUpRight}
-                          label={busyId === inv.id ? "…" : "Escalate"}
-                          disabled={busyId === inv.id || !canReject}
+                          label="Escalate"
+                          iconOnly
+                          busy={busy}
+                          disabled={!canReject}
                           title={
                             canReject
-                              ? "Escalate the current approval step to the next higher role"
+                              ? "Escalate"
                               : "Your role cannot escalate approvals"
                           }
                           onClick={() => void escalateInvoice(inv.id)}
                           testId={`escalate-${inv.id}`}
-                        />
-                      )}
-                      {col.key === "pending" && inv.status === "exception" && (
-                        <ActionChip
-                          tone="reject"
-                          icon={X}
-                          label="Reject"
-                          disabled={busyId === inv.id || !canReject}
-                          title={canReject ? undefined : "Your role cannot reject documents"}
-                          onClick={() => void rejectInvoice(inv.id)}
-                          testId={`reject-${inv.id}`}
-                        />
-                      )}
-                      {col.key === "approved" && canShowRejectOnApprovedBoard(inv) && (
-                        <ActionChip
-                          tone="reject"
-                          icon={X}
-                          label="Reject"
-                          disabled={busyId === inv.id || !canReject}
-                          title={canReject ? undefined : "Your role cannot reject documents"}
-                          onClick={() => void rejectInvoice(inv.id)}
-                          testId={`reject-${inv.id}`}
                         />
                       )}
                       {col.key === "approved" && invoiceCanPublishToLedger(inv) && (
@@ -891,6 +970,7 @@ export function ApprovalsPage() {
                           tone="post"
                           icon={Send}
                           label="Post"
+                          iconOnly
                           onClick={() => void publish(inv)}
                           testId={`publish-${inv.id}`}
                         />
@@ -899,8 +979,9 @@ export function ApprovalsPage() {
                         <ActionChip
                           tone="delete"
                           icon={Trash2}
-                          label={busyId === inv.id ? "…" : "Delete"}
-                          disabled={busyId === inv.id}
+                          label="Delete"
+                          iconOnly
+                          busy={busy}
                           onClick={() => void permanentDeleteInvoice(inv.id)}
                           testId={`delete-permanent-${inv.id}`}
                         />

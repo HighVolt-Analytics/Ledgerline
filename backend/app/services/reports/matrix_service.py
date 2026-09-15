@@ -542,7 +542,9 @@ def _apply_capture_source(query, capture_source: str | None):
     if not capture_source or not capture_source.strip():
         return query
     src = capture_source.strip().lower()
-    if src not in {"upload", "email", "whatsapp", "viber", "slack"}:
+    if src in {"app", "mobile", "mob"}:
+        src = "app"
+    if src not in {"upload", "email", "whatsapp", "viber", "slack", "app"}:
         return query
     unset_capture = or_(Invoice.capture_source.is_(None), Invoice.capture_source == "")
     if src == "upload":
@@ -579,6 +581,8 @@ def _apply_capture_source(query, capture_source: str | None):
                 and_(unset_capture, Invoice.slack_connection_id.isnot(None)),
             )
         )
+    if src == "app":
+        return query.where(func.lower(Invoice.capture_source).in_(("app", "mobile", "mob")))
     return query.where(
         or_(
             func.lower(Invoice.capture_source) == "viber",

@@ -47,6 +47,18 @@ def is_staff_claim_sender(sender: str | None, employees: list) -> bool:
     return is_known_messaging_sender(sender, employees)
 
 
+APP_CAPTURE_ALIASES = frozenset({"app", "mobile", "mob"})
+LIST_CAPTURE_SOURCES = frozenset({"upload", "email", "whatsapp", "viber", "slack", "app"})
+
+
+def stored_capture_source_for_upload(value: str | None) -> str:
+    """Desktop uploads stay ``upload``; mobile client sends app/mobile/mob → ``app``."""
+    raw = (value or "upload").strip().lower()
+    if raw in APP_CAPTURE_ALIASES:
+        return "app"
+    return "upload"
+
+
 def channel_rule_matches(rule_channel: str | None, actual: str) -> bool:
     if not rule_channel or rule_channel.strip().lower() in {"", "any"}:
         return True

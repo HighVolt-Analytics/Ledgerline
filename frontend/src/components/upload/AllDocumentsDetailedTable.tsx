@@ -184,7 +184,7 @@ export function AllDocumentsDetailedTable({
   refreshRef?: MutableRefObject<(() => void) | null>;
   searchQuery?: string;
   onSearchChange?: (value: string) => void;
-  captureSource?: "upload" | "email" | "whatsapp" | "viber" | "slack";
+  captureSource?: "upload" | "app" | "email" | "whatsapp" | "viber" | "slack";
   /** Exact Invoice.route_target (e.g. "Team Expenses"). Omits filter when unset. */
   routeTarget?: string;
   showUploadSource?: boolean;
@@ -498,7 +498,7 @@ export function AllDocumentsDetailedTable({
                     </div>
                   </div>
                   <div className="shrink-0 flex flex-col items-end gap-1.5">
-                    <div className="tnum font-normal text-sm">
+                    <div className="tnum font-normal text-xs">
                       <UploadColumnCell mode={modes.total} align="right">
                         {money(inv.total, inv.currency)}
                       </UploadColumnCell>
@@ -598,7 +598,7 @@ export function AllDocumentsDetailedTable({
                 </th>
                 <th className="px-3 py-2 font-medium" title="Invoice date">Invoice date</th>
                 <th className="px-3 py-2 font-medium" title="Due date">Due date</th>
-                <th className="px-3 py-2 font-medium" title="Currency + amount">Currency + amount</th>
+                <th className="px-3 py-2 font-medium" title="Amount">Amount</th>
                 <th className="px-3 py-2 font-medium" title="Ledger">Ledger</th>
                 <th
                   className="px-3 py-2 font-medium"
@@ -714,7 +714,7 @@ export function AllDocumentsDetailedTable({
                     </td>
                     <td className="px-3 py-2.5">
                       <UploadColumnCell mode={modes.total}>
-                        <UploadCellText value={money(inv.total, inv.currency)} className="tnum font-normal" />
+                        <UploadCellText value={money(inv.total, inv.currency)} className="tnum text-xs font-normal" />
                       </UploadColumnCell>
                     </td>
                     <td className="px-3 py-2.5">

@@ -21,14 +21,39 @@
   display: flex;
   flex-direction: column;
   min-height: 17.5rem;
-  padding: 0.75rem;
-  border-radius: 1rem;
-  border: 1px solid hsl(var(--border) / 0.55);
+  padding: 0.875rem;
+  border-radius: 1.125rem;
+  border: 1px solid hsl(var(--border) / 0.45);
   background-color: hsl(var(--sidebar));
 }
 
-.dark .approvals-kanban-column {
+.approvals-kanban-column--pending {
+  background-color: hsl(40 78% 94.5%);
+  border-color: hsl(38 42% 84%);
+}
+
+.approvals-kanban-column--awaiting {
+  background-color: hsl(210 78% 95.5%);
+  border-color: hsl(210 42% 86%);
+}
+
+.approvals-kanban-column--approved {
+  background-color: hsl(150 46% 93.5%);
+  border-color: hsl(150 30% 82%);
+}
+
+.approvals-kanban-column--rejected {
+  background-color: hsl(4 78% 96%);
+  border-color: hsl(4 42% 88%);
+}
+
+.dark .approvals-kanban-column,
+.dark .approvals-kanban-column--pending,
+.dark .approvals-kanban-column--awaiting,
+.dark .approvals-kanban-column--approved,
+.dark .approvals-kanban-column--rejected {
   background-color: hsl(var(--nav-secondary));
+  background-image: none;
   border-color: hsl(var(--nav-secondary-border) / 0.85);
 }
 
@@ -41,6 +66,23 @@
   padding: 0 0.125rem;
 }
 
+.approvals-kanban-column__heading {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.approvals-kanban-column__filters {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.25rem;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
 .approvals-kanban-column__title {
   margin: 0;
   font-size: 0.8125rem;
@@ -48,6 +90,22 @@
   line-height: 1.25;
   letter-spacing: -0.01em;
   color: hsl(var(--foreground));
+}
+
+.approvals-kanban-column__filter-select {
+  height: 1.375rem;
+  min-height: 1.375rem;
+  padding: 0 0.25rem 0 0.375rem;
+  gap: 0.2rem;
+  max-width: 6.75rem;
+  font-size: 0.625rem;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.approvals-kanban-column__filter-select svg {
+  width: 0.6875rem;
+  height: 0.6875rem;
 }
 
 .approvals-kanban-column__count {
@@ -60,56 +118,300 @@
 .approvals-kanban-column__cards {
   display: flex;
   flex-direction: column;
-  gap: 0.625rem;
+  gap: 0.75rem;
   flex: 1;
 }
 
 .approvals-kanban-card {
   display: flex;
   flex-direction: column;
-  min-height: 5.5rem;
-  padding: 0.875rem;
-  border-radius: 0.875rem;
-  border: 1px solid hsl(var(--border) / 0.5);
-  background-color: hsl(var(--card));
+  gap: 0.55rem;
+  min-width: 0;
+  flex-shrink: 0;
+  height: auto;
+  min-height: 8.75rem;
+  overflow: visible;
+  padding: 1rem;
+  border-radius: 1rem;
+  border: 1px solid hsl(220 16% 90%);
+  background-color: #fff;
   color: hsl(var(--card-foreground));
   text-align: left;
   cursor: pointer;
-  transition:
-    box-shadow 160ms ease,
-    border-color 160ms ease;
+  box-shadow:
+    0 1px 2px hsl(220 20% 12% / 0.05),
+    0 6px 16px hsl(220 20% 12% / 0.05);
+  transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+}
+
+.dark .approvals-kanban-card {
+  background-color: hsl(var(--card));
+  border-color: hsl(var(--border) / 0.65);
+  box-shadow: 0 1px 2px hsl(0 0% 0% / 0.35);
 }
 
 .approvals-kanban-card__body {
   display: flex;
-  flex: 1;
   flex-direction: column;
+  align-items: stretch;
+  flex-shrink: 0;
+  gap: 0.3rem;
   min-width: 0;
   width: 100%;
 }
 
 .approvals-kanban-card:hover {
-  border-color: hsl(var(--border) / 0.85);
+  border-color: hsl(220 16% 82%);
   box-shadow:
-    0 1px 2px hsl(var(--foreground) / 0.04),
-    0 6px 16px hsl(var(--foreground) / 0.06);
+    0 2px 4px hsl(220 20% 12% / 0.06),
+    0 8px 20px hsl(220 20% 12% / 0.08);
 }
 
-.approvals-kanban-card__top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.5rem;
-  margin-bottom: 0;
+.dark .approvals-kanban-card:hover {
+  border-color: hsl(var(--border) / 0.9);
+  box-shadow: 0 1px 2px hsl(0 0% 0% / 0.35);
 }
 
+.approvals-kanban-card:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px hsl(var(--ring));
+}
+
+.approvals-kanban-card__heading,
+.approvals-kanban-card__tag-row,
 .approvals-kanban-card__subline-row {
   display: flex;
   align-items: center;
+  flex-shrink: 0;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.approvals-kanban-card__heading {
   justify-content: space-between;
+  align-items: flex-start;
   gap: 0.5rem;
-  margin-top: 0.125rem;
-  margin-bottom: 0;
+}
+
+.approvals-kanban-card__tag-row,
+.approvals-kanban-card__subline-row {
+  justify-content: flex-start;
+}
+
+.approvals-kanban-card__tag,
+.approvals-kanban-card .approvals-kanban-card__tag.status-chip,
+.approvals-kanban-card .approvals-kanban-card__tag.approvals-action-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex-shrink: 0;
+  margin: 0 0 0 auto;
+  max-width: 5.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  height: 1.125rem;
+  min-height: 1.125rem;
+  padding: 0 0.35rem;
+  font-size: 0.625rem;
+  font-weight: 500;
+}
+
+/* Pastel fill + dark text, matching the Kanban reference chips */
+.approvals-kanban-card .approvals-kanban-card__tag.approvals-action-chip--kpi-violet {
+  background: #eee4f6;
+  color: #4a2870;
+}
+
+.approvals-kanban-card .approvals-kanban-card__tag.approvals-action-chip--kpi-blue {
+  background: #dcebf6;
+  color: #163a5c;
+}
+
+.approvals-kanban-card .approvals-kanban-card__tag.approvals-action-chip--kpi-teal,
+.approvals-kanban-card .approvals-kanban-card__tag.approvals-action-chip--post {
+  background: #d9eef2;
+  color: #1a4554;
+}
+
+.approvals-kanban-card .approvals-kanban-card__tag.approvals-action-chip--kpi-green {
+  background: #dcefe2;
+  color: #1f4d2e;
+}
+
+.approvals-kanban-card .approvals-kanban-card__tag.approvals-action-chip--kpi-sage {
+  background: #d9efe8;
+  color: #1a5244;
+}
+
+.approvals-kanban-card .approvals-kanban-card__tag.approvals-action-chip--kpi-cyan {
+  background: #d7eef0;
+  color: #1c5559;
+}
+
+.approvals-kanban-card .approvals-kanban-card__tag.approvals-action-chip--kpi-rust,
+.approvals-kanban-card .approvals-kanban-card__tag.approvals-action-chip--static.approvals-action-chip--kpi-rust {
+  background: #f8e6db;
+  color: #7a3417;
+}
+
+.approvals-kanban-card .approvals-kanban-card__tag.approvals-action-chip--kpi-rose {
+  background: #f8e4ea;
+  color: #6f2f48;
+}
+
+.approvals-kanban-card .approvals-kanban-card__tag.approvals-action-chip--muted {
+  background: #eef0f2;
+  color: #3f4a57;
+}
+
+.approvals-kanban-card .approvals-kanban-card__tag.approvals-action-chip--edit {
+  background: #eee4f6;
+  color: #4a2870;
+}
+
+.approvals-kanban-card .approvals-kanban-card__tag.approvals-action-chip--pending {
+  background: #fdecc8;
+  color: #7a4a12;
+}
+
+.dark .approvals-kanban-card .approvals-kanban-card__tag.approvals-action-chip--kpi-violet,
+.dark .approvals-kanban-card .approvals-kanban-card__tag.approvals-action-chip--edit {
+  background: hsl(270 28% 24%);
+  color: hsl(270 62% 88%);
+}
+
+.dark .approvals-kanban-card .approvals-kanban-card__tag.approvals-action-chip--kpi-blue {
+  background: hsl(210 32% 24%);
+  color: hsl(210 70% 88%);
+}
+
+.dark .approvals-kanban-card .approvals-kanban-card__tag.approvals-action-chip--kpi-teal,
+.dark .approvals-kanban-card .approvals-kanban-card__tag.approvals-action-chip--post {
+  background: hsl(188 28% 22%);
+  color: hsl(188 55% 86%);
+}
+
+.dark .approvals-kanban-card .approvals-kanban-card__tag.approvals-action-chip--kpi-green {
+  background: hsl(148 26% 20%);
+  color: hsl(148 52% 84%);
+}
+
+.dark .approvals-kanban-card .approvals-kanban-card__tag.approvals-action-chip--kpi-sage {
+  background: hsl(160 24% 20%);
+  color: hsl(160 48% 84%);
+}
+
+.dark .approvals-kanban-card .approvals-kanban-card__tag.approvals-action-chip--kpi-cyan {
+  background: hsl(186 28% 21%);
+  color: hsl(186 52% 86%);
+}
+
+.dark .approvals-kanban-card .approvals-kanban-card__tag.approvals-action-chip--kpi-rust,
+.dark .approvals-kanban-card .approvals-kanban-card__tag.approvals-action-chip--static.approvals-action-chip--kpi-rust {
+  background: hsl(22 32% 22%);
+  color: hsl(24 72% 84%);
+}
+
+.dark .approvals-kanban-card .approvals-kanban-card__tag.approvals-action-chip--kpi-rose {
+  background: hsl(340 28% 22%);
+  color: hsl(340 62% 86%);
+}
+
+.dark .approvals-kanban-card .approvals-kanban-card__tag.approvals-action-chip--muted {
+  background: hsl(214 12% 22%);
+  color: hsl(214 18% 86%);
+}
+
+.dark .approvals-kanban-card .approvals-kanban-card__tag.approvals-action-chip--pending {
+  background: hsl(38 42% 22%);
+  color: hsl(40 80% 84%);
+}
+
+.approvals-kanban-card__amount {
+  display: block;
+  flex-shrink: 0;
+  margin: 0.15rem 0 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  color: hsl(var(--card-foreground));
+}
+
+.approvals-kanban-card__awaiting {
+  display: block;
+  flex-shrink: 0;
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.3;
+  color: hsl(var(--card-foreground));
+}
+
+.approvals-kanban-card__progress {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 0.5rem;
+  min-width: 0;
+  margin-top: 0.2rem;
+}
+
+.approvals-kanban-card__dots {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.approvals-kanban-card__dot-wrap {
+  display: inline-flex;
+  align-items: center;
+}
+
+.approvals-kanban-card__dot-line {
+  width: 2.5rem;
+  height: 2px;
+  background: hsl(220 10% 84%);
+}
+
+.approvals-kanban-card__dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  border: 2px solid hsl(220 10% 72%);
+  background: #fff;
+  box-sizing: border-box;
+}
+
+.approvals-kanban-card__dot--filled {
+  background: hsl(220 12% 22%);
+  border-color: hsl(220 12% 22%);
+}
+
+.approvals-kanban-card__quorum {
+  flex-shrink: 0;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  line-height: 1.3;
+  color: hsl(var(--muted-foreground));
+  white-space: nowrap;
+}
+
+.dark .approvals-kanban-card__dot-line {
+  background: hsl(214 10% 32%);
+}
+
+.dark .approvals-kanban-card__dot {
+  background: transparent;
+  border-color: hsl(214 10% 48%);
+}
+
+.dark .approvals-kanban-card__dot--filled {
+  background: hsl(210 15% 90%);
+  border-color: hsl(210 15% 90%);
 }
 
 .approvals-kanban-card__review-pill {
@@ -142,10 +444,26 @@
   color: var(--system-yellow-text);
 }
 
-.approvals-kanban-card__vendor {
-  font-size: 0.8125rem;
+.approvals-kanban-card__vendor,
+.approvals-kanban-card__title {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.375rem;
+  min-width: 0;
+  flex: 0 1 auto;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  font-size: 0.9375rem;
   font-weight: 600;
   line-height: 1.3;
+  overflow: hidden;
+  text-align: left;
+}
+
+.approvals-kanban-card__title-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -160,10 +478,14 @@
 }
 
 .approvals-kanban-card__meta {
-  margin-top: 0;
+  display: block;
+  flex-shrink: 0;
+  margin: 0;
   min-width: 0;
-  flex: 1;
-  font-size: 0.6875rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
   line-height: 1.35;
   color: hsl(var(--muted-foreground));
 }
@@ -172,16 +494,11 @@
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  gap: 0.3125rem;
-  margin-top: 0.625rem;
-  padding-top: 0;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
-}
-
-.approvals-kanban-card__actions::-webkit-scrollbar {
-  display: none;
+  justify-content: flex-end;
+  gap: 0.25rem;
+  margin-top: 0.375rem;
+  padding-top: 0.375rem;
+  border-top: 1px solid hsl(var(--border));
 }
 
 .approvals-kanban-toolbar {
@@ -764,125 +1081,134 @@
   color: hsl(187 85% 53%);
 }
 
-/* Kanban card actions — elevated pill buttons; icon carries tone color */
+/* Kanban card actions — square icon buttons */
 .approvals-kanban-card__actions .approvals-action-chip {
-  flex-shrink: 0;
-  height: 1.625rem;
-  padding: 0 0.5rem;
-  gap: 0.3rem;
-  font-size: 0.6875rem;
-  border-radius: 9999px;
-  border: 1px solid hsl(var(--border) / 0.35);
-  background-color: hsl(var(--muted));
-  color: hsl(var(--foreground));
-  box-shadow:
-    0 1px 2px rgb(0 0 0 / 0.06),
-    0 2px 5px rgb(0 0 0 / 0.05);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.5rem;
+  width: 1.5rem;
+  min-width: 1.5rem;
+  padding: 0;
+  border: none;
+  border-radius: 0.375rem;
+  box-shadow: none;
   filter: none;
+  line-height: 0;
+  color: #fff;
 }
 
 .approvals-kanban-card__actions .approvals-action-chip__icon {
+  display: block;
   width: 0.8125rem;
   height: 0.8125rem;
+  flex-shrink: 0;
+  stroke-width: 2.4;
+  color: inherit;
 }
 
-.approvals-kanban-card__actions .approvals-action-chip:not(:disabled):not(.approvals-action-chip--static):hover {
-  filter: none;
-  border-color: hsl(var(--border) / 0.55);
-  background-color: hsl(var(--muted));
-  box-shadow:
-    0 2px 4px rgb(0 0 0 / 0.08),
-    0 4px 10px rgb(0 0 0 / 0.07);
+.approvals-kanban-card__actions
+  .approvals-action-chip:not(.approvals-action-chip--outline):not(.approvals-action-chip--static) {
+  color: #fff;
 }
 
-.dark .approvals-kanban-card__actions .approvals-action-chip {
-  border-color: hsl(var(--border) / 0.28);
-  background-color: hsl(214 12% 18%);
-  box-shadow:
-    0 1px 2px rgb(0 0 0 / 0.32),
-    0 3px 8px rgb(0 0 0 / 0.26);
+.approvals-kanban-card__actions
+  .approvals-action-chip:not(.approvals-action-chip--outline):not(.approvals-action-chip--static)
+  .approvals-action-chip__icon {
+  color: inherit;
 }
 
-.dark
-  .approvals-kanban-card__actions
-  .approvals-action-chip:not(:disabled):not(.approvals-action-chip--static):hover {
-  border-color: hsl(var(--border) / 0.42);
-  background-color: hsl(214 12% 20%);
-  box-shadow:
-    0 2px 4px rgb(0 0 0 / 0.36),
-    0 5px 12px rgb(0 0 0 / 0.3);
+/* Light mode — solid tiles with white icons (reference summary chips) */
+.approvals-kanban-card__actions .approvals-action-chip--approve {
+  background: #34c759;
+  color: #fff;
 }
 
-.approvals-kanban-card__actions .approvals-action-chip--edit,
-.approvals-kanban-card__actions .approvals-action-chip--approve,
 .approvals-kanban-card__actions .approvals-action-chip--reject,
-.approvals-kanban-card__actions .approvals-action-chip--delete,
-.approvals-kanban-card__actions .approvals-action-chip--pending,
-.approvals-kanban-card__actions .approvals-action-chip--post,
-.approvals-kanban-card__actions .approvals-action-chip--kpi-rust {
-  background-color: hsl(var(--muted));
-  color: hsl(var(--foreground));
+.approvals-kanban-card__actions .approvals-action-chip--delete {
+  background: #ff6b7a;
+  color: #fff;
 }
 
-.dark .approvals-kanban-card__actions .approvals-action-chip--edit,
-.dark .approvals-kanban-card__actions .approvals-action-chip--approve,
+.approvals-kanban-card__actions .approvals-action-chip--edit {
+  background: #ffb020;
+  color: #fff;
+}
+
+.approvals-kanban-card__actions .approvals-action-chip--post {
+  background: #4fc3f7;
+  color: #fff;
+}
+
+.approvals-kanban-card__actions
+  .approvals-action-chip:not(:disabled):not(.approvals-action-chip--static):hover {
+  filter: none;
+  box-shadow: none;
+  color: #fff;
+}
+
+.approvals-kanban-card__actions .approvals-action-chip--approve:not(:disabled):hover {
+  background: #2db64f;
+  color: #fff;
+}
+
+.approvals-kanban-card__actions .approvals-action-chip--reject:not(:disabled):hover,
+.approvals-kanban-card__actions .approvals-action-chip--delete:not(:disabled):hover {
+  background: #f25a6a;
+  color: #fff;
+}
+
+.approvals-kanban-card__actions .approvals-action-chip--edit:not(:disabled):hover {
+  background: #f0a310;
+  color: #fff;
+}
+
+.approvals-kanban-card__actions .approvals-action-chip--post:not(:disabled):hover {
+  background: #39b6ee;
+  color: #fff;
+}
+
+/* Dark mode — KPI scheme solids, white icons */
+.dark .approvals-kanban-card__actions .approvals-action-chip--approve {
+  background: #356344;
+  color: #fff;
+}
+
 .dark .approvals-kanban-card__actions .approvals-action-chip--reject,
-.dark .approvals-kanban-card__actions .approvals-action-chip--delete,
-.dark .approvals-kanban-card__actions .approvals-action-chip--pending,
-.dark .approvals-kanban-card__actions .approvals-action-chip--post,
-.dark .approvals-kanban-card__actions .approvals-action-chip--kpi-rust {
-  background-color: hsl(214 12% 18%);
-  color: hsl(var(--foreground));
+.dark .approvals-kanban-card__actions .approvals-action-chip--delete {
+  background: #8b4560;
+  color: #fff;
 }
 
-.approvals-kanban-card__actions .approvals-action-chip--edit .approvals-action-chip__icon {
-  color: hsl(262 70% 48%);
+.dark .approvals-kanban-card__actions .approvals-action-chip--edit {
+  background: #9c4e2a;
+  color: #fff;
 }
 
-.approvals-kanban-card__actions .approvals-action-chip--approve .approvals-action-chip__icon {
-  color: hsl(142 64% 32%);
+.dark .approvals-kanban-card__actions .approvals-action-chip--post {
+  background: #245e8d;
+  color: #fff;
 }
 
-.approvals-kanban-card__actions .approvals-action-chip--reject .approvals-action-chip__icon,
-.approvals-kanban-card__actions .approvals-action-chip--delete .approvals-action-chip__icon {
-  color: hsl(0 65% 44%);
+.dark .approvals-kanban-card__actions .approvals-action-chip--approve:not(:disabled):hover {
+  background: #3f7550;
+  color: #fff;
 }
 
-.approvals-kanban-card__actions .approvals-action-chip--pending .approvals-action-chip__icon {
-  color: var(--system-yellow-text);
+.dark .approvals-kanban-card__actions .approvals-action-chip--reject:not(:disabled):hover,
+.dark .approvals-kanban-card__actions .approvals-action-chip--delete:not(:disabled):hover {
+  background: #9a516c;
+  color: #fff;
 }
 
-.approvals-kanban-card__actions .approvals-action-chip--post .approvals-action-chip__icon {
-  color: hsl(199 82% 38%);
+.dark .approvals-kanban-card__actions .approvals-action-chip--edit:not(:disabled):hover {
+  background: #b35a32;
+  color: #fff;
 }
 
-.approvals-kanban-card__actions .approvals-action-chip--kpi-rust .approvals-action-chip__icon {
-  color: #9c4e2a;
-}
-
-.dark .approvals-kanban-card__actions .approvals-action-chip--edit .approvals-action-chip__icon {
-  color: hsl(262 90% 78%);
-}
-
-.dark .approvals-kanban-card__actions .approvals-action-chip--approve .approvals-action-chip__icon {
-  color: hsl(142 65% 68%);
-}
-
-.dark .approvals-kanban-card__actions .approvals-action-chip--reject .approvals-action-chip__icon,
-.dark .approvals-kanban-card__actions .approvals-action-chip--delete .approvals-action-chip__icon {
-  color: hsl(var(--destructive));
-}
-
-.dark .approvals-kanban-card__actions .approvals-action-chip--pending .approvals-action-chip__icon {
-  color: var(--system-yellow-text);
-}
-
-.dark .approvals-kanban-card__actions .approvals-action-chip--post .approvals-action-chip__icon {
-  color: hsl(199 90% 72%);
-}
-
-.dark .approvals-kanban-card__actions .approvals-action-chip--kpi-rust .approvals-action-chip__icon {
-  color: #edc0a6;
+.dark .approvals-kanban-card__actions .approvals-action-chip--post:not(:disabled):hover {
+  background: #2c6d9e;
+  color: #fff;
 }
 
 .approvals-kanban-empty {

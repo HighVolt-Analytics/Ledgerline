@@ -74,6 +74,10 @@ def normalize_capture_source(invoice: Any) -> str:
 
     capture = (getattr(invoice, "capture_source", None) or "").strip().lower()
 
+    if capture in {"app", "mobile", "mob"}:
+
+        return "app"
+
     if capture in TEAM_EXPENSE_CAPTURE_CHANNELS or capture in {"upload", "slack"}:
 
         return capture
@@ -140,9 +144,11 @@ def team_expenses_allowed_capture(
     Slack is never eligible.
     """
     src = (capture_source or "").strip().lower()
+    if src in {"app", "mobile", "mob"}:
+        src = "app"
     if src in TEAM_EXPENSE_CAPTURE_CHANNELS:
         return True
-    if src != "upload":
+    if src not in {"upload", "app"}:
         return False
     intent = pinned_team_expense_intent(invoice)
     if intent == TEAM_EXPENSE_INTENT_VENDOR:
@@ -175,7 +181,7 @@ def should_force_team_expenses(invoice: Any, employees: Sequence[Any] | None) ->
     if find_employee_by_sender(emp_list, identity) is None:
         return False
 
-    if channel == "upload":
+    if channel in {"upload", "app"}:
         return team_expenses_allowed_capture(
             channel, invoice=invoice, employees=emp_list
         )

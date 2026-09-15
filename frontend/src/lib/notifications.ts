@@ -1,6 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import { AlertTriangle, CheckCircle2, Info } from "lucide-react";
 import type { NotificationSeverity } from "@/api/types";
+import { formatUploadedAt } from "@/lib/allDocumentsSummary";
 
 export function activityLabel(
   event: string,
@@ -168,4 +169,160 @@ export function groupNotificationsByDay<T extends { created_at: string }>(
   return (["Today", "Yesterday", "Earlier"] as const)
     .filter((label) => buckets[label].length > 0)
     .map((label) => ({ label, items: buckets[label] }));
+}
+
+/** Display as `dd/mm/yy/hh:mm` in the viewer's local timezone. */
+export function formatNotificationTimestamp(iso: string | null | undefined): string {
+  return formatUploadedAt(iso);
+}
+
+const EVENT_CARD: Record<
+  string,
+  { issue: string; category: string; status: string | null }
+> = {
+  unmatched_team_vendor: {
+    issue: "Unmatched team vendor",
+    category: "Vendor matching",
+    status: "Needs review",
+  },
+  unmatched_expense_vendor: {
+    issue: "Unmatched expense vendor",
+    category: "Vendor matching",
+    status: "Needs review",
+  },
+  vendor_registration_hold: {
+    issue: "Vendor not registered",
+    category: "Vendor matching",
+    status: "Needs review",
+  },
+  customer_registration_hold: {
+    issue: "Customer not registered",
+    category: "Customer matching",
+    status: "Needs review",
+  },
+  team_expense_approval_required: {
+    issue: "Approval required",
+    category: "Team expense",
+    status: "Needs review",
+  },
+  purchase_awaiting_po: {
+    issue: "Awaiting purchase order",
+    category: "Purchase",
+    status: "Needs review",
+  },
+  validation_failed: {
+    issue: "Validation failed",
+    category: "Capture",
+    status: "Needs review",
+  },
+  pipeline_error: {
+    issue: "Pipeline error",
+    category: "Processing",
+    status: "Failed",
+  },
+  invoice_rejected: {
+    issue: "Invoice rejected",
+    category: "Approval",
+    status: "Rejected",
+  },
+  invoice_approved: {
+    issue: "Invoice approved",
+    category: "Approval",
+    status: "Approved",
+  },
+  invoice_processed: {
+    issue: "Posted to ledger",
+    category: "Pipeline",
+    status: "Done",
+  },
+  duplicate_skipped: {
+    issue: "Duplicate detected",
+    category: "Duplicate",
+    status: "Needs review",
+  },
+  duplicate_in_progress: {
+    issue: "Duplicate blocked",
+    category: "Duplicate",
+    status: "Needs review",
+  },
+  duplicate_review_suggested: {
+    issue: "Possible duplicate",
+    category: "Duplicate",
+    status: "Needs review",
+  },
+  duplicate_reingest_rejected: {
+    issue: "Resubmitted after rejection",
+    category: "Duplicate",
+    status: "Needs review",
+  },
+  email_ingested: {
+    issue: "Captured via email",
+    category: "Email",
+    status: null,
+  },
+  low_credits: {
+    issue: "Credits running low",
+    category: "Billing",
+    status: "Needs review",
+  },
+  accounting_integration_error: {
+    issue: "Accounting integration error",
+    category: "Integrations",
+    status: "Failed",
+  },
+  accounting_integration_disconnected: {
+    issue: "Accounting integration disconnected",
+    category: "Integrations",
+    status: "Failed",
+  },
+  payment_execution_blocked_by_safety_gate: {
+    issue: "Payment blocked by safety gate",
+    category: "Payments",
+    status: "Failed",
+  },
+  payment_execution_blocked_by_tenant_disable: {
+    issue: "Payment blocked for tenant",
+    category: "Payments",
+    status: "Failed",
+  },
+  payment_execution_blocked_by_limit: {
+    issue: "Payment blocked — over limit",
+    category: "Payments",
+    status: "Failed",
+  },
+};
+
+export type NotificationCardFields = {
+  documentRef: string;
+  party: string | null;
+  issue: string;
+  category: string | null;
+  status: string | null;
+  when: string;
+};
+
+export function notificationCardFields(item: {
+  title: string;
+  summary: string | null;
+  event: string;
+  created_at: string;
+}): NotificationCardFields {
+  const mapped = EVENT_CARD[item.event];
+  const beforeDash = item.title.split(" — ")[0]?.trim() || item.title;
+  const hasParty = beforeDash.includes(" · ");
+  const [refPart, partyPart] = beforeDash.split(" · ");
+  const systemTitle = Boolean(mapped && !hasParty && beforeDash === mapped.issue);
+
+  return {
+    documentRef: systemTitle ? "System" : (refPart || "").trim() || "System",
+    party: hasParty ? (partyPart || "").trim() || null : null,
+    issue:
+      mapped?.issue ??
+      item.summary?.trim() ??
+      item.title.split(" — ")[1]?.trim() ??
+      item.event.replace(/_/g, " "),
+    category: mapped?.category ?? null,
+    status: mapped?.status ?? null,
+    when: formatNotificationTimestamp(item.created_at),
+  };
 }

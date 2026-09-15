@@ -19,6 +19,7 @@ export type UploadAnalysisScope = {
 const CHANNEL_LABELS: Record<AllDocumentsChannelTab, string> = {
   all: "All Documents",
   upload: "Upload",
+  app: "App",
   email: "Email",
   whatsapp: "WhatsApp",
   viber: "Viber",
@@ -111,6 +112,7 @@ export const AREA_ANALYSIS_LABEL: Record<UploadDocumentAreaKey, string> = {
 export const CHANNEL_FUNNEL_LABEL: Record<AllDocumentsChannelTab, string> = {
   all: "FY26 YTD documents",
   upload: "Manual uploads YTD",
+  app: "App captures YTD",
   email: "Email capture YTD",
   whatsapp: "WhatsApp claims YTD",
   viber: "Viber claims YTD",

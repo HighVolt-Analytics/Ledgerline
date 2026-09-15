@@ -1,5 +1,5 @@
+import { ApiError, getScopedAuthHeadersForToken } from "@/api/client";
 import { resolveApiBase } from "@/lib/apiBase";
-import { getScopedAuthHeadersForToken } from "@/api/client";
 import type { AuthUser } from "@/api/types";
 
 const BASE = resolveApiBase();
@@ -151,7 +151,7 @@ export async function apiRefreshSession(refreshToken: string): Promise<TokenPair
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ refresh_token: refreshToken }),
   });
-  if (!res.ok) throw new Error(await parseError(res));
+  if (!res.ok) throw new ApiError(await parseError(res), res.status);
   const json = await res.json();
   return json.data as TokenPairResponse;
 }

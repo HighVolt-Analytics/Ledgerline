@@ -200,11 +200,15 @@ export function KanbanBoardSkeleton() {
           <div className="approvals-kanban-column__cards">
             {Array.from({ length: col === 0 ? 3 : 2 }).map((__, row) => (
               <div key={row} className="approvals-kanban-card pointer-events-none">
-                <Skeleton className="h-3.5 w-3/4 mb-2" />
-                <Skeleton className="h-3 w-1/2 mb-3" />
-                <div className="flex gap-1.5">
-                  <Skeleton className="h-[1.375rem] w-14 rounded-md" />
-                  <Skeleton className="h-[1.375rem] w-16 rounded-md" />
+                <Skeleton className="h-4 w-3/5" />
+                <Skeleton className="h-5 w-24 mt-1" />
+                <Skeleton className="h-3 w-2/3 mt-1" />
+                <Skeleton className="h-3 w-28 mt-1" />
+                <Skeleton className="h-3 w-20 mt-1" />
+                <Skeleton className="h-4 w-14 rounded-sm mt-1" />
+                <div className="flex justify-end gap-1 mt-2 pt-2 border-t border-border">
+                  <Skeleton className="h-5 w-5 rounded-md" />
+                  <Skeleton className="h-5 w-5 rounded-md" />
                 </div>
               </div>
             ))}

@@ -434,12 +434,12 @@ export function MobileQuickActionsPanel({ canEdit = false }: MobileQuickActionsP
     : null;
 
   return (
-    <div className="w-full max-w-3xl space-y-4" data-testid="mobile-qa-panel">
+    <div className="w-full space-y-4" data-testid="mobile-qa-panel">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 className="text-sm font-semibold">Mobile Quick Actions</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Create shortcuts for document types. Toggle them on for the mobile home screen.
+            Organisation shortcuts for document types. Toggle them on for the App home screen.
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">

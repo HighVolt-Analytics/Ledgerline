@@ -484,7 +484,12 @@ async def _create_invoice_from_bytes(
     if bundle_source_hash:
         extracted_fields = {"source_file_hash": bundle_source_hash}
 
-    is_manual_upload = (meta.capture_source or "").strip().lower() == "upload"
+    is_manual_upload = (meta.capture_source or "").strip().lower() in {
+        "upload",
+        "app",
+        "mobile",
+        "mob",
+    }
     uploader_name = ((actor_name or "").strip() or None) if is_manual_upload else None
     uploader_email = ((actor_email or "").strip() or None) if is_manual_upload else None
     inv = Invoice(
@@ -681,7 +686,8 @@ async def ingest_file_with_fanout(
             prefetched_extraction=prefetched_extraction,
             log_upload_event=log_upload_event,
             # Email/WA already filter types; upload validates in API or here.
-            skip_validation=(meta.capture_source or "").lower() not in {"upload", ""},
+            skip_validation=(meta.capture_source or "").lower()
+            not in {"upload", "app", "mobile", "mob", ""},
         )
         return outcome.result
 
@@ -1143,6 +1149,7 @@ async def ingest_upload_file(
     actor_name: str | None = None,
     actor_email: str | None = None,
     team_expense_intent: str | None = None,
+    capture_source: str | None = None,
 ) -> IngestUploadResult:
     """Upload API entry point — logs invoice_uploaded for single-file ingest."""
     from app.services.ingest.canonical_intake_service import (
@@ -1150,9 +1157,11 @@ async def ingest_upload_file(
         canonical_intake_enabled_for,
         intake_document,
     )
+    from app.services.ingest.capture_channel import stored_capture_source_for_upload
 
-    source = IngestSourceMetadata(capture_source="upload")
-    if canonical_intake_enabled_for("upload"):
+    stored_source = stored_capture_source_for_upload(capture_source)
+    source = IngestSourceMetadata(capture_source=stored_source)
+    if canonical_intake_enabled_for(stored_source):
         try:
             outcome = await intake_document(
                 session,

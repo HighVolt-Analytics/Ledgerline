@@ -10,13 +10,15 @@ import {
   formatUnreadBadge,
   groupNotificationsByDay,
   isDuplicateFileNotificationEvent,
+  notificationCardFields,
   notificationSeverityIcon,
-  relativeNotificationTime,
 } from "@/lib/notifications";
 import { duplicateNotificationCopy } from "@/lib/allDocumentsDetailed";
 import { documentDisplayRef } from "@/lib/format";
 import { counterpartyName } from "@/lib/invoice";
+import { matchesListSearch } from "@/lib/listSearch";
 import { fetchMatrixPage } from "@/lib/matrixApi";
+import { ListSearchInput } from "@/components/ListSearchInput";
 import { queryKeys } from "@/lib/queryClient";
 import { cn } from "@/lib/cn";
 import { kpiModuleIconClass } from "@/lib/kpiModuleColors";
@@ -70,6 +72,7 @@ function NotificationCard({
   const tone = severityKpiTone(item.severity);
   const clickable = Boolean(item.href);
   const Tag = clickable ? "button" : "article";
+  const card = notificationCardFields(item);
 
   return (
     <Tag
@@ -83,32 +86,42 @@ function NotificationCard({
       onClick={clickable ? () => onOpen(item.href) : undefined}
       aria-label={clickable ? `Open notification: ${item.title}` : undefined}
     >
-      {item.is_unread ? (
+      <div className="notifications-drawer__item-marks">
         <span
           className={cn(
             "notifications-drawer__item-rail",
-            `notifications-drawer__item-rail--${tone}`
+            item.is_unread && `notifications-drawer__item-rail--${tone}`
           )}
           aria-hidden
         />
-      ) : null}
-
-      <div className={cn("notifications-drawer__item-icon", `kpi-module-icon--${tone}`)}>
-        <Icon className="h-4 w-4" />
+        <span
+          className={cn("notifications-drawer__item-icon", `notifications-drawer__item-icon--${tone}`)}
+        >
+          <Icon className="h-4 w-4" />
+        </span>
       </div>
 
       <div className="notifications-drawer__item-body">
-        <div className="notifications-drawer__item-top">
-          <h3 className="notifications-drawer__item-title">{item.title}</h3>
+        <div className="notifications-drawer__item-head">
+          <h3 className="notifications-drawer__item-title">{card.documentRef}</h3>
+          <time className="notifications-drawer__item-time" dateTime={item.created_at}>
+            {card.when}
+          </time>
         </div>
-        {item.summary ? (
-          <p className="notifications-drawer__item-summary">{item.summary}</p>
+        {card.party ? <p className="notifications-drawer__item-party">{card.party}</p> : null}
+        {card.issue ? <p className="notifications-drawer__item-issue">{card.issue}</p> : null}
+        {card.category || card.status ? (
+          <div className="notifications-drawer__item-footer">
+            {card.category ? (
+              <span className="notifications-drawer__item-category">{card.category}</span>
+            ) : (
+              <span />
+            )}
+            {card.status ? (
+              <span className="notifications-drawer__item-status">{card.status}</span>
+            ) : null}
+          </div>
         ) : null}
-        <div className="notifications-drawer__item-meta">
-          <span className="notifications-drawer__item-time">
-            {relativeNotificationTime(item.created_at)}
-          </span>
-        </div>
       </div>
     </Tag>
   );
@@ -119,6 +132,7 @@ export function NotificationBell({ collapsed = false, variant = "sidebar" }: Not
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [showDuplicateFiles, setShowDuplicateFiles] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const { data, isLoading, markAllRead } = useNotifications();
   const isHeader = variant === "header";
 
@@ -141,9 +155,24 @@ export function NotificationBell({ collapsed = false, variant = "sidebar" }: Not
   const duplicateTotal = duplicateQuery.data?.total ?? duplicateItems.length;
 
   const visibleItems = useMemo(() => {
-    if (showDuplicateFiles) return duplicateItems;
-    return items.filter((item) => !isDuplicateFileNotificationEvent(item.event));
-  }, [showDuplicateFiles, duplicateItems, items]);
+    const base = showDuplicateFiles
+      ? duplicateItems
+      : items.filter((item) => !isDuplicateFileNotificationEvent(item.event));
+    return base.filter((item) => {
+      const card = notificationCardFields(item);
+      return matchesListSearch(
+        searchQuery,
+        item.title,
+        item.summary,
+        item.event,
+        card.documentRef,
+        card.party,
+        card.issue,
+        card.category,
+        card.status
+      );
+    });
+  }, [showDuplicateFiles, duplicateItems, items, searchQuery]);
 
   const groups = groupNotificationsByDay(visibleItems);
 
@@ -154,6 +183,7 @@ export function NotificationBell({ collapsed = false, variant = "sidebar" }: Not
   useEffect(() => {
     if (!open) {
       setShowDuplicateFiles(false);
+      setSearchQuery("");
       return;
     }
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -287,6 +317,13 @@ export function NotificationBell({ collapsed = false, variant = "sidebar" }: Not
                 </header>
 
                 <div className="notifications-drawer__toolbar">
+                  <ListSearchInput
+                    value={searchQuery}
+                    onChange={setSearchQuery}
+                    placeholder="Search notifications…"
+                    testId="input-notifications-search"
+                    className="notifications-drawer__search"
+                  />
                   <button
                     type="button"
                     className={cn(

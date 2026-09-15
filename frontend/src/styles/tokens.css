@@ -8,12 +8,12 @@
    * Main content card: soft white (~#FAFBF8), not harsh #FFFFFF
    */
   --background: 72 14% 93%; /* #EFF0EB — shell canvas */
-  --foreground: 220 16% 14%;
+  --foreground: 220 8% 27%; /* #3E4249 — charcoal, not black */
   --card: 80 20% 98%; /* #FAFBF8 — main workspace */
-  --card-foreground: 220 16% 14%;
+  --card-foreground: 220 8% 27%;
   --card-border: 72 10% 90%;
   --popover: 80 20% 98%;
-  --popover-foreground: 220 16% 14%;
+  --popover-foreground: 220 8% 27%;
   --popover-border: 72 10% 90%;
   --border: 72 10% 88%;
   --input: 72 10% 84%;
@@ -25,23 +25,23 @@
 
   /* Primary sidebar + whole-screen canvas */
   --sidebar: 72 14% 93%; /* #EFF0EB */
-  --sidebar-foreground: 0 0% 9%;
+  --sidebar-foreground: 220 8% 27%;
   --sidebar-border: 72 10% 88%;
   --sidebar-accent: 72 12% 90%;
-  --sidebar-accent-foreground: 0 0% 9%;
+  --sidebar-accent-foreground: 220 8% 27%;
   --sidebar-ring: 0 0% 9%;
   --sidebar-primary: 0 0% 9%;
   --sidebar-primary-foreground: 0 0% 100%;
 
   /* Secondary sidebar card */
   --nav-secondary: 60 20% 98%; /* #FBFBF9 */
-  --nav-secondary-foreground: 0 0% 9%;
+  --nav-secondary-foreground: 220 8% 27%;
   --nav-secondary-border: 72 10% 90%;
 
   /* Primary sidebar nav item states */
   --sidebar-item-hover: 72 12% 90%;
   --sidebar-item-active: 0 0% 100%;
-  --sidebar-item-active-fg: 0 0% 9%;
+  --sidebar-item-active-fg: 220 8% 27%;
 
   /* Secondary sidebar nav item states */
   --nav-item-hover: 72 12% 92%;
@@ -60,12 +60,12 @@
   --primary-foreground: 0 0% 100%;
   --ring: 0 0% 9%;
   --accent: 72 12% 91%;
-  --accent-foreground: 0 0% 9%;
+  --accent-foreground: 220 8% 27%;
 
   --secondary: 72 12% 91%;
-  --secondary-foreground: 220 16% 14%;
+  --secondary-foreground: 220 8% 27%;
   --muted: 72 12% 92%;
-  --muted-foreground: 220 10% 42%;
+  --muted-foreground: 220 7% 42%;
 
   --destructive: 0 72% 42%;
   --destructive-foreground: 0 0% 100%;

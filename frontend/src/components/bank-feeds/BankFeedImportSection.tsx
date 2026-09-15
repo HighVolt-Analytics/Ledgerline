@@ -91,7 +91,7 @@ export function BankFeedImportSection({
           return;
         }
         message =
-          "Queued for bank registration — complete it under Contacts → Banks → Pending.";
+          "Queued for bank registration — complete it under Bank feeds → Setup → Pending.";
         setImportBanner(message);
         setImportErrors([]);
         setExpanded(true);
@@ -203,8 +203,8 @@ export function BankFeedImportSection({
               {!importError && accountId == null && importBanner?.includes("Queued") ? (
                 <>
                   {" "}
-                  <Link to="/creations?tab=banks" className="underline">
-                    Open Banks
+                  <Link to="/upload?channel=bank-feeds&view=setup" className="underline">
+                    Open bank setup
                   </Link>
                 </>
               ) : null}
@@ -239,7 +239,7 @@ export function BankFeedImportSection({
               data-testid="bf-import-formats"
             >
               {accountId == null
-                ? "No bank selected — register under Contacts → Banks after upload."
+                ? "No bank selected — register under Bank feeds → Setup after upload."
                 : BANK_FEED_IMPORT_FORMAT_HINT}
             </p>
             <Button

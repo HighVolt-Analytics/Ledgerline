@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
-import { BarChart3, CloudUpload, Landmark } from "lucide-react";
+import { BarChart3, Landmark, Settings } from "lucide-react";
 import { api } from "@/api/client";
 import type { ConnectedMailbox, MailboxBackfillJob } from "@/api/types";
 import { ConnectMailboxDialog } from "@/components/ConnectMailboxDialog";
@@ -40,9 +40,10 @@ import {
   UploadViberChannelPanel,
   UploadWhatsappChannelPanel,
 } from "@/components/upload/UploadChannelPanels";
+import { MobileQuickActionsPanel } from "@/components/settings/MobileQuickActionsPanel";
 import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/queryClient";
-import { IntegrationBrandIcon } from "@/components/integrations/IntegrationBrandIcon";
+import { CaptureSourceLogo } from "@/components/upload/CaptureSourceLogo";
 import {
   BULK_UPLOAD_MAX_FILES,
   filterUploadFiles,
@@ -55,6 +56,7 @@ import {
 import { UploadDropZone } from "@/components/upload/UploadDropZone";
 import { UploadAnalysisOverlay } from "@/components/upload/UploadAnalysisOverlay";
 import { BankFeedsWorkspace } from "@/components/bank-feeds/BankFeedsWorkspace";
+import { BanksTab } from "@/components/rule-book/BanksTab";
 import type { UploadAnalysisScope } from "@/lib/uploadAnalysisScope";
 import type { BankFeedQueueTab } from "@/api/types";
 import { useNavBadges } from "@/hooks/useNavBadges";
@@ -70,7 +72,14 @@ function parseChannelTab(value: string | null): ChannelTab {
 }
 
 function channelHasSetupTab(channel: ChannelTab): boolean {
-  return channel === "email" || channel === "whatsapp" || channel === "viber" || channel === "slack";
+  return (
+    channel === "app" ||
+    channel === "email" ||
+    channel === "whatsapp" ||
+    channel === "viber" ||
+    channel === "slack" ||
+    channel === "bank-feeds"
+  );
 }
 
 function channelEmptyTitle(channel: ChannelTab, routeLabel: string | null): string {
@@ -79,6 +88,7 @@ function channelEmptyTitle(channel: ChannelTab, routeLabel: string | null): stri
   if (channel === "whatsapp") return "No WhatsApp documents yet";
   if (channel === "viber") return "No Viber documents yet";
   if (channel === "slack") return "No Slack documents yet";
+  if (channel === "app") return "No app documents yet";
   return "No documents yet";
 }
 
@@ -87,10 +97,13 @@ function channelEmptyHint(channel: ChannelTab, routeLabel: string | null): strin
     return `Documents classified and routed to ${routeLabel} appear here.`;
   }
   if (channel === "all") {
-    return "Upload files from the Upload tab, or capture documents from Email, Slack, WhatsApp, or Viber.";
+    return "Upload files from the Upload tab, capture from the App tab, or use Email, Slack, WhatsApp, or Viber.";
   }
   if (channel === "upload") {
-    return "Drop files above to upload, or capture documents from the Email, Slack, WhatsApp, or Viber tabs. Team expense claims use those channels when the sender is in Employees.";
+    return "Drop files above to upload, or capture documents from the App, Email, Slack, WhatsApp, or Viber tabs. Team expense claims use those channels when the sender is in Employees.";
+  }
+  if (channel === "app") {
+    return "Documents captured in the LedgerLink mobile app appear here. Use Setup to configure App Quick Actions.";
   }
   if (channel === "bank-feeds") {
     return "Import bank statements (PDF or CSV) and reconcile lines on this tab.";
@@ -109,7 +122,10 @@ function channelEmptyHint(channel: ChannelTab, routeLabel: string | null): strin
 
 function parseViewTab(searchParams: URLSearchParams, channel: ChannelTab): ViewTab {
   const view = searchParams.get("view") ?? searchParams.get("tab");
+  if (view === "summary") return "summary";
   if (view === "setup" && channelHasSetupTab(channel)) return "setup";
+  // Organisation mobile settings live on App — show them unless Summary is explicit.
+  if (channel === "app") return "setup";
   return "summary";
 }
 
@@ -306,7 +322,9 @@ export function UploadPage() {
     if (tab === "all") next.delete("channel");
     else next.set("channel", tab);
     next.delete("tab");
-    if (!channelHasSetupTab(tab) && (next.get("view") === "setup" || viewTab === "setup")) {
+    if (tab === "app") {
+      next.set("view", "setup");
+    } else if (!channelHasSetupTab(tab) && (next.get("view") === "setup" || viewTab === "setup")) {
       next.delete("view");
     }
     setSearchParams(next, { replace: true });
@@ -570,7 +588,9 @@ export function UploadPage() {
   }
 
   const setupPanel =
-    channelTab === "email" ? (
+    channelTab === "app" ? (
+      <MobileQuickActionsPanel canEdit={Boolean(isAdmin)} />
+    ) : channelTab === "email" ? (
       <UploadEmailChannelPanel
         mailboxes={mailboxes}
         docsPerMailbox={docsPerMailbox}
@@ -597,6 +617,8 @@ export function UploadPage() {
       <UploadSlackChannelPanel docCount={boardCounts.all} />
     ) : channelTab === "viber" ? (
       <UploadViberChannelPanel docCount={boardCounts.all} />
+    ) : channelTab === "bank-feeds" ? (
+      <BanksTab canEdit={Boolean(isAdmin)} />
     ) : null;
 
   const workspaceShell = (content: ReactNode) => (
@@ -622,8 +644,18 @@ export function UploadPage() {
                 testid: "tab-upload-upload",
                 label: (
                   <span className="inline-flex items-center gap-2">
-                    <CloudUpload className="h-4 w-4 text-primary" />
+                    <CaptureSourceLogo source="upload" />
                     Upload
+                  </span>
+                ),
+              },
+              {
+                value: "app",
+                testid: "tab-upload-app",
+                label: (
+                  <span className="inline-flex items-center gap-2">
+                    <CaptureSourceLogo source="app" />
+                    App
                   </span>
                 ),
               },
@@ -632,7 +664,7 @@ export function UploadPage() {
                 testid: "tab-upload-email",
                 label: (
                   <span className="inline-flex items-center gap-2">
-                    <IntegrationBrandIcon id="graph" size={16} />
+                    <CaptureSourceLogo source="email" />
                     Email
                   </span>
                 ),
@@ -642,7 +674,7 @@ export function UploadPage() {
                 testid: "tab-upload-slack",
                 label: (
                   <span className="inline-flex items-center gap-2">
-                    <IntegrationBrandIcon id="slack" size={16} />
+                    <CaptureSourceLogo source="slack" />
                     Slack
                   </span>
                 ),
@@ -652,7 +684,7 @@ export function UploadPage() {
                 testid: "tab-upload-whatsapp",
                 label: (
                   <span className="inline-flex items-center gap-2">
-                    <IntegrationBrandIcon id="whatsapp" size={16} />
+                    <CaptureSourceLogo source="whatsapp" />
                     WhatsApp
                   </span>
                 ),
@@ -662,7 +694,7 @@ export function UploadPage() {
                 testid: "tab-upload-viber",
                 label: (
                   <span className="inline-flex items-center gap-2">
-                    <IntegrationBrandIcon id="viber" size={16} />
+                    <CaptureSourceLogo source="viber" />
                     Viber
                   </span>
                 ),
@@ -690,20 +722,33 @@ export function UploadPage() {
           />
         }
         actions={
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => setAnalysisOpen(true)}
-              data-testid="button-upload-analysis"
-            >
-              <BarChart3 className="h-4 w-4" aria-hidden />
-              Analysis
-            </Button>
-          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => setAnalysisOpen(true)}
+            data-testid="button-upload-analysis"
+          >
+            <BarChart3 className="h-4 w-4" aria-hidden />
+            Analysis
+          </Button>
         }
       />
+      {showSetupTab ? (
+        <div className="upload-workspace__setup-row">
+          <Button
+            type="button"
+            size="sm"
+            variant={viewTab === "setup" ? "default" : "outline"}
+            aria-pressed={viewTab === "setup"}
+            onClick={() => setViewTab(viewTab === "setup" ? "summary" : "setup")}
+            data-testid="button-upload-setup"
+          >
+            <Settings className="h-4 w-4" aria-hidden />
+            Setup
+          </Button>
+        </div>
+      ) : null}
       {channelTab === "upload" ? (
         <>
           <UploadDropZone
@@ -751,28 +796,21 @@ export function UploadPage() {
             : "upload-workspace__view-row"
         }
       >
-        <PageTabs
-          className="mb-0"
-          value={viewTab}
-          onChange={(value) => setViewTab(value as ViewTab)}
-          data-testid="upload-view-tabs"
-          tabs={[
-            {
-              value: "summary",
-              testid: "tab-upload-summary",
-              label: "Summary",
-            },
-            ...(showSetupTab
-              ? [
-                  {
-                    value: "setup",
-                    testid: "tab-upload-setup",
-                    label: "Setup",
-                  },
-                ]
-              : []),
-          ]}
-        />
+        {viewTab !== "setup" ? (
+          <PageTabs
+            className="mb-0"
+            value="summary"
+            onChange={(value) => setViewTab(value as ViewTab)}
+            data-testid="upload-view-tabs"
+            tabs={[
+              {
+                value: "summary",
+                testid: "tab-upload-summary",
+                label: "Summary",
+              },
+            ]}
+          />
+        ) : null}
         {viewTab !== "setup" ? (
           <UploadTableFilterRail
             area={documentAreas}
@@ -852,10 +890,10 @@ export function UploadPage() {
   };
 
   return workspaceShell(
-    channelTab === "bank-feeds" ? (
-      <BankFeedsWorkspace initialAccountId={bankAccountId} initialTab={bankFeedTab} />
-    ) : viewTab === "setup" ? (
+    viewTab === "setup" ? (
       setupPanel
+    ) : channelTab === "bank-feeds" ? (
+      <BankFeedsWorkspace initialAccountId={bankAccountId} initialTab={bankFeedTab} />
     ) : (
       <AllDocumentsDetailedTable
         captureSource={channelCaptureSource}

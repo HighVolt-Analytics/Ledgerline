@@ -278,8 +278,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         invalidateSessionCaches("soft");
       } catch (err) {
-        // Only logout on definitive auth failure ΓÇö transient network/5xx should retry on next 401.
-        if (err instanceof ApiError && err.status === 401) {
+        // Only drop the session on a definite auth failure. Network/5xx should retry later.
+        if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
           logout();
         }
       }
@@ -301,6 +301,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           await refreshAccessTokenSingleFlight();
         } catch {
           clearAuthSession();
+          setAuthToken(null);
+          setAuthUser(null);
           return;
         }
       }
@@ -336,7 +338,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           user: me,
           memberships,
         });
-      } catch {
+      } catch (err) {
+        if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+          try {
+            await refreshAccessTokenSingleFlight();
+            if (cancelled) return;
+            const nextAccess = getAccessToken();
+            const nextRefresh = getRefreshToken();
+            if (!nextAccess || !nextRefresh) {
+              logout();
+              return;
+            }
+            const { user: me, memberships } = await hydrateUserAndMemberships({
+              access: nextAccess,
+              fetchMemberships: "if-empty",
+            });
+            if (cancelled) return;
+            setUser(me);
+            setAuthUser(me);
+            persistAuthSuccess({
+              access_token: nextAccess,
+              refresh_token: nextRefresh,
+              user: me,
+              memberships,
+            });
+            return;
+          } catch {
+            logout();
+            return;
+          }
+        }
         const fallback = userFromToken(access);
         if (!cancelled && fallback) {
           setUser(fallback);
@@ -352,7 +383,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [logout]);
 
   useEffect(() => {
     return subscribeAuthSync((payload) => {

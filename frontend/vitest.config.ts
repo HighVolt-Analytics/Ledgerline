@@ -56,6 +56,7 @@ export default defineConfig({
       "src/lib/authSync.test.ts",
       "src/lib/authToken.test.ts",
       "src/lib/authReturnTo.test.ts",
+      "src/lib/authHydrate.test.ts",
       "src/lib/navAccess.test.ts",
       "src/lib/authSession.test.ts",
       "src/lib/tenantSession.test.ts",

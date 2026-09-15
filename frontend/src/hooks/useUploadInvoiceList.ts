@@ -39,7 +39,7 @@ export function useUploadInvoiceList(options: {
   q: string;
   mailboxId: number | null;
   /** Omit / pass `"all"` to list every ingest channel. */
-  captureSource: "all" | "upload" | "email" | "whatsapp" | "viber" | "slack";
+  captureSource: "all" | "upload" | "app" | "email" | "whatsapp" | "viber" | "slack";
   enabled?: boolean;
   processingIds?: ReadonlySet<number>;
 }) {

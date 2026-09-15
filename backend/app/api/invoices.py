@@ -83,6 +83,7 @@ from app.services.classification.document_type_playbook_service import (
 from app.services.extraction.field_extraction_confidence import compute_extraction_field_confidence
 from app.services.ingest.ingest_fanout_service import DuplicateUploadError, ingest_upload_file
 from app.services.ingest.canonical_intake_service import IntakeValidationError
+from app.services.ingest.capture_channel import APP_CAPTURE_ALIASES, LIST_CAPTURE_SOURCES
 from app.services.credit_service import InsufficientCreditsError, PlanFeatureBlockedError
 from app.services.purchase.purchase_dossier_service import build_purchase_dossier
 from app.tenant_child_tables import journal_entries_for_invoice, line_items_for_invoice
@@ -175,7 +176,7 @@ async def list_invoices(
     ),
     capture_source: str | None = Query(
         None,
-        description="Filter by capture channel: upload, email, whatsapp, or viber",
+        description="Filter by capture channel: upload, app, email, whatsapp, slack, or viber",
     ),
     invoice_date_from: date | None = None,
     invoice_date_to: date | None = None,
@@ -228,7 +229,9 @@ async def list_invoices(
             query = query.where(Invoice.connected_mailbox_id == connected_mailbox_id)
         if capture_source and capture_source.strip():
             src = capture_source.strip().lower()
-            if src in {"upload", "email", "whatsapp", "viber", "slack"}:
+            if src in APP_CAPTURE_ALIASES:
+                src = "app"
+            if src in LIST_CAPTURE_SOURCES:
                 unset_capture = or_(
                     Invoice.capture_source.is_(None),
                     Invoice.capture_source == "",
@@ -278,6 +281,8 @@ async def list_invoices(
                             ),
                         )
                     )
+                elif src == "app":
+                    query = query.where(func.lower(Invoice.capture_source).in_(APP_CAPTURE_ALIASES))
                 else:  # viber
                     query = query.where(
                         or_(
@@ -335,7 +340,7 @@ async def list_invoices(
                 # Do not match vendor mailbox email_sender or every admin-uploaded AP invoice.
                 personal_capture = or_(
                     func.lower(Invoice.capture_source).in_(
-                        ("upload", "whatsapp", "viber", "slack")
+                        ("upload", "app", "whatsapp", "viber", "slack")
                     ),
                     and_(
                         or_(
@@ -772,6 +777,10 @@ async def upload_invoice(
             "or vendor_invoice"
         ),
     ),
+    capture_source: str | None = Query(
+        None,
+        description="Capture channel for this file: upload (default) or app",
+    ),
     defer_processing: bool = Query(
         False,
         description="Skip immediate pipeline run (use with POST /process-batch)",
@@ -815,6 +824,7 @@ async def upload_invoice(
             actor_name=actor_name,
             actor_email=actor_email,
             team_expense_intent=intent_raw,
+            capture_source=capture_source,
         )
     except IntakeValidationError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -911,6 +921,7 @@ async def manual_capture_invoice(
             actor_name=actor_name,
             actor_email=actor_email,
             team_expense_intent=None,
+            capture_source="app",
         )
     except IntakeValidationError as exc:
         raise HTTPException(400, str(exc)) from exc

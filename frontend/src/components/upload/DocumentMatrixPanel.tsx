@@ -130,7 +130,7 @@ export function DocumentMatrixPanel({
   showTable?: boolean;
   showLegend?: boolean;
   /** When set, only show documents for this Upload channel tab. */
-  captureSource?: "upload" | "email" | "whatsapp" | "viber" | "slack";
+  captureSource?: "upload" | "app" | "email" | "whatsapp" | "viber" | "slack";
   onFlaggedCount?: (count: number) => void;
   onGoUpload?: () => void;
   refreshRef?: MutableRefObject<(() => void) | null>;
@@ -323,7 +323,9 @@ export function DocumentMatrixPanel({
                   ? "No Viber documents in the matrix"
                   : captureSource === "upload"
                     ? "No upload documents in the matrix"
-                    : "No documents in the matrix"
+                    : captureSource === "app"
+                      ? "No app documents in the matrix"
+                      : "No documents in the matrix"
           }
           hint={
             captureSource && captureSource !== "upload"

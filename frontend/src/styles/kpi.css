@@ -251,8 +251,8 @@
 }
 
 .ops-stacked-bar-value {
-  /* Light mode pastels — dark labels */
-  color: #1c1c1e !important;
+  /* Light mode pastels — charcoal labels, not black */
+  color: hsl(var(--foreground)) !important;
 }
 
 .dark .ops-stacked-bar-value {

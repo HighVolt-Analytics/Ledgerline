@@ -130,6 +130,24 @@ describe("invoiceSourceKind", () => {
       } as Invoice),
     ).toBe("upload");
     expect(invoiceSourceLabel("upload")).toBe("Direct upload");
+    expect(
+      invoiceSourceKind({
+        capture_source: "app",
+        email_sender: null,
+        connected_mailbox_id: null,
+      } as Invoice),
+    ).toBe("app");
+    expect(invoiceSourceLabel("app")).toBe("App");
+    expect(
+      invoiceMatchesCaptureChannel(
+        {
+          capture_source: "mobile",
+          email_sender: null,
+          connected_mailbox_id: null,
+        } as Invoice,
+        "app",
+      ),
+    ).toBe(true);
   });
 
   it("keeps explicit upload when claimant/sender is set", () => {
