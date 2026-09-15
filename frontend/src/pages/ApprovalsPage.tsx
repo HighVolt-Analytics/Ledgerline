@@ -18,9 +18,7 @@ import { fetchApprovalsBoard } from "@/lib/invoices";
 import {
   approveAndProcess,
   confirmAndProcess,
-  invoiceCanAttemptReprocess,
   invoiceHasApprovableSource,
-  reprocessAndWatch,
   validateInvoiceReadyForApproval,
 } from "@/lib/invoiceActions";
 import { useRuleBookDocumentTypes } from "@/hooks/useRuleBookConfig";
@@ -479,41 +477,6 @@ export function ApprovalsPage() {
     }
   };
 
-  const reprocessInvoice = async (id: number) => {
-    const inv = invoices.find((i) => i.id === id);
-    if (!inv || inv.status !== "rejected") {
-      setToast(
-        inv?.status === "duplicate_skipped"
-          ? "Duplicate submissions have no stored file — delete permanently or reprocess the original document."
-          : "This invoice cannot be reprocessed."
-      );
-      return;
-    }
-    if (!invoiceCanAttemptReprocess(inv)) {
-      setToast("Upload a PDF before reprocessing this invoice.");
-      return;
-    }
-    setBusyId(id);
-    setProcessingIds((prev) => new Set(prev).add(id));
-    try {
-      setToast("Reprocessing document…");
-      await reprocessAndWatch(id, () => load({ silent: true, fresh: true }));
-      await load({ fresh: true });
-      await invalidateAfterApproval();
-      setToast("Reprocess complete — check Processing if the document is still in the pipeline.");
-    } catch (e) {
-      setToast(e instanceof Error ? e.message : "Reprocess failed");
-      await load({ fresh: true });
-    } finally {
-      setProcessingIds((prev) => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
-      setBusyId(null);
-    }
-  };
-
   const rejectInvoice = async (id: number) => {
     const inv = invoices.find((i) => i.id === id);
     if (!inv || (inv.status !== "exception" && inv.status !== "processed")) {
@@ -773,7 +736,13 @@ export function ApprovalsPage() {
                         )}
                       </div>
                       <p className="approvals-kanban-card__amount tnum">
-                        {invoiceMoney(invoiceCardTotal(inv), inv)}
+                        {invoiceMoney(invoiceCardTotal(inv), {
+                          currency: inv.currency,
+                          extracted_fields: inv.extracted_fields as
+                            | Record<string, string | null | undefined>
+                            | null
+                            | undefined,
+                        })}
                       </p>
                       <p className="approvals-kanban-card__meta tnum">{approvalCardDocLabel(inv)}</p>
                       {awaiting ? (
