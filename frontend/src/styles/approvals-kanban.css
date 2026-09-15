@@ -355,61 +355,91 @@
   display: flex;
   align-items: center;
   flex-shrink: 0;
-  gap: 0.5rem;
+  gap: 0.4rem;
   min-width: 0;
-  margin-top: 0.2rem;
+  margin-top: 0.1rem;
 }
 
-.approvals-kanban-card__dots {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
+.approvals-kanban-card__track {
+  position: relative;
+  display: block;
+  flex: 0 1 auto;
+  width: 3.75rem;
+  min-width: 3.75rem;
+  max-width: 3.75rem;
+  height: 0.5rem;
 }
 
-.approvals-kanban-card__dot-wrap {
-  display: inline-flex;
-  align-items: center;
-}
-
-.approvals-kanban-card__dot-line {
-  width: 2.5rem;
+.approvals-kanban-card__track-line,
+.approvals-kanban-card__track-fill {
+  position: absolute;
+  top: 50%;
+  left: 0.25rem;
+  right: 0.25rem;
   height: 2px;
+  transform: translateY(-50%);
+  border-radius: 9999px;
   background: hsl(220 10% 84%);
 }
 
-.approvals-kanban-card__dot {
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 9999px;
-  border: 2px solid hsl(220 10% 72%);
-  background: #fff;
-  box-sizing: border-box;
+.approvals-kanban-card__track-fill {
+  right: auto;
+  background: hsl(220 12% 22%);
 }
 
-.approvals-kanban-card__dot--filled {
+.approvals-kanban-card__track-knob,
+.approvals-kanban-card__track-end {
+  position: absolute;
+  top: 50%;
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 9999px;
+  border: 1.5px solid hsl(220 10% 72%);
+  background: #fff;
+  box-sizing: border-box;
+  transform: translate(-50%, -50%);
+}
+
+.approvals-kanban-card__track-knob {
+  left: 0.25rem;
+  z-index: 1;
+}
+
+.approvals-kanban-card__track-end {
+  left: calc(100% - 0.25rem);
+}
+
+.approvals-kanban-card__track-knob--filled,
+.approvals-kanban-card__track-end--filled {
   background: hsl(220 12% 22%);
   border-color: hsl(220 12% 22%);
 }
 
 .approvals-kanban-card__quorum {
   flex-shrink: 0;
-  font-size: 0.6875rem;
+  font-size: 0.625rem;
   font-weight: 500;
   line-height: 1.3;
   color: hsl(var(--muted-foreground));
   white-space: nowrap;
 }
 
-.dark .approvals-kanban-card__dot-line {
+.dark .approvals-kanban-card__track-line {
   background: hsl(214 10% 32%);
 }
 
-.dark .approvals-kanban-card__dot {
-  background: transparent;
+.dark .approvals-kanban-card__track-fill {
+  background: hsl(210 15% 90%);
+}
+
+.dark .approvals-kanban-card__track-knob,
+.dark .approvals-kanban-card__track-end {
+  background: hsl(var(--card));
   border-color: hsl(214 10% 48%);
 }
 
-.dark .approvals-kanban-card__dot--filled {
+.dark .approvals-kanban-card__track-knob--filled,
+.dark .approvals-kanban-card__track-end--filled {
   background: hsl(210 15% 90%);
   border-color: hsl(210 15% 90%);
 }
@@ -490,57 +520,33 @@
   color: hsl(var(--muted-foreground));
 }
 
+.approvals-kanban-card__due {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.15rem 0 0;
+  min-width: 0;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.35;
+  color: hsl(var(--muted-foreground));
+}
+
+.approvals-kanban-card__due-icon {
+  width: 0.75rem;
+  height: 0.75rem;
+  flex-shrink: 0;
+}
+
 .approvals-kanban-card__actions {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
   justify-content: flex-end;
-  gap: 0.25rem;
-  margin-top: 0.375rem;
-  padding-top: 0.375rem;
-  border-top: 1px solid hsl(var(--border));
-}
-
-.approvals-kanban-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  margin-bottom: 1rem;
-}
-
-.approvals-kanban-toolbar__actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-left: auto;
-}
-
-.approvals-kanban-toolbar__run-btn {
-  border-color: hsl(var(--border));
-  background-color: hsl(var(--foreground));
-  color: hsl(var(--background));
-  box-shadow: 0 1px 2px hsl(var(--foreground) / 0.08);
-}
-
-.approvals-kanban-toolbar__run-btn:hover:not(:disabled) {
-  background-color: hsl(var(--foreground) / 0.9);
-  color: hsl(var(--background));
-}
-
-.dark .approvals-kanban-toolbar__run-btn {
-  border-color: hsl(var(--border) / 0.65);
-  background-color: hsl(0 0% 100%);
-  color: hsl(0 0% 9%);
-  box-shadow: 0 1px 2px hsl(0 0% 0% / 0.2);
-}
-
-.dark .approvals-kanban-toolbar__run-btn:hover:not(:disabled) {
-  background-color: hsl(0 0% 96%);
-  color: hsl(0 0% 9%);
+  gap: 0.45rem;
+  margin-top: auto;
+  padding-top: 0.7rem;
+  border-top: none;
 }
 
 /* Connected chevron status tags — rounded start; pointed joins; rounded end on last segment */
@@ -1081,134 +1087,221 @@
   color: hsl(187 85% 53%);
 }
 
-/* Kanban card actions — square icon buttons */
+/* Kanban card actions — black CTA (white label); Reject uses previous card fill, no navy */
 .approvals-kanban-card__actions .approvals-action-chip {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   height: 1.5rem;
-  width: 1.5rem;
-  min-width: 1.5rem;
-  padding: 0;
+  width: auto;
+  min-width: 0;
+  padding: 0 0.3rem;
   border: none;
-  border-radius: 0.375rem;
+  border-radius: 0.4rem;
   box-shadow: none;
   filter: none;
-  line-height: 0;
-  color: #fff;
+  gap: 0.2rem;
+  background: transparent;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .approvals-kanban-card__actions .approvals-action-chip__icon {
   display: block;
-  width: 0.8125rem;
-  height: 0.8125rem;
+  width: 0.75rem;
+  height: 0.75rem;
   flex-shrink: 0;
-  stroke-width: 2.4;
-  color: inherit;
+  stroke-width: 2.15;
 }
 
 .approvals-kanban-card__actions
-  .approvals-action-chip:not(.approvals-action-chip--outline):not(.approvals-action-chip--static) {
+  .approvals-action-chip--approve:not(.approvals-action-chip--outline):not(.approvals-action-chip--static) {
+  height: 1.5rem;
+  padding: 0 0.7rem;
+  border-radius: 0.4rem;
+  background: #111;
   color: #fff;
 }
 
 .approvals-kanban-card__actions
-  .approvals-action-chip:not(.approvals-action-chip--outline):not(.approvals-action-chip--static)
+  .approvals-action-chip--approve:not(.approvals-action-chip--outline):not(.approvals-action-chip--static)
   .approvals-action-chip__icon {
-  color: inherit;
-}
-
-/* Light mode — solid tiles with white icons (reference summary chips) */
-.approvals-kanban-card__actions .approvals-action-chip--approve {
-  background: #34c759;
   color: #fff;
 }
 
-.approvals-kanban-card__actions .approvals-action-chip--reject,
-.approvals-kanban-card__actions .approvals-action-chip--delete {
-  background: #ff6b7a;
-  color: #fff;
+.approvals-kanban-card__actions
+  .approvals-action-chip--approve
+  .approvals-action-chip__icon:not(.animate-spin) {
+  display: none;
 }
 
-.approvals-kanban-card__actions .approvals-action-chip--edit {
-  background: #ffb020;
-  color: #fff;
+.approvals-kanban-card__actions
+  .approvals-action-chip--reject:not(.approvals-action-chip--outline):not(.approvals-action-chip--static),
+.approvals-kanban-card__actions
+  .approvals-action-chip--post:not(.approvals-action-chip--outline):not(.approvals-action-chip--static),
+.approvals-kanban-card__actions
+  .approvals-action-chip--edit:not(.approvals-action-chip--outline):not(.approvals-action-chip--static) {
+  padding: 0 0.55rem;
+  background: #eff0eb;
+  color: hsl(var(--foreground));
 }
 
+.approvals-kanban-card__actions
+  .approvals-action-chip--reject:not(.approvals-action-chip--outline):not(.approvals-action-chip--static)
+  .approvals-action-chip__icon {
+  color: #b56a65;
+}
+
+.approvals-kanban-card__actions
+  .approvals-action-chip--post:not(.approvals-action-chip--outline):not(.approvals-action-chip--static)
+  .approvals-action-chip__icon,
+.approvals-kanban-card__actions
+  .approvals-action-chip--edit:not(.approvals-action-chip--outline):not(.approvals-action-chip--static)
+  .approvals-action-chip__icon {
+  color: hsl(var(--foreground));
+}
+
+.approvals-kanban-card__actions
+  .approvals-action-chip--delete:not(.approvals-action-chip--outline):not(.approvals-action-chip--static) {
+  padding: 0 0.55rem;
+  background: #f1e6e4;
+  color: #a85f5b;
+}
+
+.approvals-kanban-card__actions
+  .approvals-action-chip--delete:not(.approvals-action-chip--outline):not(.approvals-action-chip--static)
+  .approvals-action-chip__icon {
+  color: #a85f5b;
+}
+
+.approvals-kanban-card__actions .approvals-action-chip--edit,
 .approvals-kanban-card__actions .approvals-action-chip--post {
-  background: #4fc3f7;
-  color: #fff;
+  width: 1.5rem;
+  min-width: 1.5rem;
+  padding: 0;
 }
 
 .approvals-kanban-card__actions
   .approvals-action-chip:not(:disabled):not(.approvals-action-chip--static):hover {
   filter: none;
   box-shadow: none;
+}
+
+.approvals-kanban-card__actions
+  .approvals-action-chip--approve:not(.approvals-action-chip--outline):not(.approvals-action-chip--static):not(:disabled):hover {
+  background: #000;
   color: #fff;
 }
 
-.approvals-kanban-card__actions .approvals-action-chip--approve:not(:disabled):hover {
-  background: #2db64f;
-  color: #fff;
+.approvals-kanban-card__actions
+  .approvals-action-chip--reject:not(:disabled):hover,
+.approvals-kanban-card__actions
+  .approvals-action-chip--post:not(:disabled):hover,
+.approvals-kanban-card__actions
+  .approvals-action-chip--edit:not(:disabled):hover {
+  background: #e4e6df;
+  color: hsl(var(--foreground));
 }
 
-.approvals-kanban-card__actions .approvals-action-chip--reject:not(:disabled):hover,
-.approvals-kanban-card__actions .approvals-action-chip--delete:not(:disabled):hover {
-  background: #f25a6a;
-  color: #fff;
+.approvals-kanban-card__actions
+  .approvals-action-chip--reject:not(:disabled):hover
+  .approvals-action-chip__icon {
+  color: #b56a65;
 }
 
-.approvals-kanban-card__actions .approvals-action-chip--edit:not(:disabled):hover {
-  background: #f0a310;
-  color: #fff;
+.approvals-kanban-card__actions
+  .approvals-action-chip--post:not(:disabled):hover
+  .approvals-action-chip__icon,
+.approvals-kanban-card__actions
+  .approvals-action-chip--edit:not(:disabled):hover
+  .approvals-action-chip__icon {
+  color: hsl(var(--foreground));
 }
 
-.approvals-kanban-card__actions .approvals-action-chip--post:not(:disabled):hover {
-  background: #39b6ee;
-  color: #fff;
+.approvals-kanban-card__actions
+  .approvals-action-chip--delete:not(:disabled):hover {
+  background: #eadad7;
+  color: #9a5551;
 }
 
-/* Dark mode — KPI scheme solids, white icons */
-.dark .approvals-kanban-card__actions .approvals-action-chip--approve {
-  background: #356344;
-  color: #fff;
+.approvals-kanban-card__actions
+  .approvals-action-chip--delete:not(:disabled):hover
+  .approvals-action-chip__icon {
+  color: #9a5551;
 }
 
-.dark .approvals-kanban-card__actions .approvals-action-chip--reject,
-.dark .approvals-kanban-card__actions .approvals-action-chip--delete {
-  background: #8b4560;
-  color: #fff;
+.dark .approvals-kanban-card__actions
+  .approvals-action-chip--approve:not(.approvals-action-chip--outline):not(.approvals-action-chip--static) {
+  background: #fff;
+  color: #111;
 }
 
-.dark .approvals-kanban-card__actions .approvals-action-chip--edit {
-  background: #9c4e2a;
-  color: #fff;
+.dark .approvals-kanban-card__actions
+  .approvals-action-chip--approve:not(.approvals-action-chip--outline):not(.approvals-action-chip--static)
+  .approvals-action-chip__icon {
+  color: #111;
 }
 
-.dark .approvals-kanban-card__actions .approvals-action-chip--post {
-  background: #245e8d;
-  color: #fff;
+.dark .approvals-kanban-card__actions
+  .approvals-action-chip--approve:not(.approvals-action-chip--outline):not(.approvals-action-chip--static):not(:disabled):hover {
+  background: hsl(0 0% 96%);
+  color: #111;
 }
 
-.dark .approvals-kanban-card__actions .approvals-action-chip--approve:not(:disabled):hover {
-  background: #3f7550;
-  color: #fff;
+.dark .approvals-kanban-card__actions
+  .approvals-action-chip--reject:not(.approvals-action-chip--outline):not(.approvals-action-chip--static),
+.dark .approvals-kanban-card__actions
+  .approvals-action-chip--post:not(.approvals-action-chip--outline):not(.approvals-action-chip--static),
+.dark .approvals-kanban-card__actions
+  .approvals-action-chip--edit:not(.approvals-action-chip--outline):not(.approvals-action-chip--static) {
+  background: hsl(214 12% 18%);
+  color: hsl(var(--card-foreground));
 }
 
-.dark .approvals-kanban-card__actions .approvals-action-chip--reject:not(:disabled):hover,
-.dark .approvals-kanban-card__actions .approvals-action-chip--delete:not(:disabled):hover {
-  background: #9a516c;
-  color: #fff;
+.dark .approvals-kanban-card__actions
+  .approvals-action-chip--reject:not(.approvals-action-chip--outline):not(.approvals-action-chip--static)
+  .approvals-action-chip__icon {
+  color: #c48b87;
 }
 
-.dark .approvals-kanban-card__actions .approvals-action-chip--edit:not(:disabled):hover {
-  background: #b35a32;
-  color: #fff;
+.dark .approvals-kanban-card__actions
+  .approvals-action-chip--post:not(.approvals-action-chip--outline):not(.approvals-action-chip--static)
+  .approvals-action-chip__icon,
+.dark .approvals-kanban-card__actions
+  .approvals-action-chip--edit:not(.approvals-action-chip--outline):not(.approvals-action-chip--static)
+  .approvals-action-chip__icon {
+  color: hsl(var(--card-foreground));
 }
 
-.dark .approvals-kanban-card__actions .approvals-action-chip--post:not(:disabled):hover {
-  background: #2c6d9e;
-  color: #fff;
+.dark .approvals-kanban-card__actions
+  .approvals-action-chip--delete:not(.approvals-action-chip--outline):not(.approvals-action-chip--static) {
+  background: hsl(8 18% 18%);
+  color: #c48b87;
+}
+
+.dark .approvals-kanban-card__actions
+  .approvals-action-chip--delete:not(.approvals-action-chip--outline):not(.approvals-action-chip--static)
+  .approvals-action-chip__icon {
+  color: #c48b87;
+}
+
+.dark .approvals-kanban-card__actions
+  .approvals-action-chip--reject:not(:disabled):hover,
+.dark .approvals-kanban-card__actions
+  .approvals-action-chip--post:not(:disabled):hover,
+.dark .approvals-kanban-card__actions
+  .approvals-action-chip--edit:not(:disabled):hover {
+  background: hsl(214 12% 22%);
+  color: hsl(var(--card-foreground));
+}
+
+.dark .approvals-kanban-card__actions
+  .approvals-action-chip--delete:not(:disabled):hover {
+  background: hsl(8 18% 22%);
+  color: #c48b87;
 }
 
 .approvals-kanban-empty {

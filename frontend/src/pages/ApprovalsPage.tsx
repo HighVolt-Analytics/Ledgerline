@@ -1,21 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, Check, RefreshCw, Send, Trash2, X } from "lucide-react";
+import { ArrowUpRight, Calendar, Check, Send, Trash2, X } from "lucide-react";
 import { api, ApiError, clearGetCache } from "@/api/client";
 import type { ApiEnvelope, Invoice } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
 import { LazyInvoiceDetailDrawer } from "@/components/LazyInvoiceDetailDrawer";
-import { ListSearchInput } from "@/components/ListSearchInput";
 import { PageHeader } from "@/components/PageHeader";
 import { PageLoader } from "@/components/PageLoader";
-import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import { Card } from "@/components/ui/card";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { documentDisplayRef, invoiceMoney } from "@/lib/format";
 import { formatDocDate } from "@/lib/allDocumentsSummary";
-import { approvalChainCurrentStepRole, approvalChainProgressLabel, approvalChainRecorded, approvalChainRequired } from "@/lib/approvalQuorum";
+import { approvalChainCurrentStepRole, approvalChainProgressLabel, approvalChainRecorded, approvalChainRequired, approvalChainToApproverSteps } from "@/lib/approvalQuorum";
 import { fetchApprovalsBoard } from "@/lib/invoices";
 import {
   approveAndProcess,
@@ -24,17 +22,14 @@ import {
   invoiceHasApprovableSource,
   reprocessAndWatch,
   validateInvoiceReadyForApproval,
-  watchProcessingUntilIdle,
 } from "@/lib/invoiceActions";
 import { useRuleBookDocumentTypes } from "@/hooks/useRuleBookConfig";
 import { invoiceCanPublishToLedger } from "@/lib/invoice";
 import { documentTypeLabelForCode, invoiceDocumentTypeDisplayLabel, storedDocumentTypeCode } from "@/lib/documentTypeResolve";
 import { kpiStatusChipClass, needsReviewStatusChipClass } from "@/lib/kpiModuleColors";
-import { invoiceMatchesListSearch } from "@/lib/listSearch";
 import { DocumentTypeChip } from "@/components/inbox/DocumentTypeChip";
 import { UploadColumnProcessingIndicator } from "@/components/upload/UploadColumnCell";
 import {
-  APPROVABLE_STATUSES,
   APPROVAL_QUEUE_STATUSES,
   type ApprovalBoardColumnKey,
   type ApprovedKindFilter,
@@ -43,11 +38,8 @@ import {
   canShowRejectOnApprovedBoard,
   columnForInvoice,
   filterApprovedBoardRows,
-  isPendingApprovalInvoice,
   mergeBoardRowWithLocal,
   PERMANENTLY_DELETABLE,
-  needsReviewQueueCount,
-  isNeedsReviewInvoice,
   systemFiledDocumentTypeOptions,
 } from "@/lib/approvalsBoard";
 import { ActionChip } from "@/components/ActionChip";
@@ -127,19 +119,25 @@ function approvalCardTitle(
 function approvalCardStepper(
   inv: Invoice,
   column: ApprovalBoardColumnKey
-): { required: number; recorded: number; label: string } | null {
+): { required: number; recorded: number; label: string; percent: number } {
   let required = approvalChainRequired(inv.approval_chain);
   let recorded = approvalChainRecorded(inv.approval_chain);
-  if (required <= 0 && column === "awaiting") {
-    required = 2;
-    recorded = isPendingApprovalInvoice(inv) ? 1 : 0;
+  if (required <= 0) {
+    required = 1;
+    recorded = column === "approved" ? 1 : 0;
   }
-  if (required <= 0) return null;
   const done = Math.min(Math.max(recorded, 0), required);
+  const percent =
+    required <= 1
+      ? done >= 1
+        ? 100
+        : 0
+      : ((done - (done > 0 ? 1 : 0)) / Math.max(required - 1, 1)) * 100;
   return {
     required,
     recorded: done,
     label: `${done} of ${required} approved`,
+    percent,
   };
 }
 
@@ -168,12 +166,16 @@ function approvalCardDueLabel(inv: Invoice): string {
 }
 
 function approvalCardAwaitingLabel(inv: Invoice): string | null {
+  const lastApproved = [...approvalChainToApproverSteps(inv.approval_chain)]
+    .reverse()
+    .find((step) => step.state === "approved");
+  if (lastApproved?.role) return `${lastApproved.role} approved`;
   const role = approvalChainCurrentStepRole(inv.approval_chain);
   return role ? `${role} approval` : null;
 }
 
-function approvalCardMeta(inv: Invoice): string {
-  return `${documentDisplayRef(inv)} · ${approvalCardDueLabel(inv)}`;
+function approvalCardDocLabel(inv: Invoice): string {
+  return documentDisplayRef(inv);
 }
 
 export function ApprovalsPage() {
@@ -192,8 +194,6 @@ export function ApprovalsPage() {
   const [drawerEditing, setDrawerEditing] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [processingIds, setProcessingIds] = useState<Set<number>>(() => new Set());
-  const [processingBusy, setProcessingBusy] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
   const [approvedKind, setApprovedKind] = useState<ApprovedKindFilter>("all");
   const [approvedDt, setApprovedDt] = useState("");
   const [searchParams, setSearchParams] = useSearchParams();
@@ -212,7 +212,6 @@ export function ApprovalsPage() {
     setDrawerInvoice(null);
     setDrawerOpen(false);
     setDrawerEditMode(false);
-    setSearchQuery("");
     setBusyId(null);
     setProcessingIds(new Set());
   });
@@ -300,26 +299,6 @@ export function ApprovalsPage() {
     }
   }, []);
 
-  const runProcessing = async () => {
-    setProcessingBusy(true);
-    setToast(null);
-    try {
-      await api.triggerProcess();
-      await watchProcessingUntilIdle(async () => {
-        await load({ silent: true, fresh: true });
-      });
-      setToast("Processing finished — refresh the board if cards did not move.");
-      await load({ fresh: true });
-    } catch (e) {
-      setToast(
-        (e instanceof Error ? e.message : "Processing failed") +
-          " Start the Celery worker in backend (see terminal)."
-      );
-    } finally {
-      setProcessingBusy(false);
-    }
-  };
-
   useEffect(() => {
     void load();
   }, [load]);
@@ -343,11 +322,10 @@ export function ApprovalsPage() {
       rejected: [],
     };
     for (const inv of invoices) {
-      if (!invoiceMatchesListSearch(inv, searchQuery)) continue;
       cols[columnForInvoice(inv, undefined, processingIds)].push(inv);
     }
     return cols;
-  }, [invoices, searchQuery, processingIds]);
+  }, [invoices, processingIds]);
 
   const queueCount = useMemo(
     () => boardMeta?.approval_queue_count ?? invoices.filter((inv) => APPROVAL_QUEUE_STATUSES.has(inv.status)).length,
@@ -362,7 +340,6 @@ export function ApprovalsPage() {
     }),
     [boardMeta]
   );
-  const needsReviewCount = useMemo(() => needsReviewQueueCount(invoices), [invoices]);
   const systemFiledDtOptions = useMemo(
     () => systemFiledDocumentTypeOptions(board.approved),
     [board.approved],
@@ -502,33 +479,6 @@ export function ApprovalsPage() {
     }
   };
 
-  const runNeedsReviewProcessing = async () => {
-    const targets = invoices.filter(
-      (inv) =>
-        isNeedsReviewInvoice(inv) &&
-        columnForInvoice(inv, undefined, processingIds) === "awaiting" &&
-        APPROVABLE_STATUSES.has(inv.status)
-    );
-    if (!targets.length) {
-      setToast("No needs-review documents in Processing to advance.");
-      return;
-    }
-    setProcessingBusy(true);
-    try {
-      for (const inv of targets) {
-        await confirmAndProcess(inv.id, () => load({ silent: true, fresh: true }));
-      }
-      setToast(
-        `Queued ${targets.length} needs-review document${targets.length === 1 ? "" : "s"} for processing.`
-      );
-      await load({ fresh: true });
-    } catch (e) {
-      setToast(e instanceof Error ? e.message : "Needs-review processing failed");
-    } finally {
-      setProcessingBusy(false);
-    }
-  };
-
   const reprocessInvoice = async (id: number) => {
     const inv = invoices.find((i) => i.id === id);
     if (!inv || inv.status !== "rejected") {
@@ -653,7 +603,7 @@ export function ApprovalsPage() {
   if (loading && invoices.length === 0) {
     return (
       <div>
-        <PageHeader title="Approvals" subtitle="Review and approve invoices — live data from the API." />
+        <PageHeader title="Approvals" />
         <PageLoader variant="kanban" />
       </div>
     );
@@ -676,10 +626,7 @@ export function ApprovalsPage() {
   ) {
     return (
       <div>
-        <PageHeader
-          title="Approvals"
-          subtitle="Review and approve invoices — live data from the API."
-        />
+        <PageHeader title="Approvals" />
         <EmptyState
           title="Nothing to approve"
           hint="Exception invoices appear here for review. Rejected files are stored under rejected/org/vendor/year/month in Azure."
@@ -705,64 +652,13 @@ export function ApprovalsPage() {
         </div>
       )}
 
-      <PageHeader
-        title="Approvals"
-        subtitle={`${queueCount} in approval queue · reject moves files to rejected/org/vendor/year/month`}
-        actions={
-          <Button
-            variant="surface"
-            size="sm"
-            onClick={() => load({ fresh: true })}
-            disabled={loading}
-            aria-label="Refresh approvals"
-          >
-            <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
-          </Button>
-        }
-      />
+      <PageHeader title="Approvals" />
 
       {error && (
         <Card className="p-3 mb-4 text-xs text-destructive border-destructive/30 bg-destructive/5">
           {error}
         </Card>
       )}
-
-      <div className="approvals-kanban-toolbar">
-        <ListSearchInput
-          value={searchQuery}
-          onChange={setSearchQuery}
-          placeholder="Search approvals…"
-          testId="input-approvals-search"
-          className="w-full max-w-md"
-        />
-        <div className="approvals-kanban-toolbar__actions">
-          {needsReviewCount > 0 ? (
-            <Button
-              type="button"
-              variant="surface"
-              size="sm"
-              disabled={processingBusy}
-              onClick={() => void runNeedsReviewProcessing()}
-              data-testid="button-run-needs-review"
-            >
-              {processingBusy ? "Processing…" : "Process needs-review queue"}
-            </Button>
-          ) : null}
-          {board.awaiting.length > 0 ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="approvals-kanban-toolbar__run-btn"
-              disabled={processingBusy}
-              onClick={() => void runProcessing()}
-              data-testid="button-run-processing"
-            >
-              {processingBusy ? "Processing…" : "Run processing"}
-            </Button>
-          ) : null}
-        </div>
-      </div>
 
       <div className="approvals-kanban-board">
         {KANBAN_COLUMNS.map((col) => {
@@ -772,7 +668,6 @@ export function ApprovalsPage() {
               ? filterApprovedBoardRows(rawCards, approvedKind, approvedDt)
               : rawCards;
           const columnCount =
-            searchQuery.trim() ||
             columnTotals[col.key] == null ||
             (col.key === "approved" && approvedKind !== "all")
               ? cards.length
@@ -880,55 +775,47 @@ export function ApprovalsPage() {
                       <p className="approvals-kanban-card__amount tnum">
                         {invoiceMoney(invoiceCardTotal(inv), inv)}
                       </p>
-                      <p className="approvals-kanban-card__meta tnum">{approvalCardMeta(inv)}</p>
+                      <p className="approvals-kanban-card__meta tnum">{approvalCardDocLabel(inv)}</p>
                       {awaiting ? (
                         <p className="approvals-kanban-card__awaiting">{awaiting}</p>
                       ) : null}
-                      {stepper ? (
-                        <div
-                          className="approvals-kanban-card__progress"
-                          data-testid={`card-quorum-${inv.id}`}
-                        >
-                          <span className="approvals-kanban-card__dots" aria-hidden>
-                            {Array.from({ length: stepper.required }).map((_, index) => (
-                              <span key={index} className="approvals-kanban-card__dot-wrap">
-                                {index > 0 ? <span className="approvals-kanban-card__dot-line" /> : null}
-                                <span
-                                  className={cn(
-                                    "approvals-kanban-card__dot",
-                                    index < stepper.recorded && "approvals-kanban-card__dot--filled"
-                                  )}
-                                />
-                              </span>
-                            ))}
-                          </span>
-                          <span className="approvals-kanban-card__quorum tnum">{stepper.label}</span>
-                        </div>
-                      ) : null}
+                      <p className="approvals-kanban-card__due">
+                        <Calendar className="approvals-kanban-card__due-icon" aria-hidden />
+                        {approvalCardDueLabel(inv)}
+                      </p>
+                      <div
+                        className="approvals-kanban-card__progress"
+                        data-testid={`card-quorum-${inv.id}`}
+                      >
+                        <span className="approvals-kanban-card__track" aria-hidden>
+                          <span className="approvals-kanban-card__track-line" />
+                          <span
+                            className="approvals-kanban-card__track-fill"
+                            style={{
+                              width: `calc((100% - 0.5rem) * ${stepper.percent / 100})`,
+                            }}
+                          />
+                          <span
+                            className={cn(
+                              "approvals-kanban-card__track-knob",
+                              stepper.recorded > 0 && "approvals-kanban-card__track-knob--filled"
+                            )}
+                            style={{
+                              left: `calc(0.25rem + (100% - 0.5rem) * ${stepper.percent / 100})`,
+                            }}
+                          />
+                          <span
+                            className={cn(
+                              "approvals-kanban-card__track-end",
+                              stepper.recorded >= stepper.required &&
+                                "approvals-kanban-card__track-end--filled"
+                            )}
+                          />
+                        </span>
+                        <span className="approvals-kanban-card__quorum tnum">{stepper.label}</span>
+                      </div>
                     </div>
                     <div className="approvals-kanban-card__actions">
-                      {canShowConfirmOnBoard(inv, col.key) && (
-                        <ActionChip
-                          tone="approve"
-                          icon={Check}
-                          label="Confirm"
-                          iconOnly
-                          busy={busy}
-                          onClick={() => void confirmInvoice(inv.id)}
-                          testId={`confirm-${inv.id}`}
-                        />
-                      )}
-                      {canShowApproveOnBoard(inv, col.key) && (
-                        <ActionChip
-                          tone="approve"
-                          icon={Check}
-                          label="Approve"
-                          iconOnly
-                          busy={busy}
-                          onClick={() => void approveInvoice(inv.id)}
-                          testId={`approve-${inv.id}`}
-                        />
-                      )}
                       {((col.key === "pending" || col.key === "awaiting") &&
                         (inv.status === "exception" || inv.status === "processed")) ||
                       (col.key === "approved" && canShowRejectOnApprovedBoard(inv)) ? (
@@ -936,7 +823,6 @@ export function ApprovalsPage() {
                           tone="reject"
                           icon={X}
                           label="Reject"
-                          iconOnly
                           busy={busy}
                           disabled={!canReject}
                           title={
@@ -980,10 +866,28 @@ export function ApprovalsPage() {
                           tone="delete"
                           icon={Trash2}
                           label="Delete"
-                          iconOnly
-                          busy={busy}
                           onClick={() => void permanentDeleteInvoice(inv.id)}
                           testId={`delete-permanent-${inv.id}`}
+                        />
+                      )}
+                      {canShowConfirmOnBoard(inv, col.key) && (
+                        <ActionChip
+                          tone="approve"
+                          icon={Check}
+                          label="Confirm"
+                          busy={busy}
+                          onClick={() => void confirmInvoice(inv.id)}
+                          testId={`confirm-${inv.id}`}
+                        />
+                      )}
+                      {canShowApproveOnBoard(inv, col.key) && (
+                        <ActionChip
+                          tone="approve"
+                          icon={Check}
+                          label="Approve"
+                          busy={busy}
+                          onClick={() => void approveInvoice(inv.id)}
+                          testId={`approve-${inv.id}`}
                         />
                       )}
                     </div>
