@@ -33,7 +33,7 @@ import { externalLinks } from '../data/navigation';
 import '../qll.css';
 
 const YOUTUBE_EMBED =
-  'https://www.youtube-nocookie.com/embed/0luxUk3VtgA?autoplay=1&rel=0&modestbranding=1';
+  'https://www.youtube-nocookie.com/embed/SElwFjDrqLI?autoplay=1&rel=0&modestbranding=1';
 
 const compareRows = [
   {
