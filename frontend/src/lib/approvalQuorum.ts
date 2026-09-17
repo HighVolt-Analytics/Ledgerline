@@ -52,6 +52,38 @@ export function approvalChainQuorumMet(chain: ApprovalChain | null | undefined):
   return approvalChainRecorded(chain) >= required;
 }
 
+export function approvalStepperFromCounts(
+  recorded: number,
+  required: number
+): { required: number; recorded: number; label: string; percent: number } {
+  let req = required;
+  let rec = recorded;
+  if (!Number.isFinite(req) || req <= 0) {
+    req = 1;
+    rec = 0;
+  }
+  const done = Math.min(Math.max(rec, 0), req);
+  const percent =
+    req <= 1
+      ? done >= 1
+        ? 100
+        : 0
+      : ((done - (done > 0 ? 1 : 0)) / Math.max(req - 1, 1)) * 100;
+  return {
+    required: req,
+    recorded: done,
+    label: `${done} of ${req}`,
+    percent,
+  };
+}
+
+export function approvalChainStepper(chain: ApprovalChain | null | undefined) {
+  return approvalStepperFromCounts(
+    approvalChainRecorded(chain),
+    approvalChainRequired(chain)
+  );
+}
+
 export function approvalChainCurrentStepRole(
   chain: ApprovalChain | null | undefined
 ): string | null {

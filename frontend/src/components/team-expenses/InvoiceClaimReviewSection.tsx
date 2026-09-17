@@ -1,5 +1,4 @@
 import { ApprovalPolicyNote } from "@/components/ApprovalPolicyNote";
-import { ApproverChip } from "@/components/ApproverChip";
 import { Card } from "@/components/ui/card";
 import { ClaimKindField } from "@/components/team-expenses/ClaimKindField";
 import { BudgetUtilBar } from "@/components/team-expenses/BudgetUtilBar";
@@ -8,44 +7,94 @@ import {
   budgetUtilizationDisplay,
 } from "@/lib/documentRowActions";
 import { money } from "@/lib/format";
-import { approvalChainToApproverSteps } from "@/lib/approvalQuorum";
+import {
+  approvalChainStepper,
+  approvalChainToApproverSteps,
+  approvalStepperFromCounts,
+} from "@/lib/approvalQuorum";
+import { cn } from "@/lib/cn";
 import type { ApprovalChain } from "@/api/types";
 import type { ApproverStep } from "@/lib/v4MockData";
 import type { TeamExpenseKind } from "@/lib/v4RuleBookTypes";
 
+function ApprovalChainTrack({
+  recorded,
+  required,
+  percent,
+  label,
+}: {
+  recorded: number;
+  required: number;
+  percent: number;
+  label: string;
+}) {
+  return (
+    <div className="approvals-kanban-card__progress invoice-drawer-approval-progress">
+      <span className="approvals-kanban-card__track" aria-hidden>
+        <span className="approvals-kanban-card__track-line" />
+        <span
+          className="approvals-kanban-card__track-fill"
+          style={{
+            width: `calc((100% - 0.5rem) * ${percent / 100})`,
+          }}
+        />
+        <span
+          className={cn(
+            "approvals-kanban-card__track-knob",
+            recorded > 0 && "approvals-kanban-card__track-knob--filled"
+          )}
+          style={{
+            left: `calc(0.25rem + (100% - 0.5rem) * ${percent / 100})`,
+          }}
+        />
+        <span
+          className={cn(
+            "approvals-kanban-card__track-end",
+            recorded >= required && "approvals-kanban-card__track-end--filled"
+          )}
+        />
+      </span>
+      <span className="approvals-kanban-card__quorum tnum">{label}</span>
+    </div>
+  );
+}
+
 export function ClaimApprovalChainBlock({
   approvalChain,
   approvers: approversProp,
+  compact = false,
 }: {
   approvalChain?: ApprovalChain | null;
   approvers?: ApproverStep[];
+  compact?: boolean;
 }) {
-  const approvers =
-    approversProp ?? approvalChainToApproverSteps(approvalChain);
+  const approvers = approversProp ?? approvalChainToApproverSteps(approvalChain);
+  const stepper = approvalChain
+    ? approvalChainStepper(approvalChain)
+    : approvalStepperFromCounts(
+        approvers.filter((a) => a.state === "approved").length,
+        approvers.length
+      );
+
   return (
-    <div className="mt-3" data-testid="document-approval-chain">
+    <div
+      className={cn(!compact && "mt-3")}
+      data-testid="document-approval-chain"
+    >
       <div className="text-[11px] text-muted-foreground uppercase tracking-wide mb-1.5">
         Approval chain
       </div>
-      <div className="flex flex-wrap gap-1.5">
-        {approvers.length > 0 ? (
-          approvers.map((a) => <ApproverChip key={a.id} {...a} />)
-        ) : (
-          <span className="text-xs text-muted-foreground">
-            Waiting for approval steps from Policy &amp; privileges
-          </span>
-        )}
-      </div>
-      {approvers.some((a) => a.state === "pending") &&
-      approvers.some((a) => a.state === "approved") ? (
-        <p className="text-xs text-muted-foreground mt-1">
-          {approvers.filter((a) => a.state === "approved").length} of {approvers.length}{" "}
-          approved
-        </p>
-      ) : null}
-      <div className="mt-1.5">
-        <ApprovalPolicyNote />
-      </div>
+      <ApprovalChainTrack
+        recorded={stepper.recorded}
+        required={stepper.required}
+        percent={stepper.percent}
+        label={stepper.label}
+      />
+      {compact ? null : (
+        <div className="mt-1.5">
+          <ApprovalPolicyNote />
+        </div>
+      )}
     </div>
   );
 }

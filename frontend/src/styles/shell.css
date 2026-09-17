@@ -362,10 +362,65 @@
   flex-shrink: 0;
 }
 
+@property --search-border-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes search-border-spin {
+  to {
+    --search-border-angle: 360deg;
+  }
+}
+
 /* Centered workspace search trigger */
 .global-search-trigger-wrap {
   width: min(28rem, 100%);
   margin: 0 auto;
+  position: relative;
+  border-radius: 0.625rem;
+}
+
+.global-search-trigger-wrap::before,
+.global-search-trigger-wrap::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  background: conic-gradient(
+    from var(--search-border-angle),
+    transparent 0deg,
+    transparent 232deg,
+    hsl(var(--nav-accent) / 0) 258deg,
+    hsl(var(--cyan-400) / 0.35) 292deg,
+    hsl(var(--cyan-300) / 0.9) 322deg,
+    hsl(0 0% 100% / 0.95) 338deg,
+    hsl(var(--cyan-400)) 350deg,
+    hsl(var(--nav-accent) / 0) 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: search-border-spin 4.5s linear infinite;
+}
+
+.global-search-trigger-wrap::before {
+  padding: 1.5px;
+  filter: blur(6px);
+  opacity: 0.5;
+}
+
+.global-search-trigger-wrap:hover::before {
+  opacity: 0.72;
 }
 
 .global-search-trigger {
@@ -386,7 +441,7 @@
 }
 
 .global-search-trigger:hover {
-  border-color: hsl(var(--border) / 0.9);
+  border-color: hsl(var(--nav-accent) / 0.28);
   background: hsl(var(--muted) / 0.45);
 }
 
@@ -427,6 +482,14 @@
 @media (max-width: 639px) {
   .global-search-trigger__kbd {
     display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .global-search-trigger-wrap::before,
+  .global-search-trigger-wrap::after {
+    animation: none;
+    opacity: 0;
   }
 }
 

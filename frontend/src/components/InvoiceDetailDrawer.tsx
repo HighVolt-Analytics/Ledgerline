@@ -155,7 +155,7 @@ import {
   filterPipelineStepsForPath,
 } from "@/lib/pipelineAuditPaths";
 
-const TABS = ["fields", "lines", "po", "tax", "accounting", "audit", "vault"] as const;
+const TABS = ["fields", "lines", "po", "accounting", "audit", "vault"] as const;
 export type InvoiceDrawerTab = (typeof TABS)[number];
 type Tab = InvoiceDrawerTab;
 
@@ -163,7 +163,6 @@ const TAB_LABELS: Record<Tab, string> = {
   fields: "Fields",
   lines: "Line items",
   po: "Match",
-  tax: "Tax",
   accounting: "Accounting",
   audit: "Processing",
   vault: "Vault",
@@ -185,6 +184,11 @@ function extractionFieldDisplayLabel(
   inv: InvoiceDetails,
   tax: { label: string; rate: number | null }
 ): string {
+  if (key === "invoice_no") return "Invoice no";
+  if (key === "vendor" || key === "employee_name") return "Counterparty";
+  if (key === "abn") return "Business registration";
+  if (key === "so_reference") return "SO";
+  if (key === "line_items") return "Line items";
   return extractionFieldLabelForInvoice(key, inv, tax);
 }
 
@@ -510,68 +514,63 @@ function dateFieldHint(key: string, value: string, editable: boolean): string | 
     : `Date not extracted — use ${DATE_INPUT_FORMAT} when editing (e.g. 2026-03-15)`;
 }
 
-const DOCUMENT_DETAIL_KEYS = new Set([
-  "vendor",
-  "employee_name",
+type FieldSection = { title: string; keys: Array<string | null> };
+
+const HIDDEN_DETAIL_KEYS = new Set([
   "abn",
-  "invoice_no",
-  "proforma_invoice_no",
-  "invoice_date",
-  "document_heading",
-  "billing_address",
-  "attachment_name",
-  "email_subject",
-  "email_sender",
-  "document_text",
-]);
-
-const REFERENCE_FIELD_KEYS = new Set([
-  "po_reference",
-  "so_reference",
-  "cost_centre",
-  "account_code",
-  "account_name",
-]);
-
-const FINANCIAL_FIELD_KEYS = new Set([
-  "currency",
-  "subtotal",
-  "gst",
-  "gst_rate",
-  "total",
-  "due_date",
-  "bank_details",
-  "line_items",
-]);
-
-const PARTY_FIELD_KEYS = new Set([
-  "seller_name",
+  "seller_abn",
+  "buyer_abn",
   "seller_tax_id",
-  "seller_address",
-  "buyer_name",
   "buyer_tax_id",
+  "tax_id",
+  "gstin",
+  "has_abn",
+  "so_reference",
+  "po_reference",
+  "line_items",
+  "cost_centre",
+  "billing_address",
+  "seller_address",
   "buyer_address",
+  "email_sender",
+  "email_subject",
 ]);
 
-type FieldSection = { title: string; keys: string[] };
+function isHiddenDetailKey(key: string): boolean {
+  const token = key.trim().toLowerCase();
+  return (
+    HIDDEN_DETAIL_KEYS.has(token) ||
+    token.endsWith("_tax_id") ||
+    token.endsWith("_abn") ||
+    token.endsWith("_address") ||
+    token.startsWith("email_")
+  );
+}
 
+function counterpartyExtractionKey(keys: string[]): string | null {
+  if (keys.includes("vendor")) return "vendor";
+  if (keys.includes("employee_name")) return "employee_name";
+  return null;
+}
+
+/** Details grid: invoice no | date, counterparty | due date, amounts, then remaining visible fields. */
 function groupExtractionFieldKeys(keys: string[]): FieldSection[] {
-  const buckets: FieldSection[] = [
-    { title: "Document details", keys: [] },
-    { title: "References", keys: [] },
-    { title: "Financial details", keys: [] },
-    { title: "Parties", keys: [] },
-    { title: "Other fields", keys: [] },
+  const remaining = keys.filter((key) => key !== "currency" && !isHiddenDetailKey(key));
+  const present = new Set(remaining);
+  const pick = (key: string | null) => (key && present.has(key) ? key : null);
+  const partyKey = counterpartyExtractionKey(remaining);
+  const pairs: Array<[string | null, string | null]> = [
+    [pick("invoice_no"), pick("invoice_date")],
+    [pick(partyKey), pick("due_date")],
+    [pick("subtotal"), pick("gst")],
+    [pick("total"), null],
   ];
-  for (const key of keys) {
-    if (key === "currency") continue;
-    if (DOCUMENT_DETAIL_KEYS.has(key)) buckets[0].keys.push(key);
-    else if (REFERENCE_FIELD_KEYS.has(key)) buckets[1].keys.push(key);
-    else if (FINANCIAL_FIELD_KEYS.has(key)) buckets[2].keys.push(key);
-    else if (PARTY_FIELD_KEYS.has(key)) buckets[3].keys.push(key);
-    else buckets[4].keys.push(key);
-  }
-  return buckets.filter((section) => section.keys.length > 0);
+  const primary = pairs.filter(([left, right]) => left || right).flat();
+  const used = new Set(primary.filter((key): key is string => key != null));
+  const rest = remaining.filter((key) => !used.has(key));
+  const ordered = [...primary, ...rest];
+  if (!ordered.length) return [];
+  return [{ title: "Details", keys: ordered }];
 }
 
 function strField(v: unknown): string {
@@ -959,7 +958,9 @@ function payloadFromDraft(draft: InvoiceEditDraft, inv?: InvoiceDetails): Invoic
   return payload;
 }
 
-function TeamEmployeeOrgSection({ employee }: { employee: EmployeeMaster }) {
+function OrganisationCollapse({ employee }: { employee?: EmployeeMaster | null }) {
+  const [open, setOpen] = useState(false);
+  if (!employee) return null;
   const rows: Array<{ label: string; value: string }> = [
     { label: "Employee ID", value: employee.id },
     { label: "Date of joining", value: employee.dateOfJoining ?? "" },
@@ -970,36 +971,46 @@ function TeamEmployeeOrgSection({ employee }: { employee: EmployeeMaster }) {
     { label: "Supervisor 1", value: employee.supervisor1 ?? "" },
     { label: "Supervisor 2", value: employee.supervisor2 ?? "" },
   ];
+
   return (
-    <div
-      className="rounded-md border border-border bg-muted/20 p-3 space-y-2"
-      data-testid="team-employee-org-section"
-    >
-      <div className="flex items-baseline justify-between gap-2">
-        <h4 className="invoice-drawer-field-section__title">
-          Organisation
-        </h4>
+    <section className="ai-class-panel" aria-label="Organisation" data-testid="team-employee-org-section">
+      <div className="ai-class-panel__head">
+        <h3 className="ai-class-panel__title">Organisation</h3>
         <span className="text-xs font-normal text-muted-foreground truncate">
           From employee master · {employee.name}
         </span>
       </div>
-      <div className="invoice-drawer-field-section__grid">
-        {rows.map((row) => (
-          <div key={row.label} className="invoice-drawer-field invoice-drawer-field--readonly">
-            <div className="invoice-drawer-field__label font-normal">{row.label}</div>
-            <div
-              className={cn(
-                "invoice-drawer-field__value tnum font-normal",
-                !row.value.trim() && "invoice-drawer-field__value--empty"
-              )}
-              title={row.value.trim() || undefined}
-            >
-              {row.value.trim() || "—"}
-            </div>
-          </div>
-        ))}
+      <div className="ai-class-toolbar">
+        <button
+          type="button"
+          className="ai-class-toggle"
+          aria-expanded={open}
+          onClick={() => setOpen((current) => !current)}
+        >
+          {open ? "Hide details" : "View details"}
+        </button>
       </div>
-    </div>
+      {open ? (
+        <div className="ai-class-details">
+          <div className="invoice-drawer-field-section__grid">
+            {rows.map((row) => (
+              <div key={row.label} className="invoice-drawer-field invoice-drawer-field--readonly">
+                <div className="invoice-drawer-field__label font-normal">{row.label}</div>
+                <div
+                  className={cn(
+                    "invoice-drawer-field__value tnum font-normal",
+                    !row.value.trim() && "invoice-drawer-field__value--empty"
+                  )}
+                  title={row.value.trim() || undefined}
+                >
+                  {row.value.trim() || "—"}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -1020,21 +1031,96 @@ function CurrencySelectRow({
   symbolHint,
   required,
   disabled,
+  compact,
   onChange,
 }: {
   value: string;
   symbolHint?: string | null;
   required?: boolean;
   disabled?: boolean;
+  compact?: boolean;
   onChange: (value: string) => void;
 }) {
   const { currencies } = useSetupCatalogs();
   const catalogOptions = useMemo(
-    () => currencyOptionsFromCatalog(currencies),
-    [currencies]
+    () =>
+      compact
+        ? currencies.map((currency) => ({
+            value: currency.code,
+            label: currency.symbol ? `${currency.code} ${currency.symbol}` : currency.code,
+          }))
+        : currencyOptionsFromCatalog(currencies),
+    [currencies, compact]
   );
   const selected = (value || "").trim().toUpperCase();
   const isEditable = !disabled;
+  const missing = Boolean(required && !selected);
+  const compactOptions = currencySelectOptions(catalogOptions, selected);
+
+  if (compact) {
+    const currencyTone = missing ? "error" : selected ? "ok" : undefined;
+    return (
+      <span
+        className={cn(
+          "ai-class-select-glow",
+          currencyTone && `ai-class-select-glow--${currencyTone}`
+        )}
+      >
+        <select
+          className={cn("ai-class-select ai-class-select--compact", missing && "border-destructive")}
+          value={selected}
+          disabled={!isEditable}
+          aria-label="Currency"
+          title={
+            missing
+              ? "Currency could not be extracted — select one for this invoice."
+              : symbolHint && !selected
+                ? `Detected symbol ${symbolHint}; confirm the ISO currency code.`
+                : "Currency"
+          }
+          onChange={(event) => {
+            const next = event.target.value;
+            if (next) onChange(next);
+          }}
+          data-testid="invoice-currency-select"
+        >
+          <option value="" disabled>
+            Currency
+          </option>
+          {compactOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </span>
+    );
+  }
+
+  const selectEl = isEditable ? (
+    <Select
+      value={selected}
+      disabled={disabled}
+      onValueChange={onChange}
+      options={currencySelectOptions(catalogOptions, selected)}
+      searchable
+      placeholder={
+        symbolHint
+          ? `Select ISO code (amounts show as ${symbolHint})`
+          : "Select currency"
+      }
+      className={cn(
+        "invoice-drawer-field__input w-full min-w-0 !flex",
+        missing && "border-destructive"
+      )}
+      data-testid="invoice-currency-select"
+    />
+  ) : (
+    <div className="invoice-drawer-field__value tnum">
+      {selected || "—"}
+    </div>
+  );
+
   return (
     <div
       className={cn(
@@ -1045,30 +1131,8 @@ function CurrencySelectRow({
       <label className="invoice-drawer-field__label">
         Currency{required ? " *" : ""}
       </label>
-      {isEditable ? (
-        <div className="invoice-drawer-field__control">
-          <Select
-            value={selected}
-            disabled={disabled}
-            onValueChange={onChange}
-            options={currencySelectOptions(catalogOptions, selected)}
-            searchable
-            placeholder={
-              symbolHint
-                ? `Select ISO code (amounts show as ${symbolHint})`
-                : "Select currency"
-            }
-            className={cn(
-              "invoice-drawer-field__input w-full min-w-0 !flex",
-              required && !selected && "border-destructive"
-            )}
-            data-testid="invoice-currency-select"
-          />
-        </div>
-      ) : (
-        <div className="invoice-drawer-field__value tnum">{selected || "—"}</div>
-      )}
-      {required && !selected ? (
+      {isEditable ? <div className="invoice-drawer-field__control">{selectEl}</div> : selectEl}
+      {missing ? (
         <p className="invoice-drawer-field__hint invoice-drawer-field__hint--error">
           Currency could not be extracted — select one for this invoice.
         </p>
@@ -1837,11 +1901,6 @@ export function InvoiceDetailDrawer({
     setTab(next);
   }
 
-  function openLineItemsForEdit() {
-    ensureLineItemsEditMode();
-    setTab("lines");
-  }
-
   function cancelEditing() {
     setEditing(false);
     setDraft(null);
@@ -2146,7 +2205,7 @@ export function InvoiceDetailDrawer({
         role="dialog"
         aria-modal="true"
         data-state={sheetState}
-        className="invoice-drawer-panel pointer-events-auto flex h-full flex-col gap-0 border-l border-border bg-card p-0 shadow-lg"
+        className="invoice-drawer-panel pointer-events-auto flex h-full flex-col gap-0 border-l border-border p-0 shadow-lg"
       >
         {loading || !inv ? (
           <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
@@ -2203,7 +2262,7 @@ export function InvoiceDetailDrawer({
               className="invoice-drawer-body"
               style={{ overscrollBehavior: "contain" }}
             >
-              <div className="invoice-drawer-preview-pane bg-muted/40 border-b md:border-b-0 md:border-r border-border flex flex-col min-h-0">
+              <div className="invoice-drawer-preview-pane border-b md:border-b-0 md:border-r border-border flex flex-col min-h-0">
                 <InvoicePreviewModeToggle
                   mode={previewMode}
                   onChange={setPreviewMode}
@@ -2260,9 +2319,129 @@ export function InvoiceDetailDrawer({
                   }))}
                 />
 
+                {inv && settlementHint && canApproveFromDrawer(inv) ? (
+                  <p
+                    className="mt-3 text-xs text-muted-foreground"
+                    data-testid="settlement-approval-hint"
+                  >
+                    {settlementHint}
+                  </p>
+                ) : null}
+                <div className="invoice-drawer-action-row">
+                  {tab === "fields" ? (
+                    <div className="invoice-drawer-action-row__chain">
+                      <ClaimApprovalChainBlock
+                        compact
+                        approvalChain={inv.approval_chain}
+                      />
+                    </div>
+                  ) : null}
+                  <div className="invoice-drawer-action-row__buttons">
+                    {editing ? (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={actionBusy}
+                          onClick={cancelEditing}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          size="sm"
+                          data-testid="button-save-edits"
+                          disabled={actionBusy || !draft}
+                          onClick={() => void handleSaveEdits()}
+                        >
+                          {actionBusy ? "Saving…" : "Save changes"}
+                        </Button>
+                        {canApproveFromDrawer(inv) && (
+                          <Button
+                            size="sm"
+                            data-testid="button-approve-process"
+                            disabled={actionBusy || !invoiceHasApprovableSource(inv)}
+                            onClick={() =>
+                              void (isClaimRoute
+                                ? handleApproveAndProcess()
+                                : handleConfirmAndProcess())
+                            }
+                          >
+                            {isClaimRoute ? (
+                              <>
+                                <Check className="h-4 w-4 mr-1" />
+                                Approve
+                              </>
+                            ) : (
+                              <>
+                                <Send className="h-4 w-4 mr-1" />
+                                Confirm &amp; process
+                              </>
+                            )}
+                          </Button>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="text-destructive"
+                          data-testid="button-reject"
+                          disabled={actionBusy || !canRejectClaim(inv.status)}
+                          onClick={() => void handleReject()}
+                        >
+                          <X className="h-4 w-4 mr-1" />
+                          {isClaimRoute ? "Reject with reason" : "Reject"}
+                        </Button>
+                        {canEdit(inv.status) && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            data-testid="button-edit-invoice"
+                            disabled={actionBusy}
+                            onClick={startEditing}
+                          >
+                            <Pencil className="h-4 w-4 mr-1" />
+                            Edit
+                          </Button>
+                        )}
+                        {isClaimRoute
+                          ? canApproveFromDrawer(inv) && (
+                              <Button
+                                size="sm"
+                                data-testid="button-manager-approve"
+                                disabled={actionBusy || !invoiceHasApprovableSource(inv)}
+                                title={
+                                  !invoiceHasApprovableSource(inv)
+                                    ? "Upload a receipt before this claim can be approved."
+                                    : undefined
+                                }
+                                onClick={() => void handleApproveAndProcess()}
+                              >
+                                <Check className="h-4 w-4 mr-1" />
+                                Approve
+                              </Button>
+                            )
+                          : canApproveFromDrawer(inv) && (
+                              <Button
+                                size="sm"
+                                data-testid="button-approve-process"
+                                disabled={actionBusy || !invoiceHasApprovableSource(inv)}
+                                onClick={() => void handleConfirmAndProcess()}
+                              >
+                                <Send className="h-4 w-4 mr-1" />
+                                Confirm &amp; process
+                              </Button>
+                            )}
+                      </>
+                    )}
+                  </div>
+                </div>
+
                 {tab === "fields" && inv && (
                   <div className="invoice-drawer-fields-tab">
-                    <InvoiceClassificationPanel
+                    <div className="invoice-drawer-class-org">
+                      <InvoiceClassificationPanel
                       audit={classificationAudit}
                       loading={classificationLoading}
                       catalogueCodes={catalogueCodes}
@@ -2274,26 +2453,34 @@ export function InvoiceDetailDrawer({
                           : undefined
                       }
                       onChangeDt={
-                        classificationConfirmRequired
+                        catalogueCodes.length > 0
                           ? (code) => void resolveClassification(code)
                           : undefined
                       }
+                      currencyControl={
+                        <CurrencySelectRow
+                          compact
+                          value={
+                            editing && draft
+                              ? draft.currency
+                              : strField(inv.currency).toUpperCase()
+                          }
+                          symbolHint={currencySymbolHint}
+                          required={currencyNeedsSelection(inv)}
+                          disabled={
+                            actionBusy ||
+                            (!currencyNeedsSelection(inv) &&
+                              !canEdit(inv.status) &&
+                              !editing)
+                          }
+                          onChange={(value) => void handleCurrencySelect(value)}
+                        />
+                      }
                     />
+                      <OrganisationCollapse employee={matchedTeamEmployee} />
+                    </div>
                     {extractionFieldKeys.length === 0 ? (
                       <div className="invoice-drawer-field-section">
-                        {currencyNeedsSelection(inv) ? (
-                          <CurrencySelectRow
-                            value={
-                              editing && draft
-                                ? draft.currency
-                                : strField(inv.currency).toUpperCase()
-                            }
-                            symbolHint={currencySymbolHint}
-                            required
-                            disabled={actionBusy}
-                            onChange={(value) => void handleCurrencySelect(value)}
-                          />
-                        ) : null}
                         <p className="text-sm text-muted-foreground">
                           {isVisionHeaderPipelineSummary(inv)
                             ? (inv.evaluation_status ?? "").trim() === "vision_header_review"
@@ -2318,30 +2505,11 @@ export function InvoiceDetailDrawer({
                             vision extract can fill them; full OCR fields come after DT mapping.
                           </p>
                         ) : null}
-                        {matchedTeamEmployee ? (
-                          <TeamEmployeeOrgSection employee={matchedTeamEmployee} />
-                        ) : null}
                         {(() => {
                           const sections = groupExtractionFieldKeys(extractionFieldKeys);
-                          const showCurrency =
-                            currencyNeedsSelection(inv) ||
-                            editing ||
-                            extractionFieldKeys.includes("currency");
-                          const hasFinancial = sections.some(
-                            (section) => section.title === "Financial details"
-                          );
-                          const renderSections =
-                            showCurrency && !hasFinancial
-                              ? [
-                                  { title: "Financial details", keys: [] as string[] },
-                                  ...sections,
-                                ]
-                              : sections;
 
-                          return renderSections.map((section) => {
-                            const includeCurrency =
-                              showCurrency && section.title === "Financial details";
-                            if (!includeCurrency && section.keys.length === 0) return null;
+                          return sections.map((section) => {
+                            if (section.keys.length === 0) return null;
                             return (
                               <section
                                 key={section.title}
@@ -2351,25 +2519,11 @@ export function InvoiceDetailDrawer({
                                   {section.title}
                                 </h4>
                                 <div className="invoice-drawer-field-section__grid">
-                                  {includeCurrency ? (
-                                    <CurrencySelectRow
-                                      value={
-                                        editing && draft
-                                          ? draft.currency
-                                          : strField(inv.currency).toUpperCase()
-                                      }
-                                      symbolHint={currencySymbolHint}
-                                      required={currencyNeedsSelection(inv)}
-                                      disabled={
-                                        actionBusy ||
-                                        (!currencyNeedsSelection(inv) &&
-                                          !canEdit(inv.status) &&
-                                          !editing)
-                                      }
-                                      onChange={(value) => void handleCurrencySelect(value)}
-                                    />
-                                  ) : null}
-                                  {section.keys.map((key) => (
+                                  {section.keys.map((key, index) => {
+                                    if (!key) {
+                                      return <div key={`details-slot-${index}`} className="min-w-0" />;
+                                    }
+                                    return (
                                     <div key={key} className="min-w-0">
                                       {(() => {
                                         const fieldValue = (() => {
@@ -2418,7 +2572,6 @@ export function InvoiceDetailDrawer({
                                             }
                                             bold={key === "total"}
                                             wide={
-                                              key === "line_items" ||
                                               key === "billing_address" ||
                                               key === "document_text" ||
                                               key === "bank_details" ||
@@ -2458,28 +2611,9 @@ export function InvoiceDetailDrawer({
                                           />
                                         );
                                       })()}
-                                      {key === "line_items" && canEdit(inv.status) ? (
-                                        <button
-                                          type="button"
-                                          onClick={openLineItemsForEdit}
-                                          className="mt-1 text-xs text-[hsl(var(--nav-accent))] hover:underline"
-                                        >
-                                          {editing
-                                            ? "Edit line items →"
-                                            : "Open line items to edit →"}
-                                        </button>
-                                      ) : key === "line_items" &&
-                                        drawerLineItems.previewItems.length > 0 ? (
-                                        <button
-                                          type="button"
-                                          onClick={() => setTab("lines")}
-                                          className="mt-1 text-xs text-[hsl(var(--nav-accent))] hover:underline"
-                                        >
-                                          View line items tab
-                                        </button>
-                                      ) : null}
                                     </div>
-                                  ))}
+                                    );
+                                  })}
                                 </div>
                               </section>
                             );
@@ -2522,8 +2656,6 @@ export function InvoiceDetailDrawer({
                         currency={(inv.currency || "").trim().toUpperCase() || "MMK"}
                       />
                     ) : null}
-                    {/* Amount-tier approval chain — all routes (purchase/sales/expenses/team/vault) */}
-                    <ClaimApprovalChainBlock approvalChain={inv.approval_chain} />
                     {isPurchaseSalesRoute ? (
                       <InvoiceMatchReviewSection
                         inv={inv}
@@ -2634,35 +2766,6 @@ export function InvoiceDetailDrawer({
                   )
                 )}
 
-                {tab === "tax" && (
-                  <div className="mt-4 space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Subtotal (ex-tax)</span>
-                      <span className="tnum">{fmt(editing && draft ? draft.subtotal : inv.subtotal)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">
-                        {tax.rate != null ? `${tax.label} ${tax.rate}%` : tax.label}
-                      </span>
-                      <span className="tnum">{fmt(editing && draft ? draft.gst : inv.gst)}</span>
-                    </div>
-                    <div className="border-t border-border my-2" />
-                    <div className="flex justify-between font-normal">
-                      <span>Total (inc-tax)</span>
-                      <span className="tnum">{fmt(editing && draft ? draft.total : inv.total)}</span>
-                    </div>
-                    <p className="text-xs text-muted-foreground pt-2">
-                      Tax account: {tax.label} Paid. Currency{" "}
-                      {(isSetInvoiceCurrency(inv.currency)
-                        ? normalizeCurrencyCode(inv.currency)
-                        : null) ||
-                        currencySymbolHint ||
-                        "not set"}
-                      .
-                    </p>
-                  </div>
-                )}
-
                 {tab === "accounting" && inv && postingApplies && (
                   <InvoiceDrawerAccountingSection
                     inv={inv}
@@ -2670,6 +2773,7 @@ export function InvoiceDetailDrawer({
                     currencySymbolHint={currencySymbolHint}
                     payment={payment}
                     paymentLoading={paymentLoading}
+                    editable={Boolean(editing && draft)}
                   />
                 )}
 
@@ -2765,315 +2869,6 @@ export function InvoiceDetailDrawer({
               </div>
             </div>
 
-            <div className="shrink-0 border-t border-border">
-              {inv && settlementHint && canApproveFromDrawer(inv) ? (
-                <p
-                  className="px-5 pt-2.5 text-xs text-muted-foreground"
-                  data-testid="settlement-approval-hint"
-                >
-                  {settlementHint}
-                </p>
-              ) : null}
-            <div className="flex items-center justify-between gap-2 px-5 py-3">
-              {editing ? (
-                <>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={actionBusy}
-                    onClick={cancelEditing}
-                  >
-                    Cancel
-                  </Button>
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      data-testid="button-save-edits"
-                      disabled={actionBusy || !draft}
-                      onClick={() => void handleSaveEdits()}
-                    >
-                      {actionBusy ? "Saving…" : "Save changes"}
-                    </Button>
-                    {inv.status === "rejected" && invoiceCanAttemptReprocess(inv) && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        data-testid="button-reprocess"
-                        disabled={actionBusy || !invoiceCanAttemptReprocess(inv)}
-                        onClick={() => void handleReprocess()}
-                      >
-                        {actionBusy ? (
-                          <>
-                            <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                            Reprocessing…
-                          </>
-                        ) : (
-                          "Reprocess"
-                        )}
-                      </Button>
-                    )}
-                    {canApproveFromDrawer(inv) && (
-                      <Button
-                        size="sm"
-                        data-testid="button-approve-process"
-                        disabled={actionBusy || !invoiceHasApprovableSource(inv)}
-                        onClick={() =>
-                          void (isClaimRoute
-                            ? handleApproveAndProcess()
-                            : handleConfirmAndProcess())
-                        }
-                      >
-                        {isClaimRoute ? (
-                          <>
-                            <Check className="h-4 w-4 mr-1" />
-                            Approve
-                          </>
-                        ) : (
-                          <>
-                            <Send className="h-4 w-4 mr-1" />
-                            Confirm &amp; process
-                          </>
-                        )}
-                      </Button>
-                    )}
-                    {inv.status === "exception" && canRejectClaim(inv.status) && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        data-testid="button-escalate"
-                        disabled={actionBusy}
-                        onClick={() => void handleEscalate()}
-                      >
-                        <ArrowUpRight className="h-4 w-4 mr-1" />
-                        Escalate
-                      </Button>
-                    )}
-                  </div>
-                </>
-              ) : isClaimRoute ? (
-                <>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="text-destructive"
-                    data-testid="button-reject"
-                    disabled={actionBusy || !canRejectClaim(inv.status)}
-                    onClick={() => void handleReject()}
-                  >
-                    <X className="h-4 w-4 mr-1" />
-                    Reject with reason
-                  </Button>
-                  <div className="flex gap-2">
-                    {inv.status === "rejected" && invoiceCanAttemptReprocess(inv) && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        data-testid="button-reprocess"
-                        disabled={actionBusy || !invoiceCanAttemptReprocess(inv)}
-                        onClick={() => void handleReprocess()}
-                      >
-                        {actionBusy ? (
-                          <>
-                            <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                            Reprocessing…
-                          </>
-                        ) : (
-                          "Reprocess"
-                        )}
-                      </Button>
-                    )}
-                    {canEdit(inv.status) && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        data-testid="button-edit-invoice"
-                        disabled={actionBusy}
-                        onClick={startEditing}
-                      >
-                        <Pencil className="h-4 w-4 mr-1" />
-                        Edit
-                      </Button>
-                    )}
-                    {canRequestInfo(inv.status) && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        data-testid="button-request-approval"
-                        disabled={actionBusy}
-                        onClick={() => void handleRequestApproval()}
-                      >
-                        <Clock className="h-4 w-4 mr-1" />
-                        Request more info
-                      </Button>
-                    )}
-                    {canApproveFromDrawer(inv) && (
-                      <Button
-                        size="sm"
-                        data-testid="button-manager-approve"
-                        disabled={actionBusy || !invoiceHasApprovableSource(inv)}
-                        title={
-                          !invoiceHasApprovableSource(inv)
-                            ? "Upload a receipt before this claim can be approved."
-                            : undefined
-                        }
-                        onClick={() => void handleApproveAndProcess()}
-                      >
-                        <Check className="h-4 w-4 mr-1" />
-                        Approve
-                      </Button>
-                    )}
-                    {invoiceCanPublishToLedger(inv) && (
-                      <Button
-                        size="sm"
-                        data-testid="button-publish"
-                        disabled={actionBusy}
-                        onClick={() => void publish()}
-                      >
-                        <Send className="h-4 w-4 mr-1" />
-                        Post to ledger
-                      </Button>
-                    )}
-                  </div>
-                </>
-              ) : (
-                <>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="text-destructive"
-                    data-testid="button-reject"
-                    disabled={actionBusy || !canRejectClaim(inv.status)}
-                    onClick={() => void handleReject()}
-                  >
-                    <X className="h-4 w-4 mr-1" />
-                    Reject
-                  </Button>
-                  <div className="flex gap-2">
-                    {inv.status === "rejected" && invoiceCanAttemptReprocess(inv) && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          data-testid="button-reprocess"
-                          disabled={actionBusy || !invoiceCanAttemptReprocess(inv)}
-                          onClick={() => void handleReprocess()}
-                        >
-                          {actionBusy ? (
-                            <>
-                              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                              Reprocessing…
-                            </>
-                          ) : (
-                            "Reprocess"
-                          )}
-                        </Button>
-                      )}
-                    {canEdit(inv.status) && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        data-testid="button-edit-invoice"
-                        disabled={actionBusy}
-                        onClick={startEditing}
-                      >
-                        <Pencil className="h-4 w-4 mr-1" />
-                        Edit
-                      </Button>
-                    )}
-                    {canRequestInfo(inv.status) && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      data-testid="button-request-approval"
-                      disabled={actionBusy}
-                      onClick={() => void handleRequestApproval()}
-                    >
-                      <Clock className="h-4 w-4 mr-1" />
-                      Request approval
-                    </Button>
-                    )}
-                    {matchReviewSummary?.canApproveVariance ? (
-                      <Button
-                        size="sm"
-                        data-testid="button-approve-variance-footer"
-                        disabled={
-                          actionBusy ||
-                          purchaseMutations.busyId != null ||
-                          salesMutations.busyId != null
-                        }
-                        onClick={() => void handleApproveMatchVariance()}
-                      >
-                        <Check className="h-4 w-4 mr-1" />
-                        Approve variance
-                      </Button>
-                    ) : null}
-                    {matchReviewSummary?.needsReceiptRecord &&
-                    matchReviewSummary.receiptLabel ? (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        data-testid="button-record-receipt-footer"
-                        onClick={() => setTab("po")}
-                      >
-                        <Link2 className="h-4 w-4 mr-1" />
-                        Record {matchReviewSummary.receiptLabel}
-                      </Button>
-                    ) : null}
-                    {canApproveFromDrawer(inv) && (
-                      <Button
-                        variant={
-                          matchReviewSummary?.canApproveVariance ||
-                          canManagerApproveFromDrawer(inv)
-                            ? "outline"
-                            : "default"
-                        }
-                        size="sm"
-                        data-testid="button-approve-process"
-                        disabled={actionBusy || !invoiceHasApprovableSource(inv)}
-                        onClick={() => void handleConfirmAndProcess()}
-                      >
-                        <Send className="h-4 w-4 mr-1" />
-                        Confirm &amp; process
-                      </Button>
-                    )}
-                    {canManagerApproveFromDrawer(inv) && (
-                      <Button
-                        size="sm"
-                        data-testid="button-manager-approve"
-                        disabled={actionBusy || !invoiceHasApprovableSource(inv)}
-                        onClick={() => void handleApproveAndProcess()}
-                      >
-                        <Check className="h-4 w-4 mr-1" />
-                        Approve
-                      </Button>
-                    )}
-                    {inv.status === "exception" && canRejectClaim(inv.status) && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        data-testid="button-escalate-footer"
-                        disabled={actionBusy}
-                        onClick={() => void handleEscalate()}
-                      >
-                        <ArrowUpRight className="h-4 w-4 mr-1" />
-                        Escalate
-                      </Button>
-                    )}
-                    {invoiceCanPublishToLedger(inv) && (
-                      <Button
-                        size="sm"
-                        data-testid="button-publish"
-                        disabled={actionBusy}
-                        onClick={() => void publish()}
-                      >
-                        <Send className="h-4 w-4 mr-1" />
-                        Post to ledger
-                      </Button>
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
-            </div>
           </>
         )}
       </div>

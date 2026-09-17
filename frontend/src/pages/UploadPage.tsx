@@ -644,7 +644,7 @@ export function UploadPage() {
                 testid: "tab-upload-upload",
                 label: (
                   <span className="inline-flex items-center gap-2">
-                    <CaptureSourceLogo source="upload" />
+                    <CaptureSourceLogo source="upload" size={22} />
                     Upload
                   </span>
                 ),
@@ -654,7 +654,7 @@ export function UploadPage() {
                 testid: "tab-upload-app",
                 label: (
                   <span className="inline-flex items-center gap-2">
-                    <CaptureSourceLogo source="app" />
+                    <CaptureSourceLogo source="app" size={18} />
                     App
                   </span>
                 ),

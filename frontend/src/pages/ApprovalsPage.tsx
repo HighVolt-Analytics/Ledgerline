@@ -744,10 +744,16 @@ export function ApprovalsPage() {
                             | undefined,
                         })}
                       </p>
-                      <p className="approvals-kanban-card__meta tnum">{approvalCardDocLabel(inv)}</p>
-                      {awaiting ? (
-                        <p className="approvals-kanban-card__awaiting">{awaiting}</p>
-                      ) : null}
+                      <p className="approvals-kanban-card__meta-row">
+                        <span className="approvals-kanban-card__meta tnum">
+                          {approvalCardDocLabel(inv)}
+                        </span>
+                        {awaiting ? (
+                          <span className="approvals-kanban-card__awaiting">
+                            . {awaiting}
+                          </span>
+                        ) : null}
+                      </p>
                       <p className="approvals-kanban-card__due">
                         <Calendar className="approvals-kanban-card__due-icon" aria-hidden />
                         {approvalCardDueLabel(inv)}

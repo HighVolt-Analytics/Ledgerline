@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { InvoiceClassificationAudit } from "@/api/types";
 import {
   classificationReviewReasons,
@@ -18,6 +18,7 @@ type InvoiceClassificationPanelProps = {
   onChangeDt?: (code: string) => void;
   catalogueCodes?: string[];
   documentTypes?: DocumentTypeDefinition[];
+  currencyControl?: ReactNode;
 };
 
 function SourceColumn({
@@ -49,6 +50,118 @@ function RoutingRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+function compactClassificationStatus(
+  statusMessage: string | null,
+  chips: string[],
+  requiresConfirm: boolean
+): string | null {
+  if (statusMessage) return statusMessage;
+  const visible = chips.filter((chip) => chip !== "DT_NOT_IN_CATALOGUE");
+  if (!visible.length) return null;
+  if (requiresConfirm) return "Confirm or change document type to continue processing.";
+  return reviewReasonLabel(visible[0]);
+}
+
+function dtControlTone({
+  confirmed,
+  catalogueCodes,
+  requiresConfirm,
+  chips,
+}: {
+  confirmed: string;
+  catalogueCodes: string[];
+  requiresConfirm: boolean;
+  chips: string[];
+}): "ok" | "error" {
+  const inCatalogue = catalogueCodes.some(
+    (code) => code.trim().toUpperCase() === confirmed.trim().toUpperCase()
+  );
+  if (
+    requiresConfirm ||
+    !confirmed.trim() ||
+    !inCatalogue ||
+    chips.includes("DT_NOT_IN_CATALOGUE")
+  ) {
+    return "error";
+  }
+  return "ok";
+}
+
+function SelectGlow({
+  tone,
+  children,
+}: {
+  tone?: "ok" | "error";
+  children: ReactNode;
+}) {
+  return (
+    <span className={cn("ai-class-select-glow", tone && `ai-class-select-glow--${tone}`)}>
+      {children}
+    </span>
+  );
+}
+
+function ChangeDtSelect({
+  catalogueCodes,
+  documentTypes,
+  onChangeDt,
+  tone,
+}: {
+  catalogueCodes: string[];
+  documentTypes: DocumentTypeDefinition[];
+  onChangeDt: (code: string) => void;
+  tone: "ok" | "error";
+}) {
+  return (
+    <SelectGlow tone={tone}>
+      <select
+        className="ai-class-select ai-class-select--compact"
+        defaultValue=""
+        aria-label="Change document type"
+        onChange={(e) => {
+          const code = e.target.value;
+          if (code) onChangeDt(code);
+        }}
+      >
+        <option value="" disabled>
+          Change DT
+        </option>
+        {catalogueCodes.map((code) => (
+          <option key={code} value={code}>
+            {formatDtCodeWithName(documentTypes, code)}
+          </option>
+        ))}
+      </select>
+    </SelectGlow>
+  );
+}
+
+function ClassificationHead({
+  title,
+  quiet,
+  changeDt,
+  currencyControl,
+}: {
+  title: string;
+  quiet?: boolean;
+  changeDt?: ReactNode;
+  currencyControl?: ReactNode;
+}) {
+  return (
+    <div className="ai-class-panel__head">
+      <h3 className={cn("ai-class-panel__title", quiet && "ai-class-panel__title--quiet")}>
+        {title}
+      </h3>
+      {changeDt || currencyControl ? (
+        <div className="ai-class-panel__head-controls">
+          {changeDt}
+          {currencyControl}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function InvoiceClassificationPanel({
   audit,
   loading,
@@ -57,6 +170,7 @@ export function InvoiceClassificationPanel({
   onChangeDt,
   catalogueCodes = [],
   documentTypes = [],
+  currencyControl,
 }: InvoiceClassificationPanelProps) {
   const [detailsOpen, setDetailsOpen] = useState(requiresConfirm);
   const [explanationOpen, setExplanationOpen] = useState(false);
@@ -69,39 +183,34 @@ export function InvoiceClassificationPanel({
     );
   }
 
-  const showDtPicker =
-    requiresConfirm && Boolean(onChangeDt) && catalogueCodes.length > 0;
+  const showDtPicker = Boolean(onChangeDt) && catalogueCodes.length > 0;
+  const dtTone = dtControlTone({
+    confirmed: (audit?.confirmed_dt ?? audit?.document_type_code ?? "").trim(),
+    catalogueCodes,
+    requiresConfirm,
+    chips: audit ? classificationReviewReasons(audit) : ["DT_NOT_IN_CATALOGUE"],
+  });
+  const changeDtControl =
+    showDtPicker && onChangeDt ? (
+      <ChangeDtSelect
+        catalogueCodes={catalogueCodes}
+        documentTypes={documentTypes}
+        onChangeDt={onChangeDt}
+        tone={dtTone}
+      />
+    ) : null;
 
-  // Vision understood hold (no OCR classify audit): still show DT picker.
+  // Vision understood hold (no OCR classify audit): still show DT picker / currency.
   if (!audit) {
-    if (!showDtPicker) return null;
+    if (!showDtPicker && !currencyControl) return null;
     return (
       <section className="ai-class-panel" aria-label="Document type">
-        <div className="ai-class-panel__head">
-          <h3 className="ai-class-panel__title ai-class-panel__title--quiet">Document type</h3>
-        </div>
-        <p className="ai-class-panel__note ai-class-panel__note--warn">
-          Catalogue document type is not mapped yet. Select one to extract fields and continue.
-        </p>
-        <div className="ai-class-panel__actions">
-          <select
-            className="ai-class-select"
-            defaultValue=""
-            onChange={(e) => {
-              const code = e.target.value;
-              if (code) onChangeDt?.(code);
-            }}
-          >
-            <option value="" disabled>
-              Select document type…
-            </option>
-            {catalogueCodes.map((code) => (
-              <option key={code} value={code}>
-                {formatDtCodeWithName(documentTypes, code)}
-              </option>
-            ))}
-          </select>
-        </div>
+        <ClassificationHead
+          title="Document type"
+          quiet
+          changeDt={changeDtControl}
+          currencyControl={currencyControl}
+        />
       </section>
     );
   }
@@ -115,7 +224,7 @@ export function InvoiceClassificationPanel({
   );
   const chips = classificationReviewReasons(audit);
   const statusMessage = classificationStatusMessage(audit);
-  const showActions = showDtPicker && Boolean(onConfirmDt || onChangeDt);
+  const showConfirm = requiresConfirm && Boolean(onConfirmDt) && Boolean(llmDt);
   const explanation = (audit.llm_reasoning || audit.reason || "").trim();
   const explanationLong = explanation.length > 220;
 
@@ -128,56 +237,30 @@ export function InvoiceClassificationPanel({
     (orgRoute != null && !Number.isNaN(orgRoute)) ||
     (dtRoute != null && !Number.isNaN(dtRoute));
 
-  const compactStatus =
-    statusMessage ||
-    (chips.length
-      ? requiresConfirm
-        ? "Confirm or change document type to continue processing."
-        : reviewReasonLabel(chips[0])
-      : null);
+  const compactStatus = compactClassificationStatus(statusMessage, chips, requiresConfirm);
+  const reviewNotes = chips.filter((chip) => chip !== "DT_NOT_IN_CATALOGUE");
 
   return (
     <section className="ai-class-panel" aria-label="AI classification">
-      <div className="ai-class-panel__head">
-        <h3 className="ai-class-panel__title">
-          AI classification - {confirmedName}
-        </h3>
-      </div>
+      <ClassificationHead
+        title="AI classification"
+        changeDt={changeDtControl}
+        currencyControl={currencyControl}
+      />
 
       {compactStatus ? (
         <div className="ai-class-summary__status">{compactStatus}</div>
       ) : null}
 
-      {showActions ? (
+      {showConfirm && onConfirmDt ? (
         <div className="ai-class-panel__actions">
-          {onConfirmDt && llmDt ? (
-            <button
-              type="button"
-              className="ai-class-btn"
-              onClick={() => onConfirmDt(llmDt)}
-            >
-              Confirm {formatDtCodeWithName(documentTypes, llmDt)}
-            </button>
-          ) : null}
-          {onChangeDt ? (
-            <select
-              className="ai-class-select"
-              defaultValue=""
-              onChange={(e) => {
-                const code = e.target.value;
-                if (code) onChangeDt(code);
-              }}
-            >
-              <option value="" disabled>
-                Change DT…
-              </option>
-              {catalogueCodes.map((code) => (
-                <option key={code} value={code}>
-                  {formatDtCodeWithName(documentTypes, code)}
-                </option>
-              ))}
-            </select>
-          ) : null}
+          <button
+            type="button"
+            className="ai-class-btn"
+            onClick={() => onConfirmDt(llmDt)}
+          >
+            Confirm {formatDtCodeWithName(documentTypes, llmDt)}
+          </button>
         </div>
       ) : null}
 
@@ -280,7 +363,7 @@ export function InvoiceClassificationPanel({
             </div>
           ) : null}
 
-          {chips.length ? (
+          {reviewNotes.length ? (
             <div className="ai-class-block">
               <div className="ai-class-block__label">Review notes</div>
               <p className="ai-class-panel__note ai-class-panel__note--warn">
@@ -289,7 +372,7 @@ export function InvoiceClassificationPanel({
                   : "Classification review notes:"}
               </p>
               <ul className="ai-class-notes">
-                {chips.map((chip) => (
+                {reviewNotes.map((chip) => (
                   <li key={chip} title={chip}>
                     {reviewReasonLabel(chip)}
                   </li>
