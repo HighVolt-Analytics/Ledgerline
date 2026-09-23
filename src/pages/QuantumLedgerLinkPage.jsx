@@ -1,14 +1,6 @@
 import { useEffect, useRef, useState, Fragment } from 'react';
 import {
   Users,
-  Keyboard,
-  AlertTriangle,
-  FolderOpen,
-  FileText,
-  Files,
-  RefreshCw,
-  Clock,
-  Banknote,
   MousePointerClick,
   Camera,
   ClipboardCheck,
@@ -20,7 +12,6 @@ import {
   SearchCheck,
   Check,
   X,
-  TrendingUp,
   ChevronRight,
   Zap,
 } from 'lucide-react';
@@ -29,62 +20,12 @@ import Logo from '../components/ui/Logo';
 import HowVisual from '../components/ui/HowVisuals';
 import { WorldMap } from '../components/ui/WorldMap';
 import IntegrationsSection from '../components/sections/IntegrationsSection';
+import ProblemSolutionSection from '../components/sections/ProblemSolutionSection';
 import { externalLinks } from '../data/navigation';
 import '../qll.css';
 
 const YOUTUBE_EMBED =
   'https://www.youtube-nocookie.com/embed/SElwFjDrqLI?autoplay=1&rel=0&modestbranding=1';
-
-const compareRows = [
-  {
-    label: 'Capture',
-    today: 'Documents scattered everywhere',
-    ledger: 'Captured automatically from authorised channels',
-    Icon: FileText,
-  },
-  {
-    label: 'Data entry',
-    today: 'Manual data entry',
-    ledger: 'AI reads and understands the document',
-    Icon: Keyboard,
-  },
-  {
-    label: 'Filing',
-    today: 'Manual classification and filing',
-    ledger: 'Automatically classified and stored',
-    Icon: FolderOpen,
-  },
-  {
-    label: 'Approvals',
-    today: 'Approvals chased manually',
-    ledger: 'Approvals intelligently routed',
-    Icon: RefreshCw,
-  },
-  {
-    label: 'Exceptions',
-    today: 'Duplicates and errors found late',
-    ledger: 'Exceptions detected before processing',
-    Icon: AlertTriangle,
-  },
-  {
-    label: 'Payment',
-    today: 'Payment disconnected from workflow',
-    ledger: 'Invoice, approval, and payment connected',
-    Icon: Banknote,
-  },
-  {
-    label: 'Records',
-    today: 'Records spread across systems',
-    ledger: 'Complete audit-ready record maintained',
-    Icon: Files,
-  },
-  {
-    label: 'Finance',
-    today: 'Finance spends time processing',
-    ledger: 'Finance focuses on decisions and exceptions',
-    Icon: Clock,
-  },
-];
 
 const howFlows = [
   {
@@ -744,113 +685,7 @@ export default function QuantumLedgerLinkPage() {
         </section>
 
         <div id="product" className="product-block">
-        <section className="s dark tight compare-section" id="problem">
-          <div className="wrap">
-            <p className="eyebrow r">Today versus Ledgerline</p>
-            <h2 className="h2 r">Right now, nobody can tell you what you owe.</h2>
-
-            <div className="compare-board r">
-              <article className="compare-card compare-card--features">
-                <h3>Features</h3>
-                {compareRows.map(({ label, Icon }) => (
-                  <div className="compare-row compare-row--feature" key={label}>
-                    <Icon className="compare-icon" strokeWidth={1.75} aria-hidden="true" />
-                    <span>{label}</span>
-                  </div>
-                ))}
-              </article>
-
-              <article className="compare-card compare-card--today">
-                <h3>Today</h3>
-                {compareRows.map(({ label, today }) => (
-                  <p className="compare-row" key={label}>
-                    {today}
-                  </p>
-                ))}
-              </article>
-
-              <article className="compare-card compare-card--ledger">
-                <h3>With Ledgerline</h3>
-                {compareRows.map(({ label, ledger }) => (
-                  <p className="compare-row" key={label}>
-                    {ledger}
-                  </p>
-                ))}
-              </article>
-            </div>
-          </div>
-        </section>
-
-        <section className="s dark ink2 outcome-section">
-          <div className="wrap">
-            <p className="outcome-kicker r">
-              <span className="outcome-kicker-dot" aria-hidden="true" />
-              The outcome
-            </p>
-            <h2 className="outcome-heading r">
-              Finance runs itself.
-              <br />
-              Your people move forward.
-            </h2>
-            <p className="outcome-lead r">
-              98% less processing time. 99% accuracy. 24/7 automation. 40%+ cost savings.*
-            </p>
-
-            <div className="outcome-bento r">
-              <article className="outcome-card outcome-card--247">
-                <h3>24/7 Always Running</h3>
-                <p>Invoices. Expenses. Records.</p>
-              </article>
-
-              <article className="outcome-card outcome-card--time">
-                <p>Seconds, not minutes.</p>
-                <div className="outcome-metric">
-                  <p className="outcome-num">
-                    98<span>%</span>
-                  </p>
-                  <p className="outcome-label">Time Saved</p>
-                </div>
-              </article>
-
-              <article className="outcome-card outcome-card--accuracy">
-                <h3>99% Accuracy</h3>
-                <p>Duplicates and suspicious invoices flagged.</p>
-              </article>
-
-              <article className="outcome-card outcome-card--cost">
-                <p className="outcome-num">
-                  40%<span>+</span>
-                </p>
-                <p className="outcome-label">Cost Saved*</p>
-              </article>
-
-              <article className="outcome-card outcome-card--pill">
-                <span className="outcome-pill-dot" aria-hidden="true" />
-                Guaranteed efficiency.
-              </article>
-
-              <article className="outcome-card outcome-card--faster">
-                <TrendingUp className="outcome-watermark" strokeWidth={1.25} aria-hidden="true" />
-                <h3>And the business moves faster.</h3>
-                <ul>
-                  <li>
-                    <strong>Faster reporting</strong>
-                    <span>Books stay current.</span>
-                  </li>
-                  <li>
-                    <strong>Better cash visibility</strong>
-                    <span>Know what&apos;s due and what&apos;s coming.</span>
-                  </li>
-                  <li>
-                    <strong>Audit ready</strong>
-                    <span>Every document. Every approval. Every record.</span>
-                  </li>
-                </ul>
-                <p className="outcome-faster-foot">People do what people do best. Think. Decide. Grow.</p>
-              </article>
-            </div>
-          </div>
-        </section>
+        <ProblemSolutionSection />
         </div>
 
         <section className="s dark" id="how">
@@ -966,7 +801,7 @@ export default function QuantumLedgerLinkPage() {
           </div>
         </section>
 
-        <IntegrationsSection />
+        <IntegrationsSection variant="marquee" />
 
         <section className="s dark ink2" id="audience">
           <div className="wrap">

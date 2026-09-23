@@ -53,7 +53,45 @@ function IntegrationCloud() {
   );
 }
 
-export default function IntegrationsSection() {
+function IntegrationMarquee() {
+  const loop = [integrations, integrations];
+
+  return (
+    <div className="integration-marquee" aria-label="Supported integrations">
+      <div className="integration-track">
+        {loop.map((group, groupIndex) => (
+          <div
+            key={groupIndex}
+            className="integration-track-group"
+            aria-hidden={groupIndex > 0 ? true : undefined}
+          >
+            {group.map((name) => (
+              <IntegrationTile key={`${groupIndex}-${name}`} name={name} />
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export default function IntegrationsSection({ variant = 'cloud' }) {
+  if (variant === 'marquee') {
+    return (
+      <section id="integrations" className="s dark">
+        <div className="wrap">
+          <p className="eyebrow">Integrations</p>
+          <h2 className="h2">Seamless integrations for your financial workflow</h2>
+          <p className="lead">
+            Sync payments, banking, and accounting tools to automate your workflow and keep your financial
+            data accurate and up to date.
+          </p>
+        </div>
+        <IntegrationMarquee />
+      </section>
+    );
+  }
+
   return (
     <section id="integrations" className="s dark">
       <div className="wrap">
