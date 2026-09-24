@@ -490,6 +490,7 @@ const pricingPlans = [
       { label: 'Social media integration', included: false },
       { label: 'Email integration', included: false },
       { label: 'Upload', included: true },
+      { label: 'Up to 10 documents per month', included: true },
     ],
   },
   {

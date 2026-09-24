@@ -11,11 +11,11 @@ function Paper({ x = 44, y = 22, w = 40, h = 58 }) {
 
   return (
     <g>
-      <rect x={px} y={py} width={pw} height={ph} rx="5" fill="#E8EEF5" />
-      <rect x={px + 7} y={py + 14} width={pw - 14} height="3.5" rx="1.5" fill="#64748B" />
-      <rect x={px + 7} y={py + 24} width={pw - 20} height="3.5" rx="1.5" fill="#7B8C9E" />
-      <rect x={px + 7} y={py + 34} width={pw - 17} height="3.5" rx="1.5" fill="#7B8C9E" />
-      {ph > 50 ? <rect x={px + 7} y={py + 44} width={pw - 22} height="3.5" rx="1.5" fill="#94A3B8" /> : null}
+      <rect x={px} y={py} width={pw} height={ph} rx="5" fill="#1B2632" stroke="#334556" strokeWidth="1" />
+      <rect x={px + 7} y={py + 14} width={pw - 14} height="3.5" rx="1.5" fill="#8FA4B2" />
+      <rect x={px + 7} y={py + 24} width={pw - 20} height="3.5" rx="1.5" fill="#6E8494" />
+      <rect x={px + 7} y={py + 34} width={pw - 17} height="3.5" rx="1.5" fill="#6E8494" />
+      {ph > 50 ? <rect x={px + 7} y={py + 44} width={pw - 22} height="3.5" rx="1.5" fill="#5A7182" /> : null}
     </g>
   );
 }
@@ -303,22 +303,22 @@ const visuals = {
   ),
   budget: (
     <Scene>
-      <rect x={36} y={10} width={56} height={14} rx="4" fill="#CBD5E1" />
-      <rect x={46} y={6} width={36} height={18} rx="4" fill="#94A3B8" />
-      <rect x={32} y={18} width={64} height={78} rx="6" fill="#E8EEF5" />
+      <rect x={36} y={10} width={56} height={14} rx="4" fill="#3D5161" />
+      <rect x={46} y={6} width={36} height={18} rx="4" fill="#4A6070" />
+      <rect x={32} y={18} width={64} height={78} rx="6" fill="#1B2632" stroke="#334556" strokeWidth="1" />
       <Check x={42} y={32} size={22} />
       <Check x={42} y={56} size={22} />
       <Check x={42} y={80} size={22} />
-      <rect x={70} y={38} width={18} height={4} rx="2" fill="#64748B" />
-      <rect x={70} y={62} width={18} height={4} rx="2" fill="#64748B" />
-      <rect x={70} y={86} width={18} height={4} rx="2" fill="#64748B" />
+      <rect x={70} y={38} width={18} height={4} rx="2" fill="#8FA4B2" />
+      <rect x={70} y={62} width={18} height={4} rx="2" fill="#8FA4B2" />
+      <rect x={70} y={86} width={18} height={4} rx="2" fill="#8FA4B2" />
     </Scene>
   ),
   coding: (
     <Scene>
-      <rect x={22} y={18} width={52} height={72} rx="6" fill="#E8EEF5" />
-      <rect x={30} y={28} width={36} height={3.5} rx="1.5" fill="#64748B" />
-      <rect x={30} y={38} width={28} height={3.5} rx="1.5" fill="#94A3B8" />
+      <rect x={22} y={18} width={52} height={72} rx="6" fill="#1B2632" stroke="#334556" strokeWidth="1" />
+      <rect x={30} y={28} width={36} height={3.5} rx="1.5" fill="#8FA4B2" />
+      <rect x={30} y={38} width={28} height={3.5} rx="1.5" fill="#6E8494" />
       <rect x={32} y={58} width={10} height={22} rx="2" fill="#22C55E" />
       <rect x={46} y={46} width={10} height={34} rx="2" fill="#3B82F6" />
       <rect x={60} y={34} width={10} height={46} rx="2" fill="#F59E0B" />
@@ -452,7 +452,7 @@ const visuals = {
   timestamp: (
     <Scene>
       <Paper x={14} y={18} />
-      <rect x={72} y={24} width={42} height={52} rx="6" fill="#E8EEF5" />
+      <rect x={72} y={24} width={42} height={52} rx="6" fill="#1B2632" stroke="#334556" strokeWidth="1" />
       <rect x={72} y={24} width={42} height={14} fill="#EF4444" />
       <circle cx={93} cy={58} r={13} fill="#3B82F6" />
       <path d="M93 51v8h6" stroke="#fff" strokeWidth="2.6" strokeLinecap="round" />
@@ -477,7 +477,7 @@ const visuals = {
   bundle: (
     <Scene>
       <Paper x={8} y={20} w={44} h={66} />
-      <rect x={76} y={26} width={44} height={66} rx="5" fill="#EDE9FE" />
+      <rect x={76} y={26} width={44} height={66} rx="5" fill="#1E1B2E" stroke="#3A3458" strokeWidth="1" />
       <rect x={84} y={40} width={28} height={3.5} rx="1.5" fill="#7C3AED" />
       <rect x={84} y={50} width={22} height={3.5} rx="1.5" fill="#A78BFA" />
       <rect x={84} y={60} width={26} height={3.5} rx="1.5" fill="#A78BFA" />
@@ -514,8 +514,8 @@ const visuals = {
   ),
   report: (
     <Scene>
-      <rect x={16} y={22} width={64} height={68} rx="6" fill="#E8EEF5" />
-      <rect x={26} y={32} width={44} height={3.5} rx="1.5" fill="#64748B" />
+      <rect x={16} y={22} width={64} height={68} rx="6" fill="#1B2632" stroke="#334556" strokeWidth="1" />
+      <rect x={26} y={32} width={44} height={3.5} rx="1.5" fill="#8FA4B2" />
       <rect x={28} y={56} width={10} height={24} rx="2" fill="#3B82F6" />
       <rect x={43} y={44} width={10} height={36} rx="2" fill="#22C55E" />
       <rect x={58} y={34} width={10} height={46} rx="2" fill="#F59E0B" />
