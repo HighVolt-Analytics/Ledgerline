@@ -20,6 +20,7 @@ import {
   Zap,
   ChevronRight,
 } from 'lucide-react';
+import Logo from '../ui/Logo';
 import whatsapp from '../../assets/integrations/whatsapp.svg';
 import googledrive from '../../assets/integrations/googledrive.svg';
 
@@ -94,22 +95,6 @@ function Chip({ icon, title, sub, variant, chipRef }) {
         {sub ? <span>{sub}</span> : null}
       </span>
     </div>
-  );
-}
-
-function HubMark() {
-  return (
-    <svg className="ps-hub-mark" viewBox="0 0 64 64" aria-hidden="true">
-      <path
-        d="M18 12h16c8.8 0 16 7.2 16 16v8"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="7"
-        strokeLinecap="round"
-      />
-      <path d="M18 12v40h28" fill="none" stroke="currentColor" strokeWidth="7" strokeLinecap="round" />
-      <path d="M46 14v8M42 18h8" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" />
-    </svg>
   );
 }
 
@@ -270,7 +255,7 @@ export default function ProblemSolutionSection() {
               <span className="ps-hub-flow ps-hub-flow--ring" aria-hidden="true" />
               <span className="ps-hub-flow ps-hub-flow--pull" aria-hidden="true" />
               <div className="ps-hub-core" ref={hubRef}>
-                <HubMark />
+                <Logo className="ps-hub-mark" />
                 <p>Ledgerline</p>
                 <span>
                   From documents

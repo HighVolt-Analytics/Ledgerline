@@ -928,10 +928,6 @@ export default function QuantumLedgerLinkPage() {
               </a>
             </div>
             <p className="contacts r">
-              <a href="mailto:sana@highvolt.tech">sana@highvolt.tech</a>
-              <span className="sep">·</span>
-              <a href="mailto:sithu@highvolt.tech">sithu@highvolt.tech</a>
-              <span className="sep">·</span>
               <a href="mailto:sales@highvolt.tech">sales@highvolt.tech</a>
             </p>
           </div>
