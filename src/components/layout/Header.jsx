@@ -58,9 +58,9 @@ export default function Header() {
   };
 
   return (
-    <header className="fixed inset-x-0 top-0 z-50 px-3 pt-3 sm:px-6 sm:pt-4">
+    <header className="fixed inset-x-0 top-0 z-50 px-3 pt-3 sm:px-4 sm:pt-4 lg:px-6">
       <div
-        className={`mx-auto max-w-[1200px] overflow-hidden rounded-2xl border transition-all duration-300 ${
+        className={`mx-auto w-full max-w-[1480px] overflow-hidden rounded-2xl border transition-all duration-300 ${
           scrolled
             ? 'border-border bg-background/90 shadow-lg backdrop-blur-xl'
             : 'border-border/70 bg-card/75 shadow-md backdrop-blur-md'
@@ -71,36 +71,49 @@ export default function Header() {
             type="button"
             onClick={goHome}
             className="hover-elevate inline-flex min-w-0 shrink items-center gap-2 rounded-md px-1"
-            aria-label="Quantum Ledgerline home"
+            aria-label="Quantum Ledger Line home"
           >
             <Logo className="h-7 w-auto shrink-0 sm:h-8" />
-            <span className="brand-wordmark">Quantum Ledgerline</span>
+            <span className="brand-wordmark">Quantum Ledger Line</span>
           </button>
 
           <div className="hidden items-center gap-4 xl:flex xl:gap-7">
-            {navLinks.map((link, i) => (
-              <button
-                key={`${link.label}-${i}`}
-                type="button"
-                onClick={() => goToSection(link.id)}
-                className="group relative whitespace-nowrap text-sm text-muted-foreground transition-colors hover:text-foreground"
-              >
-                {link.label}
-                <span className="absolute -bottom-1.5 left-0 h-px w-0 bg-primary transition-all duration-200 group-hover:w-full" />
-              </button>
-            ))}
+            {navLinks.map((link, i) =>
+              link.path ? (
+                <Link
+                  key={`${link.label}-${i}`}
+                  to={link.path}
+                  className={`group relative whitespace-nowrap text-sm transition-colors hover:text-foreground ${
+                    location.pathname === link.path ? 'text-foreground' : 'text-muted-foreground'
+                  }`}
+                >
+                  {link.label}
+                  <span className="absolute -bottom-1.5 left-0 h-px w-0 bg-primary transition-all duration-200 group-hover:w-full" />
+                </Link>
+              ) : (
+                <button
+                  key={`${link.label}-${i}`}
+                  type="button"
+                  onClick={() => goToSection(link.id)}
+                  className="group relative whitespace-nowrap text-sm text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  {link.label}
+                  <span className="absolute -bottom-1.5 left-0 h-px w-0 bg-primary transition-all duration-200 group-hover:w-full" />
+                </button>
+              )
+            )}
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
             <a
-              href={externalLinks.signup}
-              className="hidden rounded-full px-4 py-2 text-sm text-muted-foreground hover-elevate active-elevate-2 sm:inline-flex"
+              href={externalLinks.signin}
+              className="hidden rounded-full border border-border px-4 py-2 text-sm text-muted-foreground hover-elevate active-elevate-2 sm:inline-flex"
             >
               Sign in
             </a>
             <Link
               to={tourPath}
-              className="hidden rounded-full px-4 py-2 text-sm font-semibold shadow-sm transition-all duration-200 hover:scale-[1.02] active:scale-100 sm:inline-flex sm:px-5"
+              className="hidden whitespace-nowrap rounded-full px-4 py-2 text-sm font-semibold shadow-sm transition-all duration-200 hover:scale-[1.02] active:scale-100 sm:inline-flex sm:px-4 xl:px-5"
               style={{ background: '#2FD4B5', color: '#04161C' }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.background = '#4FE3C8';
@@ -109,7 +122,7 @@ export default function Header() {
                 e.currentTarget.style.background = '#2FD4B5';
               }}
             >
-              Demo tour
+              Interactive Product Tour
             </Link>
             <button
               type="button"
@@ -130,10 +143,10 @@ export default function Header() {
               type="button"
               onClick={goHome}
               className="inline-flex min-w-0 items-center gap-2"
-              aria-label="Quantum Ledgerline home"
+              aria-label="Quantum Ledger Line home"
             >
               <Logo className="h-7 w-auto shrink-0 sm:h-8" />
-              <span className="brand-wordmark">Quantum Ledgerline</span>
+              <span className="brand-wordmark">Quantum Ledger Line</span>
             </button>
             <button
               type="button"
@@ -146,23 +159,41 @@ export default function Header() {
           </div>
 
           <div className="flex flex-1 flex-col gap-1 overflow-y-auto px-6 pb-8 pt-4">
-            {navLinks.map((link, i) => (
-              <button
-                key={`mobile-${link.label}-${i}`}
-                type="button"
-                onClick={() => goToSection(link.id)}
-                className="rounded-xl px-4 py-4 text-left text-lg font-medium text-foreground hover-elevate"
-              >
-                {link.label}
-              </button>
-            ))}
+            {navLinks.map((link, i) =>
+              link.path ? (
+                <Link
+                  key={`mobile-${link.label}-${i}`}
+                  to={link.path}
+                  onClick={() => setMenuOpen(false)}
+                  className="rounded-xl px-4 py-4 text-left text-lg font-medium text-foreground hover-elevate"
+                >
+                  {link.label}
+                </Link>
+              ) : (
+                <button
+                  key={`mobile-${link.label}-${i}`}
+                  type="button"
+                  onClick={() => goToSection(link.id)}
+                  className="rounded-xl px-4 py-4 text-left text-lg font-medium text-foreground hover-elevate"
+                >
+                  {link.label}
+                </button>
+              )
+            )}
+            <a
+              href={externalLinks.signin}
+              onClick={() => setMenuOpen(false)}
+              className="mt-2 rounded-full border border-border px-4 py-3.5 text-center text-base text-muted-foreground"
+            >
+              Sign in
+            </a>
             <Link
               to={tourPath}
               onClick={() => setMenuOpen(false)}
               className="mt-auto rounded-full px-4 py-3.5 text-center text-base font-semibold"
               style={{ background: '#2FD4B5', color: '#04161C' }}
             >
-              Demo tour
+              Interactive Product Tour
             </Link>
           </div>
         </div>

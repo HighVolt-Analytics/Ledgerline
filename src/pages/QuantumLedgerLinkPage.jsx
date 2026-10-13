@@ -11,8 +11,8 @@ import {
   FileSpreadsheet,
   SearchCheck,
   Check,
-  X,
   ChevronRight,
+  Play,
   Zap,
 } from 'lucide-react';
 import Header from '../components/layout/Header';
@@ -26,6 +26,8 @@ import '../qll.css';
 
 const YOUTUBE_EMBED =
   'https://www.youtube-nocookie.com/embed/SElwFjDrqLI?autoplay=1&rel=0&modestbranding=1';
+const TEAM_YOUTUBE_EMBED =
+  'https://www.youtube-nocookie.com/embed/5Xw_KPwWrR8?autoplay=1&rel=0&modestbranding=1';
 
 const howFlows = [
   {
@@ -107,7 +109,73 @@ const howFlows = [
     ],
   },
   {
-    title: 'Expense Management',
+    title: 'Invoice to Cash',
+    subtitle: 'Bill. Collect. Reconcile.',
+    stages: [
+      {
+        name: '1. Capture & Bill',
+        tone: 'blue',
+        steps: [
+          {
+            n: '1',
+            title: 'Capture Billing Docs',
+            desc: 'Invoices, contracts, and delivery notes arrive from email, WhatsApp, or Slack.',
+            visual: 'capture',
+          },
+          {
+            n: '2',
+            title: 'Analyse Document',
+            desc: 'AI reads the file and pulls the customer, amount, tax, and due date.',
+            visual: 'analyse',
+          },
+          {
+            n: '3',
+            title: 'Match the Customer',
+            desc: 'Links the document to the right customer, order, or contract.',
+            visual: 'classify',
+          },
+          {
+            n: '4',
+            title: 'Raise the Receivable',
+            desc: 'Creates the invoice and the accounting entry, ready to send.',
+            visual: 'extract',
+          },
+        ],
+      },
+      {
+        name: '2. Collect & Post',
+        tone: 'teal',
+        steps: [
+          {
+            n: '5',
+            title: 'Send for Collection',
+            desc: 'The invoice goes out and the balance is tracked until it is paid.',
+            visual: 'rules',
+          },
+          {
+            n: '6',
+            title: 'Record the Payment',
+            desc: 'Incoming payment is matched to the open invoice.',
+            visual: 'payment',
+          },
+          {
+            n: '7',
+            title: 'Sync to Accounting',
+            desc: 'The receipt and the cleared invoice post to the accounting system.',
+            visual: 'sync',
+          },
+          {
+            n: '8',
+            title: 'Archive & Store',
+            desc: 'The invoice, proof of delivery, and receipt are filed together.',
+            visual: 'archive',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    title: 'Team Expenses Mgt',
     subtitle: 'Simple. Automated. Fast.',
     foot: 'All in 2 seconds — from request to payment, fully automated.',
     stages: [
@@ -174,7 +242,7 @@ const howFlows = [
     ],
   },
   {
-    title: 'File Management',
+    title: 'Document Mgt',
     subtitle: 'Capture. Organize. Bundle. Notify.',
     foot: 'From file capture to bundled reporting — fast, organized, and automated.',
     stages: [
@@ -431,7 +499,7 @@ const industryList = [
 const presenceMapDots = [
   {
     start: { lat: 1.2868, lng: 103.8545, label: 'Singapore', side: 'singapore' },
-    end: { lat: 39.1582, lng: -75.5244, label: 'USA' },
+    end: { lat: 39.1582, lng: -75.5244, label: 'USA', side: 'usa' },
   },
   {
     start: { lat: 1.2868, lng: 103.8545 },
@@ -444,6 +512,14 @@ const presenceMapDots = [
   {
     start: { lat: 1.2868, lng: 103.8545 },
     end: { lat: 16.8409, lng: 96.1735, label: 'Myanmar', side: 'myanmar' },
+  },
+  {
+    start: { lat: 1.2868, lng: 103.8545 },
+    end: { lat: 51.0447, lng: -114.0719, label: 'Canada', side: 'canada' },
+  },
+  {
+    start: { lat: 1.2868, lng: 103.8545 },
+    end: { lat: 25.2048, lng: 55.2708, label: 'Dubai', side: 'dubai' },
   },
 ];
 
@@ -480,84 +556,95 @@ const presenceOffices = [
 
 const pricingPlans = [
   {
-    name: 'Free Plan',
-    price: 'Free',
-    priceNote: 'Every month',
-    popular: false,
-    cta: 'Get started',
+    name: 'Get Started',
+    badge: '14 days free trial',
+    price: 'US$150',
+    priceSuffix: '/ month',
+    note: 'after your free trial',
+    featured: true,
+    cta: 'Start free',
     href: externalLinks.getStarted,
+    external: true,
     features: [
-      { label: 'Social media integration', included: false },
-      { label: 'Email integration', included: false },
-      { label: 'Upload', included: true },
-      { label: 'Up to 10 documents per month', included: true },
+      '1,500 credits included',
+      'Credits accumulate and expire after 12 months',
+      'Process up to 300 records',
+      'Up to 5 users included',
+      'Additional users — US$10 per user / month',
+      'Onboarding within 10 mins',
+      'Above 300 records — US$0.25 per page',
+      'Integrates with communication channels and ERP systems',
     ],
   },
   {
-    name: 'Company',
-    price: 'US$150',
-    priceNote: '/ month, per company',
-    popular: true,
-    cta: 'Get it now',
-    href: externalLinks.getStarted,
+    name: 'Enterprise',
+    badge: 'Custom plan',
+    price: 'Talk to us',
+    note: 'POC on us. Implementation on you.',
+    featured: false,
+    cta: 'Contact sales',
+    href: 'mailto:sales@highvolt.tech',
+    external: false,
     features: [
-      { label: 'Additional pages — US$0.25 each, any size', included: true },
-      { label: 'Additional users — US$10 per user, per month', included: true },
-      { label: 'Implementation — US$0. Live in 7 days.', included: true },
-      { label: 'No lock-in. Cancel any time.', included: true },
+      'Tailored setup for larger teams',
+      'Advanced workflow and approval needs',
+      'Custom onboarding and implementation',
+      'Integration support across systems',
+      'Dedicated commercial discussion',
+      'Contact: sales@highvolt.tech',
     ],
   },
 ];
 
 function PricingCard({ plan }) {
-  const includedFeatures = plan.features.filter((feature) => feature.included);
-  const excludedFeatures = plan.features.filter((feature) => !feature.included);
-  const orderedFeatures = [...includedFeatures, ...excludedFeatures];
-
   return (
-    <div className={`pricing-card ${plan.popular ? 'pricing-card--popular' : ''}`}>
-      {plan.popular && <span className="pricing-card-badge">Most popular</span>}
-
-      <h3 className="text-base font-semibold text-foreground">{plan.name}</h3>
-
-      <div className="mt-6 flex items-end gap-1.5">
-        <span className="text-4xl font-semibold tracking-tight text-foreground">{plan.price}</span>
-        {plan.priceNote && (
-          <span className="mb-1 text-sm text-muted-foreground">{plan.priceNote}</span>
-        )}
+    <article className={`qll-price-card ${plan.featured ? 'qll-price-card--featured' : ''}`}>
+      <div className="qll-price-top">
+        <h3>{plan.name}</h3>
+        <span className={`qll-price-badge${plan.featured ? ' qll-price-badge--trial' : ''}`}>{plan.badge}</span>
       </div>
 
-      <div className="pricing-card-divider my-6" />
+      <div className="qll-price-amount">
+        <span className="qll-price-figure">{plan.price}</span>
+        {plan.priceSuffix && <span className="qll-price-suffix">{plan.priceSuffix}</span>}
+      </div>
+      <p className="qll-price-note">{plan.note}</p>
 
-      <ul className="flex flex-1 flex-col gap-3">
-        {orderedFeatures.map((feature) => (
-          <li key={feature.label} className="flex items-start gap-2.5 text-sm text-muted-foreground">
-            <span className={`pricing-check ${feature.included ? '' : 'pricing-check--excluded'}`}>
-              {feature.included ? (
-                <Check className="h-3 w-3" strokeWidth={3} />
-              ) : (
-                <X className="h-3 w-3" strokeWidth={3} />
-              )}
+      <div className="qll-price-rule" />
+
+      <ul>
+        {plan.features.map((feature) => (
+          <li key={feature}>
+            <span className="qll-price-check" aria-hidden="true">
+              <Check className="h-3 w-3" strokeWidth={3} />
             </span>
-            <span>{feature.label}</span>
+            {feature.startsWith('Contact:') ? (
+              <span>
+                Contact:{' '}
+                <a href="mailto:sales@highvolt.tech">sales@highvolt.tech</a>
+              </span>
+            ) : (
+              <span>{feature}</span>
+            )}
           </li>
         ))}
       </ul>
 
       <a
+        className={`qll-price-cta ${plan.featured ? 'qll-price-cta--solid' : ''}`}
         href={plan.href}
-        target="_blank"
-        rel="noopener noreferrer"
-        className={`pricing-card-cta mt-8 w-full ${plan.popular ? 'pricing-card-cta--popular' : ''}`}
+        {...(plan.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
       >
         {plan.cta}
+        <span aria-hidden="true">→</span>
       </a>
-    </div>
+    </article>
   );
 }
 
 export default function QuantumLedgerLinkPage() {
   const [videoPlaying, setVideoPlaying] = useState(false);
+  const [teamVideoPlaying, setTeamVideoPlaying] = useState(false);
   const [howTab, setHowTab] = useState(0);
   const rootRef = useRef(null);
 
@@ -612,8 +699,21 @@ export default function QuantumLedgerLinkPage() {
           <div className="glow" aria-hidden="true" />
           <div className="wrap">
             <div className="hero-copy">
-              <p className="eyebrow r">Invoice to pay · Expenses · Records</p>
-              <h1 className="h1 r">Every invoice. Every expense. Every record. Handled.</h1>
+              <span className="hero-mark" aria-hidden="true" />
+              <p className="hero-tabs r">
+                <span>Invoice to pay</span>
+                <span className="hero-tab-dot" aria-hidden="true">·</span>
+                <span>Invoice to cash</span>
+                <span className="hero-tab-dot" aria-hidden="true">·</span>
+                <span>Team expenses mgt</span>
+                <span className="hero-tab-dot" aria-hidden="true">·</span>
+                <span>Document mgt</span>
+              </p>
+              <h1 className="h1 r">
+                Every invoice. Every expense.
+                <br />
+                Every record. Handled.
+              </h1>
               <p className="lead r">
                 One intelligent system that runs finance work from capture to payment to audit.
               </p>
@@ -635,7 +735,8 @@ export default function QuantumLedgerLinkPage() {
                     document.getElementById('video')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
                   }}
                 >
-                  Watch the product video
+                  <Play className="hero-play" strokeWidth={2.4} aria-hidden="true" />
+                  Watch demo
                 </a>
               </div>
             </div>
@@ -675,15 +776,10 @@ export default function QuantumLedgerLinkPage() {
                 )}
               </div>
             </div>
-
-            <div className="hero-meta">
-              <p className="strip r">
-                Captures via email · WhatsApp · Viber · mobile <span className="sep">·</span> Pays from your
-                bank <span className="sep">·</span> Posts to Xero · QuickBooks · MYOB · NetSuite
-              </p>
-            </div>
           </div>
         </section>
+
+        <IntegrationsSection variant="marquee" />
 
         <div id="product" className="product-block">
         <ProblemSolutionSection />
@@ -709,7 +805,45 @@ export default function QuantumLedgerLinkPage() {
               ))}
             </div>
 
-            {howFlows.map((flow, index) => (
+            {howFlows.map((flow, index) =>
+              flow.title === 'Team Expenses Mgt' ? (
+                <div
+                  key={flow.title}
+                  className="video how-tab-video r"
+                  role="tabpanel"
+                  hidden={howTab !== index}
+                >
+                  {teamVideoPlaying ? (
+                    <iframe
+                      src={TEAM_YOUTUBE_EMBED}
+                      title="Team expenses management"
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                      allowFullScreen
+                      referrerPolicy="strict-origin-when-cross-origin"
+                    />
+                  ) : (
+                    <button
+                      className="video-btn"
+                      type="button"
+                      aria-label="Play the team expenses video"
+                      onClick={() => setTeamVideoPlaying(true)}
+                    >
+                      <img
+                        src="/qll/team-expense-thumbnail.jpg"
+                        alt="Team expenses video"
+                        width="1280"
+                        height="720"
+                      />
+                      <span className="play" aria-hidden="true">
+                        <svg viewBox="0 0 64 64" fill="none">
+                          <circle cx="32" cy="32" r="31.25" stroke="#fff" strokeWidth="1.5" />
+                          <path d="M26 22.5 43 32l-17 9.5V22.5Z" fill="#fff" />
+                        </svg>
+                      </span>
+                    </button>
+                  )}
+                </div>
+              ) : (
               <article
                 key={flow.title}
                 className="how-board r"
@@ -746,7 +880,8 @@ export default function QuantumLedgerLinkPage() {
                   </p>
                 ) : null}
               </article>
-            ))}
+              )
+            )}
           </div>
         </section>
 
@@ -801,8 +936,6 @@ export default function QuantumLedgerLinkPage() {
             <p className="tag r">Shipping soon · included in the platform</p>
           </div>
         </section>
-
-        <IntegrationsSection variant="marquee" />
 
         <section className="s dark ink2" id="audience">
           <div className="wrap">
@@ -891,11 +1024,12 @@ export default function QuantumLedgerLinkPage() {
           </div>
         </section>
 
-        <section className="s paper" id="pricing">
+        <section className="s paper qll-pricing" id="pricing">
           <div className="wrap">
-            <p className="eyebrow r">Commercial</p>
-            <h2 className="h2 r">Simple, honest pricing.</h2>
-            <p className="lead r">Start free, upgrade when you need more pages, access, and integrations.</p>
+            <div className="qll-pricing-head r">
+              <h2>Simple pricing for every stage</h2>
+              <p>Start free, then scale with confidence.</p>
+            </div>
 
             <div className="qll-pricing-grid r">
               {pricingPlans.map((plan) => (

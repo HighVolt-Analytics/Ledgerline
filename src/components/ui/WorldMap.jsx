@@ -50,8 +50,10 @@ export function WorldMap({
   };
 
   const createCurvedPath = (start, end) => {
+    const dist = Math.hypot(end.x - start.x, end.y - start.y);
+    const lift = Math.min(46, Math.max(16, dist * 0.16));
     const midX = (start.x + end.x) / 2;
-    const midY = Math.min(start.y, end.y) - 50;
+    const midY = Math.min(start.y, end.y) - lift;
     return `M ${start.x} ${start.y} Q ${midX} ${midY} ${end.x} ${end.y}`;
   };
 
@@ -71,6 +73,18 @@ export function WorldMap({
           : { x: point.x + 10, y: point.y - 28, align: 'justify-start', width: 92, height: 26 };
       case 'australia':
         return { x: point.x - 120, y: point.y - (isMobile ? 3 : 80), align: 'justify-center' };
+      case 'canada':
+        return isMobile
+          ? { x: point.x - 46, y: point.y + 8, align: 'justify-center', width: 92, height: 24 }
+          : { x: point.x - 56, y: point.y + 10, align: 'justify-center', width: 112, height: 28 };
+      case 'dubai':
+        return isMobile
+          ? { x: point.x - 62, y: point.y + 8, align: 'justify-center', width: 64, height: 22 }
+          : { x: point.x - 72, y: point.y + 10, align: 'justify-center', width: 84, height: 24 };
+      case 'usa':
+        return isMobile
+          ? { x: point.x - 24, y: point.y - 24, align: 'justify-center', width: 48, height: 20 }
+          : { x: point.x - 30, y: point.y - 26, align: 'justify-center', width: 60, height: 22 };
       default:
         return { x: point.x - 120, y: point.y - 80, align: 'justify-center' };
     }
@@ -99,9 +113,8 @@ export function WorldMap({
         <defs>
           <linearGradient id="qll-path-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
             <stop offset="0%" stopColor="white" stopOpacity="0" />
-            <stop offset="5%" stopColor={lineColor} stopOpacity="1" />
-            <stop offset="95%" stopColor={lineColor} stopOpacity="1" />
-            <stop offset="100%" stopColor="white" stopOpacity="0" />
+            <stop offset="4%" stopColor={lineColor} stopOpacity="1" />
+            <stop offset="100%" stopColor={lineColor} stopOpacity="1" />
           </linearGradient>
 
           <filter id="qll-map-glow">
@@ -113,6 +126,55 @@ export function WorldMap({
           </filter>
         </defs>
 
+        {showLabels &&
+          dots.map((dot, i) => {
+            const startPoint = projectPoint(dot.start.lat, dot.start.lng);
+            const endPoint = projectPoint(dot.end.lat, dot.end.lng);
+            const labels = [];
+
+            if (dot.end.label) {
+              const pos = getLabelPosition(endPoint, dot.end.side);
+              labels.push(
+                <foreignObject
+                  key={`end-label-${i}`}
+                  x={pos.x}
+                  y={pos.y}
+                  width={pos.width ?? 240}
+                  height={pos.height ?? 80}
+                  className="pointer-events-none overflow-visible"
+                >
+                  <div className={`flex h-full w-full items-center ${pos.align}`}>
+                    <span className="rounded border border-white/20 bg-black/90 px-2 py-1 text-[10px] font-bold text-white backdrop-blur-md md:text-xs">
+                      {dot.end.label}
+                    </span>
+                  </div>
+                </foreignObject>,
+              );
+            }
+
+            if (dot.start.label && dots.findIndex((item) => item.start.label === dot.start.label) === i) {
+              const pos = getLabelPosition(startPoint, dot.start.side);
+              labels.push(
+                <foreignObject
+                  key={`start-label-${i}`}
+                  x={pos.x}
+                  y={pos.y}
+                  width={pos.width ?? 240}
+                  height={pos.height ?? 80}
+                  className="pointer-events-none overflow-visible"
+                >
+                  <div className={`flex h-full w-full items-center ${pos.align}`}>
+                    <span className="rounded border border-white/20 bg-black/90 px-2 py-1 text-[10px] font-bold text-white backdrop-blur-md md:text-xs">
+                      {dot.start.label}
+                    </span>
+                  </div>
+                </foreignObject>,
+              );
+            }
+
+            return labels;
+          })}
+
         {dots.map((dot, i) => {
           const startPoint = projectPoint(dot.start.lat, dot.start.lng);
           const endPoint = projectPoint(dot.end.lat, dot.end.lng);
@@ -121,30 +183,29 @@ export function WorldMap({
           const resetTime = totalAnimationTime / fullCycleDuration;
 
           return (
-            <g key={`path-group-${i}`}>
-              <motion.path
-                d={createCurvedPath(startPoint, endPoint)}
-                fill="none"
-                stroke="url(#qll-path-gradient)"
-                strokeWidth="1.5"
-                initial={{ pathLength: 0 }}
-                animate={loop ? { pathLength: [0, 0, 1, 1, 0] } : { pathLength: 1 }}
-                transition={
-                  loop
-                    ? {
-                        duration: fullCycleDuration,
-                        times: [0, startTime, endTime, resetTime, 1],
-                        ease: 'easeInOut',
-                        repeat: Infinity,
-                      }
-                    : {
-                        duration: animationDuration,
-                        delay: i * staggerDelay,
-                        ease: 'easeInOut',
-                      }
-                }
-              />
-            </g>
+            <motion.path
+              key={`path-${i}`}
+              d={createCurvedPath(startPoint, endPoint)}
+              fill="none"
+              stroke="url(#qll-path-gradient)"
+              strokeWidth="1.5"
+              initial={{ pathLength: 0 }}
+              animate={loop ? { pathLength: [0, 0, 1, 1, 0] } : { pathLength: 1 }}
+              transition={
+                loop
+                  ? {
+                      duration: fullCycleDuration,
+                      times: [0, startTime, endTime, resetTime, 1],
+                      ease: 'easeInOut',
+                      repeat: Infinity,
+                    }
+                  : {
+                      duration: animationDuration,
+                      delay: i * staggerDelay,
+                      ease: 'easeInOut',
+                    }
+              }
+            />
           );
         })}
 
@@ -157,7 +218,7 @@ export function WorldMap({
               <motion.circle
                 cx={startPoint.x}
                 cy={startPoint.y}
-                r="3"
+                r="3.5"
                 fill={lineColor}
                 filter="url(#qll-map-glow)"
                 whileHover={{ scale: 1.5 }}
@@ -166,32 +227,12 @@ export function WorldMap({
               <motion.circle
                 cx={endPoint.x}
                 cy={endPoint.y}
-                r="3"
+                r="3.5"
                 fill={lineColor}
                 filter="url(#qll-map-glow)"
                 whileHover={{ scale: 1.5 }}
                 className="cursor-pointer"
               />
-              {showLabels &&
-                dot.end.label &&
-                (() => {
-                  const pos = getLabelPosition(endPoint, dot.end.side);
-                  return (
-                    <foreignObject
-                      x={pos.x}
-                      y={pos.y}
-                      width={pos.width ?? 240}
-                      height={pos.height ?? 80}
-                      className="pointer-events-none overflow-visible"
-                    >
-                      <div className={`flex h-full items-center ${pos.align}`}>
-                        <span className="rounded border border-white/20 bg-black/90 px-2 py-1 text-[10px] font-bold text-white backdrop-blur-md md:text-xs">
-                          {dot.end.label}
-                        </span>
-                      </div>
-                    </foreignObject>
-                  );
-                })()}
             </React.Fragment>
           );
         })}
