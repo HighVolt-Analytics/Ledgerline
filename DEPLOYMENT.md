@@ -2,17 +2,17 @@
 
 ## Release controls
 
-The Hostinger workflow deploys on every push to `main`, and also supports manual dispatch. Manual dispatch requires an exact commit equal to the dispatched `main` commit and the typed `DEPLOY` confirmation. The workflow builds the static marketing site, packages it as a run-scoped immutable GitHub Actions artifact, records a SHA-256 checksum, and then enters the GitHub `Production` environment before any SSH operation.
+The current `main` workflow is manual-only after PR #5. This branch prepares the proposed steady-state workflow: approved `main` changes to the marketing site may deploy only when `LEDGERLINE_AUTOMATIC_DEPLOY_ENABLED=true`; manual runs require an exact current `main` commit, typed `DEPLOY`, and either the temporary cutover gate or the independent portal dispatch gate. Push events can never use the manual gates. Workflow-only changes are excluded from the production push path filter. The workflow packages an immutable run artifact with SHA-256 and enters the GitHub `Production` environment before SSH operations.
 
 The `Production` environment is branch-restricted to `main`. No independent reviewer is configured, matching the last successful legacy deployment, which had no reviewer gate. The separate `rollback.yml` workflow remains manual-only and requires `RESTORE` plus a named backup.
 
-**Current `main` is not safe to dispatch.** Its legacy `deploy.yml` uses `StrictHostKeyChecking=no`, appends `ssh-keyscan` output without pin validation, and recursively deletes most target contents before upload. PR #1 is being updated against `da53d33f8a5a33848594264b1a9190a6f3e4990f`; until that update is approved and merged, do not dispatch or enable either pipeline.
+**Verified live baseline (2026-10-14):** production serves `31f80592b385eabfc559e12b23e52d3b9da9b811`; `main` was `12239682c245f2f52688bb0aa31b69edac27a909` at the start of this work. The `LEDGERLINE_PRODUCTION_CUTOVER_ENABLED` repository variable is `false`; `LEDGERLINE_AUTOMATIC_DEPLOY_ENABLED` and `LEDGERLINE_PORTAL_DISPATCH_ENABLED` are unset. This proposed PR does not change any gate, credential, Hostinger setting, or production file. Its merge changes only workflow, helper, test, and documentation paths excluded from the deployment push filter.
 
 No staging website will be created. This is **WAIVED BY OWNER — DIRECT PRODUCTION MIGRATION**. Direct production deployment has greater risk because the build will not have been exercised against an isolated Hostinger site.
 
-## Production configuration required after explicit cutover approval
+## Verified Production configuration
 
-Configure values only after the domain change has been separately approved and the new document root has been verified. Do not reuse legacy deployment secrets or target values without review.
+The Hostinger `Production` environment is restricted to `main`, and its SSH/target settings are already configured for the verified canonical document root. Do not change those values as part of this automation PR. The SMTP secret names below are not configured in Ledgerline yet; add them only after the existing provider and approved recipient are confirmed through the official GitHub environment UI.
 
 Production secrets:
 
@@ -24,8 +24,9 @@ Production secrets:
 
 Repository-level release gates (leave unset or `false` until separately approved):
 
-- `LEDGERLINE_PRODUCTION_CUTOVER_ENABLED` - enables the manual production path after the owner approves cutover
-- `LEDGERLINE_AUTOMATIC_DEPLOY_ENABLED` - separately enables deployments on pushes to `main`
+- `LEDGERLINE_PRODUCTION_CUTOVER_ENABLED` - temporary migration/manual deployment gate
+- `LEDGERLINE_AUTOMATIC_DEPLOY_ENABLED` - separately enables marketing-source deployments on pushes to `main`
+- `LEDGERLINE_PORTAL_DISPATCH_ENABLED` - steady-state independent manual dispatch gate; set in both the Ledgerline repository and live Vercel project only after approval
 
 Production environment variables:
 
@@ -35,7 +36,21 @@ Production environment variables:
 
 The workflow resolves the configured target with `realpath -e` and requires an exact match between the canonical target and the SSH home plus the approved suffix. It creates a private, timestamped snapshot of the target before overlaying the release. It does not recursively delete files, so unrelated and persistent files are preserved; old hashed assets can remain after a release.
 
+Production notification uses the existing SMTP integration pattern from the disabled legacy deployment, with values provisioned separately in the Ledgerline `Production` environment. Required secret names are `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM`, and `MAIL_TO`. The workflow checks for all of them before its first SSH operation. A separate final notification job sends one success or failure message after each authorized attempt; SMTP delivery errors are reported in the run summary and do not conceal deployment/rollback results. Secret values and recipients are never written to logs. Do not copy a recipient or credential until the existing provider and approved recipient have been confirmed.
+
+## Proposed developer and operator flow
+
+1. Open a PR for marketing-site changes; the required `Validate Ledgerline marketing site` check runs locked install, policy tests, and a production build.
+2. Merge through the protected `main` branch after the required check passes. No review-count requirement is proposed.
+3. Automatic production deployment occurs only if the merged change touches the explicit marketing build paths and `LEDGERLINE_AUTOMATIC_DEPLOY_ENABLED=true`. It does not use either manual gate.
+4. An authorized operator can request a manual deployment in the live portal by entering the exact `main` SHA and `DEPLOY`. Portal server auth, email allowlist, same-origin check, fixed repository routing, and `LEDGERLINE_PORTAL_DISPATCH_ENABLED` remain required. The GitHub workflow additionally requires the portal/cutover gate and Production environment branch restriction.
+5. Check the marker at `https://quantumledgerline.com/deploy-info.txt` before saying a release is live. The portal reports the run URL, commit, health status and failure/rollback classification from Actions job steps.
+
+Pause automatic deployment by setting `LEDGERLINE_AUTOMATIC_DEPLOY_ENABLED=false` or unsetting it. Pause portal dispatch by disabling the server-side `LEDGERLINE_PORTAL_DISPATCH_ENABLED` variable in both Vercel production and the Ledgerline repository. A rollback remains a separate manually dispatched workflow requiring a named backup, `RESTORE`, and the cutover gate. Production secrets and SMTP settings are changed through GitHub's official environment settings, never chat.
+
 ## Application and data scope
+
+> **Historical preparation notes below** record the earlier cutover stage and should not be read as current status. The verified live baseline is above; production is now live on Ledgerline.
 
 The Ledgerline `main` application is a Vite-built static site. Source inspection found no server API routes, database client, or submitted form handler. The pricing region helper optionally calls `https://ipapi.co/json/`, falls back to AUD on errors, and stores a currency selection in `sessionStorage`. Demo media and fonts load from external providers. This is evidence that the repository build is database-independent; it does not prove the existing Hostinger document root has no PHP files, uploads, or other persistent application data.
 
@@ -43,7 +58,7 @@ The 6.4 GB Hostinger website archive is account-wide and was previously structur
 
 The historical website-specific package is dated 2026-10-10 and is not fresh enough for cutover. A new Hostinger site backup was created for the existing `quantumledgerlink.com` website at 2026-10-14 10:27 (hPanel local time), including website files and the selected database. The website files backup is now marked completed and prepared for download. The database backup is listed in the Restore and download panel. Download attempts surfaced a Hostinger network error, and no verified local copies were found; an off-panel rollback copy is therefore not confirmed. The domain-change dialog warns that existing website backups will be lost and cannot be restored after the change. The workflow's fresh pre-deployment snapshot is created only after cutover approval and exact target validation. It refuses to proceed if that archive contains symlinks or special files, because the current rollback workflow rejects them. Neither production workflow has been exercised against Hostinger.
 
-## PR #1 update and merge-trigger safety (2026-10-14)
+## Historical PR #1 update and merge-trigger safety (2026-10-14)
 
 Existing PR #1 is updated and mergeable at head `171494aca9db4141f11117744ee68eeeb1de02fd`, based on current `main` (`da53d33f8a5a33848594264b1a9190a6f3e4990f`). The resolved change keeps the guarded Hostinger workflow, the manual rollback workflow, the read-only diagnostic workflow now present on `main`, and the intended marketing-site updates. The Azure Ledgerline product application is outside the PR change set.
 
@@ -51,7 +66,7 @@ The guarded workflow still listens for pushes to `main`, but its build and deplo
 
 The update is not merged or dispatched. Current-main push run `38514892297` failed at `Validate Hostinger secrets`; all SSH setup, backup, target cleanup, upload, and verification steps were skipped. No Hostinger connection or deployment occurred. The revised branch passed YAML parsing, embedded Bash syntax checks, `git diff --check`, and `npm run build`; Vercel Preview checks passed. The repository defines no test or lint scripts. Vite emitted its existing warning that the main JavaScript chunk exceeds 500 kB.
 
-## Direct production deployment limits
+## Historical direct production deployment limits
 
 - **Local production build:** current main `5b5f91e` was built previously in a separate detached worktree. The updated PR tree was rebuilt after `npm ci` during this reconciliation; Vite succeeded and reported the main JavaScript chunk exceeds 500 kB. The build output is local only and has not been uploaded or deployed.
 
