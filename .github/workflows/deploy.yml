@@ -3,6 +3,17 @@ name: Deploy Ledgerline to Hostinger
 run-name: Ledgerline production release ${{ inputs.release_commit || github.sha }} by ${{ github.actor }}
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'index.html'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vite.config.js'
+      - 'postcss.config.js'
+      - 'tailwind.config.js'
   workflow_dispatch:
     inputs:
       release_commit:
@@ -20,6 +31,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   build:
@@ -27,12 +39,31 @@ jobs:
     runs-on: ubuntu-latest
     if: >-
       github.ref == 'refs/heads/main' &&
-      github.event_name == 'workflow_dispatch' &&
-      inputs.confirm_production == 'DEPLOY' &&
-      inputs.release_commit == github.sha
+      ((github.event_name == 'push' && vars.LEDGERLINE_AUTOMATIC_DEPLOY_ENABLED == 'true') ||
+      (github.event_name == 'workflow_dispatch' && inputs.confirm_production == 'DEPLOY' &&
+      inputs.release_commit == github.sha))
     outputs:
       artifact_sha256: ${{ steps.package.outputs.sha256 }}
+      notification_eligible: ${{ steps.attempt.outputs.eligible }}
     steps:
+      - name: Record whether this run is an authorized production attempt
+        id: attempt
+        env:
+          DEPLOY_EVENT: ${{ github.event_name }}
+          DEPLOY_REF: ${{ github.ref }}
+          CONFIRM_PRODUCTION: ${{ inputs.confirm_production }}
+          REQUESTED_SHA: ${{ inputs.release_commit || github.sha }}
+          MAIN_SHA: ${{ github.sha }}
+          AUTOMATIC_DEPLOY_ENABLED: ${{ vars.LEDGERLINE_AUTOMATIC_DEPLOY_ENABLED }}
+          PRODUCTION_CUTOVER_ENABLED: ${{ vars.LEDGERLINE_PRODUCTION_CUTOVER_ENABLED }}
+          PORTAL_DISPATCH_ENABLED: ${{ vars.LEDGERLINE_PORTAL_DISPATCH_ENABLED }}
+        run: |
+          set -euo pipefail
+          eligible=false
+          if [[ "$DEPLOY_REF" == refs/heads/main && "$DEPLOY_EVENT" == push && "$AUTOMATIC_DEPLOY_ENABLED" == true ]]; then eligible=true; fi
+          if [[ "$DEPLOY_REF" == refs/heads/main && "$DEPLOY_EVENT" == workflow_dispatch && "$CONFIRM_PRODUCTION" == DEPLOY && "$REQUESTED_SHA" == "$MAIN_SHA" && ("$PRODUCTION_CUTOVER_ENABLED" == true || "$PORTAL_DISPATCH_ENABLED" == true) ]]; then eligible=true; fi
+          echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
+
       - name: Check out requested source commit
         uses: actions/checkout@v4
         with:
@@ -48,6 +79,18 @@ jobs:
           [[ "$REQUESTED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
           test "$REQUESTED_COMMIT" = "$DISPATCHED_COMMIT"
           test "$(git rev-parse HEAD)" = "$REQUESTED_COMMIT"
+
+      - name: Exercise the production authorization policy
+        env:
+          DEPLOY_EVENT: ${{ github.event_name }}
+          DEPLOY_REF: ${{ github.ref }}
+          MAIN_SHA: ${{ github.sha }}
+          REQUESTED_SHA: ${{ inputs.release_commit || github.sha }}
+          CONFIRM_PRODUCTION: ${{ inputs.confirm_production }}
+          AUTOMATIC_DEPLOY_ENABLED: ${{ vars.LEDGERLINE_AUTOMATIC_DEPLOY_ENABLED }}
+          PRODUCTION_CUTOVER_ENABLED: ${{ vars.LEDGERLINE_PRODUCTION_CUTOVER_ENABLED }}
+          PORTAL_DISPATCH_ENABLED: ${{ vars.LEDGERLINE_PORTAL_DISPATCH_ENABLED }}
+        run: node scripts/check-production-policy.mjs
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -91,12 +134,14 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     environment: Production
+    outputs:
+      rollback_result: ${{ steps.rollback.outputs.result }}
     if: >-
       github.ref == 'refs/heads/main' &&
-      github.event_name == 'workflow_dispatch' &&
-      inputs.confirm_production == 'DEPLOY' &&
+      ((github.event_name == 'push' && vars.LEDGERLINE_AUTOMATIC_DEPLOY_ENABLED == 'true') ||
+      (github.event_name == 'workflow_dispatch' && inputs.confirm_production == 'DEPLOY' &&
       inputs.release_commit == github.sha &&
-      vars.LEDGERLINE_PRODUCTION_CUTOVER_ENABLED == 'true'
+      (vars.LEDGERLINE_PRODUCTION_CUTOVER_ENABLED == 'true' || vars.LEDGERLINE_PORTAL_DISPATCH_ENABLED == 'true')))
     steps:
       - name: Download immutable release artifact
         uses: actions/download-artifact@v4
@@ -121,12 +166,19 @@ jobs:
           HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
           HOSTINGER_TARGET_SUFFIX: ${{ vars.HOSTINGER_TARGET_SUFFIX }}
           HOSTINGER_PUBLIC_URL: ${{ vars.HOSTINGER_PUBLIC_URL }}
+          MAIL_HOST: ${{ secrets.MAIL_HOST }}
+          MAIL_PORT: ${{ secrets.MAIL_PORT }}
+          MAIL_USERNAME: ${{ secrets.MAIL_USERNAME }}
+          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
         run: |
           set -euo pipefail
-          for name in HOSTINGER_HOST HOSTINGER_PORT HOSTINGER_USERNAME HOSTINGER_SSH_KEY HOSTINGER_KNOWN_HOSTS HOSTINGER_TARGET_PATH HOSTINGER_TARGET_SUFFIX HOSTINGER_PUBLIC_URL; do
+          for name in HOSTINGER_HOST HOSTINGER_PORT HOSTINGER_USERNAME HOSTINGER_SSH_KEY HOSTINGER_KNOWN_HOSTS HOSTINGER_TARGET_PATH HOSTINGER_TARGET_SUFFIX HOSTINGER_PUBLIC_URL MAIL_HOST MAIL_PORT MAIL_USERNAME MAIL_PASSWORD MAIL_FROM MAIL_TO; do
             [[ -n "${!name:-}" ]] || { echo "Missing required production setting: $name"; exit 1; }
           done
           [[ "$HOSTINGER_PORT" =~ ^[0-9]{1,5}$ ]] && (( HOSTINGER_PORT >= 1 && HOSTINGER_PORT <= 65535 ))
+          [[ "$MAIL_PORT" =~ ^[0-9]{1,5}$ ]] && (( MAIL_PORT >= 1 && MAIL_PORT <= 65535 ))
           [[ "$HOSTINGER_TARGET_PATH" == '/home/u359614291/domains/quantumledgerline.com/public_html' ]]
           [[ "$HOSTINGER_TARGET_SUFFIX" == '/domains/quantumledgerline.com/public_html' ]]
           [[ "$HOSTINGER_PUBLIC_URL" == 'https://quantumledgerline.com' ]]
@@ -150,6 +202,15 @@ jobs:
           ssh "${ssh_opts[@]}" "$HOSTINGER_USERNAME@$HOSTINGER_HOST" \
             "set -euo pipefail; target=\$(realpath -e -- $target_q); home=\$(realpath -e -- \"\$HOME\"); suffix=$suffix_q; test -d \"\$target\"; test \"\$target\" = \"\$home\$suffix\"; test \"\$target\" = '/home/u359614291/domains/quantumledgerline.com/public_html'; test \"\$target\" != /; test \"\$target\" != \"\$home\"; test -r \"\$target\" -a -w \"\$target\"; printf '%s\\n' TARGET_OK"
 
+      - name: Reconfirm current main before taking the production snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          current_main="$(gh api repos/${GITHUB_REPOSITORY}/commits/main --jq .sha)"
+          test "$current_main" = "$GITHUB_SHA"
+
       - name: Capture and verify pre-deployment production backup
         id: snapshot
         env:
@@ -164,11 +225,14 @@ jobs:
           printf -v target_q '%q' "$HOSTINGER_TARGET_PATH"
           printf -v commit_q '%q' "$RELEASE_COMMIT"
           backup_output=$(ssh "${ssh_opts[@]}" "$HOSTINGER_USERNAME@$HOSTINGER_HOST" \
-            "set -euo pipefail; target=$target_q; commit=$commit_q; run_id=$GITHUB_RUN_ID; backup_dir=\"\$HOME/deployment_backups/ledgerline-production\"; umask 077; mkdir -p \"\$backup_dir\"; archive=\"\$backup_dir/backup-\$(date -u +%Y%m%d-%H%M%S)-\$run_id-\$commit.tar.gz\"; tar -czf \"\$archive\" -C \"\$target\" .; tar -tzf \"\$archive\" >/dev/null; tar -tvzf \"\$archive\" | awk '\$1 !~ /^[-d]/ {bad=1} END {exit bad}'; test -s \"\$archive\"; sha256sum \"\$archive\" | awk '{print \"BACKUP_SHA256:\"\$1}'; printf 'BACKUP_NAME:%s\\n' \"\$(basename \"\$archive\")\"; printf '%s\\n' BACKUP_OK")
-          printf '%s\n' "$backup_output" | grep -E '^BACKUP_(SHA256|NAME):'
+            "set -euo pipefail; target=$target_q; commit=$commit_q; run_id=$GITHUB_RUN_ID; backup_dir=\"\$HOME/deployment_backups/ledgerline-production\"; umask 077; mkdir -p \"\$backup_dir\"; archive=\"\$backup_dir/backup-\$(date -u +%Y%m%d-%H%M%S)-\$run_id-\$commit.tar.gz\"; tar -czf \"\$archive\" -C \"\$target\" .; tar -tzf \"\$archive\" >/dev/null; tar -tvzf \"\$archive\" | awk '\$1 !~ /^[-d]/ {bad=1} END {exit bad}'; test -s \"\$archive\"; sha256sum \"\$archive\" | awk '{print \"BACKUP_SHA256:\"\$1}'; old_marker=NO_MARKER; if test -s \"\$target/deploy-info.txt\"; then old_marker=\$(sed -n 's/^Commit: //p' \"\$target/deploy-info.txt\" | head -n 1); fi; printf 'PREDEPLOY_MARKER:%s\\n' \"\$old_marker\"; printf 'BACKUP_NAME:%s\\n' \"\$(basename \"\$archive\")\"; printf '%s\\n' BACKUP_OK")
+          printf '%s\n' "$backup_output" | grep -E '^(BACKUP_(SHA256|NAME)|PREDEPLOY_MARKER):'
           backup_name=$(printf '%s\n' "$backup_output" | sed -n 's/^BACKUP_NAME://p')
+          predeploy_marker=$(printf '%s\n' "$backup_output" | sed -n 's/^PREDEPLOY_MARKER://p')
           [[ "$backup_name" =~ ^backup-[0-9]{8}-[0-9]{6}-[0-9]+-[a-f0-9]{40}\.tar\.gz$ ]]
+          [[ "$predeploy_marker" == NO_MARKER || "$predeploy_marker" =~ ^[a-f0-9]{40}$ ]]
           printf 'backup_name=%s\n' "$backup_name" >> "$GITHUB_OUTPUT"
+          printf 'predeploy_marker=%s\n' "$predeploy_marker" >> "$GITHUB_OUTPUT"
 
       - name: Overlay release without deleting unrelated or persistent files
         env:
@@ -176,8 +240,12 @@ jobs:
           HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
           HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
           HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          current_main="$(gh api repos/${GITHUB_REPOSITORY}/commits/main --jq .sha)"
+          test "$current_main" = "$GITHUB_SHA"
           ssh_opts=(-o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=30 -i ~/.ssh/hostinger_key -p "$HOSTINGER_PORT")
           printf -v target_q '%q' "$HOSTINGER_TARGET_PATH"
           gzip -dc ledgerline-release.tar.gz | tar -xOf - >/dev/null
@@ -220,7 +288,8 @@ jobs:
           done
 
       - name: Restore pre-deployment snapshot after a release failure
-        if: failure() && steps.snapshot.outcome == 'success'
+        id: rollback
+        if: (failure() || cancelled()) && steps.snapshot.outcome == 'success'
         env:
           HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
           HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
@@ -228,6 +297,7 @@ jobs:
           HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
           HOSTINGER_TARGET_SUFFIX: ${{ vars.HOSTINGER_TARGET_SUFFIX }}
           BACKUP_NAME: ${{ steps.snapshot.outputs.backup_name }}
+          PREDEPLOY_MARKER: ${{ steps.snapshot.outputs.predeploy_marker }}
           HOSTINGER_PUBLIC_URL: ${{ vars.HOSTINGER_PUBLIC_URL }}
         run: |
           set -euo pipefail
@@ -239,5 +309,60 @@ jobs:
           printf -v suffix_q '%q' "$HOSTINGER_TARGET_SUFFIX"
           printf -v backup_q '%q' "$BACKUP_NAME"
           ssh "${ssh_opts[@]}" "$HOSTINGER_USERNAME@$HOSTINGER_HOST" \
-            "set -euo pipefail; target=\$(realpath -e -- $target_q); home=\$(realpath -e -- \"\$HOME\"); suffix=$suffix_q; archive=\"\$HOME/deployment_backups/ledgerline-production/$backup_q\"; test \"\$target\" = \"\$home\$suffix\"; test \"\$target\" = '/home/u359614291/domains/quantumledgerline.com/public_html'; test \"\$target\" != /; test \"\$target\" != \"\$home\"; test -f \"\$archive\"; tar -tzf \"\$archive\" >/dev/null; tar -tvzf \"\$archive\" | awk '\$1 !~ /^[-d]/ {bad=1} END {exit bad}'; find \"\$target\" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; tar -xzf \"\$archive\" -C \"\$target\" --no-same-owner --no-same-permissions; test -s \"\$target/index.html\"; test -s \"\$target/deploy-info.txt\""
+            "set -euo pipefail; target=\$(realpath -e -- $target_q); home=\$(realpath -e -- \"\$HOME\"); suffix=$suffix_q; archive=\"\$HOME/deployment_backups/ledgerline-production/$backup_q\"; test \"\$target\" = \"\$home\$suffix\"; test \"\$target\" = '/home/u359614291/domains/quantumledgerline.com/public_html'; test \"\$target\" != /; test \"\$target\" != \"\$home\"; test -f \"\$archive\"; tar -tzf \"\$archive\" >/dev/null; tar -tvzf \"\$archive\" | awk '\$1 !~ /^[-d]/ {bad=1} END {exit bad}'; find \"\$target\" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; tar -xzf \"\$archive\" -C \"\$target\" --no-same-owner --no-same-permissions; test -s \"\$target/index.html\"; if [[ \"$PREDEPLOY_MARKER\" == NO_MARKER ]]; then test ! -e \"\$target/deploy-info.txt\"; else grep -Fx \"Commit: $PREDEPLOY_MARKER\" \"\$target/deploy-info.txt\"; fi"
           curl --fail --show-error --silent --retry 3 --retry-delay 5 "$HOSTINGER_PUBLIC_URL/" -o /dev/null
+          echo 'result=verified' >> "$GITHUB_OUTPUT"
+
+      - name: Summarize production result
+        if: always()
+        env:
+          DEPLOY_RESULT: ${{ job.status }}
+          RELEASE_COMMIT: ${{ inputs.release_commit || github.sha }}
+          DEPLOY_EVENT: ${{ github.event_name }}
+        run: |
+          {
+            echo "## Ledgerline production deployment"
+            echo "- Result: $DEPLOY_RESULT"
+            echo "- Commit: $RELEASE_COMMIT"
+            echo "- Trigger: $DEPLOY_EVENT by $GITHUB_ACTOR"
+            echo "- Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  notify:
+    name: Notify approved production attempt
+    needs: [build, deploy]
+    if: >-
+      always() && needs.build.outputs.notification_eligible == 'true'
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - name: Check out notification helper
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Send one final-outcome email
+        id: mail
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SMTP_HOST: ${{ secrets.MAIL_HOST }}
+          SMTP_PORT: ${{ secrets.MAIL_PORT }}
+          SMTP_USERNAME: ${{ secrets.MAIL_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+          RELEASE_COMMIT: ${{ inputs.release_commit || github.sha }}
+          DEPLOY_EVENT: ${{ github.event_name }}
+          ROLLBACK_RESULT: ${{ needs.deploy.outputs.rollback_result }}
+        run: python3 scripts/send-deployment-notification.py
+
+      - name: Record notification delivery result
+        if: always()
+        env:
+          MAIL_OUTCOME: ${{ steps.mail.outcome }}
+        run: |
+          echo "Email notification step outcome: $MAIL_OUTCOME" >> "$GITHUB_STEP_SUMMARY"

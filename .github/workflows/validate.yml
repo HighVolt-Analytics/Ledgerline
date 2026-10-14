@@ -1,0 +1,50 @@
+name: Validate Ledgerline marketing site
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'index.html'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vite.config.js'
+      - 'postcss.config.js'
+      - 'tailwind.config.js'
+      - '.github/workflows/**'
+      - 'scripts/**'
+      - 'tests/**'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate Ledgerline marketing site
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out pull request
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Run deployment-policy tests
+        run: node --test tests/*.test.mjs
+
+      - name: Validate notification helper and tests
+        run: |
+          python3 -m py_compile scripts/send-deployment-notification.py tests/test_deployment_notification.py
+          python3 -m unittest discover -s tests -p 'test_*.py'
+
+      - name: Build production marketing site
+        run: npm run build
