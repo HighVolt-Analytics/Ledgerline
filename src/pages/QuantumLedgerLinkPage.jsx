@@ -1075,6 +1075,9 @@ export default function QuantumLedgerLinkPage() {
             Quantum Ledger Line
           </span>
           <span className="flinks">
+            <a href="https://quantumledgerline.com" target="_blank" rel="noopener noreferrer">
+              quantumledgerline.com
+            </a>
             <a href="https://highvolt.tech" target="_blank" rel="noopener noreferrer">
               highvolt.tech
             </a>

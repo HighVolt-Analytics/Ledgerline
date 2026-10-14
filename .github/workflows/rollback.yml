@@ -1,0 +1,84 @@
+name: Rollback Ledgerline on Hostinger
+
+run-name: Restore Ledgerline backup ${{ inputs.backup_file }} by ${{ github.actor }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      backup_file:
+        description: Exact backup filename from deployment_backups/ledgerline-production
+        required: true
+        type: string
+      confirm_restore:
+        description: Type RESTORE to confirm this production rollback
+        required: true
+        type: string
+
+concurrency:
+  group: deploy-ledgerline-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  rollback:
+    name: Restore a verified Hostinger backup
+    runs-on: ubuntu-latest
+    environment: Production
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      inputs.confirm_restore == 'RESTORE' &&
+      vars.LEDGERLINE_PRODUCTION_CUTOVER_ENABLED == 'true'
+    steps:
+      - name: Validate rollback request and credentials
+        env:
+          BACKUP_FILE: ${{ inputs.backup_file }}
+          CONFIRM_RESTORE: ${{ inputs.confirm_restore }}
+          HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
+          HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
+          HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
+          HOSTINGER_SSH_KEY: ${{ secrets.HOSTINGER_SSH_KEY }}
+          HOSTINGER_KNOWN_HOSTS: ${{ secrets.HOSTINGER_KNOWN_HOSTS }}
+          HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
+          HOSTINGER_TARGET_SUFFIX: ${{ vars.HOSTINGER_TARGET_SUFFIX }}
+          HOSTINGER_PUBLIC_URL: ${{ vars.HOSTINGER_PUBLIC_URL }}
+        run: |
+          set -euo pipefail
+          [[ "$CONFIRM_RESTORE" == RESTORE ]]
+          [[ "$BACKUP_FILE" =~ ^backup-[0-9]{8}-[0-9]{6}-[0-9]+-[a-f0-9]{40}(-pre-rollback)?\.tar\.gz$ ]]
+          for name in HOSTINGER_HOST HOSTINGER_PORT HOSTINGER_USERNAME HOSTINGER_SSH_KEY HOSTINGER_KNOWN_HOSTS HOSTINGER_TARGET_PATH HOSTINGER_TARGET_SUFFIX HOSTINGER_PUBLIC_URL; do
+            [[ -n "${!name:-}" ]] || { echo "Missing required production setting: $name"; exit 1; }
+          done
+          [[ "$HOSTINGER_PORT" =~ ^[0-9]{1,5}$ ]] && (( HOSTINGER_PORT >= 1 && HOSTINGER_PORT <= 65535 ))
+          [[ "$HOSTINGER_TARGET_PATH" == /* && "$HOSTINGER_TARGET_PATH" != *'..'* ]]
+          [[ "$HOSTINGER_TARGET_SUFFIX" == '/domains/quantumledgerline.com/public_html' || "$HOSTINGER_TARGET_SUFFIX" == '/public_html' ]]
+          [[ "$HOSTINGER_PUBLIC_URL" == 'https://quantumledgerline.com' ]]
+          mkdir -p ~/.ssh
+          printf '%s\n' "$HOSTINGER_SSH_KEY" > ~/.ssh/hostinger_key
+          printf '%s\n' "$HOSTINGER_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/hostinger_key
+
+      - name: Verify canonical target and safely restore backup
+        env:
+          HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
+          HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
+          HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
+          HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
+          HOSTINGER_TARGET_SUFFIX: ${{ vars.HOSTINGER_TARGET_SUFFIX }}
+          BACKUP_FILE: ${{ inputs.backup_file }}
+        run: |
+          set -euo pipefail
+          ssh_opts=(-o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=30 -i ~/.ssh/hostinger_key -p "$HOSTINGER_PORT")
+          printf -v target_q '%q' "$HOSTINGER_TARGET_PATH"
+          printf -v suffix_q '%q' "$HOSTINGER_TARGET_SUFFIX"
+          printf -v backup_q '%q' "$BACKUP_FILE"
+          ssh "${ssh_opts[@]}" "$HOSTINGER_USERNAME@$HOSTINGER_HOST" \
+            "set -euo pipefail; target=\$(realpath -e -- $target_q); home=\$(realpath -e -- \"\$HOME\"); suffix=$suffix_q; test \"\$target\" = \"\$home\$suffix\"; test \"\$target\" != /; test \"\$target\" != \"\$home\"; test -d \"\$target\" -a -w \"\$target\"; backup_dir=\"\$HOME/deployment_backups/ledgerline-production\"; archive=\"\$backup_dir/$backup_q\"; test -f \"\$archive\"; tar -tzf \"\$archive\" | awk 'BEGIN{bad=0} {p=\$0; sub(/^\.\//,\"\",p); if (p ~ /^\// || p ~ /(^|\/)\.\.(\/|$)/) bad=1} END{exit bad}'; tar -tvzf \"\$archive\" | awk '\$1 !~ /^[-d]/ {bad=1} END{exit bad}'; umask 077; stamp=\$(date -u +%Y%m%d-%H%M%S); run_id=$GITHUB_RUN_ID; commit=$GITHUB_SHA; before=\"\$backup_dir/backup-\$stamp-\$run_id-\$commit-pre-rollback.tar.gz\"; tar -czf \"\$before\" -C \"\$target\" .; tar -tzf \"\$before\" >/dev/null; tar -xzf \"\$archive\" -C \"\$target\" --no-same-owner --no-same-permissions; if test -s \"\$target/deploy-info.txt\"; then sed -n 's/^Commit: //p' \"\$target/deploy-info.txt\" | head -n 1; else printf '%s\\n' LEGACY_BASELINE_WITHOUT_MARKER; fi"
+
+      - name: Verify restored public site
+        env:
+          HOSTINGER_PUBLIC_URL: ${{ vars.HOSTINGER_PUBLIC_URL }}
+        run: |
+          set -euo pipefail
+          curl --fail --show-error --silent --retry 3 --retry-delay 5 "$HOSTINGER_PUBLIC_URL/" -o /dev/null

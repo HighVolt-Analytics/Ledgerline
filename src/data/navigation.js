@@ -18,9 +18,9 @@ export const footerProductLinks = ['Product', 'How it works', 'Pricing', 'Change
 export const footerCompanyLinks = ['Company', 'Security', 'Privacy', 'Terms', 'Contact'];
 
 export const externalLinks = {
-  signup: 'https://staging.highvolt.tech/ledgerlink/signup',
-  signin: 'https://staging.highvolt.tech/ledgerlink/signin',
-  getStarted: 'https://staging.highvolt.tech/ledgerlink/get-started',
+  signup: 'https://ledgerlink.highvolt.tech/signup',
+  signin: 'https://ledgerlink.highvolt.tech/login',
+  getStarted: 'https://ledgerlink.highvolt.tech/get-started',
   demoVideo: 'https://youtu.be/SElwFjDrqLI',
   website: 'https://highvolt.tech',
 };

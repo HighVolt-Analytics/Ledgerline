@@ -1,203 +1,232 @@
-name: Deploy to Hostinger
+name: Deploy Ledgerline to Hostinger
 
-run-name: Deploy Quantum Ledgerline by ${{ inputs.deployer_email || github.actor }}
+run-name: Ledgerline production release ${{ inputs.release_commit || github.sha }} by ${{ github.actor }}
 
 on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '.github/workflows/**'
   workflow_dispatch:
     inputs:
-      deployer_email:
-        description: "Email of the user who triggered deployment"
-        required: false
-        default: "unknown"
-      deployer_name:
-        description: "Name of the user who triggered deployment"
-        required: false
-        default: "unknown"
-      triggered_from:
-        description: "Source system"
-        required: false
-        default: "GitHub"
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - .github/workflows/**
+      release_commit:
+        description: Exact 40-character main commit to build and deploy
+        required: true
+        type: string
+      confirm_production:
+        description: Type DEPLOY to request the protected production job
+        required: true
+        type: string
 
 concurrency:
-  group: deploy-quantum-ledgerline-production
+  group: deploy-ledgerline-production
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
-  deploy:
-    name: Build and Deploy Quantum Ledgerline
+  build:
+    name: Build approved Ledgerline marketing site
     runs-on: ubuntu-latest
-
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      vars.LEDGERLINE_PRODUCTION_CUTOVER_ENABLED == 'true' &&
+      ((github.event_name == 'workflow_dispatch' &&
+        inputs.confirm_production == 'DEPLOY' &&
+        inputs.release_commit == github.sha) ||
+       (github.event_name == 'push' &&
+        vars.LEDGERLINE_AUTOMATIC_DEPLOY_ENABLED == 'true'))
+    outputs:
+      artifact_sha256: ${{ steps.package.outputs.sha256 }}
     steps:
-      - name: Checkout latest code
+      - name: Check out requested source commit
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_commit || github.sha }}
+          persist-credentials: false
 
-      - name: Setup Node.js
+      - name: Verify source commit is the dispatched main commit
+        env:
+          REQUESTED_COMMIT: ${{ inputs.release_commit || github.sha }}
+          DISPATCHED_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$REQUESTED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          test "$REQUESTED_COMMIT" = "$DISPATCHED_COMMIT"
+          test "$(git rev-parse HEAD)" = "$REQUESTED_COMMIT"
+
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
+          cache: npm
 
-      - name: Install dependencies
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm install
-          fi
+      - name: Install locked dependencies
+        run: npm ci
 
-      - name: Build project
+      - name: Build production site
         run: npm run build
 
       - name: Add deployment marker
         env:
-          DEPLOYER_EMAIL: ${{ inputs.deployer_email || github.actor }}
-          DEPLOYER_NAME: ${{ inputs.deployer_name || github.actor }}
-          TRIGGERED_FROM: ${{ inputs.triggered_from || 'GitHub' }}
+          RELEASE_COMMIT: ${{ inputs.release_commit || github.sha }}
         run: |
-          echo "Deployed from GitHub Actions" > dist/deploy-info.txt
-          echo "Website: Quantum Ledgerline" >> dist/deploy-info.txt
-          echo "Domain: quantumledgerlink.com" >> dist/deploy-info.txt
-          echo "Commit: $GITHUB_SHA" >> dist/deploy-info.txt
-          echo "Time UTC: $(date -u)" >> dist/deploy-info.txt
-          echo "Deployed by: $DEPLOYER_EMAIL" >> dist/deploy-info.txt
-          echo "Deployer name: $DEPLOYER_NAME" >> dist/deploy-info.txt
-          echo "Triggered from: $TRIGGERED_FROM" >> dist/deploy-info.txt
+          set -euo pipefail
+          printf 'Website: Quantum Ledgerline\nCommit: %s\n' "$RELEASE_COMMIT" > dist/deploy-info.txt
 
-      - name: Validate Hostinger secrets
+      - name: Package reproducible release and checksum
+        id: package
         run: |
-          if [ -z "${{ secrets.HOSTINGER_HOST }}" ]; then
-            echo "Missing secret: HOSTINGER_HOST"
-            exit 1
-          fi
+          set -euo pipefail
+          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner -cf - -C dist . | gzip -n > ledgerline-release.tar.gz
+          sha256sum ledgerline-release.tar.gz | tee ledgerline-release.tar.gz.sha256
+          echo "sha256=$(cut -d' ' -f1 ledgerline-release.tar.gz.sha256)" >> "$GITHUB_OUTPUT"
 
-          if [ -z "${{ secrets.HOSTINGER_PORT }}" ]; then
-            echo "Missing secret: HOSTINGER_PORT"
-            exit 1
-          fi
+      - name: Store immutable run artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ledgerline-${{ inputs.release_commit || github.sha }}-${{ steps.package.outputs.sha256 }}
+          path: |
+            ledgerline-release.tar.gz
+            ledgerline-release.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 90
 
-          if [ -z "${{ secrets.HOSTINGER_USERNAME }}" ]; then
-            echo "Missing secret: HOSTINGER_USERNAME"
-            exit 1
-          fi
+  deploy:
+    name: Deploy and verify approved production release
+    needs: build
+    runs-on: ubuntu-latest
+    environment: Production
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      vars.LEDGERLINE_PRODUCTION_CUTOVER_ENABLED == 'true' &&
+      ((github.event_name == 'workflow_dispatch' &&
+        inputs.confirm_production == 'DEPLOY' &&
+        inputs.release_commit == github.sha) ||
+       (github.event_name == 'push' &&
+        vars.LEDGERLINE_AUTOMATIC_DEPLOY_ENABLED == 'true'))
+    steps:
+      - name: Download immutable release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ledgerline-${{ inputs.release_commit || github.sha }}-${{ needs.build.outputs.artifact_sha256 }}
 
-          if [ -z "${{ secrets.HOSTINGER_TARGET_PATH }}" ]; then
-            echo "Missing secret: HOSTINGER_TARGET_PATH"
-            exit 1
-          fi
-
-          if [ -z "${{ secrets.HOSTINGER_SSH_KEY }}" ]; then
-            echo "Missing secret: HOSTINGER_SSH_KEY"
-            exit 1
-          fi
-
-          echo "All required Hostinger secrets are present"
-
-      - name: Prepare SSH key
+      - name: Verify artifact checksum
+        env:
+          EXPECTED_SHA256: ${{ needs.build.outputs.artifact_sha256 }}
         run: |
+          set -euo pipefail
+          echo "$EXPECTED_SHA256  ledgerline-release.tar.gz" | sha256sum --check --status
+          grep -Fx "$EXPECTED_SHA256  ledgerline-release.tar.gz" ledgerline-release.tar.gz.sha256
+
+      - name: Validate production configuration
+        env:
+          HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
+          HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
+          HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
+          HOSTINGER_SSH_KEY: ${{ secrets.HOSTINGER_SSH_KEY }}
+          HOSTINGER_KNOWN_HOSTS: ${{ secrets.HOSTINGER_KNOWN_HOSTS }}
+          HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
+          HOSTINGER_TARGET_SUFFIX: ${{ vars.HOSTINGER_TARGET_SUFFIX }}
+          HOSTINGER_PUBLIC_URL: ${{ vars.HOSTINGER_PUBLIC_URL }}
+        run: |
+          set -euo pipefail
+          for name in HOSTINGER_HOST HOSTINGER_PORT HOSTINGER_USERNAME HOSTINGER_SSH_KEY HOSTINGER_KNOWN_HOSTS HOSTINGER_TARGET_PATH HOSTINGER_TARGET_SUFFIX HOSTINGER_PUBLIC_URL; do
+            [[ -n "${!name:-}" ]] || { echo "Missing required production setting: $name"; exit 1; }
+          done
+          [[ "$HOSTINGER_PORT" =~ ^[0-9]{1,5}$ ]] && (( HOSTINGER_PORT >= 1 && HOSTINGER_PORT <= 65535 ))
+          [[ "$HOSTINGER_TARGET_PATH" == /* && "$HOSTINGER_TARGET_PATH" != *'..'* ]]
+          [[ "$HOSTINGER_TARGET_SUFFIX" == '/domains/quantumledgerline.com/public_html' || "$HOSTINGER_TARGET_SUFFIX" == '/public_html' ]]
+          [[ "$HOSTINGER_PUBLIC_URL" == 'https://quantumledgerline.com' ]]
           mkdir -p ~/.ssh
-          echo "${{ secrets.HOSTINGER_SSH_KEY }}" > ~/.ssh/hostinger_key
+          printf '%s\n' "$HOSTINGER_SSH_KEY" > ~/.ssh/hostinger_key
+          printf '%s\n' "$HOSTINGER_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/hostinger_key
-          ssh-keyscan -T 20 -p "${{ secrets.HOSTINGER_PORT }}" "${{ secrets.HOSTINGER_HOST }}" >> ~/.ssh/known_hosts || true
 
-      - name: Test SSH connection with retry
+      - name: Verify exact canonical target and SSH host
+        env:
+          HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
+          HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
+          HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
+          HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
+          HOSTINGER_TARGET_SUFFIX: ${{ vars.HOSTINGER_TARGET_SUFFIX }}
         run: |
-          SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=45 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -i ~/.ssh/hostinger_key -p ${{ secrets.HOSTINGER_PORT }}"
+          set -euo pipefail
+          ssh_opts=(-o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=30 -i ~/.ssh/hostinger_key -p "$HOSTINGER_PORT")
+          printf -v target_q '%q' "$HOSTINGER_TARGET_PATH"
+          printf -v suffix_q '%q' "$HOSTINGER_TARGET_SUFFIX"
+          ssh "${ssh_opts[@]}" "$HOSTINGER_USERNAME@$HOSTINGER_HOST" \
+            "set -euo pipefail; target=\$(realpath -e -- $target_q); home=\$(realpath -e -- \"\$HOME\"); suffix=$suffix_q; test -d \"\$target\"; test \"\$target\" = \"\$home\$suffix\"; test \"\$target\" != /; test \"\$target\" != \"\$home\"; test -r \"\$target\" -a -w \"\$target\"; printf '%s\\n' TARGET_OK"
 
-          for attempt in 1 2 3 4 5; do
-            echo "SSH connection attempt $attempt of 5"
-
-            if ssh $SSH_OPTS "${{ secrets.HOSTINGER_USERNAME }}@${{ secrets.HOSTINGER_HOST }}" "echo SSH connection successful"; then
-              echo "SSH connection verified"
-              exit 0
-            fi
-
-            echo "SSH connection failed. Waiting before retry..."
-            sleep 30
-          done
-
-          echo "SSH connection failed after 5 attempts"
-          exit 1
-
-      - name: Backup existing public_html
-        continue-on-error: true
+      - name: Capture and verify pre-deployment production backup
+        id: snapshot
+        env:
+          HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
+          HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
+          HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
+          HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
+          RELEASE_COMMIT: ${{ inputs.release_commit || github.sha }}
         run: |
-          SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=45 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -i ~/.ssh/hostinger_key -p ${{ secrets.HOSTINGER_PORT }}"
+          set -euo pipefail
+          ssh_opts=(-o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=30 -i ~/.ssh/hostinger_key -p "$HOSTINGER_PORT")
+          printf -v target_q '%q' "$HOSTINGER_TARGET_PATH"
+          printf -v commit_q '%q' "$RELEASE_COMMIT"
+          backup_output=$(ssh "${ssh_opts[@]}" "$HOSTINGER_USERNAME@$HOSTINGER_HOST" \
+            "set -euo pipefail; target=$target_q; commit=$commit_q; run_id=$GITHUB_RUN_ID; backup_dir=\"\$HOME/deployment_backups/ledgerline-production\"; umask 077; mkdir -p \"\$backup_dir\"; archive=\"\$backup_dir/backup-\$(date -u +%Y%m%d-%H%M%S)-\$run_id-\$commit.tar.gz\"; tar -czf \"\$archive\" -C \"\$target\" .; tar -tzf \"\$archive\" >/dev/null; tar -tvzf \"\$archive\" | awk '\$1 !~ /^[-d]/ {bad=1} END {exit bad}'; test -s \"\$archive\"; sha256sum \"\$archive\" | awk '{print \"BACKUP_SHA256:\"\$1}'; printf 'BACKUP_NAME:%s\\n' \"\$(basename \"\$archive\")\"; printf '%s\\n' BACKUP_OK")
+          printf '%s\n' "$backup_output" | grep -E '^BACKUP_(SHA256|NAME):'
+          backup_name=$(printf '%s\n' "$backup_output" | sed -n 's/^BACKUP_NAME://p')
+          [[ "$backup_name" =~ ^backup-[0-9]{8}-[0-9]{6}-[0-9]+-[a-f0-9]{40}\.tar\.gz$ ]]
+          printf 'backup_name=%s\n' "$backup_name" >> "$GITHUB_OUTPUT"
 
-          for attempt in 1 2 3; do
-            echo "Backup attempt $attempt of 3"
-
-            if ssh $SSH_OPTS "${{ secrets.HOSTINGER_USERNAME }}@${{ secrets.HOSTINGER_HOST }}" "mkdir -p ~/deployment_backups/quantumledgerlink.com && tar -czf ~/deployment_backups/quantumledgerlink.com/backup-$(date +%Y%m%d-%H%M%S).tar.gz -C '${{ secrets.HOSTINGER_TARGET_PATH }}' . || true"; then
-              echo "Backup completed"
-              exit 0
-            fi
-
-            echo "Backup failed. Waiting before retry..."
-            sleep 20
-          done
-
-          echo "Backup skipped after retry attempts"
-          exit 0
-
-      - name: Clean old website files safely
+      - name: Overlay release without deleting unrelated or persistent files
+        env:
+          HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
+          HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
+          HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
+          HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
         run: |
-          SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=45 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -i ~/.ssh/hostinger_key -p ${{ secrets.HOSTINGER_PORT }}"
+          set -euo pipefail
+          ssh_opts=(-o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=30 -i ~/.ssh/hostinger_key -p "$HOSTINGER_PORT")
+          printf -v target_q '%q' "$HOSTINGER_TARGET_PATH"
+          gzip -dc ledgerline-release.tar.gz | tar -xOf - >/dev/null
+          gzip -dc ledgerline-release.tar.gz | ssh "${ssh_opts[@]}" "$HOSTINGER_USERNAME@$HOSTINGER_HOST" \
+            "tar -xzf - -C $target_q --no-same-owner --no-same-permissions"
 
-          for attempt in 1 2 3 4 5; do
-            echo "Clean attempt $attempt of 5"
-
-            if ssh $SSH_OPTS "${{ secrets.HOSTINGER_USERNAME }}@${{ secrets.HOSTINGER_HOST }}" "find '${{ secrets.HOSTINGER_TARGET_PATH }}' -mindepth 1 -maxdepth 1 ! -name '.htaccess' ! -name 'api' -exec rm -rf {} +"; then
-              echo "Remote clean completed"
-              exit 0
-            fi
-
-            echo "Remote clean failed. Waiting before retry..."
-            sleep 30
-          done
-
-          echo "Remote clean failed after 5 attempts"
-          exit 1
-
-      - name: Upload dist to Hostinger
+      - name: Verify deployed marker and public health
+        env:
+          HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
+          HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
+          HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
+          HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
+          HOSTINGER_PUBLIC_URL: ${{ vars.HOSTINGER_PUBLIC_URL }}
+          RELEASE_COMMIT: ${{ inputs.release_commit || github.sha }}
         run: |
-          SCP_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=45 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -i ~/.ssh/hostinger_key -P ${{ secrets.HOSTINGER_PORT }}"
+          set -euo pipefail
+          ssh_opts=(-o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=30 -i ~/.ssh/hostinger_key -p "$HOSTINGER_PORT")
+          printf -v target_q '%q' "$HOSTINGER_TARGET_PATH"
+          printf -v commit_q '%q' "$RELEASE_COMMIT"
+          ssh "${ssh_opts[@]}" "$HOSTINGER_USERNAME@$HOSTINGER_HOST" \
+            "grep -Fx 'Commit: '$commit_q $target_q/deploy-info.txt"
+          curl --fail --show-error --silent --retry 3 --retry-delay 5 "$HOSTINGER_PUBLIC_URL/" -o /dev/null
+          curl --fail --show-error --silent --retry 3 --retry-delay 5 "$HOSTINGER_PUBLIC_URL/deploy-info.txt" -o /tmp/deploy-info.txt
+          grep -Fx "Commit: $RELEASE_COMMIT" /tmp/deploy-info.txt
 
-          for attempt in 1 2 3 4 5; do
-            echo "Upload attempt $attempt of 5"
-
-            if scp $SCP_OPTS -r dist/* "${{ secrets.HOSTINGER_USERNAME }}@${{ secrets.HOSTINGER_HOST }}:${{ secrets.HOSTINGER_TARGET_PATH }}/"; then
-              echo "Upload completed"
-              exit 0
-            fi
-
-            echo "Upload failed. Waiting before retry..."
-            sleep 30
-          done
-
-          echo "Upload failed after 5 attempts"
-          exit 1
-
-      - name: Verify remote deployment
+      - name: Restore pre-deployment snapshot after a release failure
+        if: failure() && steps.snapshot.outcome == 'success'
+        env:
+          HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
+          HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
+          HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
+          HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
+          BACKUP_NAME: ${{ steps.snapshot.outputs.backup_name }}
+          HOSTINGER_PUBLIC_URL: ${{ vars.HOSTINGER_PUBLIC_URL }}
         run: |
-          SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=45 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -i ~/.ssh/hostinger_key -p ${{ secrets.HOSTINGER_PORT }}"
-
-          for attempt in 1 2 3 4 5; do
-            echo "Verify attempt $attempt of 5"
-
-            if ssh $SSH_OPTS "${{ secrets.HOSTINGER_USERNAME }}@${{ secrets.HOSTINGER_HOST }}" "cd '${{ secrets.HOSTINGER_TARGET_PATH }}' && pwd && ls -lah && echo '--- deploy marker ---' && cat deploy-info.txt"; then
-              echo "Verification completed"
-              exit 0
-            fi
-
-            echo "Verification failed. Waiting before retry..."
-            sleep 30
-          done
-
-          echo "Verification failed after 5 attempts"
-          exit 1
-
-      - name: Deployment completed
-        run: echo "Quantum Ledgerline deployed successfully"
+          set -euo pipefail
+          [[ "$BACKUP_NAME" =~ ^backup-[0-9]{8}-[0-9]{6}-[0-9]+-[a-f0-9]{40}\.tar\.gz$ ]]
+          ssh_opts=(-o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=30 -i ~/.ssh/hostinger_key -p "$HOSTINGER_PORT")
+          printf -v target_q '%q' "$HOSTINGER_TARGET_PATH"
+          printf -v backup_q '%q' "$BACKUP_NAME"
+          ssh "${ssh_opts[@]}" "$HOSTINGER_USERNAME@$HOSTINGER_HOST" \
+            "set -euo pipefail; target=$target_q; archive=\"\$HOME/deployment_backups/ledgerline-production/$backup_q\"; test -f \"\$archive\"; tar -tzf \"\$archive\" >/dev/null; tar -xzf \"\$archive\" -C \"\$target\" --no-same-owner --no-same-permissions"
+          curl --fail --show-error --silent --retry 3 --retry-delay 5 "$HOSTINGER_PUBLIC_URL/" -o /dev/null
