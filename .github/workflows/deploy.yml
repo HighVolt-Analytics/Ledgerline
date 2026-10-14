@@ -191,7 +191,7 @@ jobs:
           printf -v target_q '%q' "$HOSTINGER_TARGET_PATH"
           gzip -dc ledgerline-release.tar.gz | tar -xOf - >/dev/null
           gzip -dc ledgerline-release.tar.gz | ssh "${ssh_opts[@]}" "$HOSTINGER_USERNAME@$HOSTINGER_HOST" \
-            "tar -xzf - -C $target_q --no-same-owner --no-same-permissions"
+            "tar -xf - -C $target_q --no-same-owner --no-same-permissions"
 
       - name: Verify deployed marker and public health
         env:
