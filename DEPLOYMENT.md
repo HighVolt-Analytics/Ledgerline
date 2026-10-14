@@ -41,7 +41,7 @@ The historical website-specific package is dated 2026-10-10 and is not fresh eno
 
 - No production dispatch has been made.
 - No Hostinger files, databases, domains, DNS, credentials, or deployment settings have been changed.
-- The new domain's DNS, SSL, email dependencies, and post-change document root remain unverified.
+- Both domains currently resolve to the same Hostinger endpoint and pass HTTPS checks while the new domain is still a parked alias. DNS/SSL after primary-domain change, ownership, mailbox dependencies, and the post-change document root remain unverified. The current legacy response returns 404 for `/interactive-tour`, `/resources`, `robots.txt`, and `sitemap.xml`; the Ledgerline build includes these routes and files.
 - The target suffix must be confirmed after the Hostinger domain change before configuring the workflow.
 - The upload overlays files without deletion. This reduces the chance of destroying persistent content but can leave stale hashed assets.
 - The workflow attempts to restore the pre-deployment snapshot if any step after the snapshot fails. The separate manual rollback workflow is also available after the cutover gate is enabled. Both restore paths remain unverified against Hostinger and require a valid, link-free snapshot.
