@@ -34,8 +34,8 @@ jobs:
   deploy:
     name: Build and Deploy Ledgerline
     runs-on: ubuntu-latest
-    environment: ${{ inputs.target == 'production' && 'Production' || 'ledgerlink-staging' }}
-    if: github.ref == 'refs/heads/main'
+    environment: ${{ inputs.target == 'production' && 'Production' || 'Staging' }}
+    if: github.ref == 'refs/heads/main' && (inputs.target == 'staging' || (inputs.target == 'production' && vars.LEDGERLINE_PRODUCTION_CUTOVER_ENABLED == 'true'))
     permissions:
       contents: read
 
@@ -56,18 +56,16 @@ jobs:
 
       - name: Add deployment marker
         env:
-          DEPLOYER_EMAIL: ${{ inputs.deployer_email || github.actor }}
-          DEPLOYER_NAME: ${{ inputs.deployer_name || github.actor }}
-          TRIGGERED_FROM: ${{ inputs.triggered_from || 'GitHub' }}
+          HOSTINGER_EXPECTED_DOMAIN: ${{ vars.HOSTINGER_EXPECTED_DOMAIN }}
         run: |
-          echo "Deployed from GitHub Actions" > dist/deploy-info.txt
-          echo "Website: Quantum Ledgerline" >> dist/deploy-info.txt
-          echo "Domain: quantumledgerline.com" >> dist/deploy-info.txt
-          echo "Commit: $GITHUB_SHA" >> dist/deploy-info.txt
-          echo "Time UTC: $(date -u)" >> dist/deploy-info.txt
-          echo "Deployed by: $DEPLOYER_EMAIL" >> dist/deploy-info.txt
-          echo "Deployer name: $DEPLOYER_NAME" >> dist/deploy-info.txt
-          echo "Triggered from: $TRIGGERED_FROM" >> dist/deploy-info.txt
+          set -euo pipefail
+          {
+            echo "Deployed from GitHub Actions"
+            echo "Website: Quantum Ledgerline"
+            echo "Domain: $HOSTINGER_EXPECTED_DOMAIN"
+            echo "Commit: $GITHUB_SHA"
+            echo "Time UTC: $(date -u)"
+          } > dist/deploy-info.txt
 
       - name: Validate Hostinger secrets
         env:
@@ -79,13 +77,14 @@ jobs:
           HOSTINGER_SSH_KEY: ${{ secrets.HOSTINGER_SSH_KEY }}
           HOSTINGER_KNOWN_HOSTS: ${{ secrets.HOSTINGER_KNOWN_HOSTS }}
           HOSTINGER_PUBLIC_URL: ${{ vars.HOSTINGER_PUBLIC_URL }}
+          HOSTINGER_EXPECTED_DOMAIN: ${{ vars.HOSTINGER_EXPECTED_DOMAIN }}
         run: |
           set -euo pipefail
           if [[ "$TARGET" != "staging" && "$TARGET" != "production" ]]; then
             echo "Unsupported deployment target"
             exit 1
           fi
-          for name in HOSTINGER_HOST HOSTINGER_PORT HOSTINGER_USERNAME HOSTINGER_TARGET_PATH HOSTINGER_SSH_KEY HOSTINGER_KNOWN_HOSTS HOSTINGER_PUBLIC_URL; do
+          for name in HOSTINGER_HOST HOSTINGER_PORT HOSTINGER_USERNAME HOSTINGER_TARGET_PATH HOSTINGER_SSH_KEY HOSTINGER_KNOWN_HOSTS HOSTINGER_PUBLIC_URL HOSTINGER_EXPECTED_DOMAIN; do
             if [ -z "${!name:-}" ]; then
               echo "Missing required Hostinger setting: $name"
               exit 1
@@ -95,13 +94,18 @@ jobs:
             /*) ;;
             *) echo "HOSTINGER_TARGET_PATH must be an absolute path"; exit 1 ;;
           esac
-          case "$HOSTINGER_TARGET_PATH" in
-            *..*) echo "HOSTINGER_TARGET_PATH must not contain parent traversal"; exit 1 ;;
-          esac
-          case "$HOSTINGER_PUBLIC_URL" in
-            https://*) ;;
-            *) echo "HOSTINGER_PUBLIC_URL must use HTTPS"; exit 1 ;;
-          esac
+          if [[ "$HOSTINGER_TARGET_PATH" =~ (^|/)\.\.?(/|$) ]]; then
+            echo "HOSTINGER_TARGET_PATH contains a dot path component"
+            exit 1
+          fi
+          if [[ ! "$HOSTINGER_PORT" =~ ^[0-9]{1,5}$ ]] || (( HOSTINGER_PORT < 1 || HOSTINGER_PORT > 65535 )); then
+            echo "HOSTINGER_PORT is invalid"
+            exit 1
+          fi
+          if [[ "$HOSTINGER_PUBLIC_URL" != "https://$HOSTINGER_EXPECTED_DOMAIN" && "$HOSTINGER_PUBLIC_URL" != "https://$HOSTINGER_EXPECTED_DOMAIN/" ]]; then
+            echo "HOSTINGER_PUBLIC_URL does not match the environment domain"
+            exit 1
+          fi
 
           echo "All required Hostinger secrets are present"
 
@@ -137,6 +141,18 @@ jobs:
 
           echo "SSH connection failed after 5 attempts"
           exit 1
+
+      - name: Validate canonical remote target
+        env:
+          HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
+          HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
+          HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
+          HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-o StrictHostKeyChecking=yes -o ConnectTimeout=45 -i ~/.ssh/hostinger_key -p $HOSTINGER_PORT"
+          printf -v REMOTE_PATH_Q '%q' "$HOSTINGER_TARGET_PATH"
+          ssh $SSH_OPTS "$HOSTINGER_USERNAME@$HOSTINGER_HOST" "set -e; target=\$(realpath -e -- $REMOTE_PATH_Q); home=\$(realpath -e -- \"\$HOME\"); test -d \"\$target\"; test \"\$target\" != /; test \"\$target\" != \"\$home\"; case \"\$target/\" in \"\$home/\"*) ;; *) exit 1 ;; esac"
 
       - name: Back up existing website before replacement
         env:
@@ -182,15 +198,17 @@ jobs:
           HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
           HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
           HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
+          GITHUB_SHA: ${{ github.sha }}
         run: |
+          set -euo pipefail
           SSH_OPTS="-o StrictHostKeyChecking=yes -o ConnectTimeout=45 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -i ~/.ssh/hostinger_key -p $HOSTINGER_PORT"
           printf -v REMOTE_PATH_Q '%q' "$HOSTINGER_TARGET_PATH"
 
           for attempt in 1 2 3 4 5; do
             echo "Verify attempt $attempt of 5"
 
-            if ssh $SSH_OPTS "$HOSTINGER_USERNAME@$HOSTINGER_HOST" "cd $REMOTE_PATH_Q && pwd && ls -lah && echo '--- deploy marker ---' && cat deploy-info.txt"; then
-              echo "Verification completed"
+            if ssh $SSH_OPTS "$HOSTINGER_USERNAME@$HOSTINGER_HOST" "cd $REMOTE_PATH_Q && test -s deploy-info.txt && grep -Fx 'Commit: $GITHUB_SHA' deploy-info.txt"; then
+              echo "Remote deployment marker verified"
               exit 0
             fi
 
@@ -205,6 +223,7 @@ jobs:
         env:
           GITHUB_SHA: ${{ github.sha }}
           HOSTINGER_PUBLIC_URL: ${{ vars.HOSTINGER_PUBLIC_URL }}
+          HOSTINGER_EXPECTED_DOMAIN: ${{ vars.HOSTINGER_EXPECTED_DOMAIN }}
         run: |
           set -euo pipefail
           curl --fail --show-error --silent --retry 5 --retry-delay 10 "$HOSTINGER_PUBLIC_URL/deploy-info.txt" -o /tmp/deploy-info.txt
