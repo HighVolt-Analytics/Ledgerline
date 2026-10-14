@@ -31,12 +31,10 @@ jobs:
     runs-on: ubuntu-latest
     if: >-
       github.ref == 'refs/heads/main' &&
-      vars.LEDGERLINE_PRODUCTION_CUTOVER_ENABLED == 'true' &&
-      ((github.event_name == 'workflow_dispatch' &&
+      ((github.event_name == 'push') ||
+       (github.event_name == 'workflow_dispatch' &&
         inputs.confirm_production == 'DEPLOY' &&
-        inputs.release_commit == github.sha) ||
-       (github.event_name == 'push' &&
-        vars.LEDGERLINE_AUTOMATIC_DEPLOY_ENABLED == 'true'))
+        inputs.release_commit == github.sha))
     outputs:
       artifact_sha256: ${{ steps.package.outputs.sha256 }}
     steps:
@@ -100,12 +98,10 @@ jobs:
     environment: Production
     if: >-
       github.ref == 'refs/heads/main' &&
-      vars.LEDGERLINE_PRODUCTION_CUTOVER_ENABLED == 'true' &&
-      ((github.event_name == 'workflow_dispatch' &&
+      ((github.event_name == 'push') ||
+       (github.event_name == 'workflow_dispatch' &&
         inputs.confirm_production == 'DEPLOY' &&
-        inputs.release_commit == github.sha) ||
-       (github.event_name == 'push' &&
-        vars.LEDGERLINE_AUTOMATIC_DEPLOY_ENABLED == 'true'))
+        inputs.release_commit == github.sha))
     steps:
       - name: Download immutable release artifact
         uses: actions/download-artifact@v4

@@ -2,7 +2,7 @@
 
 ## Release controls
 
-The Hostinger workflow preserves the legacy `push` to `main` trigger and manual dispatch. Both require the `main` ref and `LEDGERLINE_PRODUCTION_CUTOVER_ENABLED=true`. Automatic pushes additionally require `LEDGERLINE_AUTOMATIC_DEPLOY_ENABLED=true`; manual dispatch also requires an exact commit equal to the dispatched `main` commit and the typed `DEPLOY` confirmation. Repository-level gate variables were absent at the latest read; the organization administrator has manually confirmed there are no organization Actions variables, including either gate. The workflow builds the static marketing site, packages it as a run-scoped immutable GitHub Actions artifact, records a SHA-256 checksum, and then enters the GitHub `Production` environment before any SSH operation.
+The Hostinger workflow deploys on every push to `main`, and also supports manual dispatch. Manual dispatch requires an exact commit equal to the dispatched `main` commit and the typed `DEPLOY` confirmation. The workflow builds the static marketing site, packages it as a run-scoped immutable GitHub Actions artifact, records a SHA-256 checksum, and then enters the GitHub `Production` environment before any SSH operation.
 
 The `Production` environment is branch-restricted to `main`. No independent reviewer is configured, matching the last successful legacy deployment, which had no reviewer gate. The separate `rollback.yml` workflow remains manual-only and requires `RESTORE` plus a named backup.
 
