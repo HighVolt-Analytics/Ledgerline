@@ -57,11 +57,12 @@ export function WorldMap({
     return `M ${start.x} ${start.y} Q ${midX} ${midY} ${end.x} ${end.y}`;
   };
 
+  // Same positions as before — only box size grows on mobile so larger type fits.
   const getLabelPosition = (point, side) => {
     switch (side) {
       case 'left-above':
         return isMobile
-          ? { x: point.x - 32, y: point.y - 26, align: 'justify-center', width: 64, height: 24 }
+          ? { x: point.x - 40, y: point.y - 34, align: 'justify-center', width: 80, height: 30 }
           : { x: point.x - 36, y: point.y - 28, align: 'justify-center', width: 72, height: 26 };
       case 'singapore':
         return isMobile
@@ -69,21 +70,21 @@ export function WorldMap({
           : { x: point.x - 120, y: point.y - 22, align: 'justify-center' };
       case 'myanmar':
         return isMobile
-          ? { x: point.x + 8, y: point.y - 26, align: 'justify-start', width: 84, height: 24 }
+          ? { x: point.x + 8, y: point.y - 32, align: 'justify-start', width: 100, height: 30 }
           : { x: point.x + 10, y: point.y - 28, align: 'justify-start', width: 92, height: 26 };
       case 'australia':
         return { x: point.x - 120, y: point.y - (isMobile ? 3 : 80), align: 'justify-center' };
       case 'canada':
         return isMobile
-          ? { x: point.x - 46, y: point.y + 8, align: 'justify-center', width: 92, height: 24 }
+          ? { x: point.x - 56, y: point.y + 8, align: 'justify-center', width: 112, height: 30 }
           : { x: point.x - 56, y: point.y + 10, align: 'justify-center', width: 112, height: 28 };
       case 'dubai':
         return isMobile
-          ? { x: point.x - 62, y: point.y + 8, align: 'justify-center', width: 64, height: 22 }
+          ? { x: point.x - 72, y: point.y + 8, align: 'justify-center', width: 84, height: 28 }
           : { x: point.x - 72, y: point.y + 10, align: 'justify-center', width: 84, height: 24 };
       case 'usa':
         return isMobile
-          ? { x: point.x - 24, y: point.y - 24, align: 'justify-center', width: 48, height: 20 }
+          ? { x: point.x - 30, y: point.y - 30, align: 'justify-center', width: 64, height: 28 }
           : { x: point.x - 30, y: point.y - 26, align: 'justify-center', width: 60, height: 22 };
       default:
         return { x: point.x - 120, y: point.y - 80, align: 'justify-center' };
@@ -94,6 +95,11 @@ export function WorldMap({
   const totalAnimationTime = dots.length * staggerDelay + animationDuration;
   const pauseTime = 2;
   const fullCycleDuration = totalAnimationTime + pauseTime;
+
+  // foreignObject CSS px = SVG user units. Bump mobile type so it stays ~11–12px on screen.
+  const labelClass = isMobile
+    ? 'rounded border border-white/25 bg-black/95 px-2.5 py-1.5 text-[22px] font-bold leading-none text-white'
+    : 'rounded border border-white/20 bg-black/90 px-2 py-1 text-xs font-bold text-white backdrop-blur-md';
 
   return (
     <div className="relative aspect-[1.5/1] min-h-[350px] w-full overflow-hidden rounded-lg bg-black/40 font-sans will-change-transform md:aspect-[2/1] md:bg-transparent">
@@ -144,9 +150,7 @@ export function WorldMap({
                   className="pointer-events-none overflow-visible"
                 >
                   <div className={`flex h-full w-full items-center ${pos.align}`}>
-                    <span className="rounded border border-white/20 bg-black/90 px-2 py-1 text-[10px] font-bold text-white backdrop-blur-md md:text-xs">
-                      {dot.end.label}
-                    </span>
+                    <span className={labelClass}>{dot.end.label}</span>
                   </div>
                 </foreignObject>,
               );
@@ -164,9 +168,7 @@ export function WorldMap({
                   className="pointer-events-none overflow-visible"
                 >
                   <div className={`flex h-full w-full items-center ${pos.align}`}>
-                    <span className="rounded border border-white/20 bg-black/90 px-2 py-1 text-[10px] font-bold text-white backdrop-blur-md md:text-xs">
-                      {dot.start.label}
-                    </span>
+                    <span className={labelClass}>{dot.start.label}</span>
                   </div>
                 </foreignObject>,
               );
