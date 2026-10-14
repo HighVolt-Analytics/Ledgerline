@@ -20,6 +20,8 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - .github/workflows/**
 
 concurrency:
   group: deploy-quantum-ledgerline-production
