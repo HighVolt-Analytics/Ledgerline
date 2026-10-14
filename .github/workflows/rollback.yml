@@ -21,7 +21,7 @@ jobs:
     name: Restore a verified Hostinger backup
     runs-on: ubuntu-latest
     environment: Production
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && vars.LEDGERLINE_PRODUCTION_CUTOVER_ENABLED == 'true'
     permissions:
       contents: read
 
