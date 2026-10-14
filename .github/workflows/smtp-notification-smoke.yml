@@ -1,0 +1,43 @@
+name: SMTP notification smoke test
+
+on:
+  workflow_dispatch:
+    inputs:
+      outcome:
+        description: Notification outcomes to simulate; no deployment is performed
+        required: true
+        type: choice
+        options:
+          - both
+          - success
+          - failure
+        default: both
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-test:
+    name: Send simulated notification email
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - name: Check out main without a persisted token
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Send requested simulated notifications
+        env:
+          MAIL_HOST: ${{ secrets.MAIL_HOST }}
+          MAIL_PORT: ${{ secrets.MAIL_PORT }}
+          MAIL_USERNAME: ${{ secrets.MAIL_USERNAME }}
+          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+          SMOKE_OUTCOME: ${{ inputs.outcome }}
+        run: python scripts/send-notification-smoke.py
