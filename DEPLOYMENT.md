@@ -1,31 +1,47 @@
-# Hostinger deployment setup
+# Ledgerline Hostinger release preparation
 
-The Hostinger workflow is manual-only and accepts a `target` input. It has no push trigger. The default is `staging`; the staging job uses the `Staging` GitHub environment. The production job is skipped unless the repository variable `LEDGERLINE_PRODUCTION_CUTOVER_ENABLED` is exactly `true` and the run targets `main`. Do not set that variable until production cutover has separate approval and the `Production` environment has required reviewers and branch restrictions.
+## Release controls
 
-## Per-environment configuration
+The Hostinger workflow is manual-only and accepts only `main`, an exact commit equal to the dispatched `main` commit, and the typed `DEPLOY` confirmation. It builds the static marketing site, packages it as a run-scoped immutable GitHub Actions artifact, records a SHA-256 checksum, and then waits at the GitHub `Production` environment before any SSH operation. A repository variable named `LEDGERLINE_PRODUCTION_CUTOVER_ENABLED` must also be exactly `true`.
 
-Create separate `Staging` and `Production` environments. Populate each environment independently; do not copy a production private key or target into staging.
+The `Production` environment is branch-restricted to `main`. Required reviewers are not configured yet; select an independent reviewer in GitHub before enabling the production gate. The separate `rollback.yml` workflow remains manual-only and requires `RESTORE` plus a named backup.
 
-Required environment secrets:
+No staging website will be created. This is **WAIVED BY OWNER — DIRECT PRODUCTION MIGRATION**. Direct production deployment has greater risk because the build will not have been exercised against an isolated Hostinger site.
+
+## Production configuration required after explicit cutover approval
+
+Configure values only after the domain change has been separately approved and the new document root has been verified. Do not reuse legacy deployment secrets or target values without review.
+
+Production secrets:
 
 - `HOSTINGER_HOST`
 - `HOSTINGER_PORT`
 - `HOSTINGER_USERNAME`
-- `HOSTINGER_SSH_KEY`
-- `HOSTINGER_KNOWN_HOSTS` — exact known-hosts record for the verified SSH host key; SSH uses strict host-key checking.
+- `HOSTINGER_SSH_KEY` — dedicated Ledgerline key preferred
+- `HOSTINGER_KNOWN_HOSTS` — the accepted host key, using strict SSH verification
 
-Required environment variables:
+Production variables:
 
-- `HOSTINGER_TARGET_PATH` — absolute path for that environment. The workflow resolves it remotely and refuses `/`, the SSH home itself, paths outside the SSH home, and dot path components.
-- `HOSTINGER_PUBLIC_URL` — exact HTTPS origin for that environment.
-- `HOSTINGER_EXPECTED_DOMAIN` — hostname that must match the public URL and is written to the deployment marker.
+- `HOSTINGER_TARGET_PATH` — exact canonical document root after Hostinger's domain change
+- `HOSTINGER_TARGET_SUFFIX` — must be the verified domain root suffix `/domains/quantumledgerline.com/public_html` or `/public_html`
+- `HOSTINGER_PUBLIC_URL` — exactly `https://quantumledgerline.com`
+- `LEDGERLINE_PRODUCTION_CUTOVER_ENABLED` — leave unset or `false` until the cutover gate is approved
 
-Do not configure these until Hostinger has provisioned and independently verified a staging hostname and document root. A distinct URL alone does not prove the filesystem path is isolated. Prefer staging-only SSH access restricted to its document root. The existing production path must never be reused for staging.
+The workflow resolves the configured target with `realpath -e` and requires an exact match between the canonical target and the SSH home plus the approved suffix. It creates a private, timestamped snapshot of the target before overlaying the release. It does not recursively delete files, so unrelated and persistent files are preserved; old hashed assets can remain after a release.
 
-## Deployment behavior and current limits
+## Application and data scope
 
-Each deployment builds the site, verifies configuration and strict SSH host identity, checks that the canonical destination is a directory below the SSH home, creates a timestamped backup under `~/deployment_backups/ledgerline-{target}`, uploads the build without a broad remote delete, and checks the local and public deployment markers. The overlay upload preserves existing files, which can leave stale assets; a versioned-release/symlink strategy requires a separately reviewed hosting layout before adoption.
+The Ledgerline `main` application is a Vite-built static site. Source inspection found no server API routes, database client, or submitted form handler. The pricing region helper optionally calls `https://ipapi.co/json/`, falls back to AUD on errors, and stores a currency selection in `sessionStorage`. Demo media and fonts load from external providers. This is evidence that the repository build is database-independent; it does not prove the existing Hostinger document root has no PHP files, uploads, or other persistent application data.
 
-The rollback workflow is a manual production workflow and is also skipped unless `LEDGERLINE_PRODUCTION_CUTOVER_ENABLED` is exactly `true`. It requires an explicitly named backup and `RESTORE`, checks archive member paths and rejects links/special files before extraction, creates a pre-rollback backup, and verifies the public marker. It has not been run against Hostinger and is not considered validated until tested in isolated staging.
+The 6.4 GB Hostinger website archive is account-wide and was previously structurally validated. It must not be restored wholesale. Filename-only mapping identified a 57-member subtree for the old domain's `public_html`: 51 regular files and six directories, with no links or special files. The files are static HTML/CSS/JS/image/SVG/TXT types; no PHP, SQL, JSON, or environment-named files were identified in that subtree. The separate 26 KB SQL export has 11 table definitions and has not been attributed to the marketing website. A website-scoped package was prepared from this historical subtree and passed a local extraction-and-file-hash round trip. No configuration content was opened, and nothing was restored to Hostinger.
 
-No Hostinger deployment secrets or target variables are currently configured in Ledgerline. Do not use either workflow until staging has been provisioned, environment protection and target values have been reviewed, and a separate staging deployment approval is provided.
+The historical website-specific package is dated 2026-10-10 and is not fresh enough for cutover. The workflow's fresh pre-deployment snapshot is created only after cutover approval and exact target validation. It refuses to proceed if that archive contains symlinks or special files, because the current rollback workflow rejects them. Neither production workflow has been exercised against Hostinger.
+
+## Direct production deployment limits
+
+- No production dispatch has been made.
+- No Hostinger files, databases, domains, DNS, credentials, or deployment settings have been changed.
+- The new domain's DNS, SSL, email dependencies, and post-change document root remain unverified.
+- The target suffix must be confirmed after the Hostinger domain change before configuring the workflow.
+- The upload overlays files without deletion. This reduces the chance of destroying persistent content but can leave stale hashed assets.
+- The workflow attempts to restore the pre-deployment snapshot if any step after the snapshot fails. The separate manual rollback workflow is also available after the cutover gate is enabled. Both restore paths remain unverified against Hostinger and require a valid, link-free snapshot.

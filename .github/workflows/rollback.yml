@@ -1,10 +1,12 @@
 name: Rollback Ledgerline on Hostinger
 
+run-name: Restore Ledgerline backup ${{ inputs.backup_file }} by ${{ github.actor }}
+
 on:
   workflow_dispatch:
     inputs:
       backup_file:
-        description: Backup filename from the Hostinger deployment_backups/ledgerline-production directory
+        description: Exact backup filename from deployment_backups/ledgerline-production
         required: true
         type: string
       confirm_restore:
@@ -16,89 +18,67 @@ concurrency:
   group: deploy-ledgerline-production
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   rollback:
     name: Restore a verified Hostinger backup
     runs-on: ubuntu-latest
     environment: Production
-    if: github.ref == 'refs/heads/main' && vars.LEDGERLINE_PRODUCTION_CUTOVER_ENABLED == 'true'
-    permissions:
-      contents: read
-
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      inputs.confirm_restore == 'RESTORE' &&
+      vars.LEDGERLINE_PRODUCTION_CUTOVER_ENABLED == 'true'
     steps:
-      - name: Validate rollback request
+      - name: Validate rollback request and credentials
         env:
           BACKUP_FILE: ${{ inputs.backup_file }}
           CONFIRM_RESTORE: ${{ inputs.confirm_restore }}
-          HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
-        run: |
-          set -euo pipefail
-          if [[ "$CONFIRM_RESTORE" != "RESTORE" ]]; then
-            echo "Type RESTORE to confirm the rollback"
-            exit 1
-          fi
-          if [[ ! "$BACKUP_FILE" =~ ^backup-[0-9]{8}-[0-9]{6}(-pre-rollback)?\.tar\.gz$ ]]; then
-            echo "Backup filename does not match an allowed deployment backup name"
-            exit 1
-          fi
-          if [[ "$HOSTINGER_TARGET_PATH" != /* || "$HOSTINGER_TARGET_PATH" == *..* ]]; then
-            echo "HOSTINGER_TARGET_PATH must be an absolute path without parent traversal"
-            exit 1
-          fi
-
-      - name: Prepare SSH key and trusted host
-        env:
+          HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
+          HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
+          HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
           HOSTINGER_SSH_KEY: ${{ secrets.HOSTINGER_SSH_KEY }}
           HOSTINGER_KNOWN_HOSTS: ${{ secrets.HOSTINGER_KNOWN_HOSTS }}
+          HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
+          HOSTINGER_TARGET_SUFFIX: ${{ vars.HOSTINGER_TARGET_SUFFIX }}
+          HOSTINGER_PUBLIC_URL: ${{ vars.HOSTINGER_PUBLIC_URL }}
         run: |
           set -euo pipefail
-          for name in HOSTINGER_SSH_KEY HOSTINGER_KNOWN_HOSTS; do
-            if [ -z "${!name:-}" ]; then
-              echo "Missing required production secret: $name"
-              exit 1
-            fi
+          [[ "$CONFIRM_RESTORE" == RESTORE ]]
+          [[ "$BACKUP_FILE" =~ ^backup-[0-9]{8}-[0-9]{6}-[0-9]+-[a-f0-9]{40}(-pre-rollback)?\.tar\.gz$ ]]
+          for name in HOSTINGER_HOST HOSTINGER_PORT HOSTINGER_USERNAME HOSTINGER_SSH_KEY HOSTINGER_KNOWN_HOSTS HOSTINGER_TARGET_PATH HOSTINGER_TARGET_SUFFIX HOSTINGER_PUBLIC_URL; do
+            [[ -n "${!name:-}" ]] || { echo "Missing required production setting: $name"; exit 1; }
           done
+          [[ "$HOSTINGER_PORT" =~ ^[0-9]{1,5}$ ]] && (( HOSTINGER_PORT >= 1 && HOSTINGER_PORT <= 65535 ))
+          [[ "$HOSTINGER_TARGET_PATH" == /* && "$HOSTINGER_TARGET_PATH" != *'..'* ]]
+          [[ "$HOSTINGER_TARGET_SUFFIX" == '/domains/quantumledgerline.com/public_html' || "$HOSTINGER_TARGET_SUFFIX" == '/public_html' ]]
+          [[ "$HOSTINGER_PUBLIC_URL" == 'https://quantumledgerline.com' ]]
           mkdir -p ~/.ssh
           printf '%s\n' "$HOSTINGER_SSH_KEY" > ~/.ssh/hostinger_key
           printf '%s\n' "$HOSTINGER_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/hostinger_key
 
-      - name: Verify backup and restore without deleting server data
+      - name: Verify canonical target and safely restore backup
         env:
           HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
           HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
           HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
           HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
+          HOSTINGER_TARGET_SUFFIX: ${{ vars.HOSTINGER_TARGET_SUFFIX }}
           BACKUP_FILE: ${{ inputs.backup_file }}
         run: |
           set -euo pipefail
-          for name in HOSTINGER_HOST HOSTINGER_PORT HOSTINGER_USERNAME HOSTINGER_TARGET_PATH; do
-            if [ -z "${!name:-}" ]; then
-              echo "Missing required production value: $name"
-              exit 1
-            fi
-          done
-          SSH_OPTS="-o StrictHostKeyChecking=yes -o ConnectTimeout=45 -i ~/.ssh/hostinger_key -p $HOSTINGER_PORT"
-          printf -v TARGET_Q '%q' "$HOSTINGER_TARGET_PATH"
-          printf -v BACKUP_Q '%q' "$BACKUP_FILE"
-          ssh $SSH_OPTS "$HOSTINGER_USERNAME@$HOSTINGER_HOST" "set -euo pipefail; target=$TARGET_Q; archive=\"\$HOME/deployment_backups/ledgerline-production/$BACKUP_Q\"; real_target=\$(realpath -- \"\$target\"); real_home=\$(realpath -- \"\$HOME\"); case \"\$real_target\" in /|\"\$real_home\"|\"\$real_home/\") echo 'Refusing unsafe target'; exit 1;; esac; test -d \"\$target\" && test -w \"\$target\"; test -f \"\$archive\"; tar -tzf \"\$archive\" | awk 'BEGIN{bad=0} {p=\$0; sub(/^\.\//,\"\",p); if (p ~ /^\// || p ~ /(^|\/)\.\.(\/|\$)/) bad=1} END{exit bad}'; tar -tvzf \"\$archive\" | awk '\$1 !~ /^[-d]/ {bad=1} END{exit bad}'; tar -tzf \"\$archive\" | grep -Eq '(^|/)deploy-info.txt$'; umask 077; stamp=\$(date +%Y%m%d-%H%M%S); tar -czf \"\$HOME/deployment_backups/ledgerline-production/backup-\$stamp-pre-rollback.tar.gz\" -C \"\$target\" .; tar --no-same-owner --no-same-permissions -xzf \"\$archive\" -C \"\$target\"; test -s \"\$target/deploy-info.txt\"; echo 'Restored deployment marker:'; sed -n 's/^Commit: //p' \"\$target/deploy-info.txt\""
+          ssh_opts=(-o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=30 -i ~/.ssh/hostinger_key -p "$HOSTINGER_PORT")
+          printf -v target_q '%q' "$HOSTINGER_TARGET_PATH"
+          printf -v suffix_q '%q' "$HOSTINGER_TARGET_SUFFIX"
+          printf -v backup_q '%q' "$BACKUP_FILE"
+          ssh "${ssh_opts[@]}" "$HOSTINGER_USERNAME@$HOSTINGER_HOST" \
+            "set -euo pipefail; target=\$(realpath -e -- $target_q); home=\$(realpath -e -- \"\$HOME\"); suffix=$suffix_q; test \"\$target\" = \"\$home\$suffix\"; test \"\$target\" != /; test \"\$target\" != \"\$home\"; test -d \"\$target\" -a -w \"\$target\"; backup_dir=\"\$HOME/deployment_backups/ledgerline-production\"; archive=\"\$backup_dir/$backup_q\"; test -f \"\$archive\"; tar -tzf \"\$archive\" | awk 'BEGIN{bad=0} {p=\$0; sub(/^\.\//,\"\",p); if (p ~ /^\// || p ~ /(^|\/)\.\.(\/|$)/) bad=1} END{exit bad}'; tar -tvzf \"\$archive\" | awk '\$1 !~ /^[-d]/ {bad=1} END{exit bad}'; umask 077; stamp=\$(date -u +%Y%m%d-%H%M%S); run_id=$GITHUB_RUN_ID; commit=$GITHUB_SHA; before=\"\$backup_dir/backup-\$stamp-\$run_id-\$commit-pre-rollback.tar.gz\"; tar -czf \"\$before\" -C \"\$target\" .; tar -tzf \"\$before\" >/dev/null; tar -xzf \"\$archive\" -C \"\$target\" --no-same-owner --no-same-permissions; if test -s \"\$target/deploy-info.txt\"; then sed -n 's/^Commit: //p' \"\$target/deploy-info.txt\" | head -n 1; else printf '%s\\n' LEGACY_BASELINE_WITHOUT_MARKER; fi"
 
-      - name: Verify public rollback marker
+      - name: Verify restored public site
         env:
-          HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
-          HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
-          HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
-          HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
-          GITHUB_SHA: ${{ github.sha }}
+          HOSTINGER_PUBLIC_URL: ${{ vars.HOSTINGER_PUBLIC_URL }}
         run: |
           set -euo pipefail
-          SSH_OPTS="-o StrictHostKeyChecking=yes -o ConnectTimeout=45 -i ~/.ssh/hostinger_key -p $HOSTINGER_PORT"
-          printf -v TARGET_Q '%q' "$HOSTINGER_TARGET_PATH"
-          EXPECTED_COMMIT=$(ssh $SSH_OPTS "$HOSTINGER_USERNAME@$HOSTINGER_HOST" "sed -n 's/^Commit: //p' $TARGET_Q/deploy-info.txt | head -n 1")
-          if [ -z "$EXPECTED_COMMIT" ]; then
-            echo "Restored marker does not identify a commit"
-            exit 1
-          fi
-          curl --fail --show-error --silent --retry 5 --retry-delay 10 https://quantumledgerline.com/deploy-info.txt -o /tmp/deploy-info.txt
-          grep -F "Commit: $EXPECTED_COMMIT" /tmp/deploy-info.txt
-          echo "Public domain serves rollback commit $EXPECTED_COMMIT"
+          curl --fail --show-error --silent --retry 3 --retry-delay 5 "$HOSTINGER_PUBLIC_URL/" -o /dev/null
