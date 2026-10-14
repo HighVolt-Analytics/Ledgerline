@@ -5,6 +5,8 @@ run-name: Ledgerline production release ${{ inputs.release_commit || github.sha 
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '.github/workflows/**'
   workflow_dispatch:
     inputs:
       release_commit:

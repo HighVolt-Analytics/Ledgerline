@@ -1072,7 +1072,7 @@ export default function QuantumLedgerLinkPage() {
         <div className="wrap footin">
           <span className="fbrand">
             <Logo className="h-7 sm:h-8" />
-            High Volt Analytics
+            Quantum Ledger Line
           </span>
           <span className="flinks">
             <a href="https://quantumledgerline.com" target="_blank" rel="noopener noreferrer">
@@ -1082,7 +1082,6 @@ export default function QuantumLedgerLinkPage() {
               highvolt.tech
             </a>
           </span>
-          <span className="fcities">Sydney · Singapore · India · USA</span>
         </div>
       </footer>
     </div>

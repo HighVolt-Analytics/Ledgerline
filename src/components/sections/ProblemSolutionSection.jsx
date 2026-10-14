@@ -98,11 +98,20 @@ function flow(x1, y1, x2, y2) {
   return `M ${x1.toFixed(1)} ${y1.toFixed(1)} C ${c1x.toFixed(1)} ${y1.toFixed(1)}, ${c2x.toFixed(1)} ${y2.toFixed(1)}, ${x2.toFixed(1)} ${y2.toFixed(1)}`;
 }
 
-function docks(count, top, height) {
-  const pad = height * 0.22;
-  const start = top + pad;
-  const end = top + height - pad;
-  if (count <= 1) return [top + height / 2];
+function flowV(x1, y1, x2, y2) {
+  const dy = y2 - y1;
+  const lead = Math.max(22, Math.abs(dy) * 0.72);
+  const dir = dy >= 0 ? 1 : -1;
+  const c1y = y1 + dir * lead;
+  const c2y = y2 - dir * lead;
+  return `M ${x1.toFixed(1)} ${y1.toFixed(1)} C ${x1.toFixed(1)} ${c1y.toFixed(1)}, ${x2.toFixed(1)} ${c2y.toFixed(1)}, ${x2.toFixed(1)} ${y2.toFixed(1)}`;
+}
+
+function docks(count, startEdge, size) {
+  const pad = size * 0.22;
+  const start = startEdge + pad;
+  const end = startEdge + size - pad;
+  if (count <= 1) return [startEdge + size / 2];
   return Array.from({ length: count }, (_, index) => start + ((end - start) * index) / (count - 1));
 }
 
@@ -117,30 +126,68 @@ export default function ProblemSolutionSection() {
     const draw = () => {
       const card = cardRef.current;
       const core = coreRef.current;
-      if (!card || !core || window.innerWidth < 720) {
+      if (!card || !core) {
         setLines({ d: [], w: 0, h: 0 });
         return;
       }
       const base = card.getBoundingClientRect();
       const hub = core.getBoundingClientRect();
-      const leftX = hub.left - base.left;
-      const rightX = hub.right - base.left;
-      const hubTop = hub.top - base.top;
       const sources = sourceRefs.current.filter(Boolean);
       const rows = rowRefs.current.filter(Boolean);
-      const leftDocks = docks(sources.length, hubTop, hub.height);
-      const rightDocks = docks(rows.length, hubTop, hub.height);
+      if (!sources.length || !rows.length) {
+        setLines({ d: [], w: 0, h: 0 });
+        return;
+      }
+
+      const hubLeft = hub.left - base.left;
+      const hubTop = hub.top - base.top;
+      const hubCx = hubLeft + hub.width / 2;
+      const firstSource = sources[0].getBoundingClientRect();
+      const lastSource = sources[sources.length - 1].getBoundingClientRect();
+      const stacked =
+        firstSource.bottom <= hub.top + 4 &&
+        Math.abs(firstSource.top - lastSource.top) < 16;
       const paths = [];
 
-      sources.forEach((el, index) => {
-        const r = el.getBoundingClientRect();
-        paths.push(flow(r.right - base.left, r.top + r.height / 2 - base.top, leftX, leftDocks[index]));
-      });
+      if (stacked) {
+        const topDocks = docks(sources.length, hubLeft, hub.width);
+        sources.forEach((el, index) => {
+          const r = el.getBoundingClientRect();
+          paths.push(
+            flowV(
+              r.left + r.width / 2 - base.left,
+              r.bottom - base.top,
+              topDocks[index],
+              hubTop,
+            ),
+          );
+        });
 
-      rows.forEach((el, index) => {
-        const r = el.getBoundingClientRect();
-        paths.push(flow(rightX, rightDocks[index], r.left - base.left, r.top + r.height / 2 - base.top));
-      });
+        const firstRow = rows[0].getBoundingClientRect();
+        paths.push(
+          flowV(
+            hubCx,
+            hub.bottom - base.top,
+            firstRow.left + firstRow.width / 2 - base.left,
+            firstRow.top - base.top,
+          ),
+        );
+      } else {
+        const leftX = hubLeft;
+        const rightX = hub.right - base.left;
+        const leftDocks = docks(sources.length, hubTop, hub.height);
+        const rightDocks = docks(rows.length, hubTop, hub.height);
+
+        sources.forEach((el, index) => {
+          const r = el.getBoundingClientRect();
+          paths.push(flow(r.right - base.left, r.top + r.height / 2 - base.top, leftX, leftDocks[index]));
+        });
+
+        rows.forEach((el, index) => {
+          const r = el.getBoundingClientRect();
+          paths.push(flow(rightX, rightDocks[index], r.left - base.left, r.top + r.height / 2 - base.top));
+        });
+      }
 
       setLines({ d: paths, w: base.width, h: base.height });
     };
@@ -160,9 +207,7 @@ export default function ProblemSolutionSection() {
   return (
     <section className="s dark ps-section" id="problem">
       <div className="wrap">
-        <p className="ps-kicker r">
-          <span>The problem &amp; the solution</span>
-        </p>
+        <p className="eyebrow">The problem &amp; the solution</p>
         <h2 className="ps-heading r">
           Unorganised documents.
           <br />
