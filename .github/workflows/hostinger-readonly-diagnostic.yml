@@ -66,7 +66,7 @@ jobs:
           chmod 600 "$RUNNER_TEMP/hostinger_known_hosts"
           echo "Host key matched the supplied Hostinger fingerprint."
 
-      - name: Run read-only directory discovery
+      - name: Classify the configured target (read-only)
         env:
           HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
           HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
@@ -90,43 +90,33 @@ jobs:
             *) echo "Configured target is outside the SSH home; stopping."; exit 1 ;;
           esac
           case "$TARGET_PATH" in
-            *..*) echo "Configured target contains parent traversal; stopping."; exit 1 ;;
+            *..*|*$'\n'*|*$'\r'*) echo "Configured target contains an invalid path component; stopping."; exit 1 ;;
           esac
-          if [ -e "$TARGET_PATH" ]; then
-            resolved_target="$(readlink -f -- "$TARGET_PATH")"
-            case "$resolved_target" in
-              "$HOME"/*) TARGET_PATH="$resolved_target" ;;
-              *) echo "Configured target resolves outside the SSH home; stopping."; exit 1 ;;
-            esac
+          if [ ! -d "$TARGET_PATH" ]; then
+            echo "Configured target is not an existing directory; stopping."
+            exit 1
           fi
-          printf 'remote_username='
-          whoami
-          printf 'remote_working_directory='
-          pwd
-          printf 'remote_home=%s\n' "$HOME"
-          printf 'configured_target_exists='
-          if [ -d "$TARGET_PATH" ]; then echo yes; else echo no; fi
-          if [ -d "$TARGET_PATH" ]; then
-            printf 'configured_target_permissions_and_owner='
-            stat -c '%A %U:%G' "$TARGET_PATH"
-            for mode in read write; do
-              if [ "$mode" = read ] && [ -r "$TARGET_PATH" ]; then printf 'configured_target_readable=yes\n'; elif [ "$mode" = read ]; then printf 'configured_target_readable=no\n'; fi
-              if [ "$mode" = write ] && [ -w "$TARGET_PATH" ]; then printf 'configured_target_writable_by_ssh_user=yes\n'; elif [ "$mode" = write ]; then printf 'configured_target_writable_by_ssh_user=no\n'; fi
-            done
-            for child in .htaccess api; do
-              if [ -e "$TARGET_PATH/$child" ]; then printf 'configured_target_has_%s=yes\n' "$child"; else printf 'configured_target_has_%s=no\n' "$child"; fi
-            done
+          resolved_home="$(readlink -f -- "$HOME" 2>/dev/null)" || { echo "SSH home could not be resolved; stopping."; exit 1; }
+          resolved_target="$(readlink -f -- "$TARGET_PATH" 2>/dev/null)" || { echo "Configured target could not be resolved; stopping."; exit 1; }
+          case "$resolved_target" in
+            "$resolved_home"/*) TARGET_PATH="$resolved_target" ;;
+            *) echo "Configured target resolves outside the SSH home; stopping."; exit 1 ;;
+          esac
+          target_class=other_or_unknown
+          case "$TARGET_PATH" in
+            "$resolved_home/domains/quantumledgerlink.com/public_html") target_class=quantumledgerlink.com ;;
+            "$resolved_home/domains/quantumledgerline.com/public_html") target_class=quantumledgerline.com ;;
+          esac
+          printf 'configured_target_class=%s\n' "$target_class"
+          printf 'configured_target_exists=yes\n'
+          if ! target_permissions="$(stat -c '%a' -- "$TARGET_PATH" 2>/dev/null)"; then
+            echo "Configured target permissions could not be read; stopping."
+            exit 1
           fi
-          printf 'candidate_public_html_directories_begin\n'
-          find "$HOME" -maxdepth 4 -type d -name public_html -print 2>/dev/null || true
-          printf 'candidate_public_html_directories_end\n'
-          for candidate in "$HOME/public_html" "$HOME/domains/quantumledgerlink.com/public_html" "$HOME/domains/quantumledgerline.com/public_html"; do
-            if [ -d "$candidate" ]; then
-              printf 'candidate_directory='; printf '%s\n' "$candidate"
-              stat -c 'permissions_and_owner=%A %U:%G' "$candidate"
-              if [ -r "$candidate" ]; then echo readable=yes; else echo readable=no; fi
-              if [ -w "$candidate" ]; then echo writable_by_ssh_user=yes; else echo writable_by_ssh_user=no; fi
-            fi
-          done
+          printf 'configured_target_permissions=%s\n' "$target_permissions"
+          if [ -r "$TARGET_PATH" ]; then printf 'configured_target_readable=yes\n'; else printf 'configured_target_readable=no\n'; fi
+          if [ -w "$TARGET_PATH" ]; then printf 'configured_target_writable_by_ssh_user=yes\n'; else printf 'configured_target_writable_by_ssh_user=no\n'; fi
+          if [ -e "$TARGET_PATH/.htaccess" ]; then printf 'configured_target_has_htaccess=yes\n'; else printf 'configured_target_has_htaccess=no\n'; fi
+          if [ -e "$TARGET_PATH/api" ]; then printf 'configured_target_has_api=yes\n'; else printf 'configured_target_has_api=no\n'; fi
           REMOTE_READ_ONLY
           rm -f "$RUNNER_TEMP/hostinger_key" "$RUNNER_TEMP/hostinger_known_hosts" "$RUNNER_TEMP/candidate-host-key" "$RUNNER_TEMP/scanned-host-keys"
