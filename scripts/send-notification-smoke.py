@@ -14,10 +14,10 @@ def main():
     recipients = required("MAIL_TO")
     outcome = os.environ.get("SMOKE_OUTCOME", "both")
     if outcome not in {"success", "failure", "both"}:
-        raise MailGraphError("InvalidSmokeOutcome")
+        raise MailGraphError("smoke_test", "unexpected_failure")
 
     outcomes = ("success", "failure") if outcome == "both" else (outcome,)
-    failures = []
+    failures = False
     for simulated in outcomes:
         subject = f"SIMULATED NOTIFICATION — {simulated.upper()} (NO DEPLOYMENT)"
         body = "\n".join(
@@ -29,17 +29,36 @@ def main():
         )
         try:
             send_mail(subject, body, sender, recipients)
-        except Exception as error:
-            failures.append(type(error).__name__)
+        except MailGraphError as error:
+            print(
+                f"Notification failure: stage={error.stage} category={error.category}",
+                file=sys.stderr,
+            )
+            failures = True
+        except Exception:
+            print(
+                "Notification failure: stage=smoke_test category=unexpected_failure",
+                file=sys.stderr,
+            )
+            failures = True
         else:
             print(f"Simulated {simulated} notification accepted by Microsoft Graph.")
     if failures:
-        raise MailGraphError("NotificationSendFailed:" + ",".join(failures))
+        raise MailGraphError("smoke_test", "notification_failed")
 
 
 if __name__ == "__main__":
     try:
         main()
-    except Exception as error:
-        print(f"Notification smoke test failed ({type(error).__name__}).", file=sys.stderr)
+    except MailGraphError as error:
+        print(
+            f"Notification smoke test failed: stage={error.stage} category={error.category}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    except Exception:
+        print(
+            "Notification smoke test failed: stage=smoke_test category=unexpected_failure",
+            file=sys.stderr,
+        )
         sys.exit(1)

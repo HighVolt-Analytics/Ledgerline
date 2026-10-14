@@ -42,18 +42,25 @@ class NotificationSmokeTests(unittest.TestCase):
         with patch.dict(os.environ, {"MAIL_CLIENT_ID": ""}), \
              patch.object(SMOKE, "send_mail") as send_mail, \
              patch("builtins.print") as output:
-            with self.assertRaisesRegex(SMOKE.MailGraphError, "MAIL_CLIENT_ID"):
+            with self.assertRaisesRegex(SMOKE.MailGraphError, "missing_configuration"):
                 SMOKE.main()
         send_mail.assert_not_called()
         self.assertNotIn("support@example.test", str(output.call_args_list))
 
-    def test_send_failure_logs_only_exception_type(self):
-        with patch.object(SMOKE, "send_mail", side_effect=SMOKE.MailGraphError("HTTPError")), \
-             patch("builtins.print") as output:
-            with self.assertRaisesRegex(SMOKE.MailGraphError, "MailGraphError"):
+    def test_send_failure_logs_only_safe_stage_and_category(self):
+        with patch.object(
+            SMOKE,
+            "send_mail",
+            side_effect=SMOKE.MailGraphError("entra_token_exchange", "federated_credential_mismatch"),
+        ), patch("builtins.print") as output:
+            with self.assertRaisesRegex(SMOKE.MailGraphError, "notification_failed"):
                 SMOKE.main()
-        self.assertNotIn("support@example.test", str(output.call_args_list))
-        self.assertNotIn("alerts@example.test", str(output.call_args_list))
+        logged = str(output.call_args_list)
+        self.assertIn("stage=entra_token_exchange", logged)
+        self.assertIn("category=federated_credential_mismatch", logged)
+        self.assertNotIn("support@example.test", logged)
+        self.assertNotIn("alerts@example.test", logged)
+        self.assertNotIn("client-id-sentinel", logged)
 
 
 if __name__ == "__main__":

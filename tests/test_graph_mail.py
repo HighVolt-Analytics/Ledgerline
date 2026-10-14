@@ -84,7 +84,8 @@ class GraphMailTests(unittest.TestCase):
         with patch.object(GRAPH.urllib.request, "urlopen", side_effect=provider_error):
             with self.assertRaises(GRAPH.MailGraphError) as error:
                 GRAPH.acquire_graph_token()
-        self.assertEqual(str(error.exception), "HTTPError")
+        self.assertEqual(error.exception.stage, "oidc_assertion_retrieval")
+        self.assertEqual(error.exception.category, "oidc_assertion_retrieval_failed")
         self.assertNotIn("github-request-token-sentinel", str(error.exception))
 
 
