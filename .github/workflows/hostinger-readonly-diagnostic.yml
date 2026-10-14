@@ -18,15 +18,16 @@ concurrency:
 jobs:
   discover:
     name: Read-only SSH discovery
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    environment: Hostinger-ReadOnly
     steps:
-      - name: Validate configured connection
+      - name: Validate the approved connection details
         env:
-          HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
-          HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
-          HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
-          HOSTINGER_TARGET_PATH: ${{ secrets.HOSTINGER_TARGET_PATH }}
+          HOSTINGER_HOST: 92.113.28.62
+          HOSTINGER_PORT: '65002'
+          HOSTINGER_USERNAME: u359614291
           HOSTINGER_SSH_KEY: ${{ secrets.HOSTINGER_SSH_KEY }}
           EXPECTED_HOST_KEY_FINGERPRINT: ${{ inputs.expected_host_key_fingerprint }}
         run: |
@@ -34,15 +35,14 @@ jobs:
           [[ "$HOSTINGER_HOST" == "92.113.28.62" ]]
           [[ "$HOSTINGER_PORT" == "65002" ]]
           [[ "$HOSTINGER_USERNAME" == "u359614291" ]]
-          [[ -n "$HOSTINGER_TARGET_PATH" && "$HOSTINGER_TARGET_PATH" != *..* && "$HOSTINGER_TARGET_PATH" != *$'\n'* && "$HOSTINGER_TARGET_PATH" != *$'\r'* ]]
           [[ -n "$HOSTINGER_SSH_KEY" ]]
-          [[ "$EXPECTED_HOST_KEY_FINGERPRINT" == SHA256:* ]]
-          echo "Configured host, port, username, target-path format, and SSH key are present. Secret values are not printed."
+          [[ "$EXPECTED_HOST_KEY_FINGERPRINT" =~ ^SHA256:[A-Za-z0-9+/=]+$ ]]
+          echo "Approved endpoint details and SSH key are present. Secret values are not printed."
 
       - name: Pin the Hostinger SSH host key
         env:
-          HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
-          HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
+          HOSTINGER_HOST: 92.113.28.62
+          HOSTINGER_PORT: '65002'
           EXPECTED_HOST_KEY_FINGERPRINT: ${{ inputs.expected_host_key_fingerprint }}
         run: |
           set -euo pipefail
@@ -66,57 +66,83 @@ jobs:
           chmod 600 "$RUNNER_TEMP/hostinger_known_hosts"
           echo "Host key matched the supplied Hostinger fingerprint."
 
-      - name: Classify the configured target (read-only)
-        env:
-          HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
-          HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
-          HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
-          HOSTINGER_TARGET_PATH: ${{ secrets.HOSTINGER_TARGET_PATH }}
-          HOSTINGER_SSH_KEY: ${{ secrets.HOSTINGER_SSH_KEY }}
+      - name: Hash the public deployment marker over verified HTTPS
+        id: https_marker
         run: |
           set -euo pipefail
-          printf '%s\n' "$HOSTINGER_SSH_KEY" > "$RUNNER_TEMP/hostinger_key"
-          chmod 600 "$RUNNER_TEMP/hostinger_key"
-          SSH_OPTS=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$RUNNER_TEMP/hostinger_known_hosts" -o ConnectTimeout=15 -i "$RUNNER_TEMP/hostinger_key" -p "$HOSTINGER_PORT")
-          printf -v TARGET_PATH_Q '%q' "$HOSTINGER_TARGET_PATH"
-          ssh "${SSH_OPTS[@]}" "$HOSTINGER_USERNAME@$HOSTINGER_HOST" "TARGET_PATH=$TARGET_PATH_Q bash -s" <<'REMOTE_READ_ONLY'
-          set -eu
-          case "$TARGET_PATH" in
-            /*) ;;
-            *) TARGET_PATH="$HOME/$TARGET_PATH" ;;
-          esac
-          case "$TARGET_PATH" in
-            "$HOME"/*) ;;
-            *) echo "Configured target is outside the SSH home; stopping."; exit 1 ;;
-          esac
-          case "$TARGET_PATH" in
-            *..*|*$'\n'*|*$'\r'*) echo "Configured target contains an invalid path component; stopping."; exit 1 ;;
-          esac
-          if [ ! -d "$TARGET_PATH" ]; then
-            echo "Configured target is not an existing directory; stopping."
+          marker_file="$RUNNER_TEMP/https-deploy-info.txt"
+          trap 'rm -f "$marker_file"' EXIT
+          http_status="$(curl --fail --show-error --silent --max-time 20 --proto '=https' --tlsv1.2 --output "$marker_file" --write-out '%{http_code}' https://quantumledgerline.com/deploy-info.txt)"
+          [[ "$http_status" == '200' ]]
+          marker_sha256="$(sha256sum -- "$marker_file" | awk '{print $1}')"
+          [[ "$marker_sha256" =~ ^[a-f0-9]{64}$ ]]
+          printf 'sha256=%s\n' "$marker_sha256" >> "$GITHUB_OUTPUT"
+          echo "HTTPS deployment marker was retrieved and hashed. Its contents and hash are not printed."
+
+      - name: Discover and verify the canonical document root (read-only)
+        env:
+          HOSTINGER_HOST: 92.113.28.62
+          HOSTINGER_PORT: '65002'
+          HOSTINGER_USERNAME: u359614291
+          HOSTINGER_SSH_KEY: ${{ secrets.HOSTINGER_SSH_KEY }}
+          HTTPS_MARKER_SHA256: ${{ steps.https_marker.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          key_file="$RUNNER_TEMP/hostinger_key"
+          trap 'rm -f "$key_file" "$RUNNER_TEMP/hostinger_known_hosts" "$RUNNER_TEMP/candidate-host-key" "$RUNNER_TEMP/scanned-host-keys"' EXIT
+          printf '%s\n' "$HOSTINGER_SSH_KEY" > "$key_file"
+          chmod 600 "$key_file"
+          SSH_OPTS=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$RUNNER_TEMP/hostinger_known_hosts" -o ConnectTimeout=15 -i "$key_file" -p "$HOSTINGER_PORT")
+          printf -v MARKER_SHA256_Q '%q' "$HTTPS_MARKER_SHA256"
+          ssh "${SSH_OPTS[@]}" "$HOSTINGER_USERNAME@$HOSTINGER_HOST" "EXPECTED_MARKER_SHA256=$MARKER_SHA256_Q bash -s" <<'REMOTE_READ_ONLY'
+          set -euo pipefail
+          resolved_home="$(readlink -f -- "$HOME")"
+          candidates=(
+            "$resolved_home/public_html"
+            "$resolved_home/domains/quantumledgerline.com/public_html"
+          )
+          matches=0
+          matched_layout=''
+          matched_permissions=''
+          matched_readable=''
+          matched_writable=''
+          declare -A seen=()
+          has_signature() {
+            local root="$1"
+            [[ -d "$root/assets" && -d "$root/feature images" && -d "$root/integrations" && -d "$root/qll" && \
+               -f "$root/deploy-info.txt" && -f "$root/index.html" && -f "$root/favicon.svg" && \
+               -f "$root/hero-wide.png" && -f "$root/ledgerlink-favicon.png" && -f "$root/ledgerlink-logo.png" ]]
+          }
+          for candidate in "${candidates[@]}"; do
+            [[ -d "$candidate" ]] || continue
+            resolved_candidate="$(readlink -f -- "$candidate")" || continue
+            case "$resolved_candidate" in
+              "$resolved_home"/*) ;;
+              *) continue ;;
+            esac
+            [[ -z "${seen[$resolved_candidate]+x}" ]] || continue
+            seen[$resolved_candidate]=1
+            has_signature "$resolved_candidate" || continue
+            remote_marker_sha256="$(sha256sum -- "$resolved_candidate/deploy-info.txt" | awk '{print $1}')"
+            [[ "$remote_marker_sha256" == "$EXPECTED_MARKER_SHA256" ]] || continue
+            matches=$((matches + 1))
+            case "$candidate" in
+              "$resolved_home/public_html") matched_layout='account_public_html' ;;
+              "$resolved_home/domains/quantumledgerline.com/public_html") matched_layout='domain_directory' ;;
+              *) matched_layout='unknown' ;;
+            esac
+            matched_permissions="$(stat -c '%a' -- "$resolved_candidate")"
+            if [[ -r "$resolved_candidate" ]]; then matched_readable=yes; else matched_readable=no; fi
+            if [[ -w "$resolved_candidate" ]]; then matched_writable=yes; else matched_writable=no; fi
+          done
+          if [[ "$matches" -ne 1 ]]; then
+            echo "Expected exactly one documented root layout to match the public deployment marker and file signature; stopping."
             exit 1
           fi
-          resolved_home="$(readlink -f -- "$HOME" 2>/dev/null)" || { echo "SSH home could not be resolved; stopping."; exit 1; }
-          resolved_target="$(readlink -f -- "$TARGET_PATH" 2>/dev/null)" || { echo "Configured target could not be resolved; stopping."; exit 1; }
-          case "$resolved_target" in
-            "$resolved_home"/*) TARGET_PATH="$resolved_target" ;;
-            *) echo "Configured target resolves outside the SSH home; stopping."; exit 1 ;;
-          esac
-          target_class=other_or_unknown
-          case "$TARGET_PATH" in
-            "$resolved_home/domains/quantumledgerlink.com/public_html") target_class=quantumledgerlink.com ;;
-            "$resolved_home/domains/quantumledgerline.com/public_html") target_class=quantumledgerline.com ;;
-          esac
-          printf 'configured_target_class=%s\n' "$target_class"
+          printf 'configured_target_class=quantumledgerline.com\n'
+          printf 'configured_target_layout=%s\n' "$matched_layout"
           printf 'configured_target_exists=yes\n'
-          if ! target_permissions="$(stat -c '%a' -- "$TARGET_PATH" 2>/dev/null)"; then
-            echo "Configured target permissions could not be read; stopping."
-            exit 1
-          fi
-          printf 'configured_target_permissions=%s\n' "$target_permissions"
-          if [ -r "$TARGET_PATH" ]; then printf 'configured_target_readable=yes\n'; else printf 'configured_target_readable=no\n'; fi
-          if [ -w "$TARGET_PATH" ]; then printf 'configured_target_writable_by_ssh_user=yes\n'; else printf 'configured_target_writable_by_ssh_user=no\n'; fi
-          if [ -e "$TARGET_PATH/.htaccess" ]; then printf 'configured_target_has_htaccess=yes\n'; else printf 'configured_target_has_htaccess=no\n'; fi
-          if [ -e "$TARGET_PATH/api" ]; then printf 'configured_target_has_api=yes\n'; else printf 'configured_target_has_api=no\n'; fi
+          printf 'configured_target_permissions=%s\n' "$matched_permissions"
+          printf 'configured_target_readable=%s\n' "$matched_readable"
+          printf 'configured_target_writable_by_ssh_user=%s\n' "$matched_writable"
           REMOTE_READ_ONLY
-          rm -f "$RUNNER_TEMP/hostinger_key" "$RUNNER_TEMP/hostinger_known_hosts" "$RUNNER_TEMP/candidate-host-key" "$RUNNER_TEMP/scanned-host-keys"
