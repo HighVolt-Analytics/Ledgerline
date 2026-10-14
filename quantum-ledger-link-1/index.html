@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="theme-color" content="#070E13">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quantum Ledger Link — invoice to pay, expenses and records in one</title>
+<meta name="description" content="Quantum Ledger Link captures the document, runs the controls, pays from your own bank, and files the record. One system, from the invoice to the audit.">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<noscript><style>.r{opacity:1;transform:none}</style></noscript>
+</head>
+<body>
+
+<a class="skip" href="#hero">Skip to content</a>
+
+<header class="hdr" id="hdr">
+  <div class="hdr-in">
+    <a class="brand" href="#hero" aria-label="Quantum Ledger Link, home">
+      <svg class="mark" viewBox="0 0 28 28" fill="none" aria-hidden="true" focusable="false">
+        <rect x="1.75" y="1.75" width="19.5" height="24.5" rx="3.25" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M6.75 9.25h9.5M6.75 14h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        <path d="M6.75 18.75h13.5c3.2 0 5.5-2 5.5-4.75" stroke="#2FD4B5" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <span class="brand-name">Quantum Ledger Link</span>
+    </a>
+
+    <nav class="nav" aria-label="Sections">
+      <a href="#product">Product</a>
+      <a href="#how">How it works</a>
+      <a href="#controls">Controls</a>
+      <a href="#audience">Who it&rsquo;s for</a>
+      <a href="#team">Team</a>
+      <a href="#pricing">Pricing</a>
+    </nav>
+
+    <div class="hdr-cta">
+      <a class="lnk" href="https://staging.highvolt.tech/ledgerlink/signup" target="_blank" rel="noopener">Sign in</a>
+      <a class="btn btn-primary btn-sm" href="https://staging.highvolt.tech/ledgerlink/get-started" target="_blank" rel="noopener">Start free</a>
+    </div>
+
+    <button class="burger" id="burger" aria-label="Open menu" aria-expanded="false" aria-controls="mobnav">
+      <span></span><span></span>
+    </button>
+  </div>
+  <nav class="mobnav" id="mobnav" aria-label="Sections, mobile">
+    <a href="#product">Product</a>
+    <a href="#how">How it works</a>
+    <a href="#controls">Controls</a>
+    <a href="#audience">Who it&rsquo;s for</a>
+    <a href="#team">Team</a>
+    <a href="#pricing">Pricing</a>
+    <a href="https://staging.highvolt.tech/ledgerlink/signup" target="_blank" rel="noopener">Sign in</a>
+  </nav>
+</header>
+
+<main>
+
+<!-- 1. HERO -->
+<section class="s dark hero" id="hero">
+  <div class="grid-bg" aria-hidden="true"></div>
+    <div class="glow" aria-hidden="true"></div>
+  <div class="wrap">
+    <p class="eyebrow r">Invoice to pay · Expenses · Records</p>
+    <h1 class="h1 r">Every dollar that leaves your business, back in your hands.</h1>
+    <p class="lead r">Quantum Ledger Link captures the document, runs the controls, pays from your own bank, and files the record. One system, from the invoice to the audit.</p>
+    <div class="actions r">
+      <a class="btn btn-primary" href="https://staging.highvolt.tech/ledgerlink/get-started" target="_blank" rel="noopener">Start free</a>
+      <a class="btn btn-ghost" href="#video" data-scroll>Watch the product video</a>
+    </div>
+    <p class="strip r">Captures via email · WhatsApp · Viber · mobile <span class="sep">·</span> Pays from your bank <span class="sep">·</span> Posts to Xero · QuickBooks · MYOB · NetSuite</p>
+    <ul class="figs r">
+      <li><span class="fig">3 seconds</span><span class="figlabel">per invoice</span></li>
+      <li><span class="fig">12</span><span class="figlabel">control gates</span></li>
+      <li><span class="fig">&Delta;$0.00</span><span class="figlabel">daily reconciliation</span></li>
+    </ul>
+  </div>
+</section>
+
+<!-- 2. VIDEO -->
+<section class="s dark tight" id="video">
+  <div class="wrap">
+    <p class="eyebrow r">The product in motion</p>
+    <div class="video r" id="videoWrap">
+      <button class="video-btn" id="videoBtn" aria-label="Play the Quantum Ledger Link product video">
+        <img src="assets/video-poster.jpg" alt="A finance team member working at a desk with Quantum Ledger Link open on a laptop." width="1280" height="720" loading="lazy" decoding="async">
+        <span class="play" aria-hidden="true">
+          <svg viewBox="0 0 64 64" fill="none"><circle cx="32" cy="32" r="31.25" stroke="#fff" stroke-width="1.5"/><path d="M26 22.5 43 32l-17 9.5V22.5Z" fill="#fff"/></svg>
+        </span>
+      </button>
+    </div>
+    <p class="caption r">The whole product, in one short film.</p>
+  </div>
+</section>
+
+<!-- 3. PROBLEM -->
+<section class="s paper" id="problem">
+  <div class="wrap">
+    <p class="eyebrow r">The problem</p>
+    <h2 class="h2 r">Right now, nobody can tell you what you owe.</h2>
+    <ul class="rows r">
+      <li><span class="rt">Invoices scatter</span><span class="rd">Inboxes, WhatsApp, drive folders, a supervisor&rsquo;s phone.</span></li>
+      <li><span class="rt">People do work computers should do</span><span class="rd">Download, code, re-key, chase.</span></li>
+      <li><span class="rt">Risk hides in the gaps</span><span class="rd">A double payment. A vendor whose bank details changed last night.</span></li>
+      <li><span class="rt">The record never survives the audit</span><span class="rd">The invoice, the approval and the payment live in three systems.</span></li>
+    </ul>
+    <p class="statline r">15 minutes and about <span class="num">US$30</span> of somebody&rsquo;s time, per invoice.</p>
+  </div>
+</section>
+
+<!-- 4. PRODUCT -->
+<section class="s dark ink2" id="product">
+  <div class="wrap">
+    <p class="eyebrow r">Three in one</p>
+    <h2 class="h2 r">Three systems your team stopped needing.</h2>
+    <div class="cols r">
+      <div class="col">
+        <h3 class="h3">Invoice to pay</h3>
+        <p class="colp">Every bill arrives in one queue and leaves as a payment you approved.</p>
+        <ul class="sub">
+          <li>Capture from any channel</li>
+          <li>AI extraction</li>
+          <li>PO and GRN three-way match</li>
+          <li>Pay from your own bank</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h3 class="h3">Expenses</h3>
+        <p class="colp">Spending is claimed, checked against budget and settled without a spreadsheet.</p>
+        <ul class="sub">
+          <li>Card feeds</li>
+          <li>Receipt capture</li>
+          <li>Mileage and per-diem</li>
+          <li>Claims against budget and advances</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h3 class="h3">Records</h3>
+        <p class="colp">One place for every document your finance team has to defend.</p>
+        <ul class="sub">
+          <li>Encrypted vault</li>
+          <li>Version history</li>
+          <li>Retention and legal hold</li>
+          <li>Semantic search</li>
+        </ul>
+      </div>
+    </div>
+    <p class="closer r">One pipeline. One audit trail. One place to look.</p>
+  </div>
+</section>
+
+<!-- 5. HOW IT WORKS -->
+<section class="s paper" id="how">
+  <div class="wrap">
+    <p class="eyebrow r">How it works</p>
+    <h2 class="h2 wide r">One document lands. Twelve checks run. You approve. It pays.</h2>
+    <ol class="rail r">
+      <li><span class="rn">01</span><span class="rl">Capture</span><span class="rdesc">It arrives by email, chat or phone.</span></li>
+      <li><span class="rn">02</span><span class="rl">Classify</span><span class="rdesc">Invoice, receipt, statement or contract.</span></li>
+      <li><span class="rn">03</span><span class="rl">Extract</span><span class="rdesc">Every field read, every line item.</span></li>
+      <li><span class="rn">04</span><span class="rl">Match</span><span class="rdesc">Against the order and the goods received.</span></li>
+      <li><span class="rn">05</span><span class="rl">Approve</span><span class="rdesc">In your inbox or in your pocket.</span></li>
+      <li><span class="rn">06</span><span class="rl">Pay &amp; post</span><span class="rdesc">Your bank pays, your ledger updates.</span></li>
+    </ol>
+    <div class="band r">
+      <div class="bandcol">
+        <p class="bandlabel">Before</p>
+        <p class="bandfig"><span class="num">15 minutes</span></p>
+        <p class="bandsub"><span class="num">US$30</span> per invoice</p>
+      </div>
+      <div class="bandcol">
+        <p class="bandlabel">With Ledger Link</p>
+        <p class="bandfig accent"><span class="num">3 seconds</span></p>
+        <p class="bandsub"><span class="num">US$3</span> per invoice</p>
+      </div>
+    </div>
+    <p class="statline r">AI reads the document. Deterministic rules do the accounting. That separation is why auditors trust it.</p>
+  </div>
+</section>
+
+<!-- 6. CONTROLS -->
+<section class="s dark ink2" id="controls">
+  <div class="wrap">
+    <p class="eyebrow r">Controls</p>
+    <h2 class="h2 r">Six gates between the invoice and the wire.</h2>
+    <ul class="rows two r">
+      <li><span class="rt">Duplicate prevention</span><span class="rd">The same invoice cannot be paid twice, however it arrived.</span></li>
+      <li><span class="rt">Approved-only payment</span><span class="rd">Nothing can be paid until the right person has said yes.</span></li>
+      <li><span class="rt">Three-way match</span><span class="rd">No payment without an order and proof the goods arrived.</span></li>
+      <li><span class="rt">Multi-tier approval</span><span class="rd">Larger amounts climb to the people who own them.</span></li>
+      <li><span class="rt">Segregation of duties</span><span class="rd">The person who enters a bill cannot also release it.</span></li>
+      <li><span class="rt">Append-only audit</span><span class="rd">Nothing can be edited away after the fact.</span></li>
+    </ul>
+    <p class="closer r">Enforced server-side. The interface may hint; the API refuses. Funds never leave your bank &mdash; we instruct, your bank executes.</p>
+  </div>
+</section>
+
+<!-- 7. MOBILE APP -->
+<section class="s paper" id="mobile">
+  <div class="wrap">
+    <p class="eyebrow r">Mobile</p>
+    <h2 class="h2 r">Approve from your pocket. Capture from the field.</h2>
+    <div class="phones r">
+      <figure class="phone"><div class="frame"><img src="assets/app-home.png" alt="Quantum Ledger Link mobile home screen showing quarter budget, advance outstanding and recent activity." loading="lazy" decoding="async"></div><figcaption>Your quarter, at a glance</figcaption></figure>
+      <figure class="phone"><div class="frame"><img src="assets/app-capture.png" alt="Quantum Ledger Link capture review screen showing an extracted receipt ready to submit." loading="lazy" decoding="async"></div><figcaption>Snap, review, submit</figcaption></figure>
+      <figure class="phone"><div class="frame"><img src="assets/app-approvals.png" alt="Quantum Ledger Link approvals inbox listing claims awaiting a decision." loading="lazy" decoding="async"></div><figcaption>Approvals with context</figcaption></figure>
+    </div>
+    <ul class="inline r">
+      <li>Three taps maximum</li>
+      <li>Snap and submit</li>
+      <li>Approvals with full context</li>
+      <li>Budget and advances in hand</li>
+    </ul>
+    <p class="tag r">Shipping soon · included in the platform</p>
+  </div>
+</section>
+
+<!-- 8. WHO IT IS FOR -->
+<section class="s dark ink2" id="audience">
+  <div class="wrap">
+    <p class="eyebrow r">Who it&rsquo;s for</p>
+    <h2 class="h2 r">Built for the people who sign, and the people who spend.</h2>
+    <div class="two-block r">
+      <div class="block">
+        <h3 class="blabel">People</h3>
+        <ul class="rows slim">
+          <li><span class="rt">CFO</span><span class="rd">Cash, exposure, control assurance.</span></li>
+          <li><span class="rt">Finance Manager</span><span class="rd">Queues, exceptions, close.</span></li>
+          <li><span class="rt">AP and accounts team</span><span class="rd">No re-keying.</span></li>
+          <li><span class="rt">Employees and field staff</span><span class="rd">Snap a receipt, get paid.</span></li>
+          <li><span class="rt">Auditors</span><span class="rd">An evidence trail that holds.</span></li>
+        </ul>
+      </div>
+      <div class="block">
+        <h3 class="blabel">Industries</h3>
+        <ul class="rows slim plain">
+          <li><span class="rt">Aged care &amp; NDIS providers</span></li>
+          <li><span class="rt">Accounting &amp; audit firms</span></li>
+          <li><span class="rt">Education &amp; migration agencies</span></li>
+          <li><span class="rt">Logistics &amp; freight</span></li>
+          <li><span class="rt">Construction &amp; trades</span></li>
+          <li><span class="rt">Retail &amp; DTC</span></li>
+          <li><span class="rt">Professional services</span></li>
+          <li><span class="rt">Multi-entity groups</span></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 9. TEAM -->
+<section class="s paper" id="team">
+  <div class="wrap">
+    <p class="eyebrow r">Why us</p>
+    <h2 class="h2 r">Founder-led. Globally distributed.</h2>
+    <p class="lead r">A team of IITians, Chartered Accountants and industry process-automation experts. Startup velocity, with enterprise rigour.</p>
+    <ul class="rows r">
+      <li><span class="rt">Engineering</span><span class="rd">Backend, AI orchestration, deployment.</span></li>
+      <li><span class="rt">Sales &amp; GTM</span><span class="rd">Outreach, demos, onboarding.</span></li>
+      <li><span class="rt">Finance &amp; Ops</span><span class="rd">vCFO, onboarding, compliance.</span></li>
+      <li><span class="rt">Quality Assurance</span><span class="rd">Test automation and LLM validation.</span></li>
+    </ul>
+    <ul class="trust r">
+      <li><span class="rt">Institutional standard</span><span class="rd">A twelve-stage pipeline and a WORM audit trail.</span></li>
+      <li><span class="rt">Built for global business</span><span class="rd">Multi-currency, multi-jurisdiction tax, e-invoicing, data residency.</span></li>
+      <li><span class="rt">Rule-book governance</span><span class="rd">Every rule versioned and tested against 90 days of history.</span></li>
+      <li><span class="rt">We never hold your funds</span><span class="rd">Your bank executes; we only instruct.</span></li>
+    </ul>
+  </div>
+</section>
+
+<!-- 10. PRESENCE -->
+<section class="s dark" id="presence">
+  <div class="wrap">
+    <p class="eyebrow r">Presence</p>
+    <h2 class="h2 r">Four offices. One team. Your business hours.</h2>
+    <ul class="offices r">
+      <li>
+        <span class="oc">Australia</span>
+        <span class="od">High Volt Analytics Pty Ltd<br>2306A, 80 Waterloo Road, Macquarie Park NSW 2113<br><a href="tel:+61410503579" class="num">+61 410 503 579</a></span>
+        <span class="ot">Global headquarters</span>
+      </li>
+      <li>
+        <span class="oc">Singapore</span>
+        <span class="od">High Volt Analytics Pte Ltd<br>68 Circular Road #02-01, Singapore 049422</span>
+        <span class="ot">APAC</span>
+      </li>
+      <li>
+        <span class="oc">United States</span>
+        <span class="od">High Volt Analytics L.L.C.<br>8 The Green STE B, Dover DE 19901<br><a href="tel:+15853615008" class="num">+1 585 361 5008</a></span>
+      </li>
+      <li>
+        <span class="oc">India</span>
+        <span class="od">High Volt Analytics<br>O-HUB, Infocity Road, Bhubaneswar, Odisha 751024</span>
+        <span class="ot">Delivery &amp; talent hub</span>
+      </li>
+    </ul>
+  </div>
+</section>
+
+<!-- 11. PRICING -->
+<section class="s paper" id="pricing">
+  <div class="wrap">
+    <p class="eyebrow r">Commercial</p>
+    <h2 class="h2 r">Simple, honest pricing.</h2>
+    <p class="price r"><span class="num">US$150</span><span class="per">per month, per company</span></p>
+    <p class="lead r">Paid in advance. Includes 400 documents and 5 application users.</p>
+    <ul class="rows r">
+      <li><span class="rt">Additional pages</span><span class="rd"><span class="num">US$0.15</span> each, any size.</span></li>
+      <li><span class="rt">Additional users</span><span class="rd"><span class="num">US$20</span> per user, per month.</span></li>
+      <li><span class="rt">Implementation</span><span class="rd"><span class="num">US$0</span>. Live in 7 days.</span></li>
+      <li><span class="rt">Commitment</span><span class="rd">No lock-in. Cancel any time.</span></li>
+    </ul>
+  </div>
+</section>
+
+<!-- 12. CLOSE -->
+<section class="s dark ink2 close" id="close">
+  <div class="wrap">
+    <p class="eyebrow r">Next step</p>
+    <h2 class="h2 r">See it run on your own invoices.</h2>
+    <p class="lead r">Book a 20-minute call. We run your volume through the model and give you a written implementation plan.</p>
+    <div class="actions r">
+      <a class="btn btn-primary" href="https://staging.highvolt.tech/ledgerlink/get-started" target="_blank" rel="noopener">Start free</a>
+      <a class="btn btn-ghost" href="mailto:sales@highvolt.tech">Talk to us</a>
+    </div>
+    <p class="contacts r">
+      <a href="mailto:sana@highvolt.tech">sana@highvolt.tech</a><span class="sep">·</span><a href="mailto:sithu@highvolt.tech">sithu@highvolt.tech</a><span class="sep">·</span><a href="mailto:sales@highvolt.tech">sales@highvolt.tech</a>
+    </p>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot dark">
+  <div class="wrap footin">
+    <span class="fbrand">
+      <svg class="mark" viewBox="0 0 28 28" fill="none" aria-hidden="true" focusable="false">
+        <rect x="1.75" y="1.75" width="19.5" height="24.5" rx="3.25" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M6.75 9.25h9.5M6.75 14h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        <path d="M6.75 18.75h13.5c3.2 0 5.5-2 5.5-4.75" stroke="#2FD4B5" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      Quantum Ledger Line
+    </span>
+    <span class="flinks">
+      <a href="https://highvolt.tech" target="_blank" rel="noopener">highvolt.tech</a>
+    </span>
+  </div>
+</footer>
+
+<script src="js/main.js"></script>
+<script data-pplx-inline-edit>
+(function () {
+  if (window === window.top) return;
+
+  const allowedParentOrigins = ["https://www.perplexity.ai","https://perplexity.ai","https://testing.perplexity.ai","https://staging.perplexity.ai","https://*.preview.i.perplexity.ai","http://perplexity.localhost","http://localhost:1420","http://127.0.0.1:1420","http://localhost:3000","http://127.0.0.1:3000","http://localhost:5173","http://127.0.0.1:5173"];
+  const MAX_FONT_BYTES = 500 * 1024;
+  const MAX_TOTAL_FONT_BYTES = 2 * 1024 * 1024;
+  let scrollForwarding = false;
+  let scrollRaf = 0;
+  let trustedTopOrigin = null;
+
+  // Allow entries like "https://*.preview.i.perplexity.ai" — the wildcard
+  // matches a single DNS label (no dots), so "https://*.foo" cannot stretch
+  // across multiple labels.
+  function matchesAllowedOrigin(origin) {
+    if (!origin) return false;
+    for (const entry of allowedParentOrigins) {
+      if (!entry.includes("*")) {
+        if (entry === origin) return true;
+        continue;
+      }
+      const pattern = new RegExp(
+        "^" +
+          entry.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^.]+") +
+          "$",
+      );
+      if (pattern.test(origin)) return true;
+    }
+    return false;
+  }
+
+  // Trust decision: when the sender is same-origin-visible (event.origin is a
+  // real origin like https://www.perplexity.ai) we trust event.origin directly.
+  // When event.origin is "null" (opaque broker srcdoc), we fall back to the
+  // broker's stamped `parentOrigin` to identify the top window. The fallback
+  // is claim-only — we rely on the browser's native `targetOrigin` enforcement
+  // on the response path (see postToTrustedTop) to ensure replies can't be
+  // delivered to anyone but the actual top window of that claimed origin.
+  function getTrustedParentOrigin(event) {
+    const forwardedParentOrigin =
+      typeof event.data.parentOrigin === "string" ? event.data.parentOrigin : null;
+    const parentOrigin = event.origin === "null" ? forwardedParentOrigin : event.origin;
+    return matchesAllowedOrigin(parentOrigin) ? parentOrigin : null;
+  }
+
+  // All responses go to window.top with targetOrigin = the allowlisted origin.
+  // An attacker that iframes us inside their own null-origin broker can claim
+  // any parentOrigin they like, but the browser will drop the reply whenever
+  // the real top's origin doesn't match — so the screenshot never leaves.
+  function postToTrustedTop(message) {
+    if (!trustedTopOrigin) return;
+    try {
+      window.top.postMessage(message, trustedTopOrigin);
+    } catch (_error) {}
+  }
+
+  function inlineAll(original, clone) {
+    if (original.nodeType !== 1 || clone.nodeType !== 1) return;
+
+    try {
+      const computedStyle = getComputedStyle(original);
+      // cssText on a computed style is the serialized declaration in modern
+      // Chromium/Safari — a single read beats enumerating ~400 longhand
+      // properties. Firefox returns "" here, so we fall back on empty.
+      const serialized = computedStyle.cssText;
+      if (serialized) {
+        clone.style.cssText = serialized;
+      } else {
+        const parts = new Array(computedStyle.length);
+        for (let index = 0; index < computedStyle.length; index += 1) {
+          const property = computedStyle[index];
+          parts[index] = `${property}:${computedStyle.getPropertyValue(property)};`;
+        }
+        clone.style.cssText = parts.join("");
+      }
+    } catch (_error) {}
+
+    const originalChildren = original.children;
+    const clonedChildren = clone.children;
+    for (
+      let index = 0;
+      index < originalChildren.length && index < clonedChildren.length;
+      index += 1
+    ) {
+      inlineAll(originalChildren[index], clonedChildren[index]);
+    }
+  }
+
+  function extractFontUrl(srcValue) {
+    const matches = [
+      ...srcValue.matchAll(
+        /url\(["']?([^"')]+)["']?\)(?:\s*format\(["']?([^"')]+)["']?\))?/gi,
+      ),
+    ];
+    if (matches.length === 0) return null;
+    const woff2 = matches.find((m) => m[2] && m[2].toLowerCase().includes("woff2"));
+    if (woff2) return woff2[1];
+    const woff = matches.find((m) => m[2] && m[2].toLowerCase().includes("woff"));
+    if (woff) return woff[1];
+    return matches[0][1];
+  }
+
+  // Cache resolved font URL -> data URI across captures. Fonts on a page
+  // essentially never change, and a batch run emits multiple captures back to
+  // back — without this we'd refetch + re-base64 every time.
+  const fontDataUriCache = new Map();
+  const SRC_DECLARATION_RE = /src\s*:\s*[^;}]+/i;
+
+  async function fetchAsDataUri(url) {
+    if (fontDataUriCache.has(url)) return fontDataUriCache.get(url);
+    let dataUri = null;
+    try {
+      const response = await fetch(url, { mode: "cors", credentials: "omit" });
+      if (response.ok) {
+        const blob = await response.blob();
+        if (blob.size <= MAX_FONT_BYTES) {
+          dataUri = await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () =>
+              resolve(typeof reader.result === "string" ? reader.result : null);
+            reader.onerror = () => resolve(null);
+            reader.readAsDataURL(blob);
+          });
+        }
+      }
+    } catch (_error) {
+      dataUri = null;
+    }
+    fontDataUriCache.set(url, dataUri);
+    return dataUri;
+  }
+
+  function collectFontFaceRuleTexts() {
+    const rules = [];
+    for (const sheet of document.styleSheets) {
+      let cssRules;
+      try {
+        cssRules = sheet.cssRules;
+      } catch (_error) {
+        continue;
+      }
+      if (!cssRules) continue;
+      for (const rule of cssRules) {
+        const cssText = rule.cssText || "";
+        if (cssText.startsWith("@font-face")) rules.push(cssText);
+      }
+    }
+    return rules;
+  }
+
+  async function buildInlinedFontCss() {
+    const ruleTexts = collectFontFaceRuleTexts();
+    if (ruleTexts.length === 0) return null;
+
+    const resolved = ruleTexts.map((cssText) => {
+      if (!SRC_DECLARATION_RE.test(cssText)) return null;
+      const srcMatch = cssText.match(/src\s*:\s*([^;}]+)[;}]/i);
+      if (!srcMatch) return null;
+      const url = extractFontUrl(srcMatch[1]);
+      if (!url) return null;
+      try {
+        return { cssText, url: new URL(url, document.baseURI).href };
+      } catch (_error) {
+        return null;
+      }
+    });
+
+    const dataUris = await Promise.all(
+      resolved.map((entry) => (entry ? fetchAsDataUri(entry.url) : Promise.resolve(null))),
+    );
+
+    const inlined = [];
+    let totalBytes = 0;
+    for (let index = 0; index < resolved.length; index += 1) {
+      const entry = resolved[index];
+      const dataUri = dataUris[index];
+      if (!entry || !dataUri) continue;
+      const approxBytes = dataUri.length * 0.75;
+      if (totalBytes + approxBytes > MAX_TOTAL_FONT_BYTES) break;
+      totalBytes += approxBytes;
+      inlined.push(entry.cssText.replace(SRC_DECLARATION_RE, `src: url("${dataUri}")`));
+    }
+    return inlined.length > 0 ? inlined.join("\n") : null;
+  }
+
+  function stripExternal(clone) {
+    const images = clone.querySelectorAll("img");
+    for (let index = 0; index < images.length; index += 1) {
+      const src = images[index].getAttribute("src");
+      if (src && !src.startsWith("data:")) images[index].removeAttribute("src");
+    }
+
+    const elements = clone.querySelectorAll("*");
+    for (let index = 0; index < elements.length; index += 1) {
+      const style = elements[index].style.cssText;
+      if (style && style.includes("url(")) {
+        elements[index].style.cssText = style.replace(
+          /url\(["']?(?!data:)[^)"']*["']?\)/gi,
+          "none",
+        );
+      }
+    }
+  }
+
+  function emitScroll() {
+    scrollRaf = 0;
+    if (!scrollForwarding) return;
+    postToTrustedTop({
+      type: "INLINE_EDIT_SCROLL",
+      scrollX: window.scrollX,
+      scrollY: window.scrollY,
+    });
+  }
+
+  window.addEventListener(
+    "scroll",
+    function () {
+      if (!scrollForwarding || scrollRaf) return;
+      scrollRaf = requestAnimationFrame(emitScroll);
+    },
+    { passive: true, capture: true },
+  );
+
+  async function handleCaptureRequest(event) {
+    const requestId = event.data.requestId;
+    const scrollX = window.scrollX;
+    const scrollY = window.scrollY;
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+
+    function postResult(dataUrl) {
+      postToTrustedTop({
+        type: "INLINE_EDIT_SCREENSHOT_RESULT",
+        requestId,
+        dataUrl,
+        scrollX,
+        scrollY,
+      });
+    }
+
+    try {
+      // Wait for any pending web fonts to resolve so both inline metrics and
+      // the @font-face inlining below see the same loaded faces.
+      if (document.fonts && document.fonts.ready) {
+        try {
+          await document.fonts.ready;
+        } catch (_error) {}
+      }
+
+      const clone = document.documentElement.cloneNode(true);
+      inlineAll(document.documentElement, clone);
+
+      const removedNodes = clone.querySelectorAll("script,link[rel=\"stylesheet\"],style");
+      for (let index = 0; index < removedNodes.length; index += 1) {
+        removedNodes[index].remove();
+      }
+
+      stripExternal(clone);
+
+      // Re-embed web fonts as data-URI @font-face rules so the SVG rasterizer
+      // can resolve them — external font URLs aren't fetched during
+      // foreignObject rendering, which would otherwise force a fallback face
+      // and change text metrics.
+      const inlinedFontCss = await buildInlinedFontCss();
+      if (inlinedFontCss) {
+        const styleEl = document.createElement("style");
+        styleEl.textContent = inlinedFontCss;
+        const head = clone.querySelector("head");
+        if (head) head.appendChild(styleEl);
+        else clone.insertBefore(styleEl, clone.firstChild);
+      }
+
+      const html = new XMLSerializer().serializeToString(clone);
+      const svg =
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
+        '<foreignObject width="100%" height="100%">' +
+        `<div xmlns="http://www.w3.org/1999/xhtml" style="width:${width}px;height:${height}px;overflow:hidden">` +
+        `<div style="position:relative;left:-${scrollX}px;top:-${scrollY}px">` +
+        html +
+        "</div></div></foreignObject></svg>";
+      const svgUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+      const image = new Image();
+      image.onload = function () {
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext("2d").drawImage(image, 0, 0);
+        postResult(canvas.toDataURL("image/png"));
+      };
+      image.onerror = function () {
+        postResult(null);
+      };
+      image.src = svgUrl;
+    } catch (_error) {
+      postResult(null);
+    }
+  }
+
+  window.addEventListener("message", function (event) {
+    if (!event.data) return;
+    // Only accept messages from the direct parent frame. Blocks sibling /
+    // unrelated-window postMessage senders that could otherwise reach us.
+    if (event.source !== window.parent) return;
+
+    const trustedParentOrigin = getTrustedParentOrigin(event);
+    if (!trustedParentOrigin) return;
+    trustedTopOrigin = trustedParentOrigin;
+
+    if (event.data.type === "INLINE_EDIT_SCROLL_START") {
+      scrollForwarding = true;
+      emitScroll();
+      return;
+    }
+
+    if (event.data.type === "INLINE_EDIT_SCROLL_STOP") {
+      scrollForwarding = false;
+      if (scrollRaf) cancelAnimationFrame(scrollRaf);
+      scrollRaf = 0;
+      return;
+    }
+
+    if (event.data.type !== "INLINE_EDIT_CAPTURE_REQUEST") return;
+
+    handleCaptureRequest(event);
+  });
+})();
+
+
+</script></body>
+</html>
