@@ -108,7 +108,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "$EXPECTED_SHA256  ledgerline-release.tar.gz" | sha256sum --check --status
-          grep -Eq '^[0-9a-f]{64}  ledgerline-release\.tar\.gz$' ledgerline-release.tar.gz.sha256
+          grep -Fx "$EXPECTED_SHA256  ledgerline-release.tar.gz" ledgerline-release.tar.gz.sha256
 
       - name: Validate production configuration
         env:
