@@ -1,4 +1,4 @@
-name: SMTP notification smoke test
+name: Microsoft Graph notification smoke test
 
 on:
   workflow_dispatch:
@@ -22,6 +22,9 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: Production
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Check out main without a persisted token
         uses: actions/checkout@v4
@@ -33,10 +36,8 @@ jobs:
           python-version: '3.x'
       - name: Send requested simulated notifications
         env:
-          MAIL_HOST: ${{ secrets.MAIL_HOST }}
-          MAIL_PORT: ${{ secrets.MAIL_PORT }}
-          MAIL_USERNAME: ${{ secrets.MAIL_USERNAME }}
-          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+          MAIL_TENANT_ID: ${{ vars.MAIL_TENANT_ID }}
+          MAIL_CLIENT_ID: ${{ vars.MAIL_CLIENT_ID }}
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
           SMOKE_OUTCOME: ${{ inputs.outcome }}

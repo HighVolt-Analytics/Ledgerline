@@ -166,19 +166,16 @@ jobs:
           HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
           HOSTINGER_TARGET_SUFFIX: ${{ vars.HOSTINGER_TARGET_SUFFIX }}
           HOSTINGER_PUBLIC_URL: ${{ vars.HOSTINGER_PUBLIC_URL }}
-          MAIL_HOST: ${{ secrets.MAIL_HOST }}
-          MAIL_PORT: ${{ secrets.MAIL_PORT }}
-          MAIL_USERNAME: ${{ secrets.MAIL_USERNAME }}
-          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+          MAIL_TENANT_ID: ${{ vars.MAIL_TENANT_ID }}
+          MAIL_CLIENT_ID: ${{ vars.MAIL_CLIENT_ID }}
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
         run: |
           set -euo pipefail
-          for name in HOSTINGER_HOST HOSTINGER_PORT HOSTINGER_USERNAME HOSTINGER_SSH_KEY HOSTINGER_KNOWN_HOSTS HOSTINGER_TARGET_PATH HOSTINGER_TARGET_SUFFIX HOSTINGER_PUBLIC_URL MAIL_HOST MAIL_PORT MAIL_USERNAME MAIL_PASSWORD MAIL_FROM MAIL_TO; do
+          for name in HOSTINGER_HOST HOSTINGER_PORT HOSTINGER_USERNAME HOSTINGER_SSH_KEY HOSTINGER_KNOWN_HOSTS HOSTINGER_TARGET_PATH HOSTINGER_TARGET_SUFFIX HOSTINGER_PUBLIC_URL MAIL_TENANT_ID MAIL_CLIENT_ID MAIL_FROM MAIL_TO; do
             [[ -n "${!name:-}" ]] || { echo "Missing required production setting: $name"; exit 1; }
           done
           [[ "$HOSTINGER_PORT" =~ ^[0-9]{1,5}$ ]] && (( HOSTINGER_PORT >= 1 && HOSTINGER_PORT <= 65535 ))
-          [[ "$MAIL_PORT" =~ ^[0-9]{1,5}$ ]] && (( MAIL_PORT >= 1 && MAIL_PORT <= 65535 ))
           [[ "$HOSTINGER_TARGET_PATH" == '/home/u359614291/domains/quantumledgerline.com/public_html' ]]
           [[ "$HOSTINGER_TARGET_SUFFIX" == '/domains/quantumledgerline.com/public_html' ]]
           [[ "$HOSTINGER_PUBLIC_URL" == 'https://quantumledgerline.com' ]]
@@ -339,6 +336,10 @@ jobs:
       always() && needs.build.outputs.notification_eligible == 'true'
     runs-on: ubuntu-latest
     environment: Production
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
     steps:
       - name: Check out notification helper
         uses: actions/checkout@v4
@@ -351,10 +352,8 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-          SMTP_HOST: ${{ secrets.MAIL_HOST }}
-          SMTP_PORT: ${{ secrets.MAIL_PORT }}
-          SMTP_USERNAME: ${{ secrets.MAIL_USERNAME }}
-          SMTP_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+          MAIL_TENANT_ID: ${{ vars.MAIL_TENANT_ID }}
+          MAIL_CLIENT_ID: ${{ vars.MAIL_CLIENT_ID }}
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
           BUILD_RESULT: ${{ needs.build.result }}

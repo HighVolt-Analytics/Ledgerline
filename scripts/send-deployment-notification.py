@@ -1,13 +1,12 @@
 import json
 import os
-import smtplib
-import ssl
 import sys
-import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
-from email.message import EmailMessage
+
+sys.path.insert(0, os.path.dirname(__file__))
+from send_mail_graph import send_mail
 
 
 def required(name):
@@ -82,10 +81,8 @@ def live_health():
 
 
 def main():
-    smtp_host = required("SMTP_HOST")
-    smtp_port = int(required("SMTP_PORT"))
-    username = required("SMTP_USERNAME")
-    password = required("SMTP_PASSWORD")
+    required("MAIL_TENANT_ID")
+    required("MAIL_CLIENT_ID")
     sender = required("MAIL_FROM")
     recipients = required("MAIL_TO")
     release = required("RELEASE_COMMIT")
@@ -122,33 +119,7 @@ def main():
             f"Final live homepage health: {'healthy' if healthy else 'unhealthy'}",
         ]
     )
-    message = EmailMessage()
-    message["From"] = sender
-    message["To"] = recipients
-    message["Subject"] = subject
-    message.set_content(body)
-    context = ssl.create_default_context()
-    last_error = None
-    for attempt in range(3):
-        try:
-            if smtp_port == 465:
-                with smtplib.SMTP_SSL(smtp_host, smtp_port, context=context, timeout=20) as client:
-                    client.login(username, password)
-                    client.send_message(message)
-            else:
-                with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as client:
-                    client.ehlo()
-                    client.starttls(context=context)
-                    client.ehlo()
-                    client.login(username, password)
-                    client.send_message(message)
-            break
-        except (OSError, smtplib.SMTPException) as error:
-            last_error = error
-            if attempt < 2:
-                time.sleep(2 ** attempt)
-    else:
-        raise last_error
+    send_mail(subject, body, sender, recipients)
     print("Email notification sent.")
 
 
