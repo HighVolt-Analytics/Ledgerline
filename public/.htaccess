@@ -1,7 +1,11 @@
 Options -MultiViews
+DirectoryIndex index.html
 RewriteEngine On
 RewriteBase /
+
+# Keep the built entry point, assets, deployment marker, and any real directories
+# on the normal filesystem path. React Router handles only non-file routes.
 RewriteRule ^index\.html$ - [L]
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule . /index.html [L]
+RewriteRule ^ index.html [L]

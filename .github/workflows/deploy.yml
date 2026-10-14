@@ -136,8 +136,8 @@ jobs:
             [[ -n "${!name:-}" ]] || { echo "Missing required production setting: $name"; exit 1; }
           done
           [[ "$HOSTINGER_PORT" =~ ^[0-9]{1,5}$ ]] && (( HOSTINGER_PORT >= 1 && HOSTINGER_PORT <= 65535 ))
-          [[ "$HOSTINGER_TARGET_PATH" == /* && "$HOSTINGER_TARGET_PATH" != *'..'* ]]
-          [[ "$HOSTINGER_TARGET_SUFFIX" == '/domains/quantumledgerline.com/public_html' || "$HOSTINGER_TARGET_SUFFIX" == '/public_html' ]]
+          [[ "$HOSTINGER_TARGET_PATH" == '/home/u359614291/domains/quantumledgerline.com/public_html' ]]
+          [[ "$HOSTINGER_TARGET_SUFFIX" == '/domains/quantumledgerline.com/public_html' ]]
           [[ "$HOSTINGER_PUBLIC_URL" == 'https://quantumledgerline.com' ]]
           mkdir -p ~/.ssh
           printf '%s\n' "$HOSTINGER_SSH_KEY" > ~/.ssh/hostinger_key
@@ -157,7 +157,7 @@ jobs:
           printf -v target_q '%q' "$HOSTINGER_TARGET_PATH"
           printf -v suffix_q '%q' "$HOSTINGER_TARGET_SUFFIX"
           ssh "${ssh_opts[@]}" "$HOSTINGER_USERNAME@$HOSTINGER_HOST" \
-            "set -euo pipefail; target=\$(realpath -e -- $target_q); home=\$(realpath -e -- \"\$HOME\"); suffix=$suffix_q; test -d \"\$target\"; test \"\$target\" = \"\$home\$suffix\"; test \"\$target\" != /; test \"\$target\" != \"\$home\"; test -r \"\$target\" -a -w \"\$target\"; printf '%s\\n' TARGET_OK"
+            "set -euo pipefail; target=\$(realpath -e -- $target_q); home=\$(realpath -e -- \"\$HOME\"); suffix=$suffix_q; test -d \"\$target\"; test \"\$target\" = \"\$home\$suffix\"; test \"\$target\" = '/home/u359614291/domains/quantumledgerline.com/public_html'; test \"\$target\" != /; test \"\$target\" != \"\$home\"; test -r \"\$target\" -a -w \"\$target\"; printf '%s\\n' TARGET_OK"
 
       - name: Capture and verify pre-deployment production backup
         id: snapshot
@@ -208,9 +208,25 @@ jobs:
           printf -v commit_q '%q' "$RELEASE_COMMIT"
           ssh "${ssh_opts[@]}" "$HOSTINGER_USERNAME@$HOSTINGER_HOST" \
             "grep -Fx 'Commit: '$commit_q $target_q/deploy-info.txt"
-          curl --fail --show-error --silent --retry 3 --retry-delay 5 "$HOSTINGER_PUBLIC_URL/" -o /dev/null
+          [[ "$HOSTINGER_TARGET_PATH" == '/home/u359614291/domains/quantumledgerline.com/public_html' ]]
+          mkdir -p "$RUNNER_TEMP/ledgerline-release-check"
+          tar -xzf ledgerline-release.tar.gz -C "$RUNNER_TEMP/ledgerline-release-check"
+          index_file="$RUNNER_TEMP/ledgerline-release-check/index.html"
+          test -s "$index_file"
+          grep -Fq '<div id="root"></div>' "$index_file"
+          mapfile -t static_assets < <(grep -oE '(src|href)="/assets/[^" ]+"' "$index_file" | cut -d '"' -f2 | sort -u)
+          ((${#static_assets[@]} > 0))
+          curl --fail --show-error --silent --retry 3 --retry-delay 5 "$HOSTINGER_PUBLIC_URL/" -o /tmp/ledgerline-home.html
+          grep -Fq '<div id="root"></div>' /tmp/ledgerline-home.html
           curl --fail --show-error --silent --retry 3 --retry-delay 5 "$HOSTINGER_PUBLIC_URL/deploy-info.txt" -o /tmp/deploy-info.txt
           grep -Fx "Commit: $RELEASE_COMMIT" /tmp/deploy-info.txt
+          for route in interactive-tour resources; do
+            curl --fail --show-error --silent --retry 3 --retry-delay 5 "$HOSTINGER_PUBLIC_URL/$route" -o "/tmp/ledgerline-$route.html"
+            grep -Fq '<div id="root"></div>' "/tmp/ledgerline-$route.html"
+          done
+          for asset in "${static_assets[@]}"; do
+            curl --fail --show-error --silent --retry 3 --retry-delay 5 "$HOSTINGER_PUBLIC_URL$asset" -o /dev/null
+          done
 
       - name: Restore pre-deployment snapshot after a release failure
         if: failure() && steps.snapshot.outcome == 'success'
@@ -219,14 +235,18 @@ jobs:
           HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
           HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
           HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
+          HOSTINGER_TARGET_SUFFIX: ${{ vars.HOSTINGER_TARGET_SUFFIX }}
           BACKUP_NAME: ${{ steps.snapshot.outputs.backup_name }}
           HOSTINGER_PUBLIC_URL: ${{ vars.HOSTINGER_PUBLIC_URL }}
         run: |
           set -euo pipefail
           [[ "$BACKUP_NAME" =~ ^backup-[0-9]{8}-[0-9]{6}-[0-9]+-[a-f0-9]{40}\.tar\.gz$ ]]
+          [[ "$HOSTINGER_TARGET_PATH" == '/home/u359614291/domains/quantumledgerline.com/public_html' ]]
+          [[ "$HOSTINGER_TARGET_SUFFIX" == '/domains/quantumledgerline.com/public_html' ]]
           ssh_opts=(-o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=30 -i ~/.ssh/hostinger_key -p "$HOSTINGER_PORT")
           printf -v target_q '%q' "$HOSTINGER_TARGET_PATH"
+          printf -v suffix_q '%q' "$HOSTINGER_TARGET_SUFFIX"
           printf -v backup_q '%q' "$BACKUP_NAME"
           ssh "${ssh_opts[@]}" "$HOSTINGER_USERNAME@$HOSTINGER_HOST" \
-            "set -euo pipefail; target=$target_q; archive=\"\$HOME/deployment_backups/ledgerline-production/$backup_q\"; test -f \"\$archive\"; tar -tzf \"\$archive\" >/dev/null; tar -xzf \"\$archive\" -C \"\$target\" --no-same-owner --no-same-permissions"
+            "set -euo pipefail; target=\$(realpath -e -- $target_q); home=\$(realpath -e -- \"\$HOME\"); suffix=$suffix_q; archive=\"\$HOME/deployment_backups/ledgerline-production/$backup_q\"; test \"\$target\" = \"\$home\$suffix\"; test \"\$target\" = '/home/u359614291/domains/quantumledgerline.com/public_html'; test \"\$target\" != /; test \"\$target\" != \"\$home\"; test -f \"\$archive\"; tar -tzf \"\$archive\" >/dev/null; tar -tvzf \"\$archive\" | awk '\$1 !~ /^[-d]/ {bad=1} END {exit bad}'; find \"\$target\" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; tar -xzf \"\$archive\" -C \"\$target\" --no-same-owner --no-same-permissions; test -s \"\$target/index.html\"; test -s \"\$target/deploy-info.txt\""
           curl --fail --show-error --silent --retry 3 --retry-delay 5 "$HOSTINGER_PUBLIC_URL/" -o /dev/null
