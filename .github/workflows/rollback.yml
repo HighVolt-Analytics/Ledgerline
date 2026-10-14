@@ -1,0 +1,104 @@
+name: Rollback Ledgerline on Hostinger
+
+on:
+  workflow_dispatch:
+    inputs:
+      backup_file:
+        description: Backup filename from the Hostinger deployment_backups/ledgerline-production directory
+        required: true
+        type: string
+      confirm_restore:
+        description: Type RESTORE to confirm this production rollback
+        required: true
+        type: string
+
+concurrency:
+  group: deploy-ledgerline-production
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    name: Restore a verified Hostinger backup
+    runs-on: ubuntu-latest
+    environment: Production
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+
+    steps:
+      - name: Validate rollback request
+        env:
+          BACKUP_FILE: ${{ inputs.backup_file }}
+          CONFIRM_RESTORE: ${{ inputs.confirm_restore }}
+          HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
+        run: |
+          set -euo pipefail
+          if [[ "$CONFIRM_RESTORE" != "RESTORE" ]]; then
+            echo "Type RESTORE to confirm the rollback"
+            exit 1
+          fi
+          if [[ ! "$BACKUP_FILE" =~ ^backup-[0-9]{8}-[0-9]{6}(-pre-rollback)?\.tar\.gz$ ]]; then
+            echo "Backup filename does not match an allowed deployment backup name"
+            exit 1
+          fi
+          if [[ "$HOSTINGER_TARGET_PATH" != /* || "$HOSTINGER_TARGET_PATH" == *..* ]]; then
+            echo "HOSTINGER_TARGET_PATH must be an absolute path without parent traversal"
+            exit 1
+          fi
+
+      - name: Prepare SSH key and trusted host
+        env:
+          HOSTINGER_SSH_KEY: ${{ secrets.HOSTINGER_SSH_KEY }}
+          HOSTINGER_KNOWN_HOSTS: ${{ secrets.HOSTINGER_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          for name in HOSTINGER_SSH_KEY HOSTINGER_KNOWN_HOSTS; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required production secret: $name"
+              exit 1
+            fi
+          done
+          mkdir -p ~/.ssh
+          printf '%s\n' "$HOSTINGER_SSH_KEY" > ~/.ssh/hostinger_key
+          printf '%s\n' "$HOSTINGER_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/hostinger_key
+
+      - name: Verify backup and restore without deleting server data
+        env:
+          HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
+          HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
+          HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
+          HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
+          BACKUP_FILE: ${{ inputs.backup_file }}
+        run: |
+          set -euo pipefail
+          for name in HOSTINGER_HOST HOSTINGER_PORT HOSTINGER_USERNAME HOSTINGER_TARGET_PATH; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required production value: $name"
+              exit 1
+            fi
+          done
+          SSH_OPTS="-o StrictHostKeyChecking=yes -o ConnectTimeout=45 -i ~/.ssh/hostinger_key -p $HOSTINGER_PORT"
+          printf -v TARGET_Q '%q' "$HOSTINGER_TARGET_PATH"
+          printf -v BACKUP_Q '%q' "$BACKUP_FILE"
+          ssh $SSH_OPTS "$HOSTINGER_USERNAME@$HOSTINGER_HOST" "set -euo pipefail; target=$TARGET_Q; archive=\"\$HOME/deployment_backups/ledgerline-production/$BACKUP_Q\"; real_target=\$(realpath -- \"\$target\"); real_home=\$(realpath -- \"\$HOME\"); case \"\$real_target\" in /|\"\$real_home\"|\"\$real_home/\") echo 'Refusing unsafe target'; exit 1;; esac; test -d \"\$target\" && test -w \"\$target\"; test -f \"\$archive\"; tar -tzf \"\$archive\" >/dev/null; tar -tzf \"\$archive\" | grep -Eq '(^|/)deploy-info.txt$'; stamp=\$(date +%Y%m%d-%H%M%S); tar -czf \"\$HOME/deployment_backups/ledgerline-production/backup-\$stamp-pre-rollback.tar.gz\" -C \"\$target\" .; tar -xzf \"\$archive\" -C \"\$target\"; test -s \"\$target/deploy-info.txt\"; echo 'Restored deployment marker:'; sed -n 's/^Commit: //p' \"\$target/deploy-info.txt\""
+
+      - name: Verify public rollback marker
+        env:
+          HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
+          HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
+          HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
+          HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-o StrictHostKeyChecking=yes -o ConnectTimeout=45 -i ~/.ssh/hostinger_key -p $HOSTINGER_PORT"
+          printf -v TARGET_Q '%q' "$HOSTINGER_TARGET_PATH"
+          EXPECTED_COMMIT=$(ssh $SSH_OPTS "$HOSTINGER_USERNAME@$HOSTINGER_HOST" "sed -n 's/^Commit: //p' $TARGET_Q/deploy-info.txt | head -n 1")
+          if [ -z "$EXPECTED_COMMIT" ]; then
+            echo "Restored marker does not identify a commit"
+            exit 1
+          fi
+          curl --fail --show-error --silent --retry 5 --retry-delay 10 https://quantumledgerline.com/deploy-info.txt -o /tmp/deploy-info.txt
+          grep -F "Commit: $EXPECTED_COMMIT" /tmp/deploy-info.txt
+          echo "Public domain serves rollback commit $EXPECTED_COMMIT"

@@ -1,10 +1,18 @@
-name: Deploy to Hostinger
+name: Deploy Ledgerline to Hostinger
 
-run-name: Deploy Quantum Ledgerline by ${{ inputs.deployer_email || github.actor }}
+run-name: Deploy Ledgerline (${{ inputs.target || 'staging' }}) by ${{ inputs.deployer_email || github.actor }}
 
 on:
   workflow_dispatch:
     inputs:
+      target:
+        description: Deployment environment
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+        default: staging
       deployer_email:
         description: "Email of the user who triggered deployment"
         required: false
@@ -17,18 +25,19 @@ on:
         description: "Source system"
         required: false
         default: "GitHub"
-  push:
-    branches:
-      - main
 
 concurrency:
-  group: deploy-quantum-ledgerline-production
+  group: deploy-ledgerline-${{ inputs.target || 'staging' }}
   cancel-in-progress: false
 
 jobs:
   deploy:
-    name: Build and Deploy Quantum Ledgerline
+    name: Build and Deploy Ledgerline
     runs-on: ubuntu-latest
+    environment: ${{ inputs.target == 'production' && 'Production' || 'ledgerlink-staging' }}
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout latest code
@@ -37,15 +46,10 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Install dependencies
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm install
-          fi
+        run: npm ci
 
       - name: Build project
         run: npm run build
@@ -58,7 +62,7 @@ jobs:
         run: |
           echo "Deployed from GitHub Actions" > dist/deploy-info.txt
           echo "Website: Quantum Ledgerline" >> dist/deploy-info.txt
-          echo "Domain: quantumledgerlink.com" >> dist/deploy-info.txt
+          echo "Domain: quantumledgerline.com" >> dist/deploy-info.txt
           echo "Commit: $GITHUB_SHA" >> dist/deploy-info.txt
           echo "Time UTC: $(date -u)" >> dist/deploy-info.txt
           echo "Deployed by: $DEPLOYER_EMAIL" >> dist/deploy-info.txt
@@ -66,49 +70,63 @@ jobs:
           echo "Triggered from: $TRIGGERED_FROM" >> dist/deploy-info.txt
 
       - name: Validate Hostinger secrets
+        env:
+          TARGET: ${{ inputs.target }}
+          HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
+          HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
+          HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
+          HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
+          HOSTINGER_SSH_KEY: ${{ secrets.HOSTINGER_SSH_KEY }}
+          HOSTINGER_KNOWN_HOSTS: ${{ secrets.HOSTINGER_KNOWN_HOSTS }}
+          HOSTINGER_PUBLIC_URL: ${{ vars.HOSTINGER_PUBLIC_URL }}
         run: |
-          if [ -z "${{ secrets.HOSTINGER_HOST }}" ]; then
-            echo "Missing secret: HOSTINGER_HOST"
+          set -euo pipefail
+          if [[ "$TARGET" != "staging" && "$TARGET" != "production" ]]; then
+            echo "Unsupported deployment target"
             exit 1
           fi
-
-          if [ -z "${{ secrets.HOSTINGER_PORT }}" ]; then
-            echo "Missing secret: HOSTINGER_PORT"
-            exit 1
-          fi
-
-          if [ -z "${{ secrets.HOSTINGER_USERNAME }}" ]; then
-            echo "Missing secret: HOSTINGER_USERNAME"
-            exit 1
-          fi
-
-          if [ -z "${{ secrets.HOSTINGER_TARGET_PATH }}" ]; then
-            echo "Missing secret: HOSTINGER_TARGET_PATH"
-            exit 1
-          fi
-
-          if [ -z "${{ secrets.HOSTINGER_SSH_KEY }}" ]; then
-            echo "Missing secret: HOSTINGER_SSH_KEY"
-            exit 1
-          fi
+          for name in HOSTINGER_HOST HOSTINGER_PORT HOSTINGER_USERNAME HOSTINGER_TARGET_PATH HOSTINGER_SSH_KEY HOSTINGER_KNOWN_HOSTS HOSTINGER_PUBLIC_URL; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required Hostinger setting: $name"
+              exit 1
+            fi
+          done
+          case "$HOSTINGER_TARGET_PATH" in
+            /*) ;;
+            *) echo "HOSTINGER_TARGET_PATH must be an absolute path"; exit 1 ;;
+          esac
+          case "$HOSTINGER_TARGET_PATH" in
+            *..*) echo "HOSTINGER_TARGET_PATH must not contain parent traversal"; exit 1 ;;
+          esac
+          case "$HOSTINGER_PUBLIC_URL" in
+            https://*) ;;
+            *) echo "HOSTINGER_PUBLIC_URL must use HTTPS"; exit 1 ;;
+          esac
 
           echo "All required Hostinger secrets are present"
 
       - name: Prepare SSH key
+        env:
+          HOSTINGER_SSH_KEY: ${{ secrets.HOSTINGER_SSH_KEY }}
+          HOSTINGER_KNOWN_HOSTS: ${{ secrets.HOSTINGER_KNOWN_HOSTS }}
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.HOSTINGER_SSH_KEY }}" > ~/.ssh/hostinger_key
+          printf '%s\n' "$HOSTINGER_SSH_KEY" > ~/.ssh/hostinger_key
+          printf '%s\n' "$HOSTINGER_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/hostinger_key
-          ssh-keyscan -T 20 -p "${{ secrets.HOSTINGER_PORT }}" "${{ secrets.HOSTINGER_HOST }}" >> ~/.ssh/known_hosts || true
 
       - name: Test SSH connection with retry
+        env:
+          HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
+          HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
+          HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
         run: |
-          SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=45 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -i ~/.ssh/hostinger_key -p ${{ secrets.HOSTINGER_PORT }}"
+          SSH_OPTS="-o StrictHostKeyChecking=yes -o ConnectTimeout=45 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -i ~/.ssh/hostinger_key -p $HOSTINGER_PORT"
 
           for attempt in 1 2 3 4 5; do
             echo "SSH connection attempt $attempt of 5"
 
-            if ssh $SSH_OPTS "${{ secrets.HOSTINGER_USERNAME }}@${{ secrets.HOSTINGER_HOST }}" "echo SSH connection successful"; then
+            if ssh $SSH_OPTS "$HOSTINGER_USERNAME@$HOSTINGER_HOST" "echo SSH connection successful"; then
               echo "SSH connection verified"
               exit 0
             fi
@@ -120,53 +138,33 @@ jobs:
           echo "SSH connection failed after 5 attempts"
           exit 1
 
-      - name: Backup existing public_html
-        continue-on-error: true
+      - name: Back up existing website before replacement
+        env:
+          TARGET: ${{ inputs.target }}
+          HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
+          HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
+          HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
+          HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
         run: |
-          SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=45 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -i ~/.ssh/hostinger_key -p ${{ secrets.HOSTINGER_PORT }}"
-
-          for attempt in 1 2 3; do
-            echo "Backup attempt $attempt of 3"
-
-            if ssh $SSH_OPTS "${{ secrets.HOSTINGER_USERNAME }}@${{ secrets.HOSTINGER_HOST }}" "mkdir -p ~/deployment_backups/quantumledgerlink.com && tar -czf ~/deployment_backups/quantumledgerlink.com/backup-$(date +%Y%m%d-%H%M%S).tar.gz -C '${{ secrets.HOSTINGER_TARGET_PATH }}' . || true"; then
-              echo "Backup completed"
-              exit 0
-            fi
-
-            echo "Backup failed. Waiting before retry..."
-            sleep 20
-          done
-
-          echo "Backup skipped after retry attempts"
-          exit 0
-
-      - name: Clean old website files safely
-        run: |
-          SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=45 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -i ~/.ssh/hostinger_key -p ${{ secrets.HOSTINGER_PORT }}"
-
-          for attempt in 1 2 3 4 5; do
-            echo "Clean attempt $attempt of 5"
-
-            if ssh $SSH_OPTS "${{ secrets.HOSTINGER_USERNAME }}@${{ secrets.HOSTINGER_HOST }}" "find '${{ secrets.HOSTINGER_TARGET_PATH }}' -mindepth 1 -maxdepth 1 ! -name '.htaccess' ! -name 'api' -exec rm -rf {} +"; then
-              echo "Remote clean completed"
-              exit 0
-            fi
-
-            echo "Remote clean failed. Waiting before retry..."
-            sleep 30
-          done
-
-          echo "Remote clean failed after 5 attempts"
-          exit 1
+          set -euo pipefail
+          SSH_OPTS="-o StrictHostKeyChecking=yes -o ConnectTimeout=45 -i ~/.ssh/hostinger_key -p $HOSTINGER_PORT"
+          printf -v REMOTE_PATH_Q '%q' "$HOSTINGER_TARGET_PATH"
+          BACKUP_LABEL="ledgerline-$TARGET"
+          ssh $SSH_OPTS "$HOSTINGER_USERNAME@$HOSTINGER_HOST" "set -e; test -d $REMOTE_PATH_Q; mkdir -p \"\$HOME/deployment_backups/$BACKUP_LABEL\"; tar -czf \"\$HOME/deployment_backups/$BACKUP_LABEL/backup-\$(date +%Y%m%d-%H%M%S).tar.gz\" -C $REMOTE_PATH_Q ."
 
       - name: Upload dist to Hostinger
+        env:
+          HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
+          HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
+          HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
+          HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
         run: |
-          SCP_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=45 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -i ~/.ssh/hostinger_key -P ${{ secrets.HOSTINGER_PORT }}"
+          SCP_OPTS="-o StrictHostKeyChecking=yes -o ConnectTimeout=45 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -i ~/.ssh/hostinger_key -P $HOSTINGER_PORT"
 
           for attempt in 1 2 3 4 5; do
             echo "Upload attempt $attempt of 5"
 
-            if scp $SCP_OPTS -r dist/* "${{ secrets.HOSTINGER_USERNAME }}@${{ secrets.HOSTINGER_HOST }}:${{ secrets.HOSTINGER_TARGET_PATH }}/"; then
+            if scp $SCP_OPTS -r dist/* "$HOSTINGER_USERNAME@$HOSTINGER_HOST:$HOSTINGER_TARGET_PATH/"; then
               echo "Upload completed"
               exit 0
             fi
@@ -179,13 +177,19 @@ jobs:
           exit 1
 
       - name: Verify remote deployment
+        env:
+          HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
+          HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
+          HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
+          HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
         run: |
-          SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=45 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -i ~/.ssh/hostinger_key -p ${{ secrets.HOSTINGER_PORT }}"
+          SSH_OPTS="-o StrictHostKeyChecking=yes -o ConnectTimeout=45 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -i ~/.ssh/hostinger_key -p $HOSTINGER_PORT"
+          printf -v REMOTE_PATH_Q '%q' "$HOSTINGER_TARGET_PATH"
 
           for attempt in 1 2 3 4 5; do
             echo "Verify attempt $attempt of 5"
 
-            if ssh $SSH_OPTS "${{ secrets.HOSTINGER_USERNAME }}@${{ secrets.HOSTINGER_HOST }}" "cd '${{ secrets.HOSTINGER_TARGET_PATH }}' && pwd && ls -lah && echo '--- deploy marker ---' && cat deploy-info.txt"; then
+            if ssh $SSH_OPTS "$HOSTINGER_USERNAME@$HOSTINGER_HOST" "cd $REMOTE_PATH_Q && pwd && ls -lah && echo '--- deploy marker ---' && cat deploy-info.txt"; then
               echo "Verification completed"
               exit 0
             fi
@@ -198,4 +202,11 @@ jobs:
           exit 1
 
       - name: Deployment completed
-        run: echo "Quantum Ledgerline deployed successfully"
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          HOSTINGER_PUBLIC_URL: ${{ vars.HOSTINGER_PUBLIC_URL }}
+        run: |
+          set -euo pipefail
+          curl --fail --show-error --silent --retry 5 --retry-delay 10 "$HOSTINGER_PUBLIC_URL/deploy-info.txt" -o /tmp/deploy-info.txt
+          grep -F "Commit: $GITHUB_SHA" /tmp/deploy-info.txt
+          echo "Quantum Ledgerline deployment and live commit verified"

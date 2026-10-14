@@ -1075,8 +1075,8 @@ export default function QuantumLedgerLinkPage() {
             High Volt Analytics
           </span>
           <span className="flinks">
-            <a href="https://quantumledgerlink.com" target="_blank" rel="noopener noreferrer">
-              quantumledgerlink.com
+            <a href="https://quantumledgerline.com" target="_blank" rel="noopener noreferrer">
+              quantumledgerline.com
             </a>
             <a href="https://highvolt.tech" target="_blank" rel="noopener noreferrer">
               highvolt.tech
