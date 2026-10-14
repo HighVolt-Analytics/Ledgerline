@@ -2,9 +2,9 @@
 
 ## Release controls
 
-The Hostinger workflow is manual-only and accepts only `main`, an exact commit equal to the dispatched `main` commit, and the typed `DEPLOY` confirmation. It builds the static marketing site, packages it as a run-scoped immutable GitHub Actions artifact, records a SHA-256 checksum, and then waits at the GitHub `Production` environment before any SSH operation. A repository variable named `LEDGERLINE_PRODUCTION_CUTOVER_ENABLED` must also be exactly `true`.
+The Hostinger workflow preserves the legacy `push` to `main` trigger and manual dispatch. Both require the `main` ref and the repository variable `LEDGERLINE_PRODUCTION_CUTOVER_ENABLED=true`. Automatic pushes additionally require `LEDGERLINE_AUTOMATIC_DEPLOY_ENABLED=true`; both variables are unset/false by default, so merging workflow files cannot deploy. Manual dispatch additionally requires an exact commit equal to the dispatched `main` commit and the typed `DEPLOY` confirmation. The workflow builds the static marketing site, packages it as a run-scoped immutable GitHub Actions artifact, records a SHA-256 checksum, and then enters the GitHub `Production` environment before any SSH operation.
 
-The `Production` environment is branch-restricted to `main`. Required reviewers are not configured yet; select an independent reviewer in GitHub before enabling the production gate. The separate `rollback.yml` workflow remains manual-only and requires `RESTORE` plus a named backup.
+The `Production` environment is branch-restricted to `main`. No independent reviewer is configured, matching the last successful legacy deployment, which had no reviewer gate. The separate `rollback.yml` workflow remains manual-only and requires `RESTORE` plus a named backup.
 
 No staging website will be created. This is **WAIVED BY OWNER — DIRECT PRODUCTION MIGRATION**. Direct production deployment has greater risk because the build will not have been exercised against an isolated Hostinger site.
 
@@ -20,12 +20,16 @@ Production secrets:
 - `HOSTINGER_SSH_KEY` — dedicated Ledgerline key preferred
 - `HOSTINGER_KNOWN_HOSTS` — the accepted host key, using strict SSH verification
 
-Production variables:
+Repository-level release gates (leave unset or `false` until separately approved):
 
-- `HOSTINGER_TARGET_PATH` — exact canonical document root after Hostinger's domain change
-- `HOSTINGER_TARGET_SUFFIX` — must be the verified domain root suffix `/domains/quantumledgerline.com/public_html` or `/public_html`
-- `HOSTINGER_PUBLIC_URL` — exactly `https://quantumledgerline.com`
-- `LEDGERLINE_PRODUCTION_CUTOVER_ENABLED` — leave unset or `false` until the cutover gate is approved
+- `LEDGERLINE_PRODUCTION_CUTOVER_ENABLED` - enables the manual production path after the owner approves cutover
+- `LEDGERLINE_AUTOMATIC_DEPLOY_ENABLED` - separately enables deployments on pushes to `main`
+
+Production environment variables:
+
+- `HOSTINGER_TARGET_PATH` - exact canonical document root after Hostinger's domain change
+- `HOSTINGER_TARGET_SUFFIX` - must be the verified domain root suffix `/domains/quantumledgerline.com/public_html` or `/public_html`
+- `HOSTINGER_PUBLIC_URL` - exactly `https://quantumledgerline.com`
 
 The workflow resolves the configured target with `realpath -e` and requires an exact match between the canonical target and the SSH home plus the approved suffix. It creates a private, timestamped snapshot of the target before overlaying the release. It does not recursively delete files, so unrelated and persistent files are preserved; old hashed assets can remain after a release.
 

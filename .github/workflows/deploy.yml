@@ -1,8 +1,10 @@
 name: Deploy Ledgerline to Hostinger
 
-run-name: Ledgerline production release ${{ inputs.release_commit }} by ${{ github.actor }}
+run-name: Ledgerline production release ${{ inputs.release_commit || github.sha }} by ${{ github.actor }}
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       release_commit:
@@ -27,21 +29,24 @@ jobs:
     runs-on: ubuntu-latest
     if: >-
       github.ref == 'refs/heads/main' &&
-      inputs.confirm_production == 'DEPLOY' &&
-      inputs.release_commit == github.sha &&
-      vars.LEDGERLINE_PRODUCTION_CUTOVER_ENABLED == 'true'
+      vars.LEDGERLINE_PRODUCTION_CUTOVER_ENABLED == 'true' &&
+      ((github.event_name == 'workflow_dispatch' &&
+        inputs.confirm_production == 'DEPLOY' &&
+        inputs.release_commit == github.sha) ||
+       (github.event_name == 'push' &&
+        vars.LEDGERLINE_AUTOMATIC_DEPLOY_ENABLED == 'true'))
     outputs:
       artifact_sha256: ${{ steps.package.outputs.sha256 }}
     steps:
       - name: Check out requested source commit
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release_commit }}
+          ref: ${{ inputs.release_commit || github.sha }}
           persist-credentials: false
 
       - name: Verify source commit is the dispatched main commit
         env:
-          REQUESTED_COMMIT: ${{ inputs.release_commit }}
+          REQUESTED_COMMIT: ${{ inputs.release_commit || github.sha }}
           DISPATCHED_COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
@@ -63,7 +68,7 @@ jobs:
 
       - name: Add deployment marker
         env:
-          RELEASE_COMMIT: ${{ inputs.release_commit }}
+          RELEASE_COMMIT: ${{ inputs.release_commit || github.sha }}
         run: |
           set -euo pipefail
           printf 'Website: Quantum Ledgerline\nCommit: %s\n' "$RELEASE_COMMIT" > dist/deploy-info.txt
@@ -79,7 +84,7 @@ jobs:
       - name: Store immutable run artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ledgerline-${{ inputs.release_commit }}-${{ steps.package.outputs.sha256 }}
+          name: ledgerline-${{ inputs.release_commit || github.sha }}-${{ steps.package.outputs.sha256 }}
           path: |
             ledgerline-release.tar.gz
             ledgerline-release.tar.gz.sha256
@@ -93,14 +98,17 @@ jobs:
     environment: Production
     if: >-
       github.ref == 'refs/heads/main' &&
-      inputs.confirm_production == 'DEPLOY' &&
-      inputs.release_commit == github.sha &&
-      vars.LEDGERLINE_PRODUCTION_CUTOVER_ENABLED == 'true'
+      vars.LEDGERLINE_PRODUCTION_CUTOVER_ENABLED == 'true' &&
+      ((github.event_name == 'workflow_dispatch' &&
+        inputs.confirm_production == 'DEPLOY' &&
+        inputs.release_commit == github.sha) ||
+       (github.event_name == 'push' &&
+        vars.LEDGERLINE_AUTOMATIC_DEPLOY_ENABLED == 'true'))
     steps:
       - name: Download immutable release artifact
         uses: actions/download-artifact@v4
         with:
-          name: ledgerline-${{ inputs.release_commit }}-${{ needs.build.outputs.artifact_sha256 }}
+          name: ledgerline-${{ inputs.release_commit || github.sha }}-${{ needs.build.outputs.artifact_sha256 }}
 
       - name: Verify artifact checksum
         env:
@@ -156,7 +164,7 @@ jobs:
           HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
           HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
           HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
-          RELEASE_COMMIT: ${{ inputs.release_commit }}
+          RELEASE_COMMIT: ${{ inputs.release_commit || github.sha }}
         run: |
           set -euo pipefail
           ssh_opts=(-o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=30 -i ~/.ssh/hostinger_key -p "$HOSTINGER_PORT")
@@ -190,7 +198,7 @@ jobs:
           HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
           HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
           HOSTINGER_PUBLIC_URL: ${{ vars.HOSTINGER_PUBLIC_URL }}
-          RELEASE_COMMIT: ${{ inputs.release_commit }}
+          RELEASE_COMMIT: ${{ inputs.release_commit || github.sha }}
         run: |
           set -euo pipefail
           ssh_opts=(-o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=30 -i ~/.ssh/hostinger_key -p "$HOSTINGER_PORT")
