@@ -283,6 +283,10 @@ jobs:
             curl --fail --show-error --silent --retry 3 --retry-delay 5 "$HOSTINGER_PUBLIC_URL/$route" -o "/tmp/ledgerline-$route.html"
             grep -Fq '<div id="root"></div>' "/tmp/ledgerline-$route.html"
           done
+          curl --fail --show-error --silent --retry 3 --retry-delay 5 "$HOSTINGER_PUBLIC_URL/robots.txt" -o /tmp/ledgerline-robots.txt
+          grep -Fq 'User-agent:' /tmp/ledgerline-robots.txt
+          curl --fail --show-error --silent --retry 3 --retry-delay 5 "$HOSTINGER_PUBLIC_URL/sitemap.xml" -o /tmp/ledgerline-sitemap.xml
+          grep -Eq '<urlset|<sitemapindex' /tmp/ledgerline-sitemap.xml
           for asset in "${static_assets[@]}"; do
             curl --fail --show-error --silent --retry 3 --retry-delay 5 "$HOSTINGER_PUBLIC_URL$asset" -o /dev/null
           done
