@@ -16,12 +16,17 @@ HEALTH_SCRIPT = ROOT / "scripts" / "verify-deployed-health.sh"
 EXPECTED_COMMIT = "2d63c76fbe09b6cdd2d7ac3b0775bc442d7f14a2"
 STALE_COMMIT = "31f80592b385eabfc559e12b23e52d3b9da9b811"
 ROOT_SHELL = b"<!doctype html><html><body><div id=\"root\"></div>"
+JS_BODY = b"const app = true;"
+CSS_BODY = b"body{color:#000}"
+ROBOTS_BODY = b"User-agent: *\nAllow: /\n"
+SITEMAP_BODY = b"<urlset></urlset>"
 
 
 class FixtureServer(ThreadingHTTPServer):
     daemon_threads = True
     mode = "healthy"
     marker_calls = 0
+    request_count = 0
 
 
 class FixtureHandler(BaseHTTPRequestHandler):
@@ -36,10 +41,16 @@ class FixtureHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        self.server.request_count += 1
         path = urlsplit(self.path).path
         if self.server.mode == "redirect_home" and path == "/":
             self.send_response(302)
             self.send_header("Location", "/unexpected/")
+            self.end_headers()
+            return
+        if self.server.mode == "redirect_cross_origin" and path == "/":
+            self.send_response(302)
+            self.send_header("Location", f"http://localhost:{self.server.server_port}/")
             self.end_headers()
             return
         if path == "/deploy-info.txt":
@@ -52,18 +63,22 @@ class FixtureHandler(BaseHTTPRequestHandler):
                 body = f"Website: Quantum Ledgerline\nCommit: {EXPECTED_COMMIT}\n".encode()
             self.send_body(body, "text/plain")
         elif path == "/robots.txt":
-            self.send_body(b"User-agent: *\nAllow: /\n", "text/plain")
+            self.send_body(ROBOTS_BODY, "text/plain")
         elif path == "/sitemap.xml":
-            self.send_body(b"<urlset></urlset>", "application/xml")
+            self.send_body(SITEMAP_BODY, "application/xml")
         elif path == "/assets/app.js":
-            self.send_body(b"const app = true;", "application/x-javascript")
+            body = b"const unexpected_app = true;" if self.server.mode == "asset_mismatch" else JS_BODY
+            self.send_body(body, "application/x-javascript")
         elif path == "/assets/app.css":
-            self.send_body(b"body{color:#000}", "text/css")
+            self.send_body(CSS_BODY, "text/css")
         elif path == "/assets/missing.js":
             # Model the Hostinger .htaccess SPA fallback for a missing file.
             self.send_body(ROOT_SHELL, "text/html")
         else:
-            self.send_body(ROOT_SHELL, "text/html")
+            body = self.server.index_body
+            if self.server.mode == "index_mismatch":
+                body += b"<!-- stale cached index -->"
+            self.send_body(body, "text/html")
 
 
 class DeployedHealthTests(unittest.TestCase):
@@ -72,6 +87,9 @@ class DeployedHealthTests(unittest.TestCase):
         cls.bash = os.environ.get("BASH_BIN") or shutil.which("bash")
         if not cls.bash:
             raise unittest.SkipTest("bash is required for deployment-health tests")
+        probe = subprocess.run([cls.bash, "-c", "exit 0"], capture_output=True, check=False, timeout=5)
+        if probe.returncode != 0:
+            raise unittest.SkipTest("a working Bash runtime is required for deployment-health tests")
         cls.server = FixtureServer(("127.0.0.1", 0), FixtureHandler)
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
@@ -87,13 +105,23 @@ class DeployedHealthTests(unittest.TestCase):
     def setUp(self):
         self.server.mode = "healthy"
         self.server.marker_calls = 0
+        self.server.request_count = 0
         self.temp_dir = tempfile.TemporaryDirectory()
         self.index = Path(self.temp_dir.name) / "index.html"
-        self.index.write_text(
-            '<div id="root"></div><script src="/assets/app.js"></script>'
-            '<link href="/assets/app.css">',
-            encoding="utf-8",
+        self.server.index_body = (
+            b'<!doctype html><div id="root"></div><script src="/assets/app.js"></script>'
+            b'<link href="/assets/app.css">'
         )
+        self.index.write_bytes(self.server.index_body)
+        (self.index.parent / "deploy-info.txt").write_text(
+            f"Website: Quantum Ledgerline\nCommit: {EXPECTED_COMMIT}\n", encoding="utf-8"
+        )
+        (self.index.parent / "robots.txt").write_bytes(ROBOTS_BODY)
+        (self.index.parent / "sitemap.xml").write_bytes(SITEMAP_BODY)
+        assets = self.index.parent / "assets"
+        assets.mkdir()
+        (assets / "app.js").write_bytes(JS_BODY)
+        (assets / "app.css").write_bytes(CSS_BODY)
 
     def tearDown(self):
         self.temp_dir.cleanup()
@@ -119,7 +147,7 @@ class DeployedHealthTests(unittest.TestCase):
     def test_healthy_release_routes_marker_and_assets_pass(self):
         result = self.run_health()
         self.assertEqual(result.returncode, 0, result.stderr)
-        for stage in ("public_home", "public_marker", "spa_interactive_tour", "spa_resources", "robots", "sitemap", "static_assets"):
+        for stage in ("public_home", "public_marker", "spa_interactive_tour", "spa_resources", "marketing_spectra", "robots", "sitemap", "static_assets"):
             self.assertIn(f"HEALTH_OK stage={stage}", result.stdout)
 
     def test_stale_marker_is_retried_then_passes(self):
@@ -137,7 +165,9 @@ class DeployedHealthTests(unittest.TestCase):
         self.assertNotIn(self.base_url, result.stdout + result.stderr)
 
     def test_spa_fallback_cannot_masquerade_as_javascript_asset(self):
-        self.index.write_text('<div id="root"></div><script src="/assets/missing.js"></script>', encoding="utf-8")
+        (self.index.parent / "assets" / "missing.js").write_text("expected release body", encoding="utf-8")
+        self.server.index_body = b'<div id="root"></div><script src="/assets/missing.js"></script>'
+        self.index.write_bytes(self.server.index_body)
         result = self.run_health()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("HEALTH_FAILURE stage=static_assets category=content_type_mismatch", result.stderr)
@@ -148,6 +178,31 @@ class DeployedHealthTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("HEALTH_FAILURE stage=public_home category=redirect_path_mismatch", result.stderr)
         self.assertNotIn(self.base_url, result.stdout + result.stderr)
+
+    def test_cross_origin_redirect_is_rejected_before_following(self):
+        self.server.mode = "redirect_cross_origin"
+        result = self.run_health()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("HEALTH_FAILURE stage=public_home category=redirect_origin_mismatch", result.stderr)
+        self.assertEqual(self.server.request_count, 1)
+
+    def test_public_index_must_match_exact_release_bytes(self):
+        self.server.mode = "index_mismatch"
+        result = self.run_health()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("HEALTH_FAILURE stage=public_home category=release_hash_mismatch", result.stderr)
+
+    def test_public_asset_must_match_exact_release_bytes(self):
+        self.server.mode = "asset_mismatch"
+        result = self.run_health()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("HEALTH_FAILURE stage=static_assets category=release_hash_mismatch", result.stderr)
+
+    def test_public_metadata_must_match_exact_release_bytes(self):
+        (self.index.parent / "robots.txt").write_text("User-agent: *\nDisallow: /\n", encoding="utf-8")
+        result = self.run_health()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("HEALTH_FAILURE stage=robots category=release_hash_mismatch", result.stderr)
 
     def test_snapshot_manifest_restores_only_site_and_preserves_sibling(self):
         with tempfile.TemporaryDirectory() as temp_root:
