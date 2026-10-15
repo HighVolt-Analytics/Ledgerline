@@ -31,6 +31,9 @@ jobs:
 
       - name: Validate notification helper and tests
         run: |
+          for script in scripts/verify-deployed-health.sh scripts/create-hostinger-snapshot.sh scripts/restore-hostinger-snapshot.sh; do
+            bash -n "$script"
+          done
           python3 -m py_compile scripts/send-deployment-notification.py tests/test_deployment_notification.py
           python3 -m unittest discover -s tests -p 'test_*.py'
 
