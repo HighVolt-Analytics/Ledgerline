@@ -182,6 +182,13 @@ class DeployedHealthTests(unittest.TestCase):
             (target / "deploy-info.txt").write_text(f"Commit: {EXPECTED_COMMIT}\n", encoding="utf-8")
             (target_assets / "new.js").write_text("new asset", encoding="utf-8")
             self.assertNotEqual(manifest(target), expected_manifest)
+
+            verification_root = Path(temp_root) / "verification"
+            verification_root.mkdir()
+            with tarfile.open(snapshot, "r:gz") as archive:
+                archive.extractall(verification_root)
+            self.assertEqual(manifest(verification_root), expected_manifest)
+
             for child in target.iterdir():
                 if child.is_dir():
                     shutil.rmtree(child)
