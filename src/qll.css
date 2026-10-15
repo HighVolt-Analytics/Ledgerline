@@ -1558,9 +1558,6 @@ h1,h2,h3,p{margin:0;overflow-wrap:break-word}
   box-shadow:0 0 8px rgba(47,212,181,.45);
 }
 .tag{margin-top:28px;font-size:12px;text-transform:uppercase;letter-spacing:.16em;font-weight:600;color:var(--qll-accent)}
-@media (max-width:900px){
-  .tag--desktop-only{display:none}
-}
 
 /* ---------- who it's for / people cards ---------- */
 .audience-sublabel{margin-top:clamp(40px,5vw,56px)}

@@ -986,7 +986,6 @@ export default function QuantumLedgerLinkPage() {
                 </div>
               ))}
             </div>
-            <p className="tag tag--desktop-only r">Shipping soon · included in the platform</p>
           </div>
         </section>
 
