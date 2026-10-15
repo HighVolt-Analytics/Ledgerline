@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, Fragment } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, Fragment } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Users,
   MousePointerClick,
@@ -471,6 +472,14 @@ const industryList = [
     image: '/qll/industries/logistics.png',
   },
   {
+    title: 'Spectra',
+    sub: '(export & import trade docs)',
+    cta: 'Case study',
+    image: '/qll/industries/spectra-hero.jpg',
+    href: '/industries/spectra',
+    featured: true,
+  },
+  {
     title: 'Construction & trades',
     sub: '(progress claims, job cost)',
     cta: 'Build',
@@ -647,10 +656,54 @@ export default function QuantumLedgerLinkPage() {
   const [teamVideoPlaying, setTeamVideoPlaying] = useState(false);
   const [howTab, setHowTab] = useState(0);
   const rootRef = useRef(null);
+  const industryMarqueeRef = useRef(null);
+  const industryTrackRef = useRef(null);
 
   useEffect(() => {
     document.body.classList.add('qll-page');
     return () => document.body.classList.remove('qll-page');
+  }, []);
+
+  useLayoutEffect(() => {
+    const marquee = industryMarqueeRef.current;
+    const track = industryTrackRef.current;
+    if (!marquee || !track) return undefined;
+
+    // Keep Spectra mid-row with neighbors on both sides; only unpause when section is in view.
+    const placeSpectraInCenter = () => {
+      const spectra = track.querySelector('[data-industry="spectra"]');
+      if (!spectra) return;
+      const start = window.innerWidth / 2 - (spectra.offsetLeft + spectra.offsetWidth / 2);
+      track.style.setProperty('--industry-start', `${Math.round(start)}px`);
+    };
+
+    placeSpectraInCenter();
+
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce || !('IntersectionObserver' in window)) {
+      marquee.classList.add('is-running');
+      return undefined;
+    }
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            placeSpectraInCenter();
+            marquee.classList.add('is-running');
+            io.unobserve(entry.target);
+          }
+        });
+      },
+      { threshold: 0.35, rootMargin: '0px 0px -10% 0px' },
+    );
+
+    io.observe(marquee);
+    window.addEventListener('resize', placeSpectraInCenter);
+    return () => {
+      io.disconnect();
+      window.removeEventListener('resize', placeSpectraInCenter);
+    };
   }, []);
 
   useEffect(() => {
@@ -933,7 +986,7 @@ export default function QuantumLedgerLinkPage() {
                 </div>
               ))}
             </div>
-            <p className="tag r">Shipping soon · included in the platform</p>
+            <p className="tag tag--desktop-only r">Shipping soon · included in the platform</p>
           </div>
         </section>
 
@@ -957,18 +1010,35 @@ export default function QuantumLedgerLinkPage() {
 
             <h3 className="blabel industry-heading r">Industries</h3>
           </div>
-          <div className="industry-marquee r">
-            <div className="industry-track">
-              {[...industryList, ...industryList].map((item, i) => (
-                <article key={`${item.title}-${i}`} className="industry-badge">
-                  <img src={item.image} alt={item.title} />
-                  <div className="industry-badge-copy">
-                    <p className="industry-badge-title">{item.title}</p>
-                    <p className="industry-badge-sub">{item.sub}</p>
-                  </div>
-                  <span className="industry-badge-cta">{item.cta}</span>
-                </article>
-              ))}
+          <div className="industry-marquee r" ref={industryMarqueeRef}>
+            <div className="industry-track" ref={industryTrackRef}>
+              {[...industryList, ...industryList].map((item, i) => {
+                const inner = (
+                  <>
+                    <img src={item.image} alt={item.title} />
+                    <div className="industry-badge-copy">
+                      <p className="industry-badge-title">{item.title}</p>
+                      <p className="industry-badge-sub">{item.sub}</p>
+                    </div>
+                    <span className="industry-badge-cta">{item.cta}</span>
+                  </>
+                );
+
+                return item.href ? (
+                  <Link
+                    key={`${item.title}-${i}`}
+                    to={item.href}
+                    className="industry-badge industry-badge--link"
+                    data-industry={item.featured && i < industryList.length ? 'spectra' : undefined}
+                  >
+                    {inner}
+                  </Link>
+                ) : (
+                  <article key={`${item.title}-${i}`} className="industry-badge">
+                    {inner}
+                  </article>
+                );
+              })}
             </div>
           </div>
         </section>
