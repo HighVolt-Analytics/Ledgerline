@@ -57,7 +57,7 @@ Hostinger SSH credentials are stored in the Ledgerline GitHub `Production` envir
 
 ## Domain isolation and legacy workflows
 
-`quantumledgerline.com` is independent in application content: its canonical and Open Graph URLs, robots, and sitemap use the new domain; the current application source/public tree has no `quantumledgerlink.com` references. The production root, route checks, marker, and asset requests use only the new domain. The new domain's HTTPS requests validate successfully.
+`quantumledgerline.com` is independent in application content: its canonical and Open Graph URLs, robots, and sitemap use the new domain; the current application source/public tree has no `quantumledgerlink.com` references. The production root, route checks, marker, and asset requests use only the new domain. The new domain's HTTPS requests validate successfully. Static external references are to Fontshare, Google Fonts, and Supademo; none point to the old domain. The marketing SPA has no application sign-in or callback routes; Microsoft Entra authentication belongs to the Deployment Portal.
 
 Do not redirect, forward, alias, proxy, or canonicalize the old domain to the new one. Preserve its registration and DNS records until a separate retirement decision. Current DNS lookups returned A records for both domains to the Hostinger endpoint and no CNAME; this shared hosting IP does not itself indicate a DNS forwarding rule. `http://quantumledgerlink.com/` returned 403 without a `Location` redirect. The old domain's HTTPS handshake failed, so its HTTPS redirect/certificate behavior could not be inspected. Do not bypass reputation filtering; recheck only if the owner approves a supported remediation.
 
