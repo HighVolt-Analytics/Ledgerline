@@ -143,6 +143,12 @@ jobs:
       inputs.release_commit == github.sha &&
       (vars.LEDGERLINE_PRODUCTION_CUTOVER_ENABLED == 'true' || vars.LEDGERLINE_PORTAL_DISPATCH_ENABLED == 'true')))
     steps:
+      - name: Check out release verification helpers
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
       - name: Download immutable release artifact
         uses: actions/download-artifact@v4
         with:
@@ -215,22 +221,28 @@ jobs:
           HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
           HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
           HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
+          HOSTINGER_TARGET_SUFFIX: ${{ vars.HOSTINGER_TARGET_SUFFIX }}
           RELEASE_COMMIT: ${{ inputs.release_commit || github.sha }}
         run: |
           set -euo pipefail
           ssh_opts=(-o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=30 -i ~/.ssh/hostinger_key -p "$HOSTINGER_PORT")
           printf -v target_q '%q' "$HOSTINGER_TARGET_PATH"
+          printf -v suffix_q '%q' "$HOSTINGER_TARGET_SUFFIX"
           printf -v commit_q '%q' "$RELEASE_COMMIT"
+          printf -v run_q '%q' "$GITHUB_RUN_ID"
           backup_output=$(ssh "${ssh_opts[@]}" "$HOSTINGER_USERNAME@$HOSTINGER_HOST" \
-            "set -euo pipefail; target=$target_q; commit=$commit_q; run_id=$GITHUB_RUN_ID; backup_dir=\"\$HOME/deployment_backups/ledgerline-production\"; umask 077; mkdir -p \"\$backup_dir\"; archive=\"\$backup_dir/backup-\$(date -u +%Y%m%d-%H%M%S)-\$run_id-\$commit.tar.gz\"; tar -czf \"\$archive\" -C \"\$target\" .; tar -tzf \"\$archive\" >/dev/null; tar -tvzf \"\$archive\" | awk '\$1 !~ /^[-d]/ {bad=1} END {exit bad}'; test -s \"\$archive\"; sha256sum \"\$archive\" | awk '{print \"BACKUP_SHA256:\"\$1}'; file_manifest=\$(cd \"\$target\" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum | sha256sum | awk '{print \$1}'); old_marker=NO_MARKER; if test -s \"\$target/deploy-info.txt\"; then old_marker=\$(sed -n 's/^Commit: //p' \"\$target/deploy-info.txt\" | head -n 1); fi; printf 'PREDEPLOY_MARKER:%s\\n' \"\$old_marker\"; printf 'PREDEPLOY_MANIFEST:%s\\n' \"\$file_manifest\"; printf 'BACKUP_NAME:%s\\n' \"\$(basename \"\$archive\")\"; printf '%s\\n' BACKUP_OK")
+            bash -s -- "$target_q" "$suffix_q" "$commit_q" "$run_q" < scripts/create-hostinger-snapshot.sh)
           printf '%s\n' "$backup_output" | grep -E '^(BACKUP_(SHA256|NAME)|PREDEPLOY_(MARKER|MANIFEST)):'
           backup_name=$(printf '%s\n' "$backup_output" | sed -n 's/^BACKUP_NAME://p')
+          backup_sha256=$(printf '%s\n' "$backup_output" | sed -n 's/^BACKUP_SHA256://p')
           predeploy_marker=$(printf '%s\n' "$backup_output" | sed -n 's/^PREDEPLOY_MARKER://p')
           predeploy_manifest=$(printf '%s\n' "$backup_output" | sed -n 's/^PREDEPLOY_MANIFEST://p')
           [[ "$backup_name" =~ ^backup-[0-9]{8}-[0-9]{6}-[0-9]+-[a-f0-9]{40}\.tar\.gz$ ]]
+          [[ "$backup_sha256" =~ ^[a-f0-9]{64}$ ]]
           [[ "$predeploy_marker" == NO_MARKER || "$predeploy_marker" =~ ^[a-f0-9]{40}$ ]]
           [[ "$predeploy_manifest" =~ ^[a-f0-9]{64}$ ]]
           printf 'backup_name=%s\n' "$backup_name" >> "$GITHUB_OUTPUT"
+          printf 'backup_sha256=%s\n' "$backup_sha256" >> "$GITHUB_OUTPUT"
           printf 'predeploy_marker=%s\n' "$predeploy_marker" >> "$GITHUB_OUTPUT"
           printf 'predeploy_manifest=%s\n' "$predeploy_manifest" >> "$GITHUB_OUTPUT"
 
@@ -240,6 +252,7 @@ jobs:
           HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
           HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
           HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
+          HOSTINGER_TARGET_SUFFIX: ${{ vars.HOSTINGER_TARGET_SUFFIX }}
           GH_TOKEN: ${{ github.token }}
           GITHUB_SHA: ${{ github.sha }}
         run: |
@@ -248,9 +261,31 @@ jobs:
           test "$current_main" = "$GITHUB_SHA"
           ssh_opts=(-o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=30 -i ~/.ssh/hostinger_key -p "$HOSTINGER_PORT")
           printf -v target_q '%q' "$HOSTINGER_TARGET_PATH"
-          gzip -dc ledgerline-release.tar.gz | tar -xOf - >/dev/null
+          printf -v suffix_q '%q' "$HOSTINGER_TARGET_SUFFIX"
+          release_check="$RUNNER_TEMP/ledgerline-release-manifest"
+          mkdir -p "$release_check"
+          tar -tzf ledgerline-release.tar.gz >/dev/null
+          if ! tar -tzf ledgerline-release.tar.gz | awk '/^\// || /(^|\/)\.\.(\/|$)/ { bad=1 } END { exit bad }'; then
+            echo 'RELEASE_FAILURE stage=artifact category=unsafe_archive_path'
+            exit 1
+          fi
+          if ! tar -tvzf ledgerline-release.tar.gz | awk '$1 !~ /^[-d]/ { bad=1 } END { exit bad }'; then
+            echo 'RELEASE_FAILURE stage=artifact category=unsafe_archive_entry'
+            exit 1
+          fi
+          tar -xzf ledgerline-release.tar.gz -C "$release_check" --no-same-owner --no-same-permissions
+          if [[ -n "$(find "$release_check" -type l -print -quit)" ]]; then
+            echo 'RELEASE_FAILURE stage=artifact category=symlink_entry'
+            exit 1
+          fi
+          (cd "$release_check" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum) > "$RUNNER_TEMP/ledgerline-release.manifest"
+          test -s "$RUNNER_TEMP/ledgerline-release.manifest"
           gzip -dc ledgerline-release.tar.gz | ssh "${ssh_opts[@]}" "$HOSTINGER_USERNAME@$HOSTINGER_HOST" \
             "tar -xf - -C $target_q --no-same-owner --no-same-permissions"
+          ssh "${ssh_opts[@]}" "$HOSTINGER_USERNAME@$HOSTINGER_HOST" \
+            "set -euo pipefail; target=\$(realpath -e -- $target_q); home=\$(realpath -e -- \"\$HOME\"); suffix=$suffix_q; test \"\$target\" = \"\$home\$suffix\"; test \"\$target\" = '/home/u359614291/domains/quantumledgerline.com/public_html'; cd -- \"\$target\"; sha256sum --check --status" \
+            < "$RUNNER_TEMP/ledgerline-release.manifest"
+          printf 'RELEASE_FILES_VERIFIED count=%s\n' "$(wc -l < "$RUNNER_TEMP/ledgerline-release.manifest" | tr -d ' ')"
 
       - name: Verify deployed marker and public health
         env:
@@ -295,6 +330,7 @@ jobs:
           HOSTINGER_TARGET_PATH: ${{ vars.HOSTINGER_TARGET_PATH }}
           HOSTINGER_TARGET_SUFFIX: ${{ vars.HOSTINGER_TARGET_SUFFIX }}
           BACKUP_NAME: ${{ steps.snapshot.outputs.backup_name }}
+          BACKUP_SHA256: ${{ steps.snapshot.outputs.backup_sha256 }}
           PREDEPLOY_MARKER: ${{ steps.snapshot.outputs.predeploy_marker }}
           PREDEPLOY_MANIFEST: ${{ steps.snapshot.outputs.predeploy_manifest }}
           HOSTINGER_PUBLIC_URL: ${{ vars.HOSTINGER_PUBLIC_URL }}
@@ -307,10 +343,11 @@ jobs:
           printf -v target_q '%q' "$HOSTINGER_TARGET_PATH"
           printf -v suffix_q '%q' "$HOSTINGER_TARGET_SUFFIX"
           printf -v backup_q '%q' "$BACKUP_NAME"
-          printf -v marker_q '%q' "$PREDEPLOY_MARKER"
           printf -v manifest_q '%q' "$PREDEPLOY_MANIFEST"
+          printf -v marker_q '%q' "$PREDEPLOY_MARKER"
+          printf -v backup_sha_q '%q' "$BACKUP_SHA256"
           ssh "${ssh_opts[@]}" "$HOSTINGER_USERNAME@$HOSTINGER_HOST" \
-            "set -euo pipefail; target=\$(realpath -e -- $target_q); home=\$(realpath -e -- \"\$HOME\"); suffix=$suffix_q; archive=\"\$HOME/deployment_backups/ledgerline-production/$backup_q\"; marker=$marker_q; manifest=$manifest_q; test \"\$target\" = \"\$home\$suffix\"; test \"\$target\" = '/home/u359614291/domains/quantumledgerline.com/public_html'; test \"\$target\" != /; test \"\$target\" != \"\$home\"; test -f \"\$archive\"; tar -tzf \"\$archive\" >/dev/null; tar -tvzf \"\$archive\" | awk '\$1 !~ /^[-d]/ {bad=1} END {exit bad}'; find \"\$target\" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; tar -xzf \"\$archive\" -C \"\$target\" --no-same-owner --no-same-permissions; test -s \"\$target/index.html\"; restored_manifest=\$(cd \"\$target\" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum | sha256sum | awk '{print \$1}'); test \"\$restored_manifest\" = \"\$manifest\"; printf '%s\\n' ROLLBACK_CONTENTS_OK; if [[ \"\$marker\" == NO_MARKER ]]; then test ! -e \"\$target/deploy-info.txt\"; else grep -Fx \"Commit: \$marker\" \"\$target/deploy-info.txt\"; fi"
+            bash -s -- "$target_q" "$suffix_q" "$backup_q" "$manifest_q" "$marker_q" "$backup_sha_q" < scripts/restore-hostinger-snapshot.sh
           curl --fail --show-error --silent --retry 3 --retry-delay 5 "$HOSTINGER_PUBLIC_URL/" -o /dev/null
           echo 'result=verified' >> "$GITHUB_OUTPUT"
 
