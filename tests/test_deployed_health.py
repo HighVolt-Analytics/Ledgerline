@@ -37,6 +37,11 @@ class FixtureHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        if self.server.mode == "stale_forever" and urlsplit(self.path).path == "/deploy-info.txt":
+            self.send_header("Cache-Control", "public, max-age=3600")
+            self.send_header("Age", "120")
+            self.send_header("ETag", '"stale-marker"')
+            self.send_header("Last-Modified", "Thu, 01 Jan 1970 00:00:00 GMT")
         self.end_headers()
         self.wfile.write(body)
 
@@ -55,6 +60,11 @@ class FixtureHandler(BaseHTTPRequestHandler):
             return
         if path == "/deploy-info.txt":
             self.server.marker_calls += 1
+            if self.server.mode == "marker_cross_origin":
+                self.send_response(302)
+                self.send_header("Location", "https://untrusted.example/private-path")
+                self.end_headers()
+                return
             if self.server.mode == "stale_once" and self.server.marker_calls == 1:
                 body = f"Website: Quantum Ledgerline\nCommit: {STALE_COMMIT}\n".encode()
             elif self.server.mode == "stale_forever":
@@ -113,8 +123,8 @@ class DeployedHealthTests(unittest.TestCase):
             b'<link href="/assets/app.css">'
         )
         self.index.write_bytes(self.server.index_body)
-        (self.index.parent / "deploy-info.txt").write_text(
-            f"Website: Quantum Ledgerline\nCommit: {EXPECTED_COMMIT}\n", encoding="utf-8"
+        (self.index.parent / "deploy-info.txt").write_bytes(
+            f"Website: Quantum Ledgerline\nCommit: {EXPECTED_COMMIT}\n".encode("utf-8")
         )
         (self.index.parent / "robots.txt").write_bytes(ROBOTS_BODY)
         (self.index.parent / "sitemap.xml").write_bytes(SITEMAP_BODY)
@@ -134,8 +144,19 @@ class DeployedHealthTests(unittest.TestCase):
             HEALTH_MARKER_INTERVAL="0",
             GITHUB_RUN_ID="fixture-run",
         )
+        index_path = str(self.index)
+        script_path = str(HEALTH_SCRIPT)
+        if os.name == "nt":
+            cygpath = shutil.which("cygpath")
+            if cygpath:
+                index_path = subprocess.check_output(
+                    [cygpath, "-u", index_path], text=True
+                ).strip()
+                script_path = subprocess.check_output(
+                    [cygpath, "-u", script_path], text=True
+                ).strip()
         return subprocess.run(
-            [self.bash, str(HEALTH_SCRIPT), self.base_url, EXPECTED_COMMIT, str(self.index), "fixture-run"],
+            [self.bash, script_path, self.base_url, EXPECTED_COMMIT, index_path, "fixture-run"],
             cwd=ROOT,
             env=env,
             text=True,
@@ -161,8 +182,25 @@ class DeployedHealthTests(unittest.TestCase):
         result = self.run_health()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("HEALTH_FAILURE stage=public_marker category=marker_mismatch", result.stderr)
+        self.assertIn("HEALTH_DIAGNOSTIC stage=public_marker source=public", result.stdout + result.stderr)
+        self.assertIn(f"marker_commit={STALE_COMMIT}", result.stdout + result.stderr)
+        self.assertRegex(result.stdout + result.stderr, r"body_sha256=[a-f0-9]{64}")
+        self.assertIn("cache_control=public,_max-age=3600", result.stdout + result.stderr)
+        self.assertIn("age=120", result.stdout + result.stderr)
+        self.assertIn("etag=stale-marker", result.stdout + result.stderr)
+        self.assertNotIn("untrusted.example", result.stdout + result.stderr)
         self.assertNotIn("Sensitive-Body-Sentinel", result.stdout + result.stderr)
         self.assertNotIn(self.base_url, result.stdout + result.stderr)
+
+    def test_cross_origin_marker_redirect_diagnostic_is_redacted(self):
+        self.server.mode = "marker_cross_origin"
+        result = self.run_health()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("HEALTH_FAILURE stage=public_marker category=redirect_origin_mismatch", result.stderr)
+        self.assertIn("HEALTH_DIAGNOSTIC stage=public_marker source=public", result.stdout + result.stderr)
+        self.assertIn("redirects=0", result.stdout + result.stderr)
+        self.assertNotIn("untrusted.example", result.stdout + result.stderr)
+        self.assertNotIn("private-path", result.stdout + result.stderr)
 
     def test_spa_fallback_cannot_masquerade_as_javascript_asset(self):
         (self.index.parent / "assets" / "missing.js").write_text("expected release body", encoding="utf-8")
