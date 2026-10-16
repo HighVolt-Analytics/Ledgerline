@@ -2,13 +2,14 @@ import os
 import hashlib
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import tarfile
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +19,7 @@ STALE_COMMIT = "31f80592b385eabfc559e12b23e52d3b9da9b811"
 ROOT_SHELL = b"<!doctype html><html><body><div id=\"root\"></div>"
 JS_BODY = b"const app = true;"
 CSS_BODY = b"body{color:#000}"
+PNG_BODY = b"fixture png bytes"
 ROBOTS_BODY = b"User-agent: *\nAllow: /\n"
 SITEMAP_BODY = b"<urlset></urlset>"
 
@@ -37,12 +39,17 @@ class FixtureHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        if self.server.mode in ("stale_forever", "stale_and_asset_mismatch") and urlsplit(self.path).path == "/deploy-info.txt":
+            self.send_header("Cache-Control", "public, max-age=3600")
+            self.send_header("Age", "120")
+            self.send_header("ETag", '"stale-marker"')
+            self.send_header("Last-Modified", "Thu, 01 Jan 1970 00:00:00 GMT")
         self.end_headers()
         self.wfile.write(body)
 
     def do_GET(self):
         self.server.request_count += 1
-        path = urlsplit(self.path).path
+        path = unquote(urlsplit(self.path).path)
         if self.server.mode == "redirect_home" and path == "/":
             self.send_response(302)
             self.send_header("Location", "/unexpected/")
@@ -55,6 +62,11 @@ class FixtureHandler(BaseHTTPRequestHandler):
             return
         if path == "/deploy-info.txt":
             self.server.marker_calls += 1
+            if self.server.mode == "marker_cross_origin":
+                self.send_response(302)
+                self.send_header("Location", "https://untrusted.example/private-path")
+                self.end_headers()
+                return
             if self.server.mode == "stale_once" and self.server.marker_calls == 1:
                 body = f"Website: Quantum Ledgerline\nCommit: {STALE_COMMIT}\n".encode()
             elif self.server.mode == "stale_forever":
@@ -67,10 +79,19 @@ class FixtureHandler(BaseHTTPRequestHandler):
         elif path == "/sitemap.xml":
             self.send_body(SITEMAP_BODY, "application/xml")
         elif path == "/assets/app.js":
-            body = b"const unexpected_app = true;" if self.server.mode == "asset_mismatch" else JS_BODY
+            if self.server.mode == "asset_missing":
+                self.send_response(404)
+                self.end_headers()
+                return
+            body = b"const unexpected_app = true;" if self.server.mode in ("asset_mismatch", "stale_and_asset_mismatch") else JS_BODY
             self.send_body(body, "application/x-javascript")
         elif path == "/assets/app.css":
             self.send_body(CSS_BODY, "text/css")
+        elif path == "/feature images/asset (sample).png":
+            if self.server.mode == "image_html_fallback":
+                self.send_body(ROOT_SHELL, "text/html")
+            else:
+                self.send_body(PNG_BODY, "image/png")
         elif path == "/assets/missing.js":
             # Model the Hostinger .htaccess SPA fallback for a missing file.
             self.send_body(ROOT_SHELL, "text/html")
@@ -113,8 +134,8 @@ class DeployedHealthTests(unittest.TestCase):
             b'<link href="/assets/app.css">'
         )
         self.index.write_bytes(self.server.index_body)
-        (self.index.parent / "deploy-info.txt").write_text(
-            f"Website: Quantum Ledgerline\nCommit: {EXPECTED_COMMIT}\n", encoding="utf-8"
+        (self.index.parent / "deploy-info.txt").write_bytes(
+            f"Website: Quantum Ledgerline\nCommit: {EXPECTED_COMMIT}\n".encode("utf-8")
         )
         (self.index.parent / "robots.txt").write_bytes(ROBOTS_BODY)
         (self.index.parent / "sitemap.xml").write_bytes(SITEMAP_BODY)
@@ -122,6 +143,9 @@ class DeployedHealthTests(unittest.TestCase):
         assets.mkdir()
         (assets / "app.js").write_bytes(JS_BODY)
         (assets / "app.css").write_bytes(CSS_BODY)
+        feature_images = self.index.parent / "feature images"
+        feature_images.mkdir()
+        (feature_images / "asset (sample).png").write_bytes(PNG_BODY)
 
     def tearDown(self):
         self.temp_dir.cleanup()
@@ -134,8 +158,24 @@ class DeployedHealthTests(unittest.TestCase):
             HEALTH_MARKER_INTERVAL="0",
             GITHUB_RUN_ID="fixture-run",
         )
+        self.github_output = Path(self.temp_dir.name) / "github-output"
+        env["GITHUB_OUTPUT"] = str(self.github_output)
+        index_path = str(self.index)
+        script_path = str(HEALTH_SCRIPT)
+        if os.name == "nt":
+            cygpath = shutil.which("cygpath")
+            if cygpath:
+                index_path = subprocess.check_output(
+                    [cygpath, "-u", index_path], text=True
+                ).strip()
+                script_path = subprocess.check_output(
+                    [cygpath, "-u", script_path], text=True
+                ).strip()
+                env["PYTHON_BIN"] = subprocess.check_output(
+                    [cygpath, "-u", sys.executable], text=True
+                ).strip()
         return subprocess.run(
-            [self.bash, str(HEALTH_SCRIPT), self.base_url, EXPECTED_COMMIT, str(self.index), "fixture-run"],
+            [self.bash, script_path, self.base_url, EXPECTED_COMMIT, index_path, "fixture-run"],
             cwd=ROOT,
             env=env,
             text=True,
@@ -149,20 +189,49 @@ class DeployedHealthTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         for stage in ("public_home", "public_marker", "spa_interactive_tour", "spa_resources", "marketing_spectra", "robots", "sitemap", "static_assets"):
             self.assertIn(f"HEALTH_OK stage={stage}", result.stdout)
+        self.assertIn("HEALTH_OK stage=release_files", result.stdout)
+        self.assertIn("public_marker_status=matched", self.github_output.read_text())
 
     def test_stale_marker_is_retried_then_passes(self):
-        self.server.mode = "stale_once"
+        self.server.mode = "stale_forever"
         result = self.run_health()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertGreaterEqual(self.server.marker_calls, 2)
+        self.assertIn("HEALTH_WARNING stage=public_marker category=stale_marker_content", result.stdout)
+        self.assertIn("PUBLIC_MARKER_STATUS=stale_warning", result.stdout)
+        self.assertIn("HEALTH_OK stage=release_files", result.stdout)
+        self.assertIn("public_marker_status=stale_warning", self.github_output.read_text())
+        self.assertNotIn("Sensitive-Body-Sentinel", result.stdout + result.stderr)
 
-    def test_persistent_marker_mismatch_reports_safe_stage(self):
-        self.server.mode = "stale_forever"
+    def test_stale_marker_with_mixed_release_asset_fails_without_warning(self):
+        self.server.mode = "stale_and_asset_mismatch"
         result = self.run_health()
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("HEALTH_FAILURE stage=public_marker category=marker_mismatch", result.stderr)
-        self.assertNotIn("Sensitive-Body-Sentinel", result.stdout + result.stderr)
-        self.assertNotIn(self.base_url, result.stdout + result.stderr)
+        self.assertIn("HEALTH_FAILURE stage=static_assets category=release_hash_mismatch", result.stderr)
+        self.assertNotIn("HEALTH_WARNING stage=public_marker", result.stdout)
+
+    def test_missing_public_asset_fails(self):
+        self.server.mode = "asset_missing"
+        result = self.run_health()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("HEALTH_FAILURE stage=static_assets category=http_status", result.stderr)
+        self.assertNotIn("HEALTH_WARNING stage=public_marker", result.stdout)
+
+    def test_image_asset_spa_fallback_is_rejected(self):
+        self.server.mode = "image_html_fallback"
+        result = self.run_health()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("HEALTH_FAILURE stage=release_files category=content_type_mismatch", result.stderr)
+
+    def test_cross_origin_marker_redirect_diagnostic_is_redacted(self):
+        self.server.mode = "marker_cross_origin"
+        result = self.run_health()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("HEALTH_FAILURE stage=public_marker category=redirect_origin_mismatch", result.stderr)
+        self.assertIn("HEALTH_DIAGNOSTIC stage=public_marker source=public", result.stdout + result.stderr)
+        self.assertIn("redirects=0", result.stdout + result.stderr)
+        self.assertNotIn("untrusted.example", result.stdout + result.stderr)
+        self.assertNotIn("private-path", result.stdout + result.stderr)
 
     def test_spa_fallback_cannot_masquerade_as_javascript_asset(self):
         (self.index.parent / "assets" / "missing.js").write_text("expected release body", encoding="utf-8")

@@ -26,6 +26,7 @@ class NotificationTests(unittest.TestCase):
             "DEPLOY_EVENT": "workflow_dispatch",
             "BUILD_RESULT": "success",
             "DEPLOY_RESULT": "success",
+            "PUBLIC_MARKER_STATUS": "matched",
             "ROLLBACK_RESULT": "",
         })
         self.environment.start()
@@ -44,6 +45,30 @@ class NotificationTests(unittest.TestCase):
         self.assertIn("/actions/runs/12345", body)
         self.assertIn("Rollback result: Not required", body)
         self.assertEqual((sender, recipients), ("support@example.test", "alerts@example.test"))
+
+    def test_stale_public_marker_is_an_explicit_warning_in_success_email(self):
+        sent = []
+        with patch.dict(os.environ, {"PUBLIC_MARKER_STATUS": "stale_warning"}), \
+             patch.object(NOTIFIER, "github_run_details", return_value=("none", "No", "Not required", "2026-10-14T00:00:00Z")), \
+             patch.object(NOTIFIER, "live_health", return_value=(True, "Commit: old-release", "HTTPS homepage: healthy")), \
+             patch.object(NOTIFIER, "send_mail", side_effect=lambda *args: sent.append(args)):
+            NOTIFIER.main()
+        subject, body, _sender, _recipients = sent[0]
+        self.assertIn("SUCCESS", subject)
+        self.assertIn("Final result: Success", body)
+        self.assertIn("Public marker consistency: WARNING: public deploy-info.txt is stale", body)
+        self.assertIn("Final live marker: Commit: old-release", body)
+
+    def test_success_fails_closed_when_public_marker_status_is_missing(self):
+        sent = []
+        with patch.dict(os.environ, {"PUBLIC_MARKER_STATUS": "unavailable"}), \
+             patch.object(NOTIFIER, "github_run_details", return_value=("none", "No", "Not required", "2026-10-14T00:00:00Z")), \
+             patch.object(NOTIFIER, "live_health", return_value=(True, f"Commit: {'a' * 40}", "HTTPS homepage: healthy")), \
+             patch.object(NOTIFIER, "send_mail", side_effect=lambda *args: sent.append(args)):
+            NOTIFIER.main()
+        subject, body, _sender, _recipients = sent[0]
+        self.assertIn("FAILURE", subject)
+        self.assertIn("Public marker consistency: Not verified", body)
 
     def test_failure_message_preserves_failed_stage_and_rollback_status(self):
         sent = []
