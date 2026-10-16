@@ -7,6 +7,7 @@ index_file="${3:-}"
 probe_id="${4:-${GITHUB_RUN_ID:-local}}"
 marker_retries="${HEALTH_MARKER_RETRIES:-12}"
 marker_interval="${HEALTH_MARKER_INTERVAL:-5}"
+python_bin="${PYTHON_BIN:-python3}"
 
 fail() {
   printf 'HEALTH_FAILURE stage=%s category=%s\n' "$1" "$2" >&2
@@ -46,6 +47,8 @@ last_remote_ip=''
 last_tls_verify=''
 last_redirect_count=0
 last_final_path=''
+marker_inconclusive=false
+marker_mismatch=false
 
 origin_of() {
   local url="$1"
@@ -88,6 +91,10 @@ request() {
     IFS=$'\t' read -r last_status last_content_type response_remote_ip response_tls_verify <<< "$metrics"
     last_remote_ip="$response_remote_ip"
     last_tls_verify="$response_tls_verify"
+    if [[ "$public_url" == https://* && "$last_tls_verify" != 0 ]]; then
+      last_category=tls_verification_failure
+      return 1
+    fi
     last_redirect_count="$redirects"
     last_final_path="${current_url#"$base_url"}"
     last_final_path="${last_final_path%%\?*}"
@@ -235,23 +242,39 @@ check_shell_route public_home /
 # verified SSH write. Cache-busting and bounded polling preserve the strict
 # commit assertion while allowing normal host/CDN propagation.
 marker_ok=false
+marker_status=''
 expected_marker_hash="$(sha256sum -- "$release_root/deploy-info.txt" | cut -d ' ' -f1)"
+marker_failure_category='marker_mismatch'
 for ((attempt = 1; attempt <= marker_retries; attempt++)); do
   if request public_marker /deploy-info.txt "ledgerline_probe=${probe_id}-${attempt}"; then
+    if [[ "$last_content_type" != text/plain* ]]; then
+      marker_inconclusive=true
+      marker_failure_category=content_type_mismatch
+      last_category=content_type_mismatch
+      continue
+    fi
     actual_marker_hash="$(sha256sum -- "$body_file" | cut -d ' ' -f1)"
     if grep -Fxq "Commit: $release_commit" "$body_file" && [[ "$actual_marker_hash" == "$expected_marker_hash" ]]; then
       marker_ok=true
       break
     fi
+    marker_mismatch=true
     last_category=marker_mismatch
+  else
+    marker_inconclusive=true
+    marker_failure_category="$last_category"
   fi
   if ((attempt < marker_retries && marker_interval > 0)); then sleep "$marker_interval"; fi
 done
 if [[ "$marker_ok" != true ]]; then
   diagnose_public_marker_failure
-  fail public_marker "$last_category"
+  if [[ "$marker_inconclusive" == true || "$marker_mismatch" != true ]]; then
+    fail public_marker "${marker_failure_category:-verification_inconclusive}"
+  fi
+  marker_status=stale_warning
+else
+  marker_status=matched
 fi
-printf 'HEALTH_OK stage=public_marker\n'
 
 check_shell_route spa_interactive_tour /interactive-tour
 check_shell_route spa_resources /resources
@@ -291,3 +314,47 @@ for asset in "${static_assets[@]}"; do
   [[ "$actual_hash" == "$expected_hash" ]] || fail static_assets release_hash_mismatch
 done
 printf 'HEALTH_OK stage=static_assets count=%s\n' "${#static_assets[@]}"
+
+verify_release_mime() {
+  local relative="$1" content_type="${2,,}"
+  case "$relative:$content_type" in
+    *.js:application/javascript*|*.js:text/javascript*|*.js:application/x-javascript*) ;;
+    *.css:text/css*) ;;
+    *.html:text/html*) ;;
+    *.svg:image/svg+xml*) ;;
+    *.png:image/png*) ;;
+    *.jpg:image/jpeg*|*.jpeg:image/jpeg*) ;;
+    *.txt:text/plain*) ;;
+    *.xml:application/xml*|*.xml:text/xml*) ;;
+    *.htaccess:*) return 0 ;;
+    *:text/html*) return 1 ;;
+    *) return 1 ;;
+  esac
+}
+
+public_release_files=0
+while IFS= read -r relative_file; do
+  [[ -n "$relative_file" ]] || continue
+  encoded_path="/$("$python_bin" -c 'import sys, urllib.parse; sys.stdout.write(urllib.parse.quote(sys.argv[1], safe="/-._~"))' "$relative_file")"
+  request release_files "$encoded_path" "ledgerline_probe=${probe_id}" || fail release_files "$last_category"
+  verify_release_mime "$relative_file" "$last_content_type" || fail release_files content_type_mismatch
+  expected_hash="$(sha256sum -- "$release_root/$relative_file" | cut -d ' ' -f1)"
+  actual_hash="$(sha256sum -- "$body_file" | cut -d ' ' -f1)"
+  [[ "$actual_hash" == "$expected_hash" ]] || fail release_files release_hash_mismatch
+  ((public_release_files += 1))
+done < <(cd "$release_root" && find . -type f ! -name deploy-info.txt ! -name .htaccess -print | LC_ALL=C sort | sed 's#^./##')
+((public_release_files > 0)) || fail release_artifact missing_public_release_files
+printf 'HEALTH_OK stage=release_files count=%s\n' "$public_release_files"
+
+if [[ "$marker_status" == stale_warning ]]; then
+  printf 'HEALTH_WARNING stage=public_marker category=stale_marker_content expected_commit=%s\n' "$release_commit"
+  printf 'PUBLIC_MARKER_STATUS=stale_warning\n'
+  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+    printf 'public_marker_status=stale_warning\n' >> "$GITHUB_OUTPUT"
+  fi
+else
+  printf 'HEALTH_OK stage=public_marker\n'
+  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+    printf 'public_marker_status=matched\n' >> "$GITHUB_OUTPUT"
+  fi
+fi

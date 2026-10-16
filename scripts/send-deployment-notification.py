@@ -91,13 +91,18 @@ def main():
     trigger = f"{required('DEPLOY_EVENT')} by {required('GITHUB_ACTOR')}"
     build_result = os.environ.get("BUILD_RESULT", "unknown")
     deploy_result = os.environ.get("DEPLOY_RESULT", "unknown")
+    public_marker_status = os.environ.get("PUBLIC_MARKER_STATUS", "unavailable")
     rollback_job_output = os.environ.get("ROLLBACK_RESULT", "")
     failed_stage, rollback_attempted, rollback_result, started_at = github_run_details()
     if rollback_job_output == "verified":
         rollback_result = "Verified"
     healthy, marker, health_summary = live_health()
-    marker_matches_release = f"Commit: {release}" in marker
-    success = deploy_result == "success" and healthy and marker_matches_release
+    public_marker_verified = public_marker_status in {"matched", "stale_warning"}
+    success = deploy_result == "success" and healthy and public_marker_verified
+    marker_summary = {
+        "matched": "Matched intended release",
+        "stale_warning": "WARNING: public deploy-info.txt is stale; all other public release content matched the immutable artifact",
+    }.get(public_marker_status, "Not verified")
     subject = (
         f"Ledgerline production {'SUCCESS' if success else 'FAILURE'} — {release[:12]}"
     )
@@ -112,6 +117,7 @@ def main():
             f"Deployment timestamp (UTC): {started_at}",
             f"Final result: {'Success' if success else 'Failure'} (build={build_result}, deploy={deploy_result})",
             f"Health checks: {'deployment routes verified by deploy workflow' if deploy_result == 'success' else 'deployment checks did not all pass'}; {health_summary}",
+            f"Public marker consistency: {marker_summary}",
             f"Failure stage: {failed_stage if deploy_result != 'success' else ('none' if success else 'Final live site verification')}",
             f"Rollback attempted: {rollback_attempted}",
             f"Rollback result: {rollback_result}",

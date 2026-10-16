@@ -136,6 +136,7 @@ jobs:
     environment: Production
     outputs:
       rollback_result: ${{ steps.rollback.outputs.result }}
+      public_marker_status: ${{ steps.public_health.outputs.public_marker_status }}
     if: >-
       github.ref == 'refs/heads/main' &&
       ((github.event_name == 'push' && vars.LEDGERLINE_AUTOMATIC_DEPLOY_ENABLED == 'true') ||
@@ -288,6 +289,7 @@ jobs:
           printf 'RELEASE_FILES_VERIFIED count=%s\n' "$(wc -l < "$RUNNER_TEMP/ledgerline-release.manifest" | tr -d ' ')"
 
       - name: Verify deployed marker and public health
+        id: public_health
         env:
           HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
           HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
@@ -395,6 +397,7 @@ jobs:
           MAIL_TO: ${{ secrets.MAIL_TO }}
           BUILD_RESULT: ${{ needs.build.result }}
           DEPLOY_RESULT: ${{ needs.deploy.result }}
+          PUBLIC_MARKER_STATUS: ${{ needs.deploy.outputs.public_marker_status }}
           RELEASE_COMMIT: ${{ inputs.release_commit || github.sha }}
           DEPLOY_EVENT: ${{ github.event_name }}
           ROLLBACK_RESULT: ${{ needs.deploy.outputs.rollback_result }}
