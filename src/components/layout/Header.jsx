@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Menu, X } from 'lucide-react';
 import Logo from '../ui/Logo';
-import { navLinks, externalLinks, tourPath } from '../../data/navigation';
+import { navLinks, externalLinks } from '../../data/navigation';
 import { scrollToSection } from '../../utils/scroll';
 
 export default function Header() {
@@ -111,8 +111,8 @@ export default function Header() {
             >
               Sign in
             </a>
-            <Link
-              to={tourPath}
+            <a
+              href={externalLinks.getStarted}
               className="hidden whitespace-nowrap rounded-full px-4 py-2 text-sm font-semibold shadow-sm transition-all duration-200 hover:scale-[1.02] active:scale-100 sm:inline-flex sm:px-4 xl:px-5"
               style={{ background: '#2FD4B5', color: '#04161C' }}
               onMouseEnter={(e) => {
@@ -122,8 +122,8 @@ export default function Header() {
                 e.currentTarget.style.background = '#2FD4B5';
               }}
             >
-              Interactive Product Tour
-            </Link>
+              Start free
+            </a>
             <button
               type="button"
               onClick={() => setMenuOpen((o) => !o)}
@@ -187,14 +187,14 @@ export default function Header() {
             >
               Sign in
             </a>
-            <Link
-              to={tourPath}
+            <a
+              href={externalLinks.getStarted}
               onClick={() => setMenuOpen(false)}
               className="mt-auto rounded-full px-4 py-3.5 text-center text-base font-semibold"
               style={{ background: '#2FD4B5', color: '#04161C' }}
             >
-              Interactive Product Tour
-            </Link>
+              Start free
+            </a>
           </div>
         </div>
       )}
