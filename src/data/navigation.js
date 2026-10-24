@@ -14,6 +14,9 @@ export const resourcesPath = '/resources';
 export const SUPADEMO_ID = 'cmufk4uzg1d6jqmg16tatl9ll';
 export const SUPADEMO_EMBED_SRC = `https://app.supademo.com/embed/${SUPADEMO_ID}?embed_v=2&utm_source=embed`;
 
+export const TOUR_SUPADEMO_ID = 'cmvaqltkk0lhhqmb3pxq8qw4f';
+export const TOUR_SUPADEMO_EMBED_SRC = `https://app.supademo.com/embed/${TOUR_SUPADEMO_ID}?embed_v=2&utm_source=embed`;
+
 export const footerProductLinks = ['Product', 'How it works', 'Pricing', 'Changelog', 'Status'];
 export const footerCompanyLinks = ['Company', 'Security', 'Privacy', 'Terms', 'Contact'];
 
