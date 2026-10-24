@@ -1,6 +1,10 @@
-import { SUPADEMO_EMBED_SRC } from '../../data/navigation';
+import { TOUR_SUPADEMO_EMBED_SRC } from '../../data/navigation';
 
-export default function SupademoEmbed({ title = 'Highvolt Demo', className = '' }) {
+export default function SupademoEmbed({
+  title = 'Submit, Approve, and Pay Expense Claims in HighVolt',
+  src = TOUR_SUPADEMO_EMBED_SRC,
+  className = '',
+}) {
   return (
     <div
       className={className}
@@ -14,7 +18,7 @@ export default function SupademoEmbed({ title = 'Highvolt Demo', className = '' 
       }}
     >
       <iframe
-        src={SUPADEMO_EMBED_SRC}
+        src={src}
         loading="eager"
         title={title}
         allow="clipboard-write"
