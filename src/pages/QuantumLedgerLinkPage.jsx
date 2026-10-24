@@ -762,7 +762,7 @@ export default function QuantumLedgerLinkPage() {
                 <span className="hero-tab-dot" aria-hidden="true">·</span>
                 <span>Document mgt</span>
               </p>
-              <h1 className="h1 r">
+              <h1 className="h1 r" aria-label="Every invoice. Every expense. Every record. Handled.">
                 Every invoice. Every expense.
                 <br />
                 Every record. Handled.
