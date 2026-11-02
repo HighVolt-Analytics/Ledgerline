@@ -610,7 +610,10 @@ function PricingCard({ plan }) {
     <article className={`qll-price-card ${plan.featured ? 'qll-price-card--featured' : ''}`}>
       <div className="qll-price-top">
         <h3>{plan.name}</h3>
-        <span className={`qll-price-badge${plan.featured ? ' qll-price-badge--trial' : ''}`}>{plan.badge}</span>
+        <div className="qll-price-badge-wrap">
+          <span className={`qll-price-badge${plan.featured ? ' qll-price-badge--trial' : ''}`}>{plan.badge}</span>
+          {plan.featured ? <p className="qll-price-nocard">No credit card required.</p> : null}
+        </div>
       </div>
 
       <div className="qll-price-amount">
@@ -762,14 +765,17 @@ export default function QuantumLedgerLinkPage() {
                 <span className="hero-tab-dot" aria-hidden="true">·</span>
                 <span>Document mgt</span>
               </p>
-              <h1 className="h1 r" aria-label="Every invoice. Every expense. Every record. Handled.">
-                Every invoice. Every expense.
-                <br />
-                Every record. Handled.
+              <h1 className="h1 r">
+                Bookkeeping in 3 Clicks.
               </h1>
-              <p className="lead r">
-                One intelligent system that runs finance work from capture to payment to audit.
-              </p>
+              <div className="hero-lines">
+                <p className="hero-support r">
+                  Supporting the people behind the numbers.
+                </p>
+                <p className="lead r">
+                  One intelligent system that runs finance work from capture to payment to audit.
+                </p>
+              </div>
               <div className="actions r in">
                 <a
                   className="btn btn-primary"
@@ -1046,6 +1052,11 @@ export default function QuantumLedgerLinkPage() {
           <div className="wrap">
             <p className="eyebrow r">Why us</p>
             <h2 className="h2 r">Founder-led. Globally distributed.</h2>
+            <p className="team-proof r">
+              <span>Tested by Accountants.</span>
+              <span className="team-proof-dot" aria-hidden="true" />
+              <span>Purpose built product for bookkeeping.</span>
+            </p>
             <p className="lead r">
               A team of IITians, Chartered Accountants and industry process-automation experts. Startup
               velocity, with enterprise rigour.
