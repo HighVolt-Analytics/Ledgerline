@@ -14,6 +14,14 @@ function buildRows(items) {
 
 const ROWS = buildRows(integrations);
 
+const INTEGRATION_POINTS = [
+  'Email to ERP in 3 clicks.',
+  'Built to support Bookkeepers.',
+  'Institutional grade security.',
+  'Data Residency in your country.',
+  'Your data, your control.',
+];
+
 function IntegrationTile({ name, fade }) {
   const logo = integrationLogoMap[name];
 
@@ -86,6 +94,11 @@ export default function IntegrationsSection({ variant = 'cloud' }) {
             Sync payments, banking, and accounting tools to automate your workflow and keep your financial
             data accurate and up to date.
           </p>
+          <ol className="integration-points">
+            {INTEGRATION_POINTS.map((point) => (
+              <li key={point}>{point}</li>
+            ))}
+          </ol>
         </div>
         <IntegrationMarquee />
       </section>
