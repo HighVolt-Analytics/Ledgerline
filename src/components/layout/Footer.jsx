@@ -5,7 +5,6 @@ import { scrollToSection } from '../../utils/scroll';
 const productIds = {
   Product: 'how',
   'How it works': 'how',
-  Pricing: 'pricing',
   Changelog: 'how',
   Status: 'faq',
 };
@@ -15,7 +14,7 @@ const companyIds = {
   Security: 'faq',
   Privacy: 'faq',
   Terms: 'faq',
-  Contact: 'pricing',
+  Contact: 'faq',
 };
 
 function FooterLink({ label, id }) {

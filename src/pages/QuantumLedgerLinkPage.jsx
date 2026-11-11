@@ -13,11 +13,10 @@ import {
   SearchCheck,
   Check,
   ChevronRight,
-  Play,
   Zap,
 } from 'lucide-react';
 import Header from '../components/layout/Header';
-import Logo from '../components/ui/Logo';
+import SiteFooter from '../components/layout/SiteFooter';
 import HowVisual from '../components/ui/HowVisuals';
 import { WorldMap } from '../components/ui/WorldMap';
 import IntegrationsSection from '../components/sections/IntegrationsSection';
@@ -29,6 +28,8 @@ const YOUTUBE_EMBED =
   'https://www.youtube-nocookie.com/embed/SElwFjDrqLI?autoplay=1&rel=0&modestbranding=1';
 const TEAM_YOUTUBE_EMBED =
   'https://www.youtube-nocookie.com/embed/5Xw_KPwWrR8?autoplay=1&rel=0&modestbranding=1';
+const INVOICE_YOUTUBE_EMBED =
+  'https://www.youtube-nocookie.com/embed/XZUaMXvXw-w?autoplay=1&rel=0&modestbranding=1';
 
 const howFlows = [
   {
@@ -477,6 +478,16 @@ const industryList = [
     cta: 'Case study',
     image: '/qll/industries/spectra-hero.jpg',
     href: '/industries/spectra',
+    slug: 'spectra',
+    featured: true,
+  },
+  {
+    title: 'Pactify',
+    sub: '(BAS, invoice to pay)',
+    cta: 'Case study',
+    image: '/qll/industries/accounting.png',
+    href: '/industries/pactify',
+    slug: 'pactify',
     featured: true,
   },
   {
@@ -563,100 +574,10 @@ const presenceOffices = [
   },
 ];
 
-const pricingPlans = [
-  {
-    name: 'Get Started',
-    badge: '14 days free trial',
-    price: 'US$150',
-    priceSuffix: '/ month',
-    note: 'after your free trial',
-    featured: true,
-    cta: 'Start free',
-    href: externalLinks.getStarted,
-    external: true,
-    features: [
-      '1,500 credits included',
-      'Credits accumulate and expire after 12 months',
-      'Process up to 300 records',
-      'Up to 5 users included',
-      'Additional users — US$10 per user / month',
-      'Onboarding within 10 mins',
-      'Above 300 records — US$0.25 per page',
-      'Integrates with communication channels and ERP systems',
-    ],
-  },
-  {
-    name: 'Enterprise',
-    badge: 'Custom plan',
-    price: 'Talk to us',
-    note: 'POC on us. Implementation on you.',
-    featured: false,
-    cta: 'Contact sales',
-    href: 'mailto:sales@highvolt.tech',
-    external: false,
-    features: [
-      'Tailored setup for larger teams',
-      'Advanced workflow and approval needs',
-      'Custom onboarding and implementation',
-      'Integration support across systems',
-      'Dedicated commercial discussion',
-      'Contact: sales@highvolt.tech',
-    ],
-  },
-];
-
-function PricingCard({ plan }) {
-  return (
-    <article className={`qll-price-card ${plan.featured ? 'qll-price-card--featured' : ''}`}>
-      <div className="qll-price-top">
-        <h3>{plan.name}</h3>
-        <div className="qll-price-badge-wrap">
-          <span className={`qll-price-badge${plan.featured ? ' qll-price-badge--trial' : ''}`}>{plan.badge}</span>
-          {plan.featured ? <p className="qll-price-nocard">No credit card required.</p> : null}
-        </div>
-      </div>
-
-      <div className="qll-price-amount">
-        <span className="qll-price-figure">{plan.price}</span>
-        {plan.priceSuffix && <span className="qll-price-suffix">{plan.priceSuffix}</span>}
-      </div>
-      <p className="qll-price-note">{plan.note}</p>
-
-      <div className="qll-price-rule" />
-
-      <ul>
-        {plan.features.map((feature) => (
-          <li key={feature}>
-            <span className="qll-price-check" aria-hidden="true">
-              <Check className="h-3 w-3" strokeWidth={3} />
-            </span>
-            {feature.startsWith('Contact:') ? (
-              <span>
-                Contact:{' '}
-                <a href="mailto:sales@highvolt.tech">sales@highvolt.tech</a>
-              </span>
-            ) : (
-              <span>{feature}</span>
-            )}
-          </li>
-        ))}
-      </ul>
-
-      <a
-        className={`qll-price-cta ${plan.featured ? 'qll-price-cta--solid' : ''}`}
-        href={plan.href}
-        {...(plan.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
-      >
-        {plan.cta}
-        <span aria-hidden="true">→</span>
-      </a>
-    </article>
-  );
-}
-
 export default function QuantumLedgerLinkPage() {
   const [videoPlaying, setVideoPlaying] = useState(false);
   const [teamVideoPlaying, setTeamVideoPlaying] = useState(false);
+  const [invoiceVideoPlaying, setInvoiceVideoPlaying] = useState(false);
   const [howTab, setHowTab] = useState(0);
   const rootRef = useRef(null);
   const industryMarqueeRef = useRef(null);
@@ -786,17 +707,9 @@ export default function QuantumLedgerLinkPage() {
                 >
                   Start free
                 </a>
-                <a
-                  className="btn btn-ghost"
-                  href="#video"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    document.getElementById('video')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                  }}
-                >
-                  <Play className="hero-play" strokeWidth={2.4} aria-hidden="true" />
-                  Watch demo
-                </a>
+                <Link className="btn btn-ghost" to="/book-demo">
+                  Book a demo
+                </Link>
               </div>
             </div>
 
@@ -838,6 +751,43 @@ export default function QuantumLedgerLinkPage() {
           </div>
         </section>
 
+        <section className="s dark industry-strip" id="industries" aria-label="Industries">
+          <div className="wrap">
+            <h3 className="blabel industry-heading r">Industries</h3>
+          </div>
+          <div className="industry-marquee r" ref={industryMarqueeRef}>
+            <div className="industry-track" ref={industryTrackRef}>
+              {[...industryList, ...industryList].map((item, i) => {
+                const inner = (
+                  <>
+                    <img src={item.image} alt={item.title} />
+                    <div className="industry-badge-copy">
+                      <p className="industry-badge-title">{item.title}</p>
+                      <p className="industry-badge-sub">{item.sub}</p>
+                    </div>
+                    <span className="industry-badge-cta">{item.cta}</span>
+                  </>
+                );
+
+                return item.href ? (
+                  <Link
+                    key={`${item.title}-${i}`}
+                    to={item.href}
+                    className="industry-badge industry-badge--link"
+                    data-industry={item.slug && i < industryList.length ? item.slug : undefined}
+                  >
+                    {inner}
+                  </Link>
+                ) : (
+                  <article key={`${item.title}-${i}`} className="industry-badge">
+                    {inner}
+                  </article>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+
         <IntegrationsSection variant="marquee" />
 
         <div id="product" className="product-block">
@@ -864,18 +814,40 @@ export default function QuantumLedgerLinkPage() {
               ))}
             </div>
 
-            {howFlows.map((flow, index) =>
-              flow.title === 'Team Expenses Mgt' ? (
+            {howFlows.map((flow, index) => {
+              const howVideo = {
+                'Invoice to Pay': {
+                  playing: invoiceVideoPlaying,
+                  onPlay: () => setInvoiceVideoPlaying(true),
+                  embed: INVOICE_YOUTUBE_EMBED,
+                  title: 'Invoice to pay',
+                  label: 'Play the invoice to pay video',
+                  thumb: '/qll/invoice-to-pay-thumbnail.jpg',
+                  alt: 'Invoice to pay video',
+                },
+                'Team Expenses Mgt': {
+                  playing: teamVideoPlaying,
+                  onPlay: () => setTeamVideoPlaying(true),
+                  embed: TEAM_YOUTUBE_EMBED,
+                  title: 'Team expenses management',
+                  label: 'Play the team expenses video',
+                  thumb: '/qll/team-expense-thumbnail.jpg',
+                  alt: 'Team expenses video',
+                },
+              }[flow.title];
+
+              if (howVideo) {
+                return (
                 <div
                   key={flow.title}
                   className="video how-tab-video r"
                   role="tabpanel"
                   hidden={howTab !== index}
                 >
-                  {teamVideoPlaying ? (
+                  {howVideo.playing ? (
                     <iframe
-                      src={TEAM_YOUTUBE_EMBED}
-                      title="Team expenses management"
+                      src={howVideo.embed}
+                      title={howVideo.title}
                       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                       allowFullScreen
                       referrerPolicy="strict-origin-when-cross-origin"
@@ -884,12 +856,12 @@ export default function QuantumLedgerLinkPage() {
                     <button
                       className="video-btn"
                       type="button"
-                      aria-label="Play the team expenses video"
-                      onClick={() => setTeamVideoPlaying(true)}
+                      aria-label={howVideo.label}
+                      onClick={howVideo.onPlay}
                     >
                       <img
-                        src="/qll/team-expense-thumbnail.jpg"
-                        alt="Team expenses video"
+                        src={howVideo.thumb}
+                        alt={howVideo.alt}
                         width="1280"
                         height="720"
                       />
@@ -902,7 +874,10 @@ export default function QuantumLedgerLinkPage() {
                     </button>
                   )}
                 </div>
-              ) : (
+                );
+              }
+
+              return (
               <article
                 key={flow.title}
                 className="how-board r"
@@ -939,8 +914,8 @@ export default function QuantumLedgerLinkPage() {
                   </p>
                 ) : null}
               </article>
-              )
-            )}
+              );
+            })}
           </div>
         </section>
 
@@ -1013,38 +988,6 @@ export default function QuantumLedgerLinkPage() {
               ))}
             </div>
 
-            <h3 className="blabel industry-heading r">Industries</h3>
-          </div>
-          <div className="industry-marquee r" ref={industryMarqueeRef}>
-            <div className="industry-track" ref={industryTrackRef}>
-              {[...industryList, ...industryList].map((item, i) => {
-                const inner = (
-                  <>
-                    <img src={item.image} alt={item.title} />
-                    <div className="industry-badge-copy">
-                      <p className="industry-badge-title">{item.title}</p>
-                      <p className="industry-badge-sub">{item.sub}</p>
-                    </div>
-                    <span className="industry-badge-cta">{item.cta}</span>
-                  </>
-                );
-
-                return item.href ? (
-                  <Link
-                    key={`${item.title}-${i}`}
-                    to={item.href}
-                    className="industry-badge industry-badge--link"
-                    data-industry={item.featured && i < industryList.length ? 'spectra' : undefined}
-                  >
-                    {inner}
-                  </Link>
-                ) : (
-                  <article key={`${item.title}-${i}`} className="industry-badge">
-                    {inner}
-                  </article>
-                );
-              })}
-            </div>
           </div>
         </section>
 
@@ -1104,21 +1047,6 @@ export default function QuantumLedgerLinkPage() {
           </div>
         </section>
 
-        <section className="s paper qll-pricing" id="pricing">
-          <div className="wrap">
-            <div className="qll-pricing-head r">
-              <h2>Simple pricing for every stage</h2>
-              <p>Start free, then scale with confidence.</p>
-            </div>
-
-            <div className="qll-pricing-grid r">
-              {pricingPlans.map((plan) => (
-                <PricingCard key={plan.name} plan={plan} />
-              ))}
-            </div>
-          </div>
-        </section>
-
         <section className="s dark ink2 close" id="close">
           <div className="wrap">
             <p className="eyebrow r">Next step</p>
@@ -1148,22 +1076,7 @@ export default function QuantumLedgerLinkPage() {
         </section>
       </main>
 
-      <footer className="foot dark">
-        <div className="wrap footin">
-          <span className="fbrand">
-            <Logo className="h-7 sm:h-8" />
-            Quantum Ledger Line
-          </span>
-          <span className="flinks">
-            <a href="https://quantumledgerline.com" target="_blank" rel="noopener noreferrer">
-              quantumledgerline.com
-            </a>
-            <a href="https://highvolt.tech" target="_blank" rel="noopener noreferrer">
-              highvolt.tech
-            </a>
-          </span>
-        </div>
-      </footer>
+      <SiteFooter />
     </div>
   );
 }
