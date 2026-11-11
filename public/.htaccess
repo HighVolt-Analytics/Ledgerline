@@ -3,6 +3,12 @@ DirectoryIndex index.html
 RewriteEngine On
 RewriteBase /
 
+# Partnership program lives at /partnership. Never leave index.html in the address.
+RewriteCond %{THE_REQUEST} \s/partners(?:/index\.html|/?)[\s?] [NC]
+RewriteRule ^partners(?:/index\.html|/)?$ /partnership [R=302,L]
+
+RewriteRule ^partnership(?:/(?:signup|signin|checkout|portal(?:/(?:clients|commissions|payouts|share|settings))?))?/?$ /partners/index.html [L]
+
 # Keep the built entry point, assets, deployment marker, and any real directories
 # on the normal filesystem path. React Router handles only non-file routes.
 RewriteRule ^index\.html$ - [L]
