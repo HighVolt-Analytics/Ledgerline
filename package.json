@@ -6,10 +6,12 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "tsx --test src/lib/bookingClient.test.mjs"
   },
   "dependencies": {
     "@radix-ui/react-accordion": "^1.2.2",
+    "country-state-city": "^3.2.1",
     "dotted-map": "^2.2.3",
     "framer-motion": "^11.15.0",
     "lucide-react": "^0.469.0",
@@ -22,6 +24,7 @@
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
+    "tsx": "^4.23.15",
     "vite": "^6.0.5"
   }
 }

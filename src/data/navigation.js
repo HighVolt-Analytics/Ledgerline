@@ -10,6 +10,8 @@ export const navLinks = [
 export const tourPath = '/interactive-tour';
 export const resourcesPath = '/resources';
 export const partnershipPath = '/partnership';
+/** Primary Book a Demo page for Ledgerline (site=ledgerline booking flow). */
+export const bookDemoPath = '/book-demo';
 
 export const SUPADEMO_ID = 'cmufk4uzg1d6jqmg16tatl9ll';
 export const SUPADEMO_EMBED_SRC = `https://app.supademo.com/embed/${SUPADEMO_ID}?embed_v=2&utm_source=embed`;
