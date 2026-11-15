@@ -3,6 +3,9 @@ DirectoryIndex index.html
 RewriteEngine On
 RewriteBase /
 
+# Partner auth API (PHP). Keep real API files off the SPA fallback.
+RewriteRule ^api/ - [L]
+
 # Partnership program lives at /partnership. Never leave index.html in the address.
 RewriteCond %{THE_REQUEST} \s/partners(?:/index\.html|/?)[\s?] [NC]
 RewriteRule ^partners(?:/index\.html|/)?$ /partnership [R=302,L]

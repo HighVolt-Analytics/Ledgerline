@@ -354,7 +354,16 @@ while IFS= read -r relative_file; do
   actual_hash="$(sha256sum -- "$body_file" | cut -d ' ' -f1)"
   [[ "$actual_hash" == "$expected_hash" ]] || fail release_files release_hash_mismatch
   ((public_release_files += 1))
-done < <(cd "$release_root" && find . -type f ! -name deploy-info.txt ! -name .htaccess ! -path './partners/index.html' -print | LC_ALL=C sort | sed 's#^./##')
+done < <(
+  cd "$release_root" && find . -type f \
+    ! -name deploy-info.txt \
+    ! -name .htaccess \
+    ! -path './partners/index.html' \
+    ! -path './api/*' \
+    ! -name '*.php' \
+    ! -name '*.sqlite' \
+    -print | LC_ALL=C sort | sed 's#^./##'
+)
 ((public_release_files > 0)) || fail release_artifact missing_public_release_files
 printf 'HEALTH_OK stage=release_files count=%s\n' "$public_release_files"
 
