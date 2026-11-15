@@ -17,6 +17,9 @@ HEALTH_SCRIPT = ROOT / "scripts" / "verify-deployed-health.sh"
 EXPECTED_COMMIT = "2d63c76fbe09b6cdd2d7ac3b0775bc442d7f14a2"
 STALE_COMMIT = "31f80592b385eabfc559e12b23e52d3b9da9b811"
 ROOT_SHELL = b"<!doctype html><html><body><div id=\"root\"></div>"
+PARTNERS_SHELL = b"<!doctype html><html><body><div id=\"app\"></div><script src=\"/partners/app.js\"></script>"
+PARTNERS_JS = b"window.partners = true;"
+PARTNERS_CSS = b".partner{color:teal}"
 JS_BODY = b"const app = true;"
 CSS_BODY = b"body{color:#000}"
 PNG_BODY = b"fixture png bytes"
@@ -59,6 +62,21 @@ class FixtureHandler(BaseHTTPRequestHandler):
             self.send_response(302)
             self.send_header("Location", f"http://localhost:{self.server.server_port}/")
             self.end_headers()
+            return
+        # Mirror production .htaccess: /partners and /partners/index.html 302 to /partnership.
+        if path in ("/partners", "/partners/", "/partners/index.html"):
+            self.send_response(302)
+            self.send_header("Location", "/partnership")
+            self.end_headers()
+            return
+        if path == "/partnership":
+            self.send_body(PARTNERS_SHELL, "text/html")
+            return
+        if path == "/partners/app.js":
+            self.send_body(PARTNERS_JS, "application/javascript")
+            return
+        if path == "/partners/styles.css":
+            self.send_body(PARTNERS_CSS, "text/css")
             return
         if path == "/deploy-info.txt":
             self.server.marker_calls += 1
@@ -146,6 +164,11 @@ class DeployedHealthTests(unittest.TestCase):
         feature_images = self.index.parent / "feature images"
         feature_images.mkdir()
         (feature_images / "asset (sample).png").write_bytes(PNG_BODY)
+        partners = self.index.parent / "partners"
+        partners.mkdir()
+        (partners / "index.html").write_bytes(PARTNERS_SHELL)
+        (partners / "app.js").write_bytes(PARTNERS_JS)
+        (partners / "styles.css").write_bytes(PARTNERS_CSS)
 
     def tearDown(self):
         self.temp_dir.cleanup()
@@ -187,10 +210,34 @@ class DeployedHealthTests(unittest.TestCase):
     def test_healthy_release_routes_marker_and_assets_pass(self):
         result = self.run_health()
         self.assertEqual(result.returncode, 0, result.stderr)
-        for stage in ("public_home", "public_marker", "spa_interactive_tour", "spa_resources", "marketing_spectra", "robots", "sitemap", "static_assets"):
+        for stage in (
+            "public_home",
+            "public_marker",
+            "spa_interactive_tour",
+            "spa_resources",
+            "marketing_spectra",
+            "robots",
+            "sitemap",
+            "static_assets",
+            "partnership_entry",
+        ):
             self.assertIn(f"HEALTH_OK stage={stage}", result.stdout)
         self.assertIn("HEALTH_OK stage=release_files", result.stdout)
         self.assertIn("public_marker_status=matched", self.github_output.read_text())
+
+    def test_partners_index_rewrite_target_is_not_probed_by_filesystem_path(self):
+        """Production redirects /partners/index.html -> /partnership; release_files must not fail on that."""
+        result = self.run_health()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("HEALTH_OK stage=partnership_entry", result.stdout)
+        self.assertIn("HEALTH_OK stage=release_files", result.stdout)
+        self.assertNotIn("HEALTH_FAILURE stage=release_files category=redirect_path_mismatch", result.stderr)
+
+    def test_missing_partners_entry_fails_before_release_files(self):
+        (self.index.parent / "partners" / "index.html").unlink()
+        result = self.run_health()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("HEALTH_FAILURE stage=release_artifact category=missing_partners_entry", result.stderr)
 
     def test_stale_marker_is_retried_then_passes(self):
         self.server.mode = "stale_forever"
