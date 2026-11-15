@@ -103,6 +103,10 @@ jobs:
 
       - name: Build production site
         run: npm run build
+        env:
+          VITE_TURNSTILE_SITE_KEY: ${{ vars.VITE_TURNSTILE_SITE_KEY }}
+          VITE_BOOKING_V2_ENABLED: ${{ vars.VITE_BOOKING_V2_ENABLED }}
+          VITE_BOOKING_V2_API_BASE: ${{ vars.VITE_BOOKING_V2_API_BASE }}
 
       - name: Add deployment marker
         env:

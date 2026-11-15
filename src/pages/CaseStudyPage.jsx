@@ -1,8 +1,9 @@
 import { useEffect, useLayoutEffect } from 'react';
+import { Link } from 'react-router-dom';
 import Header from '../components/layout/Header';
 import SiteFooter from '../components/layout/SiteFooter';
 import StoryShareButton from '../components/StoryShareButton';
-import { externalLinks } from '../data/navigation';
+import { bookDemoPath } from '../data/navigation';
 import '../qll.css';
 
 function jumpToTop() {
@@ -126,14 +127,9 @@ export default function CaseStudyPage({ study }) {
             implementation plan.
           </p>
           <div className="actions r in">
-            <a
-              className="btn btn-primary"
-              href={externalLinks.getStarted}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Start free
-            </a>
+            <Link className="btn btn-primary" to={bookDemoPath}>
+              Book a demo
+            </Link>
             <a className="btn btn-ghost" href="mailto:sales@highvolt.tech">
               Talk to us
             </a>
