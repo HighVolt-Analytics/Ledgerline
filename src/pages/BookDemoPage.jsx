@@ -27,9 +27,7 @@ import {
   isBookingV2Enabled,
   localEquivalent,
   shiftCalendarMonth,
-  statesForCountry,
   sydneyZoneLabel,
-  timeZoneChoices,
   zoneLabel,
 } from '../lib/bookingClient';
 import '../qll.css';
@@ -59,7 +57,6 @@ const EMPTY = {
   phone: '',
   org: '',
   country: '',
-  state: '',
   timeZone: detectTimeZone(),
   consent: false,
 };
@@ -133,8 +130,6 @@ function validate(values) {
   }
   if (!values.org.trim()) errors.org = 'Please enter your business or accounting firm.';
   if (!values.country) errors.country = 'Please select your country.';
-  if (!values.state.trim()) errors.state = 'Please enter your state or province.';
-  if (V2_ON && !values.timeZone) errors.timeZone = 'Please select your timezone.';
   if (!values.consent) errors.consent = 'Please confirm so we can contact you.';
   return errors;
 }
@@ -294,12 +289,10 @@ export default function BookDemoPage() {
   const [tsError, setTsError] = useState(false);
   const [confirmation, setConfirmation] = useState(null);
   const [pending, setPending] = useState(null);
-  const regionList = useMemo(() => statesForCountry(values.country), [values.country]);
   const calendar = useMemo(
     () => buildCalendarMonth(calMonth.year, calMonth.month, days, date),
     [calMonth, days, date],
   );
-  const zoneChoices = useMemo(() => timeZoneChoices(values.timeZone || detectTimeZone()), [values.timeZone]);
   const attemptRef = useRef(null);
   const widgetId = useRef(null);
   const tsBox = useRef(null);
@@ -472,11 +465,11 @@ export default function BookDemoPage() {
           site: BOOKING_V2_SITE,
           timeZone: values.timeZone || detectTimeZone(),
           ...payload,
-          answers: { ...payload.answers, country, state: values.state.trim() },
+          answers: { ...payload.answers, country },
         })
       : api.book({
           ...payload,
-          answers: { ...payload.answers, country, state: values.state.trim() },
+          answers: { ...payload.answers, country },
         }));
     setBusy(false);
     resetTurnstile();
@@ -754,73 +747,11 @@ export default function BookDemoPage() {
                           invalid={Boolean(errors.country)}
                           onChange={(next) => {
                             setField('country', next);
-                            setField('state', '');
-                            if (stage === 'times' && next) void loadTimes({ ...values, country: next, state: '' });
+                            if (stage === 'times' && next) void loadTimes({ ...values, country: next });
                           }}
                         />
                         <span className="err">{errors.country}</span>
                       </div>
-                      <div className={`book-field${errors.state ? ' has-error' : ''}`}>
-                        <label htmlFor="state">State / province</label>
-                        {regionList ? (
-                          <select
-                            className="book-input"
-                            id="state"
-                            name="state"
-                            autoComplete="address-level1"
-                            required
-                            value={values.state}
-                            onChange={(event) => setField('state', event.target.value)}
-                            disabled={busy}
-                          >
-                            <option value="">Select state / province</option>
-                            {regionList.map((name) => (
-                              <option key={name} value={name}>
-                                {name}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <input
-                            className="book-input"
-                            id="state"
-                            name="state"
-                            autoComplete="address-level1"
-                            required
-                            placeholder="Region or province"
-                            value={values.state}
-                            onChange={(event) => setField('state', event.target.value)}
-                            disabled={busy}
-                          />
-                        )}
-                        <span className="err">{errors.state}</span>
-                      </div>
-                      {V2_ON ? (
-                        <div className={`book-field${errors.timeZone ? ' has-error' : ''}`}>
-                          <label htmlFor="timeZone">Timezone</label>
-                          <select
-                            className="book-input"
-                            id="timeZone"
-                            name="timeZone"
-                            required
-                            value={values.timeZone}
-                            onChange={(event) => {
-                              const next = event.target.value;
-                              setField('timeZone', next);
-                              if (stage === 'times' && next) void loadTimes({ ...values, timeZone: next });
-                            }}
-                            disabled={busy}
-                          >
-                            <option value="">Select your timezone</option>
-                            {zoneChoices.map((zone) => (
-                              <option key={zone} value={zone}>
-                                {zone}
-                              </option>
-                            ))}
-                          </select>
-                          <span className="err">{errors.timeZone}</span>
-                        </div>
-                      ) : null}
                     </div>
                     <label className="book-consent">
                       <input
@@ -831,7 +762,7 @@ export default function BookDemoPage() {
                         onChange={(event) => setField('consent', event.target.checked)}
                       />
                       <span>
-                        I agree to High Volt Analytics contacting me about this demonstration, as described in the Privacy Policy (link to be added).
+                        I agree to High Volt Analytics contacting me about this demonstration.
                       </span>
                     </label>
                     <span className="err">{errors.consent}</span>
@@ -1083,6 +1014,9 @@ export default function BookDemoPage() {
                   <Play aria-hidden="true" /> Watch It Work
                 </Link>
               </div>
+              <p className="book-reach">
+                If you are unable to contact us, email <a className="book-link" href={MAILTO}>{CONTACT}</a>.
+              </p>
             </aside>
           </div>
         </section>

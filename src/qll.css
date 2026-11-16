@@ -3098,6 +3098,11 @@ select.book-input{
   .booked-row{grid-template-columns:1fr;gap:2px}
 }
 .book-aside{display:grid;gap:18px;min-width:0}
+.book-reach{
+  justify-self:end;width:max-content;max-width:100%;margin-top:4px;padding:12px 14px;
+  border-radius:12px;border:1px solid var(--hair-dark);background:#0C1620;
+  font-size:13px;line-height:1.45;color:var(--on-dark-muted);
+}
 .book-aside .h3,.book-expect,.book-watch{min-width:0;max-width:100%}
 .book-expect{display:grid;gap:14px}
 .book-expect li{display:grid;grid-template-columns:22px minmax(0,1fr);gap:12px;align-items:start;font-size:15px;line-height:1.45;color:var(--on-dark-muted)}
