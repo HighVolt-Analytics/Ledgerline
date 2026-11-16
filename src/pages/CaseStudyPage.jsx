@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect } from 'react';
 import Header from '../components/layout/Header';
+import { externalLinks } from '../data/navigation';
 import SiteFooter from '../components/layout/SiteFooter';
 import StoryShareButton from '../components/StoryShareButton';
-import { externalLinks } from '../data/navigation';
 import '../qll.css';
 
 function jumpToTop() {
