@@ -353,9 +353,9 @@
     return `${siteHead()}
     <main>
       <section class="hero wrap">
-        <div class="eyebrow">LedgerLine Lifetime Partnership Program</div>
+        <div class="eyebrow">LedgerLine <span class="life">Lifetime</span> Partnership Program</div>
         <h1>Your clients grow.<br>Your revenue grows.</h1>
-        <p class="lede">For accountants, bookkeepers, virtual CFOs and finance advisors. Bring LedgerLine to your clients and earn 20% recurring commission for as long as they stay.</p>
+        <p class="lede">For accountants, bookkeepers, virtual CFOs and finance advisors. Bring LedgerLine to your clients and earn 20% fixed commission for as long as they stay.</p>
         <div class="ctas"><button class="btn lg" data-go="signup">Become a founding partner</button><button class="btn ghost lg" data-jump="earn">See what you could earn</button></div>
       </section>
 
@@ -363,8 +363,8 @@
         <div class="big-stat">
           <div class="n">20%</div>
           <div>
-            <h2>Lifetime recurring commission.</h2>
-            <p>Refer a client and earn 20% of eligible net subscription revenue collected, for as long as that client remains an active, paying customer.</p>
+            <h2><span class="life">Lifetime</span> fixed commission.</h2>
+            <p>Refer a client and earn 20% of eligible net fixed subscription revenue collected, for as long as that client remains an active, paying customer.</p>
             <ul class="checks"><li>No one-time referral fee</li><li>No 12-month limit</li><li>Paid monthly to your Stripe account</li></ul>
           </div>
         </div>
@@ -385,11 +385,11 @@
       <section class="band"><div class="wrap sec">
         <div class="sec-head"><h2>What your firm gets.</h2><p>You bring the relationship. We bring the technology. We grow together.</p></div>
         <div class="list-num">
-          <div class="i"><div class="k">01</div><h3>Lifetime recurring revenue</h3><p>20% of eligible net subscription revenue from every approved referred client.</p></div>
+          <div class="i"><div class="k">01</div><h3><span class="life">Lifetime</span> fixed revenue</h3><p>20% of eligible net fixed subscription revenue from every approved referred client.</p></div>
           <div class="i"><div class="k">02</div><h3>More value for clients</h3><p>Less manual processing, stronger controls, more time running the business.</p></div>
           <div class="i"><div class="k">03</div><h3>No system replacement</h3><p>Works alongside existing accounting and ERP systems, subject to supported integrations.</p></div>
           <div class="i"><div class="k">04</div><h3>Demos and onboarding</h3><p>Our team demonstrates, onboards and supports your referred clients.</p></div>
-          <div class="i"><div class="k">05</div><h3>Long-term growth</h3><p>As your clients grow, your recurring commission grows with them.</p></div>
+          <div class="i"><div class="k">05</div><h3>Long-term growth</h3><p>As your clients grow, your fixed commission grows with them.</p></div>
         </div>
       </div></section>
 
@@ -400,7 +400,7 @@
             <div class="row"><label>Active referred clients <span class="val" id="c-n-v">25</span></label><input type="range" id="c-n" min="1" max="200" value="25" aria-label="Active referred clients"></div>
             <div class="row"><label>Average monthly subscription <span class="val" id="c-p-v">US$150</span></label><input type="range" id="c-p" min="50" max="500" step="10" value="150" aria-label="Average monthly subscription"></div>
             <div class="out"><div><div class="l">Monthly commission</div><div class="v" id="c-m">US$750</div></div><div><div class="l">Annualised commission</div><div class="v" id="c-a">US$9,000</div></div></div>
-            <p class="fine">20% of net subscription revenue, excluding taxes. Illustrative only.</p>
+            <p class="fine">20% of net fixed subscription revenue, excluding taxes. Illustrative only.</p>
           </div>
           <div class="panel" style="overflow:hidden">
             <div class="tbl-wrap"><table class="t"><thead><tr><th>Active referred clients</th><th class="num">Monthly commission</th><th class="num">Annualised commission</th></tr></thead><tbody>${rows}</tbody></table></div>
@@ -415,7 +415,7 @@
           <div class="s"><div class="dot">1</div><h3>Join LedgerLine</h3><p>Create your partner account and accept the partnership terms. Your referral link is ready straight away.</p></div>
           <div class="s"><div class="dot">2</div><h3>Introduce your clients</h3><p>Share your link or invite clients by email. They subscribe online in a few minutes.</p></div>
           <div class="s"><div class="dot">3</div><h3>We demonstrate and onboard</h3><p>Our team supports demonstrations, implementation and customer onboarding.</p></div>
-          <div class="s"><div class="dot">4</div><h3>Earn recurring commission</h3><p>20% of eligible net revenue actually collected, paid monthly to your connected Stripe account.</p></div>
+          <div class="s"><div class="dot">4</div><h3>Earn fixed commission</h3><p>20% of eligible net fixed revenue actually collected, paid monthly to your connected Stripe account.</p></div>
         </div>
         <p class="fine" style="margin-top:36px">Commissions are subject to the partner agreement, including referral eligibility, payment terms, exclusions and applicable professional disclosure requirements. <a href="#" data-act="terms">Read the key terms</a>.</p>
       </div></section>
@@ -423,7 +423,7 @@
       <section class="cta-final wrap">
         <h2>Become a founding<br>LedgerLine partner.</h2>
         <p>The future of accounting is not more manual work. It is better technology, stronger controls and more valuable client relationships.</p>
-        <button class="btn lg" data-go="signup">Create your partner account</button>
+        <a href="mailto:sales@highvolt.tech">sales@highvolt.tech</a>
       </section>
     </main>
     <footer class="site-foot"><div class="wrap in"><span><b style="color:var(--text)">LedgerLine</b> | High Volt Analytics · Built for Accountants. Powered by AI. Growing Together.</span><a href="${SITE}/" target="_blank" rel="noopener">quantumledgerline.com</a></div></footer>`;
@@ -507,7 +507,7 @@
       <div><div class="l">Client subscriptions</div><div class="v">${M(st.mrr, { whole: true })}</div><div class="s">net monthly, excl. tax</div></div>
       <div><div class="l">Your monthly commission</div><div class="v">${M(st.monthlyComm)}</div><div class="s">20% of collected net revenue</div></div>
       <div><div class="l">Available to pay out</div><div class="v" style="color:${st.available > 0 ? 'var(--ok)' : 'inherit'}">${M(st.available)}</div><div class="s">${M(st.pending)} held in 30-day window</div></div>
-      <div><div class="l">Lifetime earned</div><div class="v">${M(st.lifetime)}</div><div class="s">${M(st.paid)} paid out</div></div>
+      <div><div class="l"><span class="life">Lifetime</span> earned</div><div class="v">${M(st.lifetime)}</div><div class="s">${M(st.paid)} paid out</div></div>
     </div>`;
   }
 
@@ -572,7 +572,7 @@
       ${list.length ? `<div class="tbl-wrap"><table class="t"><thead><tr><th>Date</th><th>Client</th><th>Invoice</th><th class="num">Net collected</th><th class="num">Rate</th><th class="num">Commission</th><th>Status</th><th>Available from</th></tr></thead><tbody>
       ${list.map((x) => `<tr><td>${fd(x.date)}</td><td>${esc(cn(x.clientId))}</td><td class="mono">${invn(x.invoiceId)}${x.kind === 'clawback' ? ' <span class="xs muted">refund</span>' : ''}</td><td class="num">${M(x.net)}</td><td class="num">20%</td><td class="num" style="${x.status === 'reversed' ? 'text-decoration:line-through;color:var(--faint)' : ''}">${M(x.amount)}</td><td>${pill(x)}</td><td>${x.status === 'pending' ? fd(x.availableOn) : x.payoutId ? `<span class="xs muted">${x.payoutId}</span>` : '—'}</td></tr>`).join('')}
       </tbody></table></div>` : '<div class="empty"><b>No commission yet</b>Commission appears here when a referred client\u2019s payment is collected.</div>'}</div>
-      <div class="note"><b>How commission is calculated.</b> 20% of the net subscription amount actually collected — excluding GST/VAT, refunds, chargebacks, discounts and credits. Each amount is held for 30 days, then becomes available. Refunds inside the window reverse the commission; refunds after a payout are deducted from the next one. Failed payments earn nothing until they are collected.</div>`;
+      <div class="note"><b>How commission is calculated.</b> 20% of the net fixed subscription amount actually collected — excluding GST/VAT, refunds, chargebacks, discounts and credits. Each amount is held for 30 days, then becomes available. Refunds inside the window reverse the commission; refunds after a payout are deducted from the next one. Failed payments earn nothing until they are collected.</div>`;
   }
 
   function tPayouts(p, st) {
@@ -619,7 +619,7 @@
         </div></div>
         <div class="card"><div class="card-head"><h2>Partner agreement</h2><span class="pill ok">Accepted</span></div><div class="card-body"><dl class="kv">
           <dt>Status</dt><dd>${p.status === 'approved' ? 'Approved partner' : 'Pending'}${p.founding ? ' · Founding partner' : ''}</dd>
-          <dt>Commission</dt><dd>20% lifetime recurring</dd><dt>Accepted on</dt><dd>${fd(p.created)}</dd><dt>Partner code</dt><dd><span class="code-chip">${p.code}</span></dd></dl>
+          <dt>Commission</dt><dd>20% <span class="life">lifetime</span> fixed</dd><dt>Accepted on</dt><dd>${fd(p.created)}</dd><dt>Partner code</dt><dd><span class="code-chip">${p.code}</span></dd></dl>
           <div style="margin-top:16px"><button class="btn ghost sm" data-act="terms">View key terms</button></div></div></div>
       </div>`;
   }
@@ -695,7 +695,7 @@
   function termsModal() {
     modal(`${mHead('Partner program — key terms', 'Summary for this prototype. The signed partner agreement governs.')}
     <div class="m-body terms">
-      <h3>Commission</h3><p>20% of eligible net subscription revenue actually collected from each approved referred client, for as long as their subscription remains active and paid.</p>
+      <h3>Commission</h3><p>20% of eligible net fixed subscription revenue actually collected from each approved referred client, for as long as their subscription remains active and paid.</p>
       <h3>What counts as net revenue</h3><ul><li>Subscription fees received, excluding GST, VAT and other taxes</li><li>Less refunds, chargebacks, discounts and credits</li><li>Excludes one-off implementation or services fees</li></ul>
       <h3>Referral eligibility</h3><ul><li>Client subscribes through your link, code or a registered invitation</li><li>Attribution lasts 90 days from first click</li><li>Existing LedgerLine customers and self-referrals are not eligible</li></ul>
       <h3>Payment</h3><ul><li>Commission is held for 30 days to cover refunds, then becomes available</li><li>Paid monthly on the 15th via Stripe Connect, minimum US$50</li><li>Refunds after payout are deducted from the next payout</li></ul>
@@ -973,7 +973,8 @@
     if (ev.key === 'Enter' && ev.target.matches('.auth-card input')) { const b = $('.auth-card [data-act="su-next"], .auth-card [data-act="su-create"], .auth-card [data-act="signin"]'); if (b) b.click(); }
   });
   $('#modal-wrap').addEventListener('click', (ev) => { if (ev.target.id === 'modal-wrap') closeModal(); });
-  $('#proto-reset').addEventListener('click', () => {
+  const resetBtn = $('#proto-reset');
+  if (resetBtn) resetBtn.addEventListener('click', () => {
     if (!authPartner) { go('signin'); return toast('Sign in to use the prototype portal'); }
     store.clear();
     S = seed();

@@ -1,22 +1,25 @@
-import { useEffect, useLayoutEffect, useRef, useState, Fragment } from 'react';
+import { useEffect, useRef, useState, Fragment } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Users,
   MousePointerClick,
   Camera,
   ClipboardCheck,
   Wallet,
-  User,
-  DollarSign,
-  Calculator,
-  FileSpreadsheet,
+  Receipt,
+  CircleCheck,
+  ThumbsUp,
+  ThumbsDown,
+  Copy,
   SearchCheck,
   Check,
   ChevronRight,
   Zap,
+  CalendarCheck,
+  Send,
 } from 'lucide-react';
 import Header from '../components/layout/Header';
 import SiteFooter from '../components/layout/SiteFooter';
+import GradientCard from '../components/ui/GradientCard';
 import HowVisual from '../components/ui/HowVisuals';
 import { WorldMap } from '../components/ui/WorldMap';
 import IntegrationsSection from '../components/sections/IntegrationsSection';
@@ -363,15 +366,50 @@ function PeopleCardVisual({ visual }) {
   if (visual === 'cfo') {
     return (
       <div className="people-scene people-scene--cfo">
-        <span className="people-avatar people-avatar--a">
-          <User size={15} strokeWidth={2} />
+        <svg className="cfo-trend" viewBox="0 0 240 90" aria-hidden="true">
+          <defs>
+            <linearGradient id="cfo-trend-glow" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#2FD4B5" stopOpacity="0.28" />
+              <stop offset="100%" stopColor="#2FD4B5" stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          <path
+            d="M0 62 C40 60 70 52 100 54 C130 56 150 48 175 50 C200 52 220 48 240 50 L240 90 L0 90 Z"
+            fill="url(#cfo-trend-glow)"
+          />
+          <path
+            className="cfo-trend-line"
+            d="M0 62 C40 60 70 52 100 54 C130 56 150 48 175 50 C200 52 220 48 240 50"
+          />
+          <circle cx="175" cy="50" r="3.2" fill="#0C1620" stroke="#2FD4B5" strokeWidth="1.6" />
+        </svg>
+
+        <span className="cfo-float cfo-plane">
+          <Send size={14} strokeWidth={2.4} />
         </span>
-        <span className="people-avatar people-avatar--b">
-          <User size={15} strokeWidth={2} />
+        <span className="cfo-float cfo-bolt">
+          <Zap size={18} strokeWidth={2.2} />
         </span>
-        <span className="people-avatar people-avatar--c">
-          <Users size={14} strokeWidth={2} />
+        <span className="cfo-float cfo-pie" aria-hidden="true">
+          <svg viewBox="0 0 32 32">
+            <circle cx="16" cy="16" r="13" fill="#12202A" />
+            <path d="M16 16 L16 3.5 A12.5 12.5 0 0 1 27.2 21.2 Z" fill="#2FD4B5" />
+            <path d="M16 16 L27.2 21.2 A12.5 12.5 0 0 1 7.2 24.4 Z" fill="#1A8F7A" />
+          </svg>
         </span>
+
+        <div className="cfo-pill">
+          <span className="cfo-orb cfo-orb--cal">
+            <CalendarCheck size={16} strokeWidth={2.2} />
+          </span>
+          <span className="cfo-orb cfo-orb--face">
+            <img src="/qll/cfo-user-a.png" alt="" />
+          </span>
+          <span className="cfo-orb cfo-orb--face">
+            <img src="/qll/cfo-user-b.png" alt="" />
+          </span>
+          <span className="cfo-orb cfo-orb--plus">+2</span>
+        </div>
       </div>
     );
   }
@@ -379,18 +417,32 @@ function PeopleCardVisual({ visual }) {
   if (visual === 'finance') {
     return (
       <div className="people-scene people-scene--finance">
-        <div className="people-bars">
-          <span />
-          <span />
-          <span />
-          <span />
-        </div>
-        <span className="people-finance-mark">
-          <DollarSign size={14} strokeWidth={2.25} />
-        </span>
-        <span className="people-finance-calc">
-          <Calculator size={12} strokeWidth={2} />
-        </span>
+        <svg className="fin-multi" viewBox="0 0 240 140" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+          <text className="fin-axis" x="2" y="20">100</text>
+          <text className="fin-axis" x="6" y="72">50</text>
+          <text className="fin-axis" x="10" y="126">0</text>
+          <path className="fin-series fin-series--soft" d="M32 40 C80 38 120 28 168 24" />
+          <path className="fin-series" d="M32 96 C62 94 82 80 92 74 C102 68 138 56 168 52" />
+          <path className="fin-series fin-series--muted" d="M32 114 C90 112 130 108 168 106" />
+          <line x1="92" y1="12" x2="92" y2="128" className="fin-guide" />
+          <circle cx="92" cy="74" r="3.6" className="fin-node" />
+          <g className="fin-tip">
+            <rect x="61" y="48" width="62" height="16" rx="8" />
+            <text x="92" y="59" textAnchor="middle">37 <tspan className="fin-tip-up">+1.2%</tspan></text>
+          </g>
+          <g className="fin-pill fin-pill--cash">
+            <rect x="178" y="16" width="52" height="16" rx="8" />
+            <text x="204" y="27" textAnchor="middle">Cash</text>
+          </g>
+          <g className="fin-pill fin-pill--close">
+            <rect x="178" y="44" width="52" height="16" rx="8" />
+            <text x="204" y="55" textAnchor="middle">Close</text>
+          </g>
+          <g className="fin-pill fin-pill--queue">
+            <rect x="178" y="98" width="52" height="16" rx="8" />
+            <text x="204" y="109" textAnchor="middle">Queue</text>
+          </g>
+        </svg>
       </div>
     );
   }
@@ -398,15 +450,22 @@ function PeopleCardVisual({ visual }) {
   if (visual === 'ap') {
     return (
       <div className="people-scene people-scene--ap">
-        <div className="people-sheet people-sheet--back" />
-        <div className="people-sheet people-sheet--front">
-          <span />
-          <span />
-          <span />
+        <div className="acct-board">
+          <p>Invoice checked. Ready for the next control gate.</p>
+          <span className="acct-k">Title</span>
+          <span className="acct-bar" />
+          <span className="acct-k">Content</span>
+          <span className="acct-bar acct-bar--mid" />
+          <div className="acct-row">
+            <span><ThumbsUp size={10} strokeWidth={2.2} /> Like</span>
+            <span><ThumbsDown size={10} strokeWidth={2.2} /> Dislike</span>
+          </div>
         </div>
-        <span className="people-ap-mark">
-          <FileSpreadsheet size={12} strokeWidth={2} />
-        </span>
+        <div className="acct-pop">
+          <span><ThumbsUp size={10} strokeWidth={2.2} /> Like</span>
+          <span><ThumbsDown size={10} strokeWidth={2.2} /> Dislike</span>
+          <span><Copy size={10} strokeWidth={2.2} /> Copy</span>
+        </div>
       </div>
     );
   }
@@ -414,14 +473,22 @@ function PeopleCardVisual({ visual }) {
   if (visual === 'field') {
     return (
       <div className="people-scene people-scene--field">
-        <div className="people-phone">
-          <span className="people-phone-notch" />
-          <Camera size={13} strokeWidth={2} />
-        </div>
-        <div className="people-receipt">
-          <span />
-          <span />
-          <span />
+        <div className="inv-panel">
+          <div className="inv-card inv-card--back" />
+          <div className="inv-card inv-card--mid">
+            <span className="inv-ico"><Receipt size={11} strokeWidth={2} /></span>
+            <span className="inv-name">Invoice #25</span>
+            <CircleCheck size={14} className="inv-ok" strokeWidth={2} />
+          </div>
+          <div className="inv-card inv-card--front">
+            <span className="inv-ico"><Receipt size={11} strokeWidth={2} /></span>
+            <span className="inv-copy">
+              <strong>Invoice #27</strong>
+              <em>+ $2,450.00</em>
+            </span>
+            <CircleCheck size={14} className="inv-ok" strokeWidth={2} />
+          </div>
+          <span className="inv-create">Create +</span>
         </div>
       </div>
     );
@@ -447,72 +514,28 @@ function PeopleCardVisual({ visual }) {
   );
 }
 
-const industryList = [
+const industryCards = [
   {
-    title: 'Aged care & NDIS providers',
-    sub: '(claims, rostering, funding)',
-    cta: 'Care',
-    image: '/qll/industries/aged-care.png',
-  },
-  {
-    title: 'Accounting & audit firms',
-    sub: '(close, AP, assurance)',
-    cta: 'Audit',
-    image: '/qll/industries/accounting.png',
-  },
-  {
-    title: 'Education & migration agencies',
-    sub: '(enrolments, visas, fees)',
-    cta: 'Learn',
-    image: '/qll/industries/education.png',
-  },
-  {
-    title: 'Logistics & freight',
-    sub: '(POD, payables, fleet)',
-    cta: 'Move',
-    image: '/qll/industries/logistics.png',
-  },
-  {
+    tone: 'teal',
+    badgeText: 'Case study',
+    badgeColor: '#5EEAD4',
     title: 'Spectra',
-    sub: '(export & import trade docs)',
-    cta: 'Case study',
-    image: '/qll/industries/spectra-hero.jpg',
+    description:
+      'Export and import across countries. Scattered trade documents become an audit-ready ledger posting.',
+    ctaText: 'Read the story',
     href: '/industries/spectra',
-    slug: 'spectra',
-    featured: true,
+    imageUrl: '/qll/industries/spectra-hero.jpg',
   },
   {
+    tone: 'violet',
+    badgeText: 'Case study',
+    badgeColor: '#C4B5FD',
     title: 'Pactify',
-    sub: '(BAS, invoice to pay)',
-    cta: 'Case study',
-    image: '/qll/industries/accounting.png',
+    description:
+      'A quarterly BAS review that used to take six to seven hours now finishes in one, with consultancy fees cut in half.',
+    ctaText: 'Read the story',
     href: '/industries/pactify',
-    slug: 'pactify',
-    featured: true,
-  },
-  {
-    title: 'Construction & trades',
-    sub: '(progress claims, job cost)',
-    cta: 'Build',
-    image: '/qll/industries/construction.png',
-  },
-  {
-    title: 'Retail & DTC',
-    sub: '(stock, suppliers, payouts)',
-    cta: 'Sell',
-    image: '/qll/industries/retail.png',
-  },
-  {
-    title: 'Professional services',
-    sub: '(WIP, retainers, bills)',
-    cta: 'Advise',
-    image: '/qll/industries/professional.png',
-  },
-  {
-    title: 'Multi-entity groups',
-    sub: '(group close, intercompany)',
-    cta: 'Group',
-    image: '/qll/industries/multi-entity.png',
+    imageUrl: '/qll/industries/accounting.png',
   },
 ];
 
@@ -580,54 +603,10 @@ export default function QuantumLedgerLinkPage() {
   const [invoiceVideoPlaying, setInvoiceVideoPlaying] = useState(false);
   const [howTab, setHowTab] = useState(0);
   const rootRef = useRef(null);
-  const industryMarqueeRef = useRef(null);
-  const industryTrackRef = useRef(null);
 
   useEffect(() => {
     document.body.classList.add('qll-page');
     return () => document.body.classList.remove('qll-page');
-  }, []);
-
-  useLayoutEffect(() => {
-    const marquee = industryMarqueeRef.current;
-    const track = industryTrackRef.current;
-    if (!marquee || !track) return undefined;
-
-    // Keep Spectra mid-row with neighbors on both sides; only unpause when section is in view.
-    const placeSpectraInCenter = () => {
-      const spectra = track.querySelector('[data-industry="spectra"]');
-      if (!spectra) return;
-      const start = window.innerWidth / 2 - (spectra.offsetLeft + spectra.offsetWidth / 2);
-      track.style.setProperty('--industry-start', `${Math.round(start)}px`);
-    };
-
-    placeSpectraInCenter();
-
-    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (reduce || !('IntersectionObserver' in window)) {
-      marquee.classList.add('is-running');
-      return undefined;
-    }
-
-    const io = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            placeSpectraInCenter();
-            marquee.classList.add('is-running');
-            io.unobserve(entry.target);
-          }
-        });
-      },
-      { threshold: 0.35, rootMargin: '0px 0px -10% 0px' },
-    );
-
-    io.observe(marquee);
-    window.addEventListener('resize', placeSpectraInCenter);
-    return () => {
-      io.disconnect();
-      window.removeEventListener('resize', placeSpectraInCenter);
-    };
   }, []);
 
   useEffect(() => {
@@ -757,36 +736,10 @@ export default function QuantumLedgerLinkPage() {
         <section className="s dark industry-strip" id="industries" aria-label="Industries">
           <div className="wrap">
             <h3 className="blabel industry-heading r">Industries</h3>
-          </div>
-          <div className="industry-marquee r" ref={industryMarqueeRef}>
-            <div className="industry-track" ref={industryTrackRef}>
-              {[...industryList, ...industryList].map((item, i) => {
-                const inner = (
-                  <>
-                    <img src={item.image} alt={item.title} />
-                    <div className="industry-badge-copy">
-                      <p className="industry-badge-title">{item.title}</p>
-                      <p className="industry-badge-sub">{item.sub}</p>
-                    </div>
-                    <span className="industry-badge-cta">{item.cta}</span>
-                  </>
-                );
-
-                return item.href ? (
-                  <Link
-                    key={`${item.title}-${i}`}
-                    to={item.href}
-                    className="industry-badge industry-badge--link"
-                    data-industry={item.slug && i < industryList.length ? item.slug : undefined}
-                  >
-                    {inner}
-                  </Link>
-                ) : (
-                  <article key={`${item.title}-${i}`} className="industry-badge">
-                    {inner}
-                  </article>
-                );
-              })}
+            <div className="industry-grid r">
+              {industryCards.map((card) => (
+                <GradientCard key={card.href} {...card} />
+              ))}
             </div>
           </div>
         </section>
