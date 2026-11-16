@@ -426,7 +426,7 @@
         <a href="mailto:sales@highvolt.tech">sales@highvolt.tech</a>
       </section>
     </main>
-    <footer class="site-foot"><div class="wrap in"><span><b style="color:var(--text)">LedgerLine</b> | High Volt Analytics · Built for Accountants. Powered by AI. Growing Together.</span><a href="${SITE}/" target="_blank" rel="noopener">quantumledgerline.com</a></div></footer>`;
+    <footer class="site-foot"><div class="wrap in"><span><b style="color:var(--text)">LedgerLine</b> | Your clients grow. Your revenue grows.</span><a href="${SITE}/" target="_blank" rel="noopener">quantumledgerline.com</a></div></footer>`;
   }
 
   function vSignup() {

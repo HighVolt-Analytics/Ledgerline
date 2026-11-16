@@ -39,8 +39,9 @@ function partnershipRoutes() {
 function startPartnerApi() {
   const publicDir = path.join(ROOT, 'public');
   const router = path.join(publicDir, 'api', 'router.php');
+  let child;
   try {
-    return spawn(
+    child = spawn(
       phpBin(),
       [...phpSqliteArgs(), '-S', `127.0.0.1:${PARTNER_API_PORT}`, '-t', publicDir, router],
       {
@@ -55,6 +56,8 @@ function startPartnerApi() {
   } catch {
     return null;
   }
+  child.on('error', () => {});
+  return child;
 }
 
 function proxyPartnerApi(req, res, next) {
