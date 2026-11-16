@@ -1,29 +1,49 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { tourPath } from '../data/navigation';
 import { Clock, FileCheck2, Hand, Play, ShieldCheck, Target } from 'lucide-react';
 import Header from '../components/layout/Header';
 import SiteFooter from '../components/layout/SiteFooter';
 import {
+  BOOKING_V2_SITE,
   CONTACT,
   buildBookingPayload,
+  buildCalendarMonth,
   buildDateOptions,
+  buildMarketDateOptions,
+  calendarMonthForNow,
+  calendarMonthFromDays,
   confirmationDetails,
+  countryNameForApi,
+  countryOptions,
   createBookingApi,
+  detectTimeZone,
   formatSydneyTime,
+  formatZoneTime,
   idempotencyKeyFor,
   interpretAvailability,
   interpretBooking,
   isBookingConfigured,
+  isBookingV2Enabled,
   localEquivalent,
+  shiftCalendarMonth,
+  statesForCountry,
   sydneyZoneLabel,
+  timeZoneChoices,
+  zoneLabel,
 } from '../lib/bookingClient';
 import '../qll.css';
 
 const API_BASE = 'https://func-qvm-bookdemo-prod-aue.azurewebsites.net';
-const SITE_KEY = '0x4AAAAAAFdkE2jqh1bsE-WB';
+const V2_API_BASE = String(import.meta.env.VITE_BOOKING_V2_API_BASE || '').trim();
+const SITE_KEY = String(import.meta.env.VITE_TURNSTILE_SITE_KEY || '').trim();
 const TURNSTILE_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
-const BOOKING_READY = isBookingConfigured({ siteKey: SITE_KEY, apiBase: API_BASE });
+const V2_ON = isBookingV2Enabled();
+const COUNTRIES = countryOptions();
+const BOOKING_READY = isBookingConfigured({
+  siteKey: SITE_KEY,
+  apiBase: V2_ON ? V2_API_BASE || API_BASE : API_BASE,
+});
 const MAILTO = `mailto:${CONTACT}?subject=Book%20a%20Demo`;
 const PARTNER = 'We are an accounting, audit or vCFO firm';
 
@@ -38,7 +58,9 @@ const EMPTY = {
   email: '',
   phone: '',
   org: '',
-  state: 'Australia',
+  country: '',
+  state: '',
+  timeZone: detectTimeZone(),
   consent: false,
 };
 
@@ -64,16 +86,6 @@ const BOTTLENECKS = [
   'Bank reconciliation and reporting',
   'Managing multiple entities or clients',
 ];
-
-const COUNTRY_CODES = 'AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS XK YE YT ZA ZM ZW'.split(' ');
-
-const COUNTRIES = (() => {
-  const display = new Intl.DisplayNames(['en'], { type: 'region' });
-  const names = COUNTRY_CODES.map((code) => display.of(code)).filter((name) => name && !COUNTRY_CODES.includes(name));
-  const rest = [...new Set(names)].filter((name) => name !== 'Australia');
-  rest.sort((a, b) => a.localeCompare(b, 'en'));
-  return ['Australia', ...rest];
-})();
 
 const EXPECT = [
   [Clock, '30 minutes on video, at a time that suits you.'],
@@ -120,6 +132,9 @@ function validate(values) {
     errors.phone = 'Please enter a valid phone number.';
   }
   if (!values.org.trim()) errors.org = 'Please enter your business or accounting firm.';
+  if (!values.country) errors.country = 'Please select your country.';
+  if (!values.state.trim()) errors.state = 'Please enter your state or province.';
+  if (V2_ON && !values.timeZone) errors.timeZone = 'Please select your timezone.';
   if (!values.consent) errors.consent = 'Please confirm so we can contact you.';
   return errors;
 }
@@ -141,14 +156,136 @@ function Choice({ name, value, checked, onChange, children, center, stack, disab
   );
 }
 
+/** One searchable country control: search and selected value share the same field. */
+function CountryCombobox({ id, value, options, disabled, invalid, onChange }) {
+  const listId = useId();
+  const rootRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [active, setActive] = useState(0);
+  const selected = options.find((item) => item.code === value) || null;
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter((item) => item.name.toLowerCase().includes(q) || item.code.toLowerCase().includes(q));
+  }, [options, query]);
+
+  useEffect(() => {
+    if (!open) setQuery(selected?.name || '');
+  }, [open, selected?.name]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    function onPointerDown(event) {
+      if (!rootRef.current?.contains(event.target)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, [open]);
+
+  useEffect(() => {
+    setActive(0);
+  }, [query, open]);
+
+  function choose(code) {
+    onChange(code);
+    setOpen(false);
+  }
+
+  function onKeyDown(event) {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      if (!open) {
+        setOpen(true);
+        return;
+      }
+      setActive((index) => Math.min(index + 1, Math.max(filtered.length - 1, 0)));
+      return;
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setActive((index) => Math.max(index - 1, 0));
+      return;
+    }
+    if (event.key === 'Enter') {
+      if (!open) return;
+      event.preventDefault();
+      const item = filtered[active];
+      if (item) choose(item.code);
+      return;
+    }
+    if (event.key === 'Escape') {
+      setOpen(false);
+      setQuery(selected?.name || '');
+    }
+  }
+
+  return (
+    <div className={`book-combobox${open ? ' is-open' : ''}`} ref={rootRef}>
+      <input type="hidden" name="country" value={value} />
+      <input
+        className="book-input book-combobox__input"
+        id={id}
+        type="text"
+        role="combobox"
+        aria-expanded={open}
+        aria-controls={listId}
+        aria-autocomplete="list"
+        aria-invalid={invalid ? 'true' : undefined}
+        autoComplete="country-name"
+        placeholder="Search country"
+        value={open ? query : selected?.name || ''}
+        disabled={disabled}
+        onFocus={() => {
+          setQuery(selected?.name || '');
+          setOpen(true);
+        }}
+        onChange={(event) => {
+          setQuery(event.target.value);
+          setOpen(true);
+          if (value) onChange('');
+        }}
+        onKeyDown={onKeyDown}
+      />
+      {open ? (
+        <ul className="book-combobox__list" id={listId} role="listbox">
+          {filtered.length ? (
+            filtered.map((item, index) => (
+              <li key={item.code} role="presentation">
+                <button
+                  type="button"
+                  role="option"
+                  className={`book-combobox__option${item.code === value ? ' is-selected' : ''}${index === active ? ' is-active' : ''}`}
+                  aria-selected={item.code === value}
+                  onMouseEnter={() => setActive(index)}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => choose(item.code)}
+                >
+                  {item.name}
+                </button>
+              </li>
+            ))
+          ) : (
+            <li className="book-combobox__empty" role="presentation">
+              No countries match
+            </li>
+          )}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 export default function BookDemoPage() {
-  const api = useRef(createBookingApi({ baseUrl: API_BASE })).current;
+  const api = useRef(createBookingApi({ baseUrl: API_BASE, v2BaseUrl: V2_API_BASE || API_BASE })).current;
   const [values, setValues] = useState(EMPTY);
   const [errors, setErrors] = useState({});
   const [stage, setStage] = useState('questions');
   const [days, setDays] = useState([]);
+  const [marketZone, setMarketZone] = useState(null);
   const [date, setDate] = useState(null);
   const [slot, setSlot] = useState(null);
+  const [calMonth, setCalMonth] = useState(() => calendarMonthFromDays([], null));
   const [token, setToken] = useState('');
   const [busy, setBusy] = useState(false);
   const [busyLabel, setBusyLabel] = useState('');
@@ -157,6 +294,12 @@ export default function BookDemoPage() {
   const [tsError, setTsError] = useState(false);
   const [confirmation, setConfirmation] = useState(null);
   const [pending, setPending] = useState(null);
+  const regionList = useMemo(() => statesForCountry(values.country), [values.country]);
+  const calendar = useMemo(
+    () => buildCalendarMonth(calMonth.year, calMonth.month, days, date),
+    [calMonth, days, date],
+  );
+  const zoneChoices = useMemo(() => timeZoneChoices(values.timeZone || detectTimeZone()), [values.timeZone]);
   const attemptRef = useRef(null);
   const widgetId = useRef(null);
   const tsBox = useRef(null);
@@ -218,9 +361,11 @@ export default function BookDemoPage() {
   }, [stage]);
 
   const activeDay = days.find((day) => day.date === date);
-  const zoneNote = activeDay?.slots?.[0]
-    ? `All times are Sydney time, ${sydneyZoneLabel(new Date(activeDay.slots[0].start))}.`
-    : 'All times are Sydney time.';
+  const zoneNote = marketZone
+    ? `All times are ${zoneLabel(new Date(activeDay?.slots?.[0]?.start || Date.now()), marketZone)}.`
+    : activeDay?.slots?.[0]
+      ? `All times are Sydney time, ${sydneyZoneLabel(new Date(activeDay.slots[0].start))}.`
+      : 'All times are Sydney time.';
   const timesHint = !activeDay?.slots?.length
     ? 'Choose a date to see available times.'
     : `${activeDay.slots.length} available ${activeDay.slots.length === 1 ? 'time' : 'times'} on ${activeDay.longLabel}.`;
@@ -246,16 +391,19 @@ export default function BookDemoPage() {
     }
   }
 
-  async function loadTimes() {
+  async function loadTimes(nextValues = values) {
     setBusy(true);
     setBusyLabel('Loading times…');
-    const res = await api.availability();
+    const country = countryNameForApi(nextValues.country, COUNTRIES) || nextValues.country;
+    const res = await (V2_ON
+      ? api.availabilityV2(BOOKING_V2_SITE, country, nextValues.timeZone || detectTimeZone())
+      : api.availability());
     setBusy(false);
     if (res.network) {
       setStatus(`We couldn't load available times. Check your connection and try again, or email ${CONTACT}.`);
       return false;
     }
-    const parsed = interpretAvailability(res.httpStatus, res.body);
+    const parsed = interpretAvailability(res.httpStatus, res.body, res.headers);
     if (parsed.kind === 'unavailable') {
       setStage('unavailable');
       return false;
@@ -264,14 +412,21 @@ export default function BookDemoPage() {
       setStatus(parsed.message);
       return false;
     }
-    const nextDays = buildDateOptions(new Date(), parsed.slots);
+    const usingMarket = V2_ON && Boolean(parsed.timeZone);
+    setMarketZone(usingMarket ? parsed.timeZone : null);
+    const nextDays = usingMarket
+      ? buildMarketDateOptions(new Date(), parsed.slots, parsed)
+      : buildDateOptions(new Date(), parsed.slots);
     const first = nextDays.find((day) => day.available);
     setDays(nextDays);
     setDate(first ? first.date : null);
     setSlot(null);
+    setCalMonth(calendarMonthFromDays(nextDays, first?.date || null));
     setStepError(false);
     if (!parsed.slots.length) {
       setStatus(`No times are available in the next 14 days. Please email ${CONTACT} and we'll arrange one.`);
+    } else {
+      setStatus('');
     }
     return true;
   }
@@ -311,16 +466,27 @@ export default function BookDemoPage() {
     setBusy(true);
     setBusyLabel('Booking…');
     setStatus('');
-    const res = await api.book(payload);
+    const country = countryNameForApi(values.country, COUNTRIES) || values.country;
+    const res = await (V2_ON
+      ? api.bookV2({
+          site: BOOKING_V2_SITE,
+          timeZone: values.timeZone || detectTimeZone(),
+          ...payload,
+          answers: { ...payload.answers, country, state: values.state.trim() },
+        })
+      : api.book({
+          ...payload,
+          answers: { ...payload.answers, country, state: values.state.trim() },
+        }));
     setBusy(false);
     resetTurnstile();
     if (res.network) {
       setStatus("We couldn't reach the booking service. Please complete the security check and press Confirm booking again — you won't be booked twice.");
       return;
     }
-    const parsed = interpretBooking(res.httpStatus, res.body);
+    const parsed = interpretBooking(res.httpStatus, res.body, res.headers);
     if (parsed.kind === 'confirmed') {
-      setConfirmation(confirmationDetails(parsed, email));
+      setConfirmation(confirmationDetails(parsed, email, values.timeZone || detectTimeZone()));
       setStage('booked');
       return;
     }
@@ -329,7 +495,11 @@ export default function BookDemoPage() {
       setStage('pending');
       return;
     }
-    attemptRef.current = null;
+    if (parsed.kind !== 'retry_later') attemptRef.current = null;
+    if (parsed.kind === 'already_booked' || parsed.kind === 'retry_later') {
+      setStatus(parsed.message);
+      return;
+    }
     if (parsed.kind === 'slot_gone') {
       setStatus(parsed.message);
       await loadTimes();
@@ -574,21 +744,83 @@ export default function BookDemoPage() {
                         />
                         <span className="err">{errors.org}</span>
                       </div>
-                      <div className="book-field">
+                      <div className={`book-field${errors.country ? ' has-error' : ''}`}>
                         <label htmlFor="country">Country</label>
-                        <select
-                          className="book-input"
+                        <CountryCombobox
                           id="country"
-                          name="state"
-                          autoComplete="country-name"
-                          value={values.state}
-                          onChange={(event) => setField('state', event.target.value)}
-                        >
-                          {COUNTRIES.map((item) => (
-                            <option key={item}>{item}</option>
-                          ))}
-                        </select>
+                          value={values.country}
+                          options={COUNTRIES}
+                          disabled={busy}
+                          invalid={Boolean(errors.country)}
+                          onChange={(next) => {
+                            setField('country', next);
+                            setField('state', '');
+                            if (stage === 'times' && next) void loadTimes({ ...values, country: next, state: '' });
+                          }}
+                        />
+                        <span className="err">{errors.country}</span>
                       </div>
+                      <div className={`book-field${errors.state ? ' has-error' : ''}`}>
+                        <label htmlFor="state">State / province</label>
+                        {regionList ? (
+                          <select
+                            className="book-input"
+                            id="state"
+                            name="state"
+                            autoComplete="address-level1"
+                            required
+                            value={values.state}
+                            onChange={(event) => setField('state', event.target.value)}
+                            disabled={busy}
+                          >
+                            <option value="">Select state / province</option>
+                            {regionList.map((name) => (
+                              <option key={name} value={name}>
+                                {name}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            className="book-input"
+                            id="state"
+                            name="state"
+                            autoComplete="address-level1"
+                            required
+                            placeholder="Region or province"
+                            value={values.state}
+                            onChange={(event) => setField('state', event.target.value)}
+                            disabled={busy}
+                          />
+                        )}
+                        <span className="err">{errors.state}</span>
+                      </div>
+                      {V2_ON ? (
+                        <div className={`book-field${errors.timeZone ? ' has-error' : ''}`}>
+                          <label htmlFor="timeZone">Timezone</label>
+                          <select
+                            className="book-input"
+                            id="timeZone"
+                            name="timeZone"
+                            required
+                            value={values.timeZone}
+                            onChange={(event) => {
+                              const next = event.target.value;
+                              setField('timeZone', next);
+                              if (stage === 'times' && next) void loadTimes({ ...values, timeZone: next });
+                            }}
+                            disabled={busy}
+                          >
+                            <option value="">Select your timezone</option>
+                            {zoneChoices.map((zone) => (
+                              <option key={zone} value={zone}>
+                                {zone}
+                              </option>
+                            ))}
+                          </select>
+                          <span className="err">{errors.timeZone}</span>
+                        </div>
+                      ) : null}
                     </div>
                     <label className="book-consent">
                       <input
@@ -614,37 +846,71 @@ export default function BookDemoPage() {
                       <legend tabIndex={-1}>
                         <span className="n">05</span>Choose a time
                       </legend>
-                      <p className="book-zone">{zoneNote}</p>
+                      <div className="book-calendar-head">
+                        <p className="book-zone">{zoneNote}</p>
+                        <button type="button" className="book-link" disabled={busy} onClick={() => void loadTimes()}>
+                          Refresh times
+                        </button>
+                      </div>
                       <div className="book-field">
-                        <span className="book-label" id="bk-date-label">
-                          Date
-                        </span>
-                        <div className="choice-grid booking-dates" role="radiogroup" aria-labelledby="bk-date-label">
-                          {days.map((day) => {
-                            const unavailable = day.closed || !day.available;
-                            const sub = day.closed ? 'Closed' : day.available ? `${day.slots.length} ${day.slots.length === 1 ? 'time' : 'times'}` : 'No times';
-                            return (
-                              <Choice
-                                key={day.date}
-                                name="bookingDate"
-                                value={day.date}
-                                center
-                                stack
-                                disabled={unavailable}
-                                checked={date === day.date}
-                                label={`${day.longLabel}${day.closed ? ', closed' : !day.available ? ', no times available' : ''}`}
-                                onChange={() => {
-                                  setDate(day.date);
-                                  setSlot(null);
-                                  setStepError(false);
-                                  setStatus('');
-                                }}
-                              >
-                                <b>{day.label}</b>
-                                <small>{sub}</small>
-                              </Choice>
-                            );
-                          })}
+                        <div className="book-calendar-nav">
+                          <p className="book-label" id="bk-date-label">
+                            {calendar.label}
+                          </p>
+                          <div className="book-calendar-actions">
+                            <button
+                              type="button"
+                              className="book-cal-btn"
+                              disabled={busy}
+                              onClick={() => setCalMonth((current) => shiftCalendarMonth(current.year, current.month, -1))}
+                            >
+                              Previous
+                            </button>
+                            <button
+                              type="button"
+                              className="book-cal-btn"
+                              disabled={busy}
+                              onClick={() =>
+                                setCalMonth(calendarMonthForNow(new Date(), marketZone || values.timeZone || detectTimeZone()))
+                              }
+                            >
+                              Today
+                            </button>
+                            <button
+                              type="button"
+                              className="book-cal-btn"
+                              disabled={busy}
+                              onClick={() => setCalMonth((current) => shiftCalendarMonth(current.year, current.month, 1))}
+                            >
+                              Next
+                            </button>
+                          </div>
+                        </div>
+                        <div className="book-calendar-weekdays" aria-hidden>
+                          {calendar.weekdays.map((day) => (
+                            <span key={day}>{day}</span>
+                          ))}
+                        </div>
+                        <div className="book-calendar-grid" role="radiogroup" aria-labelledby="bk-date-label">
+                          {calendar.cells.map((cell) => (
+                            <button
+                              key={`${cell.date}-${cell.inMonth ? 'in' : 'out'}`}
+                              type="button"
+                              className={`book-cal-day${cell.selected ? ' is-selected' : ''}${cell.available && cell.inMonth ? ' is-available' : ''}`}
+                              disabled={cell.disabled || busy}
+                              aria-pressed={cell.selected}
+                              onClick={() => {
+                                if (cell.disabled) return;
+                                setDate(cell.date);
+                                setSlot(null);
+                                setStepError(false);
+                                setStatus('');
+                              }}
+                            >
+                              <span>{cell.day}</span>
+                              {cell.available && cell.inMonth ? <i aria-hidden /> : null}
+                            </button>
+                          ))}
                         </div>
                       </div>
                       <div className="book-field">
@@ -653,7 +919,7 @@ export default function BookDemoPage() {
                         </span>
                         <div className="choice-grid booking-times" role="radiogroup" aria-labelledby="bk-time-label">
                           {(activeDay?.slots || []).map((item) => {
-                            const local = localEquivalent(item.start);
+                            const local = localEquivalent(item.start, undefined, marketZone || undefined);
                             return (
                               <Choice
                                 key={item.start}
@@ -668,7 +934,7 @@ export default function BookDemoPage() {
                                   setStatus('');
                                 }}
                               >
-                                <b>{formatSydneyTime(item.start)}</b>
+                                <b>{marketZone ? formatZoneTime(item.start, marketZone) : formatSydneyTime(item.start)}</b>
                                 {local ? <small>{local} your time</small> : null}
                               </Choice>
                             );
@@ -697,7 +963,7 @@ export default function BookDemoPage() {
                       {stage === 'times' ? (
                         'Your time is reserved only when this page confirms the booking.'
                       ) : BOOKING_READY ? (
-                        'Next, choose a 30-minute time. Times are shown in Sydney time.'
+                        marketZone ? `Next, choose a time. Times are shown in ${marketZone}.` : 'Next, choose a 30-minute time. Times are shown in Sydney time.'
                       ) : (
                         <>
                           Online scheduling is temporarily unavailable. To arrange a demo, email{' '}

@@ -332,6 +332,18 @@ verify_release_mime() {
   esac
 }
 
+# partners/index.html is an internal rewrite target for /partnership. Direct
+# requests to /partners or /partners/index.html intentionally 302 to
+# /partnership (.htaccess), so that file must not be probed by filesystem path.
+partners_index="$release_root/partners/index.html"
+[[ -s "$partners_index" ]] || fail release_artifact missing_partners_entry
+request partnership_entry /partnership "ledgerline_probe=${probe_id}" || fail partnership_entry "$last_category"
+[[ "${last_content_type,,}" == text/html* ]] || fail partnership_entry content_type_mismatch
+expected_hash="$(sha256sum -- "$partners_index" | cut -d ' ' -f1)"
+actual_hash="$(sha256sum -- "$body_file" | cut -d ' ' -f1)"
+[[ "$actual_hash" == "$expected_hash" ]] || fail partnership_entry release_hash_mismatch
+printf 'HEALTH_OK stage=partnership_entry\n'
+
 public_release_files=0
 while IFS= read -r relative_file; do
   [[ -n "$relative_file" ]] || continue
@@ -342,7 +354,16 @@ while IFS= read -r relative_file; do
   actual_hash="$(sha256sum -- "$body_file" | cut -d ' ' -f1)"
   [[ "$actual_hash" == "$expected_hash" ]] || fail release_files release_hash_mismatch
   ((public_release_files += 1))
-done < <(cd "$release_root" && find . -type f ! -name deploy-info.txt ! -name .htaccess -print | LC_ALL=C sort | sed 's#^./##')
+done < <(
+  cd "$release_root" && find . -type f \
+    ! -name deploy-info.txt \
+    ! -name .htaccess \
+    ! -path './partners/index.html' \
+    ! -path './api/*' \
+    ! -name '*.php' \
+    ! -name '*.sqlite' \
+    -print | LC_ALL=C sort | sed 's#^./##'
+)
 ((public_release_files > 0)) || fail release_artifact missing_public_release_files
 printf 'HEALTH_OK stage=release_files count=%s\n' "$public_release_files"
 

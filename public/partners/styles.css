@@ -155,6 +155,15 @@ table.t th.num, table.t td.num { text-align: right; }
 .divider::before, .divider::after { content: ''; flex: 1; border-top: 1px solid var(--line); }
 
 .portal { display: grid; grid-template-columns: 236px 1fr; min-height: calc(100vh - 33px); background: var(--bg); }
+.proto-banner {
+  margin: 16px 28px 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(47, 212, 181, 0.35);
+  background: rgba(47, 212, 181, 0.08);
+  color: var(--text);
+  font-size: 13px;
+}
 .side { background: var(--surface); border-right: 1px solid var(--line); padding: 20px 14px; position: sticky; top: 33px; height: calc(100vh - 33px); display: flex; flex-direction: column; }
 .side .brand { padding: 0 10px 22px; }
 .side nav { display: flex; flex-direction: column; gap: 2px; }

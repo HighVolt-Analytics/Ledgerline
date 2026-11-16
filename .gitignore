@@ -1,4 +1,11 @@
-node_modules
-dist
+node_modules/
+dist/
 .DS_Store
 *.log
+tests/__pycache__/
+public/api/data/*.sqlite
+public/api/data/*.sqlite-*
+.env
+.env.local
+private/partner-secrets.php
+private/*.local.php

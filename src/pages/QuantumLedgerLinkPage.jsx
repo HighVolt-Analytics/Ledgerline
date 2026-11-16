@@ -24,7 +24,7 @@ import HowVisual from '../components/ui/HowVisuals';
 import { WorldMap } from '../components/ui/WorldMap';
 import IntegrationsSection from '../components/sections/IntegrationsSection';
 import ProblemSolutionSection from '../components/sections/ProblemSolutionSection';
-import { externalLinks } from '../data/navigation';
+import { bookDemoPath, externalLinks } from '../data/navigation';
 import '../qll.css';
 
 const YOUTUBE_EMBED =
@@ -677,18 +677,21 @@ export default function QuantumLedgerLinkPage() {
                 </p>
               </div>
               <div className="actions r in">
-                <a
+                <Link
                   className="btn btn-primary"
+                  to={bookDemoPath}
+                  style={{ background: '#2FD4B5', color: '#04161C' }}
+                >
+                  Book a demo
+                </Link>
+                <a
+                  className="btn btn-ghost"
                   href={externalLinks.getStarted}
                   target="_blank"
                   rel="noopener noreferrer"
-                  style={{ background: '#2FD4B5', color: '#04161C' }}
                 >
                   Start free
                 </a>
-                <Link className="btn btn-ghost" to="/book-demo">
-                  Book a demo
-                </Link>
               </div>
             </div>
 
@@ -1009,15 +1012,13 @@ export default function QuantumLedgerLinkPage() {
               implementation plan.
             </p>
             <div className="actions r">
-              <a
+              <Link
                 className="btn btn-primary"
-                href={externalLinks.getStarted}
-                target="_blank"
-                rel="noopener noreferrer"
+                to={bookDemoPath}
                 style={{ background: '#2FD4B5', color: '#04161C' }}
               >
-                Start free
-              </a>
+                Book a demo
+              </Link>
               <a className="btn btn-ghost" href="mailto:sales@highvolt.tech">
                 Talk to us
               </a>
