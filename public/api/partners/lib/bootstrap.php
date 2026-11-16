@@ -166,3 +166,55 @@ function partner_valid_email(string $email): bool
 {
     return (bool) filter_var($email, FILTER_VALIDATE_EMAIL);
 }
+
+/**
+ * Shared secret for HighVolt deployment portal → Ledgerline partner list (server-to-server).
+ * Fail closed when unset. Never authorize partner listing via session cookies.
+ */
+function partner_admin_token(): ?string
+{
+    $token = partner_env('PARTNER_ADMIN_TOKEN');
+    if ($token === null || $token === '') {
+        return null;
+    }
+    return $token;
+}
+
+function partner_request_admin_token(): ?string
+{
+    $header = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
+    if (is_string($header) && preg_match('/^\s*Bearer\s+(\S+)\s*$/i', $header, $m)) {
+        return $m[1];
+    }
+    $custom = $_SERVER['HTTP_X_PARTNER_ADMIN_TOKEN'] ?? '';
+    if (is_string($custom) && $custom !== '') {
+        return $custom;
+    }
+    return null;
+}
+
+function partner_admin_authorized(): bool
+{
+    $expected = partner_admin_token();
+    if ($expected === null) {
+        return false;
+    }
+    $provided = partner_request_admin_token();
+    if ($provided === null || $provided === '') {
+        return false;
+    }
+    return hash_equals($expected, $provided);
+}
+
+/** Read-only account fields for the deployment portal Partners tab. */
+function partner_admin_row(array $row): array
+{
+    return [
+        'name' => $row['name'],
+        'email' => $row['email'],
+        'firm' => $row['firm'],
+        'country' => $row['country'],
+        'type' => $row['type'],
+        'created' => substr((string) $row['created_at'], 0, 10),
+    ];
+}
