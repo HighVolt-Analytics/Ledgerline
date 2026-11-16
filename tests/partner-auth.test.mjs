@@ -436,3 +436,75 @@ test('book-demo journey stays on booking flow and is not redirected to partner s
   assert.match(app, /Become a founding partner/)
   assert.match(app, /data-go="signup"/)
 })
+
+const signupBody = (email) => ({
+  name: 'Grace Hopper',
+  email,
+  password: 'secure-pass-123',
+  firm: 'Compiler Co',
+  type: 'Accounting firm',
+  country: 'AU',
+})
+
+test('signup links the partner to the HighVolt partner service when PARTNER_SERVICE_URL is set', async () => {
+  const received = []
+  const fake = createServer((req, res) => {
+    let data = ''
+    req.on('data', (c) => (data += c))
+    req.on('end', () => {
+      received.push({ method: req.method, url: req.url, body: JSON.parse(data || '{}') })
+      res.writeHead(201, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ partner_id: '11111111-2222-3333-4444-555555555555', status: 'APPLIED' }))
+    })
+  })
+  await new Promise((r) => fake.listen(0, '127.0.0.1', r))
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'll-partner-'))
+  const apiServer = await startPartnerApi(path.join(tmp, 'p.sqlite'), {
+    PARTNER_SERVICE_URL: `http://127.0.0.1:${fake.address().port}/platform/v1/partners/`,
+  })
+  try {
+    const email = `linked-${Date.now()}@example.test`
+    const signup = await api(apiServer.base, '/signup', { method: 'POST', body: signupBody(email) })
+    assert.equal(signup.res.status, 201)
+    assert.equal(signup.json.partner.programLinked, true)
+    assert.ok(!('hva_partner_id' in signup.json.partner))
+    assert.equal(received.length, 1)
+    assert.equal(received[0].method, 'POST')
+    assert.equal(received[0].url, '/platform/v1/partners/applications')
+    assert.deepEqual(received[0].body, {
+      product_key: 'ledgerline',
+      display_name: 'Compiler Co',
+      contact_email: email,
+      country: 'AU',
+      agreement_version: 'ledgerline-partner-terms-2026-11',
+      marketing_consent: false,
+    })
+    assert.ok(!('password' in received[0].body))
+    const me = await api(apiServer.base, '/me', { cookie: signup.cookie })
+    assert.equal(me.json.partner.programLinked, true)
+  } finally {
+    await apiServer.close()
+    fake.close()
+    await rm(tmp, { recursive: true, force: true })
+  }
+})
+
+test('signup still succeeds, unlinked, when the partner service is down or not configured', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'll-partner-'))
+  const down = await startPartnerApi(path.join(tmp, 'a.sqlite'), { PARTNER_SERVICE_URL: 'http://127.0.0.1:9' })
+  const off = await startPartnerApi(path.join(tmp, 'b.sqlite'))
+  try {
+    for (const server of [down, off]) {
+      const signup = await api(server.base, '/signup', {
+        method: 'POST',
+        body: signupBody(`unlinked-${Date.now()}-${Math.random()}@example.test`),
+      })
+      assert.equal(signup.res.status, 201)
+      assert.equal(signup.json.partner.programLinked, false)
+    }
+  } finally {
+    await down.close()
+    await off.close()
+    await rm(tmp, { recursive: true, force: true })
+  }
+})

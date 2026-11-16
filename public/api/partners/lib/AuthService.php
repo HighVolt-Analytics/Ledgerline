@@ -2,16 +2,17 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/bootstrap.php';
+require_once __DIR__ . '/PartnerProgramClient.php';
 
 final class PartnerAuthService
 {
-    public function __construct(private PDO $pdo)
+    public function __construct(private PDO $pdo, private PartnerProgramClient $program)
     {
     }
 
     public static function create(): self
     {
-        return new self(partner_pdo());
+        return new self(partner_pdo(), PartnerProgramClient::fromEnv());
     }
 
     public function signup(array $input): array
@@ -70,6 +71,11 @@ final class PartnerAuthService
         $insert->execute([$id, $email, $hash, $name, $firm, $type, $country, $abn, $code, $createdAt]);
 
         $partner = $this->findById($id);
+        $hvaPartnerId = $this->program->apply($partner, !empty($input['marketingConsent']));
+        if ($hvaPartnerId !== null) {
+            $this->pdo->prepare('UPDATE partners SET hva_partner_id = ? WHERE id = ?')->execute([$hvaPartnerId, $id]);
+            $partner = $this->findById($id);
+        }
         $sessionId = $this->createSession($id);
         return [
             'ok' => true,

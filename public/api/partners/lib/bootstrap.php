@@ -69,6 +69,11 @@ function partner_pdo(): PDO
             FOREIGN KEY(partner_id) REFERENCES partners(id) ON DELETE CASCADE
         )'
     );
+    $columns = array_column($pdo->query('PRAGMA table_info(partners)')->fetchAll(), 'name');
+    if (!in_array('hva_partner_id', $columns, true)) {
+        // Id of the matching application in the HighVolt partner service (null until linked).
+        $pdo->exec('ALTER TABLE partners ADD COLUMN hva_partner_id TEXT NULL');
+    }
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_partner_sessions_partner ON partner_sessions(partner_id)');
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_partner_sessions_expires ON partner_sessions(expires_at)');
     return $pdo;
@@ -119,6 +124,7 @@ function partner_public_row(array $row): array
         'abn' => $row['abn'],
         'code' => $row['code'],
         'founding' => (bool) $row['founding'],
+        'programLinked' => !empty($row['hva_partner_id']),
         'created' => substr((string) $row['created_at'], 0, 10),
     ];
 }
