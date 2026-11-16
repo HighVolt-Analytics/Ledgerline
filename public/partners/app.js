@@ -1,8 +1,10 @@
 /* LedgerLine Partner Program — prototype
-   Sample data only. Stripe, email and payments are simulated in the browser. */
+   Auth accounts are stored server-side. Portal clients, Stripe, email and payments
+   remain simulated in the browser and are clearly marked as prototype behaviour. */
 (() => {
   'use strict';
 
+  const AUTH_API = '/api/partners';
   const RATE = 0.20;
   const HOLD_DAYS = 30;
   const MIN_PAYOUT = 5000;
@@ -40,7 +42,7 @@
   const cycleNet = (plan, cycle) => cycle === 'annual' ? PLANS[plan].price * 10 : PLANS[plan].price;
   const monthlyEq = (c) => c.cycle === 'annual' ? Math.round(PLANS[c.plan].price * 10 / 12) : PLANS[c.plan].price;
 
-  const KEY = 'll-partners-v1';
+  const KEY = 'll-partners-proto-v2';
   let mem = null;
   const store = {
     get() {
@@ -62,13 +64,91 @@
   };
 
   let S;
-  const UI = { route: 'home', tab: 'overview', signupStep: 1, draft: {}, co: { plan: 'growth', cycle: 'monthly', step: 1, ref: null, done: null }, demoOpen: false, cfilter: 'all', errors: {} };
+  let authPartner = null;
+  let authReady = false;
+  const UI = { route: 'home', tab: 'overview', signupStep: 1, draft: {}, co: { plan: 'growth', cycle: 'monthly', step: 1, ref: null, done: null }, demoOpen: false, cfilter: 'all', errors: {}, authBusy: false };
 
   function blankState() { return { today: TODAY0, partners: [], clients: [], invoices: [], commissions: [], payouts: [], invites: [], activity: [], session: null }; }
 
+  async function authFetch(path, options = {}) {
+    const res = await fetch(`${AUTH_API}${path}`, {
+      credentials: 'include',
+      headers: { Accept: 'application/json', ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) },
+      ...options,
+    });
+    let body = null;
+    try { body = await res.json(); } catch { body = null; }
+    return { res, body };
+  }
+
+  function partnerFromAuth(row) {
+    return {
+      id: row.id,
+      code: row.code,
+      firm: row.firm,
+      name: row.name,
+      email: row.email,
+      type: row.type || PTYPES[0],
+      country: row.country || 'AU',
+      abn: row.abn || '',
+      phone: '',
+      created: row.created || TODAY0,
+      status: 'approved',
+      founding: row.founding !== false,
+      stripe: null,
+    };
+  }
+
+  function applyAuthPartner(row, { keepPrototype = true } = {}) {
+    authPartner = row;
+    const next = partnerFromAuth(row);
+    const existing = S.partners.find((p) => p.id === next.id || p.email.toLowerCase() === next.email.toLowerCase());
+    if (existing) {
+      Object.assign(existing, next, { stripe: existing.stripe || null });
+      S.session = existing.id;
+    } else if (keepPrototype && S.partners[0] && S.partners[0].id === 'P-1' && !S.session) {
+      // Keep sample prototype clients/commissions, but bind them to the signed-in partner identity.
+      const sample = S.partners[0];
+      const oldId = sample.id;
+      Object.assign(sample, next);
+      S.clients.forEach((c) => { if (c.partnerId === oldId) c.partnerId = sample.id; });
+      S.commissions.forEach((c) => { if (c.partnerId === oldId) c.partnerId = sample.id; });
+      S.payouts.forEach((c) => { if (c.partnerId === oldId) c.partnerId = sample.id; });
+      S.invites.forEach((c) => { if (c.partnerId === oldId) c.partnerId = sample.id; });
+      S.activity.forEach((c) => { if (c.partnerId === oldId) c.partnerId = sample.id; });
+      S.session = sample.id;
+    } else {
+      S.partners.push(next);
+      S.session = next.id;
+    }
+    save();
+  }
+
+  function clearAuthPartner() {
+    authPartner = null;
+    S.session = null;
+    save();
+  }
+
+  async function refreshAuthSession() {
+    try {
+      const { res, body } = await authFetch('/me');
+      if (res.ok && body?.partner) {
+        applyAuthPartner(body.partner);
+      } else {
+        clearAuthPartner();
+      }
+    } catch {
+      clearAuthPartner();
+    } finally {
+      authReady = true;
+    }
+  }
+
   function seed() {
     const s = blankState();
-    const p = { id: 'P-1', code: 'ELMCO20', firm: 'Elm & Co Advisory', name: 'Sarah Chen', email: 'sarah@elmco.example', pw: 'demo1234', type: 'Accounting firm', country: 'AU', abn: '51 824 753 556', phone: '', created: '2026-05-04', status: 'approved', founding: true,
+    // Sample prototype partner only — no password. Real accounts live in the server database.
+    const p = { id: 'P-1', code: 'ELMCO20', firm: 'Elm & Co Advisory', name: 'Sarah Chen', email: 'sarah@elmco.example', type: 'Accounting firm', country: 'AU', abn: '51 824 753 556', phone: '', created: '2026-05-04', status: 'approved', founding: true,
       stripe: { acct: 'acct_1QhL8mElmCo20AU', bank: 'Commonwealth Bank •••• 4821', holder: 'Elm & Co Advisory Pty Ltd', schedule: 'monthly', connected: '2026-05-06' } };
     s.partners.push(p);
     const C = [
@@ -243,7 +323,7 @@
   }
 
   function go(route, opts = {}) {
-    if (route === 'portal' && !S.session) route = 'signin';
+    if (route === 'portal' && !authPartner) route = 'signin';
     UI.route = route; Object.assign(UI, opts); UI.errors = {};
     if (route === 'checkout' && opts.ref === undefined && !UI.co.ref) { const p = me() || S.partners[0]; UI.co.ref = p ? p.code : null; }
     syncUrl(false);
@@ -357,8 +437,9 @@
       <div class="stepper"><span class="on"></span><span></span></div>
       ${f('name', 'Your name', 'text', 'Sarah Chen', '', 'name')}
       ${f('email', 'Work email', 'email', 'you@yourfirm.com.au', '', 'email')}
+      ${e.email && /sign in/i.test(e.email) ? `<div class="auth-alt" style="margin-top:-6px;margin-bottom:12px"><a href="#" data-go="signin">Sign in instead</a></div>` : ''}
       ${f('pw', 'Password', 'password', 'At least 8 characters', '', 'new-password')}
-      <button class="btn block lg" data-act="su-next">Continue</button>
+      <button class="btn block lg" data-act="su-next" ${UI.authBusy ? 'disabled' : ''}>Continue</button>
       <div class="auth-alt">Already a partner? <a href="#" data-go="signin">Sign in</a></div>`
       : `
       <h1>About your practice</h1><p class="sub">This appears to your clients when they subscribe through your link.</p>
@@ -372,7 +453,7 @@
       <label class="chk"><input type="checkbox" id="agree" ${d.agree ? 'checked' : ''}><span>I accept the <a href="#" data-act="terms">LedgerLine partner terms</a>.</span></label>
       <label class="chk"><input type="checkbox" id="disclose" ${d.disclose ? 'checked' : ''}><span>I will disclose my referral commission to clients as required by my professional obligations.</span></label>
       ${e.agree ? `<div class="err-msg" style="margin-bottom:10px">${e.agree}</div>` : ''}
-      <div style="display:flex;gap:10px;margin-top:8px"><button class="btn ghost lg" data-act="su-back">Back</button><button class="btn lg" style="flex:1" data-act="su-create">Create account</button></div>`;
+      <div style="display:flex;gap:10px;margin-top:8px"><button class="btn ghost lg" data-act="su-back" ${UI.authBusy ? 'disabled' : ''}>Back</button><button class="btn lg" style="flex:1" data-act="su-create" ${UI.authBusy ? 'disabled' : ''}>${UI.authBusy ? 'Creating…' : 'Create account'}</button></div>`;
     return `<div class="auth">${siteHead(true)}<div class="auth-main"><div class="auth-card">${body}</div></div></div>`;
   }
 
@@ -382,10 +463,8 @@
       <h1>Partner sign in</h1><p class="sub">Manage referrals, commissions and payouts.</p>
       <div class="field"><label for="si-email">Email</label><input class="in-t ${e.si ? 'err' : ''}" id="si-email" type="email" autocomplete="email"></div>
       <div class="field"><label for="si-pw">Password</label><input class="in-t ${e.si ? 'err' : ''}" id="si-pw" type="password" autocomplete="current-password">${e.si ? `<div class="err-msg">${e.si}</div>` : ''}</div>
-      <button class="btn block lg" data-act="signin">Sign in</button>
-      <div class="divider">or</div>
-      <button class="btn ghost block" data-act="demo-login">Explore the sample partner account</button>
-      <p class="hint xs muted" style="margin-top:8px;text-align:center">Elm & Co Advisory · 12 referred clients and six months of history</p>
+      <button class="btn block lg" data-act="signin" ${UI.authBusy ? 'disabled' : ''}>${UI.authBusy ? 'Signing in…' : 'Sign in'}</button>
+      <p class="hint xs muted" style="margin-top:12px;text-align:center">Portal commissions and payouts are a prototype simulation after you sign in.</p>
       <div class="auth-alt">New to LedgerLine? <a href="#" data-go="signup">Become a partner</a></div>
     </div></div></div>`;
   }
@@ -393,6 +472,9 @@
   const TABS = [['overview', 'Overview'], ['clients', 'Clients'], ['commissions', 'Commissions'], ['payouts', 'Payouts'], ['share', 'Share & invite'], ['settings', 'Settings']];
   function vPortal() {
     const p = me();
+    if (!authPartner || !p) {
+      return `<div class="auth">${siteHead(true)}<div class="auth-main"><div class="auth-card"><h1>Sign in required</h1><p class="sub">Open the partner portal after creating an account or signing in.</p><button class="btn block lg" data-go="signin">Sign in</button></div></div></div>`;
+    }
     const st = stats(p);
     const nav = TABS.map(([k, l]) => `<button class="${UI.tab === k ? 'on' : ''}" data-tab="${k}">${l}${k === 'payouts' && !p.stripe ? '<span class="pill warn" style="padding:0 7px">Set up</span>' : ''}</button>`).join('');
     const view = { overview: tOverview, clients: tClients, commissions: tCommissions, payouts: tPayouts, share: tShare, settings: tSettings }[UI.tab](p, st);
@@ -400,16 +482,17 @@
       <aside class="side">${brandLink()}<nav>${nav}</nav>
         <div class="who"><b>${esc(p.firm)}</b><span class="muted">${esc(p.name)}</span><br><button class="btn quiet sm" style="padding-left:0" data-act="signout">Sign out</button></div></aside>
       <div><div class="mobile-nav">${TABS.map(([k, l]) => `<button class="${UI.tab === k ? 'on' : ''}" data-tab="${k}">${l}</button>`).join('')}</div>
+      <div class="proto-banner" role="status">Prototype portal · commissions, Stripe and client checkout are simulated</div>
       <main class="main">${view}</main></div>
     </div>
-    <button class="btn ghost demo-fab" data-act="demo-toggle" aria-expanded="${UI.demoOpen}">Demo controls</button>
+    <button class="btn ghost demo-fab" data-act="demo-toggle" aria-expanded="${UI.demoOpen}">Prototype controls</button>
     <div class="demo-pop ${UI.demoOpen ? 'open' : ''}" id="demo-pop">${demoPanel(p)}</div>`;
   }
 
   function demoPanel(p) {
     const cl = S.clients.filter((c) => c.partnerId === p.id && c.status !== 'cancelled');
     const opts = cl.map((c) => `<option value="${c.id}">${esc(c.biz)}</option>`).join('');
-    return `<h3>Demo controls</h3><p class="d">Simulated date: <b>${fd(S.today)}</b>. Move time forward to bill clients, release held commission and run payouts.</p>
+    return `<h3>Prototype controls</h3><p class="d">Simulated date: <b>${fd(S.today)}</b>. Move time forward to bill clients, release held commission and run payouts. These actions do not process real payments.</p>
       <button class="btn" data-act="advance">Advance one month →</button>
       <button class="btn ghost" data-act="open-checkout">Subscribe a new client via my link</button>
       ${cl.length ? `<div style="border-top:1px solid var(--line);margin:10px 0;padding-top:10px"><select class="sel" id="demo-client" aria-label="Client">${opts}</select>
@@ -689,7 +772,6 @@
         readDraft(); const d = UI.draft, e = {};
         if (!d.name) e.name = 'Enter your name';
         if (!validEmail(d.email || '')) e.email = 'Enter a valid email address';
-        else if (S.partners.some((x) => x.email.toLowerCase() === d.email.toLowerCase())) e.email = 'A partner account already uses this email. Sign in instead.';
         if ((d.pw || '').length < 8) e.pw = 'Use at least 8 characters';
         UI.errors = e; if (!Object.keys(e).length) UI.signupStep = 2; return render();
       }
@@ -699,19 +781,84 @@
         if (!d.firm) e.firm = 'Enter your firm name';
         if (!d.agree || !d.disclose) e.agree = 'Accept the partner terms and the disclosure commitment to continue';
         UI.errors = e; if (Object.keys(e).length) return render();
-        const np = { id: nid('P-'), code: makeCode(d.firm), firm: d.firm, name: d.name, email: d.email, pw: d.pw, type: d.type || PTYPES[0], country: d.country || 'AU', abn: d.abn || '', created: S.today, status: 'approved', founding: true, stripe: null };
-        S.partners.push(np); S.session = np.id; log(S, np.id, S.today, 'Partner account created and approved');
-        save(); UI.draft = {}; UI.signupStep = 1; UI.tab = 'overview'; UI.co = { plan: 'growth', cycle: 'monthly', step: 1, ref: np.code, done: null };
-        go('portal'); return toast(`Welcome to LedgerLine Partners — your code is ${np.code}`);
+        if (UI.authBusy) return undefined;
+        UI.authBusy = true; render();
+        void (async () => {
+          try {
+            const { res, body } = await authFetch('/signup', {
+              method: 'POST',
+              body: JSON.stringify({
+                name: d.name,
+                email: d.email,
+                password: d.pw,
+                firm: d.firm,
+                type: d.type || PTYPES[0],
+                country: d.country || 'AU',
+                abn: d.abn || '',
+              }),
+            });
+            if (res.status === 409) {
+              UI.signupStep = 1;
+              UI.errors = {
+                email: body?.message || 'A partner account already uses this email. Sign in instead.',
+              };
+              return;
+            }
+            if (!res.ok || !body?.partner) {
+              UI.errors = { agree: body?.message || 'Unable to create your account. Try again.' };
+              return;
+            }
+            applyAuthPartner(body.partner);
+            UI.draft = {}; UI.signupStep = 1; UI.tab = 'overview';
+            UI.co = { plan: 'growth', cycle: 'monthly', step: 1, ref: body.partner.code, done: null };
+            go('portal');
+            toast(`Welcome to LedgerLine Partners — your code is ${body.partner.code}`);
+          } catch {
+            UI.errors = { agree: 'Unable to reach the partner service. Try again.' };
+          } finally {
+            UI.authBusy = false;
+            render();
+          }
+        })();
+        return undefined;
       }
       case 'signin': {
+        if (UI.authBusy) return undefined;
         const em = $('#si-email').value.trim().toLowerCase(), pw = $('#si-pw').value;
-        const x = S.partners.find((q) => q.email.toLowerCase() === em && q.pw === pw);
-        if (!x) { UI.errors = { si: 'Email or password is incorrect' }; return render(); }
-        S.session = x.id; save(); UI.tab = 'overview'; UI.co.ref = x.code; return go('portal');
+        UI.authBusy = true; UI.errors = {}; render();
+        void (async () => {
+          try {
+            const { res, body } = await authFetch('/signin', {
+              method: 'POST',
+              body: JSON.stringify({ email: em, password: pw }),
+            });
+            if (!res.ok || !body?.partner) {
+              UI.errors = { si: body?.message || 'Email or password is incorrect' };
+              return;
+            }
+            applyAuthPartner(body.partner);
+            UI.tab = 'overview';
+            UI.co.ref = body.partner.code;
+            go('portal');
+          } catch {
+            UI.errors = { si: 'Unable to reach the partner service. Try again.' };
+          } finally {
+            UI.authBusy = false;
+            render();
+          }
+        })();
+        return undefined;
       }
-      case 'demo-login': S.session = 'P-1'; save(); UI.tab = 'overview'; UI.co.ref = 'ELMCO20'; return go('portal');
-      case 'signout': S.session = null; save(); UI.demoOpen = false; return go('home');
+      case 'signout': {
+        void (async () => {
+          try { await authFetch('/signout', { method: 'POST', body: '{}' }); } catch { /* ignore */ }
+          clearAuthPartner();
+          UI.demoOpen = false;
+          go('home');
+          toast('Signed out');
+        })();
+        return undefined;
+      }
       case 'copy-link': p.shared = true; save(); copy(refLink(p), 'Referral link copied'); return render();
       case 'copy-email': { const t = $('#email-tpl'); p.shared = true; save(); return copy(t ? t.value : emailTemplate(p), 'Email template copied'); }
       case 'open-checkout': UI.demoOpen = false; UI.co = { plan: 'growth', cycle: 'monthly', step: 1, ref: p ? p.code : UI.co.ref, done: null }; if (p) { p.shared = true; save(); } return go('checkout');
@@ -778,7 +925,10 @@
         save(); UI.co.done = { biz: c.biz, plan: c.plan, total: inv.total, email: c.email, subId: c.subId, num: inv.num };
         return render();
       }
-      case 'co-to-portal': { const ref = S.partners.find((x) => x.code === UI.co.ref); if (ref) { S.session = ref.id; save(); } UI.tab = 'clients'; UI.cfilter = 'all'; UI.co.done = null; UI.co.step = 1; return go('portal'); }
+      case 'co-to-portal': {
+        if (!authPartner) return go('signin');
+        UI.tab = 'clients'; UI.cfilter = 'all'; UI.co.done = null; UI.co.step = 1; return go('portal');
+      }
       case 'co-again': UI.co = { plan: 'growth', cycle: 'monthly', step: 1, ref: UI.co.ref, done: null }; return render();
       default: return undefined;
     }
@@ -790,8 +940,18 @@
     const d = el.dataset;
     if (el.tagName === 'A') ev.preventDefault();
     if (d.act) return act(d.act, el);
-    if (d.go) { if (d.go === 'checkout') { const p = me() || S.partners[0]; UI.co = { plan: 'growth', cycle: 'monthly', step: 1, ref: p ? p.code : null, done: null }; } return go(d.go); }
-    if (d.tab) { UI.tab = d.tab; UI.route = 'portal'; syncUrl(false); render(); return window.scrollTo(0, 0); }
+    if (d.go) {
+      if (d.go === 'checkout') {
+        const p = authPartner ? me() : null;
+        UI.co = { plan: 'growth', cycle: 'monthly', step: 1, ref: p ? p.code : UI.co.ref, done: null };
+      }
+      if (d.go === 'portal' && !authPartner) return go('signin');
+      return go(d.go);
+    }
+    if (d.tab) {
+      if (!authPartner) return go('signin');
+      UI.tab = d.tab; UI.route = 'portal'; syncUrl(false); render(); return window.scrollTo(0, 0);
+    }
     if (d.jump) { const t = document.getElementById(d.jump); if (t) window.scrollTo({ top: t.getBoundingClientRect().top + window.scrollY - 90, behavior: 'smooth' }); return; }
     if (d.plan) { UI.co.plan = d.plan; return render(); }
     if (d.cycle) { UI.co.cycle = d.cycle; return render(); }
@@ -813,19 +973,37 @@
     if (ev.key === 'Enter' && ev.target.matches('.auth-card input')) { const b = $('.auth-card [data-act="su-next"], .auth-card [data-act="su-create"], .auth-card [data-act="signin"]'); if (b) b.click(); }
   });
   $('#modal-wrap').addEventListener('click', (ev) => { if (ev.target.id === 'modal-wrap') closeModal(); });
-  $('#proto-reset').addEventListener('click', () => { store.clear(); S = seed(); save(); UI.tab = 'overview'; UI.co = { plan: 'growth', cycle: 'monthly', step: 1, ref: null, done: null }; UI.demoOpen = false; go('home'); toast('Sample data restored'); });
+  $('#proto-reset').addEventListener('click', () => {
+    if (!authPartner) { go('signin'); return toast('Sign in to use the prototype portal'); }
+    store.clear();
+    S = seed();
+    applyAuthPartner(authPartner);
+    UI.tab = 'overview';
+    UI.co = { plan: 'growth', cycle: 'monthly', step: 1, ref: authPartner.code, done: null };
+    UI.demoOpen = false;
+    go('portal');
+    toast('Prototype sample data restored');
+  });
 
   load();
   readLocation();
-  if (UI.route === 'portal' && !S.session) UI.route = 'signin';
-  if (UI.route === 'checkout' && !UI.co.ref) { const p = me() || S.partners[0]; UI.co.ref = p ? p.code : null; }
-  render();
+  void refreshAuthSession().then(() => {
+    if (UI.route === 'portal' && !authPartner) UI.route = 'signin';
+    if (UI.route === 'checkout' && !UI.co.ref) {
+      const p = authPartner ? me() : S.partners[0];
+      UI.co.ref = p ? p.code : null;
+    }
+    render();
+  });
   window.addEventListener('popstate', () => {
     readLocation();
-    if (UI.route === 'portal' && !S.session) UI.route = 'signin';
-    if (UI.route === 'checkout' && !UI.co.ref) { const p = me() || S.partners[0]; UI.co.ref = p ? p.code : null; }
+    if (UI.route === 'portal' && !authPartner) UI.route = 'signin';
+    if (UI.route === 'checkout' && !UI.co.ref) {
+      const p = authPartner ? me() : S.partners[0];
+      UI.co.ref = p ? p.code : null;
+    }
     UI.errors = {};
     render();
   });
-  window.__LP = { S: () => S, UI, stats };
+  window.__LP = { S: () => S, UI, stats, auth: () => authPartner };
 })();

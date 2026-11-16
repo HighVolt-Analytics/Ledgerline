@@ -1,0 +1,2 @@
+# Partner SQLite database — never serve directly.
+Require all denied

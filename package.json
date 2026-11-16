@@ -7,7 +7,10 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "tsx --test src/lib/bookingClient.test.mjs"
+    "partner-api": "node scripts/partner-api.mjs",
+    "test": "tsx --test src/lib/bookingClient.test.mjs tests/partner-auth.test.mjs",
+    "test:booking": "tsx --test src/lib/bookingClient.test.mjs",
+    "test:partners": "tsx --test tests/partner-auth.test.mjs"
   },
   "dependencies": {
     "@radix-ui/react-accordion": "^1.2.2",
