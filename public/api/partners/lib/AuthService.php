@@ -133,6 +133,31 @@ final class PartnerAuthService
         return ['ok' => true, 'status' => 200, 'body' => ['partner' => partner_public_row($partner)]];
     }
 
+    /**
+     * Read-only partner account list for the HighVolt deployment portal.
+     * Caller must already enforce PARTNER_ADMIN_TOKEN.
+     */
+    public function listForAdmin(): array
+    {
+        $stmt = $this->pdo->query(
+            'SELECT name, email, firm, country, type, created_at
+             FROM partners
+             ORDER BY created_at DESC, email ASC'
+        );
+        $partners = [];
+        while ($row = $stmt->fetch()) {
+            $partners[] = partner_admin_row($row);
+        }
+        return [
+            'ok' => true,
+            'status' => 200,
+            'body' => [
+                'partners' => $partners,
+                'count' => count($partners),
+            ],
+        ];
+    }
+
     private function findById(string $id): array
     {
         $stmt = $this->pdo->prepare('SELECT * FROM partners WHERE id = ? LIMIT 1');

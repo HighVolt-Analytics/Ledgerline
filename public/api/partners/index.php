@@ -5,7 +5,7 @@ require_once __DIR__ . '/lib/AuthService.php';
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-    header('Access-Control-Allow-Headers: Content-Type');
+    header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Partner-Admin-Token');
     header('Access-Control-Allow-Credentials: true');
     http_response_code(204);
     exit;
@@ -19,13 +19,30 @@ try {
     $cookieName = partner_cookie_name();
     $sessionId = isset($_COOKIE[$cookieName]) ? (string) $_COOKIE[$cookieName] : null;
 
-    // Accept /api/partners, /api/partners/signup, etc.
+    // Accept /api/partners, /api/partners/signup, /api/partners/admin/list, etc.
     $action = 'me';
-    if (preg_match('#/api/partners(?:/(signup|signin|signout|me))?$#', $path, $m)) {
+    if (preg_match('#/api/partners/admin/list$#', $path)) {
+        $action = 'admin_list';
+    } elseif (preg_match('#/api/partners(?:/(signup|signin|signout|me))?$#', $path, $m)) {
         $action = $m[1] ?? 'me';
+    } elseif (preg_match('#/(admin/list)$#', $path)) {
+        $action = 'admin_list';
     } elseif (preg_match('#/(signup|signin|signout|me)$#', $path, $m)) {
         // When invoked via PHP built-in server with rewritten SCRIPT path.
         $action = $m[1];
+    }
+
+    if ($method === 'GET' && $action === 'admin_list') {
+        if (!partner_admin_authorized()) {
+            partner_respond(401, [
+                'error' => 'unauthorized',
+                'message' => 'Admin token required.',
+            ]);
+            exit;
+        }
+        $result = $auth->listForAdmin();
+        partner_respond($result['status'], $result['body']);
+        exit;
     }
 
     if ($method === 'GET' && ($action === 'me' || $path === '/api/partners')) {

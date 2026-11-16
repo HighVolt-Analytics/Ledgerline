@@ -28,14 +28,14 @@ function parseSetCookie(header) {
   return match ? match[1] : null
 }
 
-async function startPartnerApi(dbPath) {
+async function startPartnerApi(dbPath, extraEnv = {}) {
   const port = await freePort()
   const router = path.join(PUBLIC, 'api', 'router.php')
   const child = spawn(
     phpBin(),
     [...phpSqliteArgs(), '-S', `127.0.0.1:${port}`, '-t', PUBLIC, router],
     {
-      env: { ...process.env, PARTNER_DB_PATH: dbPath },
+      env: { ...process.env, PARTNER_DB_PATH: dbPath, ...extraEnv },
       stdio: ['ignore', 'ignore', 'pipe'],
       windowsHide: true,
     },
@@ -66,10 +66,12 @@ async function startPartnerApi(dbPath) {
   throw new Error(`Partner API failed to start.\n${stderr}`)
 }
 
-async function api(base, route, { method = 'GET', body, cookie } = {}) {
+async function api(base, route, { method = 'GET', body, cookie, authorization, adminToken } = {}) {
   const headers = { Accept: 'application/json' }
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   if (cookie) headers.Cookie = `ll_partner_session=${cookie}`
+  if (authorization) headers.Authorization = authorization
+  if (adminToken) headers['X-Partner-Admin-Token'] = adminToken
   const res = await fetch(`${base}/api/partners${route}`, {
     method,
     headers,
@@ -170,6 +172,92 @@ test('partner signup, duplicate email, sign-in, session, portal gate, and sign-o
     assert.equal(signedOut.res.status, 200)
     const gone = await api(apiServer.base, '/me', { cookie: good.cookie })
     assert.equal(gone.res.status, 401)
+  } finally {
+    await apiServer.close()
+    await rm(tmp, { recursive: true, force: true })
+  }
+})
+
+test('admin partner list requires token and returns only safe account fields', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'll-partner-admin-'))
+  const dbPath = path.join(tmp, 'partners.sqlite')
+  const adminToken = 'test-admin-token-partner-list'
+  const apiServer = await startPartnerApi(dbPath, { PARTNER_ADMIN_TOKEN: adminToken })
+  try {
+    const email = `admin-list-${Date.now()}@example.test`
+    await api(apiServer.base, '/signup', {
+      method: 'POST',
+      body: {
+        name: 'List Partner',
+        email,
+        password: 'secure-pass-123',
+        firm: 'List Firm',
+        type: 'Bookkeeper',
+        country: 'NZ',
+      },
+    })
+
+    const denied = await api(apiServer.base, '/admin/list')
+    assert.equal(denied.res.status, 401)
+    assert.equal(denied.json.error, 'unauthorized')
+
+    const wrong = await api(apiServer.base, '/admin/list', {
+      authorization: 'Bearer wrong-token',
+    })
+    assert.equal(wrong.res.status, 401)
+
+    const cookieOnly = await api(apiServer.base, '/signup', {
+      method: 'POST',
+      body: {
+        name: 'Second',
+        email: `second-${Date.now()}@example.test`,
+        password: 'secure-pass-123',
+        firm: 'Second Firm',
+        type: 'Accounting firm',
+        country: 'AU',
+      },
+    })
+    const withCookie = await api(apiServer.base, '/admin/list', { cookie: cookieOnly.cookie })
+    assert.equal(withCookie.res.status, 401)
+
+    const listed = await api(apiServer.base, '/admin/list', {
+      authorization: `Bearer ${adminToken}`,
+    })
+    assert.equal(listed.res.status, 200)
+    assert.ok(Array.isArray(listed.json.partners))
+    assert.ok(listed.json.count >= 1)
+    const row = listed.json.partners.find((p) => p.email === email)
+    assert.ok(row)
+    assert.deepEqual(Object.keys(row).sort(), ['country', 'created', 'email', 'firm', 'name', 'type'].sort())
+    assert.equal(row.name, 'List Partner')
+    assert.equal(row.firm, 'List Firm')
+    assert.equal(row.country, 'NZ')
+    assert.equal(row.type, 'Bookkeeper')
+    assert.match(row.created, /^\d{4}-\d{2}-\d{2}$/)
+    assert.equal('password' in row, false)
+    assert.equal('password_hash' in row, false)
+    assert.equal('id' in row, false)
+    assert.equal('code' in row, false)
+    assert.equal('sessionId' in listed.json, false)
+
+    const viaHeader = await api(apiServer.base, '/admin/list', { adminToken })
+    assert.equal(viaHeader.res.status, 200)
+    assert.ok(viaHeader.json.partners.some((p) => p.email === email))
+  } finally {
+    await apiServer.close()
+    await rm(tmp, { recursive: true, force: true })
+  }
+})
+
+test('admin partner list fails closed when PARTNER_ADMIN_TOKEN is unset', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'll-partner-admin-off-'))
+  const dbPath = path.join(tmp, 'partners.sqlite')
+  const apiServer = await startPartnerApi(dbPath, { PARTNER_ADMIN_TOKEN: '' })
+  try {
+    const denied = await api(apiServer.base, '/admin/list', {
+      authorization: 'Bearer anything',
+    })
+    assert.equal(denied.res.status, 401)
   } finally {
     await apiServer.close()
     await rm(tmp, { recursive: true, force: true })
