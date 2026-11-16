@@ -126,8 +126,22 @@
 
   function clearAuthPartner() {
     authPartner = null;
+    LIVE = null;
     S.session = null;
     save();
+  }
+
+  // Live data from the HighVolt partner service (via /api/partners/program). null = not loaded or switched off.
+  let LIVE = null;
+
+  async function loadLiveProgram() {
+    try {
+      const { res, body } = await authFetch('/program');
+      LIVE = res.ok && body?.linked && body.available ? body : null;
+    } catch {
+      LIVE = null;
+    }
+    if (UI.route === 'portal') render();
   }
 
   async function refreshAuthSession() {
@@ -135,6 +149,7 @@
       const { res, body } = await authFetch('/me');
       if (res.ok && body?.partner) {
         applyAuthPartner(body.partner);
+        loadLiveProgram();
       } else {
         clearAuthPartner();
       }
@@ -515,6 +530,34 @@
     return `<div class="link-box"><input class="in-t" id="ref-link" readonly value="${esc(refLink(p))}" aria-label="Your referral link"><button class="btn sm" data-act="copy-link">Copy link</button><button class="btn ghost sm" data-act="open-checkout">Preview client page</button></div>`;
   }
 
+  function liveMoney(minor, currency) {
+    try {
+      return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency || 'USD' }).format((minor || 0) / 100);
+    } catch {
+      return `${((minor || 0) / 100).toFixed(2)} ${esc(currency || '')}`;
+    }
+  }
+
+  function liveCard() {
+    if (!LIVE) return '';
+    const active = LIVE.status === 'ACTIVE';
+    const code = (LIVE.codes || []).find((c) => c.status === 'ACTIVE');
+    const link = code ? `${LIVE.referralBase}${encodeURIComponent(code.code)}` : '';
+    const b = LIVE.balance;
+    const statusPill = active ? '<span class="pill ok">Approved</span>' : '<span class="pill warn">Under review</span>';
+    const linkPart = code
+      ? `<div class="link-box"><input class="in-t" id="live-link" readonly value="${esc(link)}" aria-label="Your live referral link"><button class="btn sm" data-act="copy-live-link">Copy link</button></div>
+         ${active ? '' : '<p class="small muted" style="margin-top:8px">Your link starts earning once your application is approved.</p>'}`
+      : `<button class="btn sm" data-act="live-code">Get my referral link</button>`;
+    const money = b ? `<div class="kpis" style="margin-top:14px">
+        <div><div class="l">Pending</div><div class="v">${liveMoney(b.pendingMinor, b.currency)}</div><div class="s">held for 30 days</div></div>
+        <div><div class="l">Ready to pay</div><div class="v">${liveMoney(b.approvedMinor, b.currency)}</div><div class="s">paid on the 15th</div></div>
+        <div><div class="l">Paid out</div><div class="v">${liveMoney(b.paidMinor, b.currency)}</div><div class="s">all time</div></div>
+      </div>` : '';
+    return `<div class="card" id="live-program"><div class="card-head"><h2>Your partner account</h2>${statusPill}</div>
+      <div class="card-body">${linkPart}${money}</div></div>`;
+  }
+
   function tOverview(p, st) {
     const first = S.clients.some((c) => c.partnerId === p.id);
     const steps = [
@@ -528,6 +571,7 @@
     const firstName = p.name.split(' ')[0];
     return `<div class="page-head"><div><h1>Welcome, ${esc(firstName)}</h1><p>${esc(p.firm)} · Partner code <span class="code-chip">${p.code}</span>${p.founding ? ' · Founding partner' : ''}</p></div>
       <button class="btn" data-act="invite">Invite a client</button></div>
+      ${liveCard()}
       ${kpis(st)}
       <div class="card"><div class="card-head"><h2>Your referral link</h2><span class="small muted">Clients who subscribe through this link are attributed to you for life</span></div><div class="card-body">${linkBox(p)}</div></div>
       <div class="two">
@@ -808,7 +852,7 @@
               UI.errors = { agree: body?.message || 'Unable to create your account. Try again.' };
               return;
             }
-            applyAuthPartner(body.partner);
+            applyAuthPartner(body.partner); loadLiveProgram();
             UI.draft = {}; UI.signupStep = 1; UI.tab = 'overview';
             UI.co = { plan: 'growth', cycle: 'monthly', step: 1, ref: body.partner.code, done: null };
             go('portal');
@@ -836,7 +880,7 @@
               UI.errors = { si: body?.message || 'Email or password is incorrect' };
               return;
             }
-            applyAuthPartner(body.partner);
+            applyAuthPartner(body.partner); loadLiveProgram();
             UI.tab = 'overview';
             UI.co.ref = body.partner.code;
             go('portal');
@@ -856,6 +900,17 @@
           UI.demoOpen = false;
           go('home');
           toast('Signed out');
+        })();
+        return undefined;
+      }
+      case 'copy-live-link': { const el = $('#live-link'); return el ? copy(el.value, 'Referral link copied') : undefined; }
+      case 'live-code': {
+        (async () => {
+          try {
+            const { res, body } = await authFetch('/program/code', { method: 'POST', body: '{}' });
+            if (res.ok && body?.available) { LIVE = body; render(); return toast('Your referral link is ready'); }
+            toast(body?.message || 'Please try again later.');
+          } catch { toast('Please try again later.'); }
         })();
         return undefined;
       }

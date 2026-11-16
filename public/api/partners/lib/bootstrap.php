@@ -296,3 +296,27 @@ function partner_admin_row(array $row): array
         'created' => substr((string) $row['created_at'], 0, 10),
     ];
 }
+
+/**
+ * Generic private setting: getenv($key) first, else the same key in private/partner-secrets.php
+ * (outside the document root). Fail closed (null). Never log or echo the value.
+ */
+function partner_secret(string $key): ?string
+{
+    $value = partner_env($key);
+    if ($value !== null && $value !== '') {
+        return $value;
+    }
+    $path = partner_secrets_file_path();
+    if ($path === null) {
+        return null;
+    }
+    try {
+        /** @var mixed $config */
+        $config = require $path;
+    } catch (Throwable $e) {
+        return null;
+    }
+    $v = is_array($config) ? ($config[$key] ?? null) : null;
+    return is_string($v) && $v !== '' ? $v : null;
+}

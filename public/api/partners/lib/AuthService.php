@@ -140,6 +140,63 @@ final class PartnerAuthService
     }
 
     /**
+     * Live partner-program data (status, referral codes, balance) for the signed-in partner only.
+     * The service partner id is read from this server's database, never from the browser.
+     */
+    public function program(?string $sessionId): array
+    {
+        $partner = $this->partnerFromSession($sessionId);
+        if (!$partner) {
+            return ['ok' => false, 'status' => 401, 'body' => ['error' => 'unauthenticated', 'signinPath' => '/partnership/signin']];
+        }
+        $hvaId = $this->ensureLinked($partner);
+        if ($hvaId === null) {
+            return ['ok' => true, 'status' => 200, 'body' => ['linked' => false]];
+        }
+        $summary = $this->program->summary($hvaId);
+        if ($summary === null) {
+            return ['ok' => true, 'status' => 200, 'body' => ['linked' => true, 'available' => false]];
+        }
+        return ['ok' => true, 'status' => 200, 'body' => ['linked' => true, 'available' => true] + $summary];
+    }
+
+    /** Creates the signed-in partner's referral code once they are approved. */
+    public function programCode(?string $sessionId): array
+    {
+        $partner = $this->partnerFromSession($sessionId);
+        if (!$partner) {
+            return ['ok' => false, 'status' => 401, 'body' => ['error' => 'unauthenticated']];
+        }
+        $hvaId = $partner['hva_partner_id'] ?? null;
+        if (!is_string($hvaId) || $hvaId === '') {
+            return ['ok' => false, 'status' => 409, 'body' => ['error' => 'not_linked']];
+        }
+        $status = $this->program->createCode($hvaId);
+        if ($status === 201) {
+            return $this->program($sessionId);
+        }
+        return ['ok' => false, 'status' => $status === 403 ? 409 : 502, 'body' => [
+            'error' => $status === 403 ? 'not_approved' : 'program_unavailable',
+            'message' => $status === 403 ? 'Your partner application is still being reviewed.' : 'Please try again later.',
+        ]];
+    }
+
+    /** Retries the link for accounts created while the partner service was unavailable. */
+    private function ensureLinked(array $partner): ?string
+    {
+        $hvaId = $partner['hva_partner_id'] ?? null;
+        if (is_string($hvaId) && $hvaId !== '') {
+            return $hvaId;
+        }
+        $hvaId = $this->program->apply($partner);
+        if ($hvaId !== null) {
+            $this->pdo->prepare('UPDATE partners SET hva_partner_id = ? WHERE id = ? AND hva_partner_id IS NULL')
+                ->execute([$hvaId, $partner['id']]);
+        }
+        return $hvaId;
+    }
+
+    /**
      * Read-only partner account list for the HighVolt deployment portal.
      * Caller must already enforce PARTNER_ADMIN_TOKEN.
      */
