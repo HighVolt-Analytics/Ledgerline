@@ -7,3 +7,5 @@ public/api/data/*.sqlite
 public/api/data/*.sqlite-*
 .env
 .env.local
+private/partner-secrets.php
+private/*.local.php
