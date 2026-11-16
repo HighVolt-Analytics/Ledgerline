@@ -168,16 +168,88 @@ function partner_valid_email(string $email): bool
 }
 
 /**
+ * Document root used to locate private/partner-secrets.php beside public_html.
+ * PARTNER_DOCUMENT_ROOT is a test/local override only.
+ */
+function partner_document_root(): ?string
+{
+    $override = partner_env('PARTNER_DOCUMENT_ROOT');
+    if ($override !== null && $override !== '') {
+        $resolved = realpath($override);
+        return $resolved !== false ? $resolved : null;
+    }
+    $doc = $_SERVER['DOCUMENT_ROOT'] ?? '';
+    if (!is_string($doc) || $doc === '') {
+        return null;
+    }
+    $resolved = realpath($doc);
+    return $resolved !== false ? $resolved : null;
+}
+
+/**
+ * Hostinger layout: private/partner-secrets.php sits beside public_html (outside the web root).
+ * Returns null when the path cannot be proven to be outside the document root.
+ */
+function partner_secrets_file_path(): ?string
+{
+    $docRoot = partner_document_root();
+    if ($docRoot === null) {
+        return null;
+    }
+    $parent = dirname($docRoot);
+    if ($parent === '' || $parent === '.' || $parent === $docRoot) {
+        return null;
+    }
+    $candidate = $parent . DIRECTORY_SEPARATOR . 'private' . DIRECTORY_SEPARATOR . 'partner-secrets.php';
+    $resolved = realpath($candidate);
+    if ($resolved === false || !is_file($resolved)) {
+        return null;
+    }
+    $docPrefix = $docRoot . DIRECTORY_SEPARATOR;
+    if ($resolved === $docRoot || str_starts_with($resolved, $docPrefix)) {
+        return null;
+    }
+    return $resolved;
+}
+
+/**
+ * Load PARTNER_ADMIN_TOKEN from private/partner-secrets.php (outside document root).
+ * Fail closed on missing/invalid files. Never log or echo the token.
+ */
+function partner_admin_token_from_secrets_file(): ?string
+{
+    $path = partner_secrets_file_path();
+    if ($path === null) {
+        return null;
+    }
+    try {
+        /** @var mixed $config */
+        $config = require $path;
+    } catch (Throwable $e) {
+        return null;
+    }
+    if (!is_array($config)) {
+        return null;
+    }
+    $token = $config['PARTNER_ADMIN_TOKEN'] ?? null;
+    if (!is_string($token) || $token === '') {
+        return null;
+    }
+    return $token;
+}
+
+/**
  * Shared secret for HighVolt deployment portal → Ledgerline partner list (server-to-server).
+ * Prefer getenv('PARTNER_ADMIN_TOKEN'); otherwise private/partner-secrets.php beside public_html.
  * Fail closed when unset. Never authorize partner listing via session cookies.
  */
 function partner_admin_token(): ?string
 {
     $token = partner_env('PARTNER_ADMIN_TOKEN');
-    if ($token === null || $token === '') {
-        return null;
+    if ($token !== null && $token !== '') {
+        return $token;
     }
-    return $token;
+    return partner_admin_token_from_secrets_file();
 }
 
 function partner_request_admin_token(): ?string

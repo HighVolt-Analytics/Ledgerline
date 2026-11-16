@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:http'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -251,8 +251,13 @@ test('admin partner list requires token and returns only safe account fields', a
 
 test('admin partner list fails closed when PARTNER_ADMIN_TOKEN is unset', async () => {
   const tmp = await mkdtemp(path.join(os.tmpdir(), 'll-partner-admin-off-'))
+  const docRoot = path.join(tmp, 'public_html')
+  await mkdir(docRoot, { recursive: true })
   const dbPath = path.join(tmp, 'partners.sqlite')
-  const apiServer = await startPartnerApi(dbPath, { PARTNER_ADMIN_TOKEN: '' })
+  const apiServer = await startPartnerApi(dbPath, {
+    PARTNER_ADMIN_TOKEN: '',
+    PARTNER_DOCUMENT_ROOT: docRoot,
+  })
   try {
     const denied = await api(apiServer.base, '/admin/list', {
       authorization: 'Bearer anything',
@@ -260,6 +265,140 @@ test('admin partner list fails closed when PARTNER_ADMIN_TOKEN is unset', async 
     assert.equal(denied.res.status, 401)
   } finally {
     await apiServer.close()
+    await rm(tmp, { recursive: true, force: true })
+  }
+})
+
+test('admin partner list loads PARTNER_ADMIN_TOKEN from private/partner-secrets.php beside the document root', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'll-partner-secrets-'))
+  const docRoot = path.join(tmp, 'public_html')
+  const privateDir = path.join(tmp, 'private')
+  await mkdir(docRoot, { recursive: true })
+  await mkdir(privateDir, { recursive: true })
+  const fileToken = `file-token-${Date.now()}`
+  await writeFile(
+    path.join(privateDir, 'partner-secrets.php'),
+    `<?php\ndeclare(strict_types=1);\nreturn ['PARTNER_ADMIN_TOKEN' => ${JSON.stringify(fileToken)}];\n`,
+    'utf8',
+  )
+  const dbPath = path.join(tmp, 'partners.sqlite')
+  const apiServer = await startPartnerApi(dbPath, {
+    PARTNER_ADMIN_TOKEN: '',
+    PARTNER_DOCUMENT_ROOT: docRoot,
+  })
+  try {
+    const email = `secrets-file-${Date.now()}@example.test`
+    await api(apiServer.base, '/signup', {
+      method: 'POST',
+      body: {
+        name: 'Secrets File Partner',
+        email,
+        password: 'secure-pass-123',
+        firm: 'Secrets Firm',
+        type: 'Accounting firm',
+        country: 'AU',
+      },
+    })
+
+    const denied = await api(apiServer.base, '/admin/list', {
+      authorization: 'Bearer wrong-token',
+    })
+    assert.equal(denied.res.status, 401)
+
+    const listed = await api(apiServer.base, '/admin/list', {
+      authorization: `Bearer ${fileToken}`,
+    })
+    assert.equal(listed.res.status, 200)
+    assert.ok(listed.json.partners.some((p) => p.email === email))
+    assert.equal(JSON.stringify(listed.json).includes(fileToken), false)
+  } finally {
+    await apiServer.close()
+    await rm(tmp, { recursive: true, force: true })
+  }
+})
+
+test('admin partner list prefers getenv over the private secrets file', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'll-partner-env-wins-'))
+  const docRoot = path.join(tmp, 'public_html')
+  const privateDir = path.join(tmp, 'private')
+  await mkdir(docRoot, { recursive: true })
+  await mkdir(privateDir, { recursive: true })
+  const fileToken = 'file-token-should-not-win'
+  const envToken = 'env-token-should-win'
+  await writeFile(
+    path.join(privateDir, 'partner-secrets.php'),
+    `<?php\nreturn ['PARTNER_ADMIN_TOKEN' => ${JSON.stringify(fileToken)}];\n`,
+    'utf8',
+  )
+  const dbPath = path.join(tmp, 'partners.sqlite')
+  const apiServer = await startPartnerApi(dbPath, {
+    PARTNER_ADMIN_TOKEN: envToken,
+    PARTNER_DOCUMENT_ROOT: docRoot,
+  })
+  try {
+    await api(apiServer.base, '/signup', {
+      method: 'POST',
+      body: {
+        name: 'Env Wins',
+        email: `env-wins-${Date.now()}@example.test`,
+        password: 'secure-pass-123',
+        firm: 'Env Firm',
+        type: 'Bookkeeper',
+        country: 'NZ',
+      },
+    })
+    const viaFile = await api(apiServer.base, '/admin/list', {
+      authorization: `Bearer ${fileToken}`,
+    })
+    assert.equal(viaFile.res.status, 401)
+    const viaEnv = await api(apiServer.base, '/admin/list', {
+      authorization: `Bearer ${envToken}`,
+    })
+    assert.equal(viaEnv.res.status, 200)
+  } finally {
+    await apiServer.close()
+    await rm(tmp, { recursive: true, force: true })
+  }
+})
+
+test('admin partner list fails closed when secrets file is inside the document root or invalid', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'll-partner-secrets-bad-'))
+  const docRoot = path.join(tmp, 'public_html')
+  const insidePrivate = path.join(docRoot, 'private')
+  await mkdir(insidePrivate, { recursive: true })
+  await writeFile(
+    path.join(insidePrivate, 'partner-secrets.php'),
+    `<?php\nreturn ['PARTNER_ADMIN_TOKEN' => 'inside-docroot-token'];\n`,
+    'utf8',
+  )
+  const dbPath = path.join(tmp, 'partners.sqlite')
+  const insideServer = await startPartnerApi(dbPath, {
+    PARTNER_ADMIN_TOKEN: '',
+    PARTNER_DOCUMENT_ROOT: docRoot,
+  })
+  try {
+    const denied = await api(insideServer.base, '/admin/list', {
+      authorization: 'Bearer inside-docroot-token',
+    })
+    assert.equal(denied.res.status, 401)
+  } finally {
+    await insideServer.close()
+  }
+
+  const outsidePrivate = path.join(tmp, 'private')
+  await mkdir(outsidePrivate, { recursive: true })
+  await writeFile(path.join(outsidePrivate, 'partner-secrets.php'), '<?php\nreturn "not-an-array";\n', 'utf8')
+  const invalidServer = await startPartnerApi(dbPath, {
+    PARTNER_ADMIN_TOKEN: '',
+    PARTNER_DOCUMENT_ROOT: docRoot,
+  })
+  try {
+    const denied = await api(invalidServer.base, '/admin/list', {
+      authorization: 'Bearer anything',
+    })
+    assert.equal(denied.res.status, 401)
+  } finally {
+    await invalidServer.close()
     await rm(tmp, { recursive: true, force: true })
   }
 })
