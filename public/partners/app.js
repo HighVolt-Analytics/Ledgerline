@@ -554,8 +554,24 @@
         <div><div class="l">Ready to pay</div><div class="v">${liveMoney(b.approvedMinor, b.currency)}</div><div class="s">paid on the 15th</div></div>
         <div><div class="l">Paid out</div><div class="v">${liveMoney(b.paidMinor, b.currency)}</div><div class="s">all time</div></div>
       </div>` : '';
+    const bankRows = (LIVE.bank || []);
+    const activeBank = bankRows.find((x) => x.status === 'ACTIVE');
+    const pendingBank = bankRows.find((x) => x.status === 'PENDING');
+    const bankLine = [
+      activeBank ? `<p class="small">Payouts go to <b>${esc(activeBank.holder)}</b> · ${esc(activeBank.masked)} <span class="pill ok">Confirmed</span></p>` : '',
+      pendingBank ? `<p class="small">${esc(pendingBank.holder)} · ${esc(pendingBank.masked)} <span class="pill warn">Waiting for confirmation</span></p>` : '',
+    ].join('');
+    const bankForm = active ? `<div style="margin-top:16px;border-top:1px solid var(--line);padding-top:14px">
+        <h3 style="margin:0 0 6px">Bank details for payouts</h3>
+        ${bankLine || '<p class="small muted">Add the bank account we should pay your commission into.</p>'}
+        <p class="xs muted">For your safety, new or changed details are checked by the LedgerLine team before any payment is sent.</p>
+        <div class="two" style="gap:8px"><input class="in-t" id="bk-holder" placeholder="Account holder name" autocomplete="name">
+        <input class="in-t" id="bk-code" placeholder="BSB / routing / SWIFT" autocomplete="off"></div>
+        <input class="in-t" id="bk-number" placeholder="Account number" inputmode="numeric" autocomplete="off" style="margin-top:8px">
+        <div class="err-msg" id="bk-err" role="alert"></div>
+        <button class="btn sm" style="margin-top:8px" data-act="live-bank">Save bank details</button></div>` : '';
     return `<div class="card" id="live-program"><div class="card-head"><h2>Your partner account</h2>${statusPill}</div>
-      <div class="card-body">${linkPart}${money}</div></div>`;
+      <div class="card-body">${linkPart}${money}${bankForm}</div></div>`;
   }
 
   function tOverview(p, st) {
@@ -900,6 +916,18 @@
           UI.demoOpen = false;
           go('home');
           toast('Signed out');
+        })();
+        return undefined;
+      }
+      case 'live-bank': {
+        const body = { holder: $('#bk-holder').value.trim(), bankCode: $('#bk-code').value.trim(), accountNumber: $('#bk-number').value.trim() };
+        (async () => {
+          try {
+            const { res, body: out } = await authFetch('/program/bank', { method: 'POST', body: JSON.stringify(body) });
+            if (res.ok && out?.available) { LIVE = out; render(); return toast('Bank details sent for confirmation'); }
+            const errEl = $('#bk-err');
+            if (errEl) errEl.textContent = out?.fields ? Object.values(out.fields).join('. ') : (out?.message || 'Please try again later.');
+          } catch { toast('Please try again later.'); }
         })();
         return undefined;
       }

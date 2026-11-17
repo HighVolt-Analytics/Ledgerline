@@ -578,7 +578,7 @@ test('portal program data uses a 60s signed token for the signed-in partner only
       assert.ok(ids.includes(t.claims.partner_id))
       assert.ok(!('email' in t.claims))
     }
-    assert.equal(seen.filter((t) => t.claims.partner_id === ids[1]).length, 3)
+    assert.equal(seen.filter((t) => t.claims.partner_id === ids[1]).length, 4)
 
     const code = await api(apiServer.base, '/program/code', { method: 'POST', cookie: a.cookie })
     assert.equal(code.res.status, 200)
@@ -609,6 +609,52 @@ test('portal program is safely off without a signing key', async () => {
     const prog = await api(apiServer.base, '/program', { cookie: s.cookie })
     assert.equal(prog.res.status, 200)
     assert.deepEqual(prog.json, { linked: true, available: false })
+  } finally {
+    await apiServer.close()
+    fake.close()
+    await rm(tmp, { recursive: true, force: true })
+  }
+})
+
+test('bank details go server-side to partner-service and are validated first', async () => {
+  const { generateKeyPairSync } = await import('node:crypto')
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
+  const puts = []
+  const fake = createServer((req, res) => {
+    let data = ''
+    req.on('data', (c) => (data += c))
+    req.on('end', () => {
+      const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)) }
+      if (req.method === 'POST' && req.url === '/applications') return send(201, { partner_id: 'dddddddd-0000-4000-8000-000000000004', status: 'APPLIED' })
+      if (req.method === 'PUT' && req.url === '/site/me/payout-account') { puts.push(JSON.parse(data)); return send(200, { id: 'acc-1' }) }
+      if (req.url === '/site/me') return send(200, { status: 'ACTIVE' })
+      if (req.url === '/site/me/payout-account') return send(200, puts.length ? [{ status: 'PENDING', account_masked: '****5678', account_holder_name: 'Elm & Co' }] : [])
+      if (req.url === '/site/me/balance') return send(200, { currency: 'USD' })
+      if (req.url === '/site/me/referral-codes') return send(200, [])
+      return send(404, {})
+    })
+  })
+  await new Promise((r) => fake.listen(0, '127.0.0.1', r))
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'll-partner-'))
+  const apiServer = await startPartnerApi(path.join(tmp, 'p.sqlite'), {
+    PARTNER_SERVICE_URL: `http://127.0.0.1:${fake.address().port}`,
+    PARTNER_SITE_SIGNING_KEY: privateKey.export({ type: 'pkcs8', format: 'pem' }),
+  })
+  try {
+    const s = await api(apiServer.base, '/signup', { method: 'POST', body: signupBody(`bank-${Date.now()}@example.test`) })
+    const bad = await api(apiServer.base, '/program/bank', { method: 'POST', cookie: s.cookie, body: { holder: '', accountNumber: '12', bankCode: '!' } })
+    assert.equal(bad.res.status, 400)
+    assert.deepEqual(Object.keys(bad.json.fields).sort(), ['accountNumber', 'bankCode', 'holder'])
+    assert.equal(puts.length, 0, 'invalid input never reaches partner-service')
+
+    const ok = await api(apiServer.base, '/program/bank', { method: 'POST', cookie: s.cookie, body: { holder: 'Elm & Co', accountNumber: '1234 5678', bankCode: '062-000' } })
+    assert.equal(ok.res.status, 200)
+    assert.deepEqual(puts[0], { provider: 'MANUAL_BANK_BATCH', account_holder_name: 'Elm & Co', account_number: '12345678', bank_code: '062000' })
+    assert.deepEqual(ok.json.bank, [{ status: 'PENDING', masked: '****5678', holder: 'Elm & Co' }])
+    assert.ok(!JSON.stringify(ok.json).includes('12345678'), 'full account number is never sent back to the browser')
+
+    const anon = await api(apiServer.base, '/program/bank', { method: 'POST', body: { holder: 'x', accountNumber: '12345678', bankCode: '062000' } })
+    assert.equal(anon.res.status, 401)
   } finally {
     await apiServer.close()
     fake.close()

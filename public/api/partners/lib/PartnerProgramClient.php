@@ -93,7 +93,17 @@ final class PartnerProgramClient
         }
         [$s2, $balance] = $this->request('GET', '/site/me/balance', $token);
         [$s3, $codes] = $this->request('GET', '/site/me/referral-codes', $token);
+        [$s4, $accounts] = $this->request('GET', '/site/me/payout-account', $token);
+        $bank = [];
+        if ($s4 === 200 && is_array($accounts)) {
+            foreach (array_filter($accounts, 'is_array') as $a) {
+                // Masked only: the service never returns full bank details.
+                $bank[] = ['status' => (string) ($a['status'] ?? ''), 'masked' => (string) ($a['account_masked'] ?? ''),
+                    'holder' => (string) ($a['account_holder_name'] ?? '')];
+            }
+        }
         return [
+            'bank' => $bank,
             'status' => is_string($profile['status'] ?? null) ? $profile['status'] : null,
             // Public click link: Edge /r/{code} redirects to the LedgerLine landing page and sets the referral cookie.
             'referralBase' => $this->baseUrl . '/r/',
@@ -119,6 +129,24 @@ final class PartnerProgramClient
         }
         $token = $this->signFor($hvaPartnerId);
         return $token === null ? 0 : $this->request('POST', '/site/me/referral-codes', $token, new stdClass())[0];
+    }
+
+    /**
+     * Submits bank details for the partner. Saved as PENDING by partner-service and unusable for payouts until a
+     * PartnerAdmin confirms them. Returns HTTP status (0 when off or unreachable).
+     */
+    public function savePayoutAccount(string $hvaPartnerId, string $holder, string $accountNumber, string $bankCode): int
+    {
+        if (!$this->portalEnabled()) {
+            return 0;
+        }
+        $token = $this->signFor($hvaPartnerId);
+        return $token === null ? 0 : $this->request('PUT', '/site/me/payout-account', $token, [
+            'provider' => 'MANUAL_BANK_BATCH',
+            'account_holder_name' => $holder,
+            'account_number' => $accountNumber,
+            'bank_code' => $bankCode,
+        ])[0];
     }
 
     /** RS256 JWT, 60 s, for exactly this partner and product. */

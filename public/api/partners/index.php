@@ -21,7 +21,9 @@ try {
 
     // Accept /api/partners, /api/partners/signup, /api/partners/admin/list, etc.
     $action = 'me';
-    if (preg_match('#/api/partners/program/code$#', $path)) {
+    if (preg_match('#/api/partners/program/bank$#', $path)) {
+        $action = 'program_bank';
+    } elseif (preg_match('#/api/partners/program/code$#', $path)) {
         $action = 'program_code';
     } elseif (preg_match('#/api/partners/program$#', $path)) {
         $action = 'program';
@@ -51,6 +53,12 @@ try {
 
     if ($method === 'GET' && $action === 'program') {
         $result = $auth->program($sessionId);
+        partner_respond($result['status'], $result['body']);
+        exit;
+    }
+
+    if ($method === 'POST' && $action === 'program_bank') {
+        $result = $auth->programBank($sessionId, partner_json_input());
         partner_respond($result['status'], $result['body']);
         exit;
     }
