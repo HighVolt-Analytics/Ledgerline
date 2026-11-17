@@ -543,17 +543,24 @@
     const active = LIVE.status === 'ACTIVE';
     const code = (LIVE.codes || []).find((c) => c.status === 'ACTIVE');
     const link = code ? `${LIVE.referralBase}${encodeURIComponent(code.code)}` : '';
-    const b = LIVE.balance;
+    // One row per currency the partner earned in (never added together across currencies).
+    const allBalances = (LIVE.balances && LIVE.balances.length ? LIVE.balances : (LIVE.balance ? [LIVE.balance] : []))
+      .filter((x, i) => i === 0 || x.pendingMinor || x.approvedMinor || x.paidMinor);
+    const b = allBalances.length ? {
+      multi: allBalances.length > 1,
+      rows: allBalances,
+    } : null;
     const statusPill = active ? '<span class="pill ok">Approved</span>' : '<span class="pill warn">Under review</span>';
     const linkPart = code
       ? `<div class="link-box"><input class="in-t" id="live-link" readonly value="${esc(link)}" aria-label="Your live referral link"><button class="btn sm" data-act="copy-live-link">Copy link</button></div>
          ${active ? '' : '<p class="small muted" style="margin-top:8px">Your link starts earning once your application is approved.</p>'}`
       : `<button class="btn sm" data-act="live-code">Get my referral link</button>`;
-    const money = b ? `<div class="kpis" style="margin-top:14px">
-        <div><div class="l">Pending</div><div class="v">${liveMoney(b.pendingMinor, b.currency)}</div><div class="s">held for 30 days</div></div>
-        <div><div class="l">Ready to pay</div><div class="v">${liveMoney(b.approvedMinor, b.currency)}</div><div class="s">paid on the 15th</div></div>
-        <div><div class="l">Paid out</div><div class="v">${liveMoney(b.paidMinor, b.currency)}</div><div class="s">all time</div></div>
-      </div>` : '';
+    const money = b ? b.rows.map((r) => `<div class="kpis" style="margin-top:14px">
+        ${b.multi ? `<div><div class="l">Currency</div><div class="v">${esc(r.currency)}</div><div class="s">paid separately</div></div>` : ''}
+        <div><div class="l">Pending</div><div class="v">${liveMoney(r.pendingMinor, r.currency)}</div><div class="s">held for 30 days</div></div>
+        <div><div class="l">Ready to pay</div><div class="v">${liveMoney(r.approvedMinor, r.currency)}</div><div class="s">paid on the 15th</div></div>
+        <div><div class="l">Paid out</div><div class="v">${liveMoney(r.paidMinor, r.currency)}</div><div class="s">all time</div></div>
+      </div>`).join('') : '';
     const bankRows = (LIVE.bank || []);
     const activeBank = bankRows.find((x) => x.status === 'ACTIVE');
     const pendingBank = bankRows.find((x) => x.status === 'PENDING');

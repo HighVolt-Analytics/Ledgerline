@@ -534,7 +534,7 @@ test('portal program data uses a 60s signed token for the signed-in partner only
       seen.push({ url: req.url, method: req.method, header, claims })
       const pid = claims.partner_id
       if (req.url === '/site/me') return send(200, { partner_id: pid, status: 'APPLIED' })
-      if (req.url === '/site/me/balance') return send(200, { currency: 'USD', pending_minor: 1500, approved_minor: 0, paid_minor: 0, debt_minor: 0 })
+      if (req.url === '/site/me/balances') return send(200, [{ currency: 'USD', pending_minor: 1500, approved_minor: 0, paid_minor: 0, debt_minor: 0 }, { currency: 'SGD', pending_minor: 2000, approved_minor: 0, paid_minor: 0, debt_minor: 0 }])
       if (req.url === '/site/me/referral-codes' && req.method === 'GET') return send(200, [{ code: `CODE-${pid.slice(0, 4)}`, status: 'ACTIVE' }])
       if (req.url === '/site/me/referral-codes' && req.method === 'POST') return send(201, { code: 'NEW1', status: 'ACTIVE' })
       return send(404, {})
@@ -561,6 +561,7 @@ test('portal program data uses a 60s signed token for the signed-in partner only
     assert.deepEqual(progA.json.codes, [{ code: 'CODE-aaaa', status: 'ACTIVE' }])
     assert.equal(progA.json.balance.currency, 'USD')
     assert.equal(progA.json.balance.pendingMinor, 1500)
+    assert.deepEqual(progA.json.balances.map((x) => x.currency + ':' + x.pendingMinor), ['USD:1500', 'SGD:2000'])
     assert.ok(!JSON.stringify(progA.json).includes(ids[0]), 'service partner id is never sent to the browser')
 
     const progB = await api(apiServer.base, '/program', { cookie: b.cookie })
@@ -629,7 +630,7 @@ test('bank details go server-side to partner-service and are validated first', a
       if (req.method === 'PUT' && req.url === '/site/me/payout-account') { puts.push(JSON.parse(data)); return send(200, { id: 'acc-1' }) }
       if (req.url === '/site/me') return send(200, { status: 'ACTIVE' })
       if (req.url === '/site/me/payout-account') return send(200, puts.length ? [{ status: 'PENDING', account_masked: '****5678', account_holder_name: 'Elm & Co' }] : [])
-      if (req.url === '/site/me/balance') return send(200, { currency: 'USD' })
+      if (req.url === '/site/me/balances') return send(200, [{ currency: 'USD' }])
       if (req.url === '/site/me/referral-codes') return send(200, [])
       return send(404, {})
     })

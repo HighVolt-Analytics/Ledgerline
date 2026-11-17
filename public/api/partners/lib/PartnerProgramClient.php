@@ -91,7 +91,21 @@ final class PartnerProgramClient
             error_log('partner_program: profile unavailable, status=' . $s1);
             return null;
         }
-        [$s2, $balance] = $this->request('GET', '/site/me/balance', $token);
+        // One balance per currency the partner earned in (partner-service ADR-0019), product currency first.
+        [$s2, $balanceList] = $this->request('GET', '/site/me/balances', $token);
+        $balances = [];
+        if ($s2 === 200 && is_array($balanceList)) {
+            foreach (array_filter($balanceList, 'is_array') as $bl) {
+                $balances[] = [
+                    'currency' => (string) ($bl['currency'] ?? ''),
+                    'pendingMinor' => (int) ($bl['pending_minor'] ?? 0),
+                    'approvedMinor' => (int) ($bl['approved_minor'] ?? 0),
+                    'paidMinor' => (int) ($bl['paid_minor'] ?? 0),
+                    'debtMinor' => (int) ($bl['debt_minor'] ?? 0),
+                ];
+            }
+        }
+        $balance = $balances[0] ?? null;
         [$s3, $codes] = $this->request('GET', '/site/me/referral-codes', $token);
         [$s4, $accounts] = $this->request('GET', '/site/me/payout-account', $token);
         $bank = [];
@@ -111,13 +125,8 @@ final class PartnerProgramClient
                 static fn ($c) => ['code' => (string) ($c['code'] ?? ''), 'status' => (string) ($c['status'] ?? '')],
                 array_filter($codes, 'is_array'),
             )) : [],
-            'balance' => $s2 === 200 && is_array($balance) ? [
-                'currency' => (string) ($balance['currency'] ?? ''),
-                'pendingMinor' => (int) ($balance['pending_minor'] ?? 0),
-                'approvedMinor' => (int) ($balance['approved_minor'] ?? 0),
-                'paidMinor' => (int) ($balance['paid_minor'] ?? 0),
-                'debtMinor' => (int) ($balance['debt_minor'] ?? 0),
-            ] : null,
+            'balance' => $balance,
+            'balances' => $balances,
         ];
     }
 
