@@ -50,7 +50,7 @@ const EMPTY = {
   partner: false,
   system: '',
   systemName: '',
-  bottleneck: [],
+  bottleneck: '',
   first: '',
   last: '',
   email: '',
@@ -121,7 +121,7 @@ function validate(values) {
   const errors = {};
   if (!values.size) errors.size = 'Please select your business or practice size.';
   if (!values.system) errors.system = 'Please select your accounting or ERP software.';
-  if (!values.bottleneck.length) errors.bottleneck = 'Please choose at least one bottleneck.';
+  if (!values.bottleneck) errors.bottleneck = 'Please select your biggest bottleneck.';
   if (!values.first.trim()) errors.first = 'Please enter your first name.';
   if (!values.last.trim()) errors.last = 'Please enter your last name.';
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(values.email.trim())) errors.email = 'Please enter a valid email address.';
@@ -447,7 +447,6 @@ export default function BookDemoPage() {
       form: {
         get: (name) => {
           if (name === 'consent') return values.consent ? 'yes' : '';
-          if (name === 'bottleneck') return values.bottleneck.join(', ');
           if (name === 'size') return [values.size, values.partner ? PARTNER : ''].filter(Boolean).join(' — ');
           return String(values[name] ?? '');
         },
@@ -634,32 +633,27 @@ export default function BookDemoPage() {
                     </div>
                   </fieldset>
 
-                  <fieldset className={`book-fieldset${errors.bottleneck ? ' has-error' : ''}`}>
+                  <fieldset className="book-fieldset">
                     <legend>
                       <span className="n">03</span>Biggest bottleneck
                     </legend>
-                    <div className="choice-grid" role="group" aria-label="Select biggest bottlenecks">
-                      {BOTTLENECKS.map((label) => (
-                        <Choice
-                          key={label}
-                          name="bottleneck"
-                          type="checkbox"
-                          value={label}
-                          checked={values.bottleneck.includes(label)}
-                          onChange={() =>
-                            setField(
-                              'bottleneck',
-                              values.bottleneck.includes(label)
-                                ? values.bottleneck.filter((item) => item !== label)
-                                : [...values.bottleneck, label],
-                            )
-                          }
-                        >
-                          {label}
-                        </Choice>
-                      ))}
+                    <div className={`book-field${errors.bottleneck ? ' has-error' : ''}`}>
+                      <label htmlFor="bottleneck">What is the biggest bottleneck?</label>
+                      <select
+                        className="book-input"
+                        id="bottleneck"
+                        name="bottleneck"
+                        value={values.bottleneck}
+                        aria-invalid={errors.bottleneck ? 'true' : undefined}
+                        onChange={(event) => setField('bottleneck', event.target.value)}
+                      >
+                        <option value="">Select one</option>
+                        {BOTTLENECKS.map((item) => (
+                          <option key={item}>{item}</option>
+                        ))}
+                      </select>
+                      <span className="err">{errors.bottleneck}</span>
                     </div>
-                    <span className="err">{errors.bottleneck}</span>
                   </fieldset>
 
                   <fieldset className={`book-fieldset${errors.consent ? ' has-error' : ''}`}>
