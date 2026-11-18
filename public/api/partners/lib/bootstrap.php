@@ -69,6 +69,11 @@ function partner_pdo(): PDO
             FOREIGN KEY(partner_id) REFERENCES partners(id) ON DELETE CASCADE
         )'
     );
+    $columns = array_column($pdo->query('PRAGMA table_info(partners)')->fetchAll(), 'name');
+    if (!in_array('hva_partner_id', $columns, true)) {
+        // Id of the matching application in the HighVolt partner service (null until linked).
+        $pdo->exec('ALTER TABLE partners ADD COLUMN hva_partner_id TEXT NULL');
+    }
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_partner_sessions_partner ON partner_sessions(partner_id)');
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_partner_sessions_expires ON partner_sessions(expires_at)');
     return $pdo;
@@ -119,6 +124,7 @@ function partner_public_row(array $row): array
         'abn' => $row['abn'],
         'code' => $row['code'],
         'founding' => (bool) $row['founding'],
+        'programLinked' => !empty($row['hva_partner_id']),
         'created' => substr((string) $row['created_at'], 0, 10),
     ];
 }
@@ -289,4 +295,28 @@ function partner_admin_row(array $row): array
         'type' => $row['type'],
         'created' => substr((string) $row['created_at'], 0, 10),
     ];
+}
+
+/**
+ * Generic private setting: getenv($key) first, else the same key in private/partner-secrets.php
+ * (outside the document root). Fail closed (null). Never log or echo the value.
+ */
+function partner_secret(string $key): ?string
+{
+    $value = partner_env($key);
+    if ($value !== null && $value !== '') {
+        return $value;
+    }
+    $path = partner_secrets_file_path();
+    if ($path === null) {
+        return null;
+    }
+    try {
+        /** @var mixed $config */
+        $config = require $path;
+    } catch (Throwable $e) {
+        return null;
+    }
+    $v = is_array($config) ? ($config[$key] ?? null) : null;
+    return is_string($v) && $v !== '' ? $v : null;
 }

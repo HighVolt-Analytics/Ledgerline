@@ -47,6 +47,10 @@ export function phpSqliteArgs() {
     return cachedArgs
   }
   const args = ['-d', `extension_dir=${extDir}`, '-d', 'extension=pdo_sqlite', '-d', 'extension=sqlite3']
+  // openssl signs the partner-service site token (Hostinger ships it enabled).
+  if (fs.existsSync(path.join(extDir, 'php_openssl.dll')) || fs.existsSync(path.join(extDir, 'openssl.so'))) {
+    args.push('-d', 'extension=openssl')
+  }
   cachedArgs = phpProbe(args) ? args : []
   return cachedArgs
 }

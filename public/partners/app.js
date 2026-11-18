@@ -126,8 +126,28 @@
 
   function clearAuthPartner() {
     authPartner = null;
+    LIVE = null;
     S.session = null;
     save();
+  }
+
+  // Live data from the HighVolt partner service (via /api/partners/program). null = not loaded or switched off.
+  let LIVE = null;
+  // True while the real program data is being fetched: the portal shows a loading state instead of the
+  // simulated prototype, so old demo numbers never flash before the real ones.
+  let LIVE_LOADING = false;
+
+  async function loadLiveProgram() {
+    LIVE_LOADING = true;
+    if (UI.route === 'portal') render();
+    try {
+      const { res, body } = await authFetch('/program');
+      LIVE = res.ok && body?.linked && body.available ? body : null;
+    } catch {
+      LIVE = null;
+    }
+    LIVE_LOADING = false;
+    if (UI.route === 'portal') render();
   }
 
   async function refreshAuthSession() {
@@ -135,6 +155,7 @@
       const { res, body } = await authFetch('/me');
       if (res.ok && body?.partner) {
         applyAuthPartner(body.partner);
+        loadLiveProgram();
       } else {
         clearAuthPartner();
       }
@@ -286,7 +307,7 @@
     };
   }
   function nextPayoutDate() { const d = D(S.today); let m = d.getUTCMonth(), y = d.getUTCFullYear(); if (d.getUTCDate() >= PAYOUT_DAY) { m++; if (m > 11) { m = 0; y++; } } return iso(new Date(Date.UTC(y, m, PAYOUT_DAY))); }
-  const refLink = (p) => `${SITE}/subscribe?ref=${p.code}`;
+  const refLink = (p) => (LIVE && liveCode() ? liveLink() : `${SITE}/subscribe?ref=${p.code}`);
 
   function save() { S.seq = seq; store.set(S); }
   function load() { const v = store.get(); S = v && v.partners ? v : seed(); if (!v) save(); seq = Math.max(seq, S.seq || 0, 2000); }
@@ -327,17 +348,29 @@
     UI.route = route; Object.assign(UI, opts); UI.errors = {};
     if (route === 'checkout' && opts.ref === undefined && !UI.co.ref) { const p = me() || S.partners[0]; UI.co.ref = p ? p.code : null; }
     syncUrl(false);
-    render(); window.scrollTo(0, 0);
+    render(); scrollTopAll();
   }
+  // Desktop portal scrolls inside its content column (app shell), so reset both.
+  function scrollTopAll() {
+    window.scrollTo(0, 0);
+    const pane = document.querySelector('.portal.live > div:last-child');
+    if (pane) pane.scrollTop = 0;
+  }
+
   function render() {
     document.querySelectorAll('#proto-switch button').forEach((b) => b.classList.toggle('on', b.dataset.go === (['signin', 'signup'].includes(UI.route) ? 'portal' : UI.route)));
     const v = { home: vHome, signup: vSignup, signin: vSignin, portal: vPortal, checkout: vCheckout }[UI.route] || vHome;
+    // Real portal: full-height app layout below the "Partner page / Partner portal" switch (its height is measured,
+    // so the portal fills exactly the rest of the screen and only the content column scrolls).
+    document.body.classList.toggle('live-portal', UI.route === 'portal' && !!LIVE);
+    const bar = document.querySelector('.proto-bar');
+    document.documentElement.style.setProperty('--bar-h', `${bar ? bar.offsetHeight : 0}px`);
     app.innerHTML = v();
     afterRender();
   }
 
-  function brandLink() {
-    return `<a href="/" class="brand"><img src="/ledgerlink-logo.png" alt=""><span>Quantum Ledger Line</span></a>`;
+  function brandLink(label = 'Quantum Ledger Line') {
+    return `<a href="/" class="brand"><img src="/ledgerlink-logo.png" alt=""><span>${label}</span></a>`;
   }
 
   function siteHead(minimal) {
@@ -472,21 +505,47 @@
   const TABS = [['overview', 'Overview'], ['clients', 'Clients'], ['commissions', 'Commissions'], ['payouts', 'Payouts'], ['share', 'Share & invite'], ['settings', 'Settings']];
   function vPortal() {
     const p = me();
+    // Until the session and the real program data are loaded, show a neutral loading state (never demo numbers).
+    if (!authReady || (LIVE_LOADING && !LIVE)) {
+      return `<div class="auth">${siteHead(true)}<div class="auth-main"><div class="auth-card" role="status" aria-live="polite"><h1>Loading your partner account…</h1><p class="sub">Fetching your latest commissions and payouts.</p></div></div></div>`;
+    }
     if (!authPartner || !p) {
       return `<div class="auth">${siteHead(true)}<div class="auth-main"><div class="auth-card"><h1>Sign in required</h1><p class="sub">Open the partner portal after creating an account or signing in.</p><button class="btn block lg" data-go="signin">Sign in</button></div></div></div>`;
     }
     const st = stats(p);
-    const nav = TABS.map(([k, l]) => `<button class="${UI.tab === k ? 'on' : ''}" data-tab="${k}">${l}${k === 'payouts' && !p.stripe ? '<span class="pill warn" style="padding:0 7px">Set up</span>' : ''}</button>`).join('');
-    const view = { overview: tOverview, clients: tClients, commissions: tCommissions, payouts: tPayouts, share: tShare, settings: tSettings }[UI.tab](p, st);
-    return `<div class="portal">
-      <aside class="side">${brandLink()}<nav>${nav}</nav>
-        <div class="who"><b>${esc(p.firm)}</b><span class="muted">${esc(p.name)}</span><br><button class="btn quiet sm" style="padding-left:0" data-act="signout">Sign out</button></div></aside>
+    // Live mode: real data from the partner service; the simulated prototype (fake clients, Stripe, controls) is hidden.
+    const live = !!LIVE;
+    const setUp = live ? (liveApproved() && !liveBank().active) : !p.stripe;
+    // Sidebar: icon + label, one clear active item (aria-current), "Set up" badge on Payouts until bank details exist.
+    const ICONS = {
+      overview: '<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
+      clients: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M21.5 20a6.5 6.5 0 0 0-4-6"/>',
+      commissions: '<path d="M12 2v20M17 6H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
+      payouts: '<rect x="2.5" y="5" width="19" height="14" rx="2"/><path d="M2.5 10h19M6.5 15h4"/>',
+      share: '<circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="m8.2 10.8 7.6-4.4M8.2 13.2l7.6 4.4"/>',
+      settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+    };
+    const icon = (k) => `<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k] || ''}</svg>`;
+    const navItem = ([k, l]) => `<button class="${UI.tab === k ? 'on' : ''}" data-tab="${k}"${UI.tab === k ? ' aria-current="page"' : ''}>${icon(k)}<span class="lbl">${l}</span>${k === 'payouts' && setUp ? '<span class="pill warn" style="padding:0 7px">Set up</span>' : ''}</button>`;
+    // Main pages (incl. Share & invite) on top; Settings sits at the bottom, just above the account box.
+    const nav = TABS.filter(([k]) => k !== 'settings').map(navItem).join('');
+    const navBottom = TABS.filter(([k]) => k === 'settings').map(navItem).join('');
+    const initialsOf = (s) => String(s || '').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('') || 'P';
+    const views = live
+      ? { overview: lOverview, clients: lClients, commissions: lCommissions, payouts: lPayouts, share: tShare, settings: tSettings }
+      : { overview: tOverview, clients: tClients, commissions: tCommissions, payouts: tPayouts, share: tShare, settings: tSettings };
+    const view = views[UI.tab](p, st);
+    return `<div class="portal${live ? ' live' : ''}">
+      <aside class="side">${brandLink('Ledgerline')}<nav aria-label="Partner portal">${nav}</nav>
+        <nav class="nav-bottom" aria-label="Account">${navBottom}</nav>
+        <div class="who"><span class="avatar" aria-hidden="true">${esc(initialsOf(p.name))}</span><span class="meta"><b>${esc(p.name)}</b><span>${esc(p.firm)}</span></span>
+          <button class="signout" data-act="signout" title="Sign out" aria-label="Sign out"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></button></div></aside>
       <div><div class="mobile-nav">${TABS.map(([k, l]) => `<button class="${UI.tab === k ? 'on' : ''}" data-tab="${k}">${l}</button>`).join('')}</div>
-      <div class="proto-banner" role="status">Prototype portal · commissions, Stripe and client checkout are simulated</div>
+      ${live ? '' : '<div class="proto-banner" role="status">Prototype portal · commissions, Stripe and client checkout are simulated</div>'}
       <main class="main">${view}</main></div>
     </div>
-    <button class="btn ghost demo-fab" data-act="demo-toggle" aria-expanded="${UI.demoOpen}">Prototype controls</button>
-    <div class="demo-pop ${UI.demoOpen ? 'open' : ''}" id="demo-pop">${demoPanel(p)}</div>`;
+    ${live ? '' : `<button class="btn ghost demo-fab" data-act="demo-toggle" aria-expanded="${UI.demoOpen}">Prototype controls</button>
+    <div class="demo-pop ${UI.demoOpen ? 'open' : ''}" id="demo-pop">${demoPanel(p)}</div>`}`;
   }
 
   function demoPanel(p) {
@@ -513,6 +572,347 @@
 
   function linkBox(p) {
     return `<div class="link-box"><input class="in-t" id="ref-link" readonly value="${esc(refLink(p))}" aria-label="Your referral link"><button class="btn sm" data-act="copy-link">Copy link</button><button class="btn ghost sm" data-act="open-checkout">Preview client page</button></div>`;
+  }
+
+  function liveMoney(minor, currency) {
+    try {
+      return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency || 'USD' }).format((minor || 0) / 100);
+    } catch {
+      return `${((minor || 0) / 100).toFixed(2)} ${esc(currency || '')}`;
+    }
+  }
+
+  // ---- Live portal (real data from the HighVolt partner service). Replaces the simulated prototype views. ----
+  const liveDate = (s) => (s ? fd(String(s).slice(0, 10)) : '—');
+  function liveCode() { return LIVE ? (LIVE.codes || []).find((c) => c.status === 'ACTIVE') : null; }
+  function liveLink() { const c = liveCode(); return c ? `${LIVE.referralBase}${encodeURIComponent(c.code)}` : ''; }
+  function liveBalances() {
+    const all = LIVE.balances && LIVE.balances.length ? LIVE.balances : (LIVE.balance ? [LIVE.balance] : []);
+    return all.filter((x, i) => i === 0 || x.pendingMinor || x.approvedMinor || x.paidMinor);
+  }
+  function liveBank() {
+    const rows = LIVE.bank || [];
+    return { active: rows.find((x) => x.status === 'ACTIVE'), pending: rows.find((x) => x.status === 'PENDING') };
+  }
+  const liveApproved = () => LIVE && LIVE.status === 'ACTIVE';
+
+  function liveKpis() {
+    // Same five tiles as the original portal, from real data. Amounts in the main (product) currency; other
+    // currencies are listed under Lifetime earned (never added together).
+    const clients = (LIVE.clients || []).filter((c) => c.status !== 'REJECTED');
+    const active = clients.filter((c) => c.subStatus === 'ACTIVE' || c.subStatus === 'PAST_DUE');
+    const rows = liveBalances();
+    const b = rows[0] || { currency: 'USD', pendingMinor: 0, approvedMinor: 0, paidMinor: 0 };
+    const cur = b.currency;
+    const perMonth = (c) => (c.netMinor == null || c.currency !== cur ? 0 : (c.interval === 'year' ? Math.round(c.netMinor / 12) : c.netMinor));
+    const mrr = clients.filter((c) => c.subStatus === 'ACTIVE').reduce((t, c) => t + perMonth(c), 0);
+    const lifetime = b.pendingMinor + b.approvedMinor + b.paidMinor;
+    const others = rows.slice(1).map((r) => liveMoney(r.pendingMinor + r.approvedMinor + r.paidMinor, r.currency)).join(' · ');
+    return `<div class="kpis">
+      <div><div class="l">Active referred clients</div><div class="v">${active.length}</div><div class="s">${clients.length} referred in total</div></div>
+      <div><div class="l">Client subscriptions</div><div class="v">${liveMoney(mrr, cur)}</div><div class="s">net monthly, excl. tax</div></div>
+      <div><div class="l">Your monthly commission</div><div class="v">${liveMoney(Math.round(mrr * RATE), cur)}</div><div class="s">${RATE * 100}% of collected net revenue</div></div>
+      <div><div class="l">Available to pay out</div><div class="v" style="color:${b.approvedMinor > 0 ? 'var(--ok)' : 'inherit'}">${liveMoney(b.approvedMinor, cur)}</div><div class="s">${liveMoney(b.pendingMinor, cur)} held in 30-day window</div></div>
+      <div><div class="l"><span class="life">Lifetime</span> earned</div><div class="v">${liveMoney(lifetime, cur)}</div><div class="s">${liveMoney(b.paidMinor, cur)} paid out${others ? ` · plus ${others}` : ''}</div></div>
+    </div>`;
+  }
+
+  function liveLinkBox() {
+    if (!liveCode()) {
+      return liveApproved()
+        ? `<button class="btn sm" data-act="live-code">Get my referral link</button>`
+        : `<p class="small muted">Your referral link is created once your application is approved.</p>`;
+    }
+    return `<div class="link-box"><input class="in-t" id="live-link" readonly value="${esc(liveLink())}" aria-label="Your referral link"><button class="btn sm" data-act="copy-live-link">Copy link</button></div>`;
+  }
+
+  function liveBankForm() {
+    const { active, pending } = liveBank();
+    const lines = [
+      active ? `<p class="small">Payouts go to <b>${esc(active.holder)}</b> · ${esc(active.masked)} <span class="pill ok">Confirmed</span></p>` : '',
+      pending ? `<p class="small">${esc(pending.holder)} · ${esc(pending.masked)} <span class="pill warn">Waiting for confirmation</span></p>` : '',
+    ].join('');
+    return `${lines || '<p class="small muted">Add the bank account we should pay your commission into.</p>'}
+      <p class="xs muted">For your safety, new or changed details are checked by the LedgerLine team before any payment is sent.</p>
+      <div class="two" style="gap:8px"><input class="in-t" id="bk-holder" placeholder="Account holder name" autocomplete="name">
+      <input class="in-t" id="bk-code" placeholder="BSB / routing / SWIFT" autocomplete="off"></div>
+      <input class="in-t" id="bk-number" placeholder="Account number" inputmode="numeric" autocomplete="off" style="margin-top:8px">
+      <div class="err-msg" id="bk-err" role="alert"></div>
+      <button class="btn sm" style="margin-top:8px" data-act="live-bank">Save bank details</button>`;
+  }
+
+  function lOverview(p) {
+    const { active } = liveBank();
+    const refs = (LIVE.referrals || []).filter((r) => r.status === 'VALID');
+    // Same 4 steps as the original portal; step 4 is bank details (payouts are bank transfers, not Stripe).
+    const shareAct = liveCode()
+      ? `<button class="btn ghost sm act" data-act="copy-live-link">Copy link</button>`
+      : liveApproved() ? `<button class="btn ghost sm act" data-act="live-code">Get link</button>` : '';
+    const steps = [
+      [true, 'Partner account created', fd(p.created), ''],
+      [!!liveCode() && (!!p.shared || refs.length > 0), 'Share your referral link with a client',
+        liveApproved() ? '' : 'Available once your application is approved', shareAct],
+      [refs.length > 0, 'First client subscribes', '', liveCode() ? `<button class="btn ghost sm act" data-act="copy-live-link">Copy link</button>` : ''],
+      [!!active, 'Add bank details to receive payouts', '', `<button class="btn sm act" data-tab="payouts">Add bank details</button>`],
+    ];
+    const done = steps.filter((s) => s[0]).length;
+    const b = liveBalances()[0] || { currency: 'USD', pendingMinor: 0, approvedMinor: 0 };
+    const firstName = p.name.split(' ')[0];
+    // Same header as the original portal; "Under review" shows only until the application is approved.
+    return `<div class="page-head"><div><h1>Welcome, ${esc(firstName)}</h1><p>${esc(p.firm)}${liveCode() ? ` · Partner code <span class="code-chip">${esc(liveCode().code)}</span>` : ''}${liveApproved() ? '' : ' · <span class="pill warn">Under review</span>'}</p></div>
+      <button class="btn" data-act="invite">Invite a client</button></div>
+      ${liveKpis()}
+      <div class="card"><div class="card-head"><h2>Your referral link</h2><span class="small muted">Clients who subscribe through this link are attributed to you for life</span></div><div class="card-body">${liveLinkBox()}</div></div>
+      <div class="two">
+        <div class="card"><div class="card-head"><h2>Get set up</h2><span class="small muted">${done} of ${steps.length} done</span></div><div class="card-body" style="padding-top:4px;padding-bottom:4px"><ul class="checklist">${steps.map(([ok, t, sub, a]) => `<li class="${ok ? 'done' : ''}"><span class="ic">${ok ? '✓' : ''}</span><span class="tx">${t}${sub ? `<br><span class="xs muted">${sub}</span>` : ''}</span>${ok ? '' : a}</li>`).join('')}</ul></div></div>
+        <div class="card"><div class="card-head"><h2>Next payout</h2>${active ? '<span class="pill ok">Bank details confirmed</span>' : '<span class="pill warn">Bank details needed</span>'}</div><div class="card-body">
+          <div style="font-size:28px;font-weight:700;letter-spacing:-0.02em">${liveMoney(b.approvedMinor, b.currency)}</div>
+          <p class="small muted" style="margin-top:4px">${active ? `Paid on the ${PAYOUT_DAY}th of the month once at least the minimum is available` : 'Add your bank details to receive payouts'}</p>
+          <p class="small muted" style="margin-top:12px">${liveMoney(b.pendingMinor, b.currency)} is in the 30-day refund window and will become available automatically.</p>
+          <div style="margin-top:16px"><button class="btn ghost sm" data-tab="payouts">View payouts</button></div>
+        </div></div>
+      </div>`;
+  }
+
+  function lClients() {
+    // Same table as the original portal, from real data (partner-service /me/clients + commissions).
+    const rows = (LIVE.clients || []).filter((c) => c.status !== 'REJECTED');
+    const state = (c) => c.subStatus === 'CANCELED' ? 'cancelled' : c.subStatus === 'PAST_DUE' ? 'past_due' : c.subStatus === 'ACTIVE' ? 'active' : 'signed_up';
+    const f = UI.cfilter;
+    const inView = (c) => f === 'all' || (f === 'active' ? state(c) === 'active' : f === 'attention' ? state(c) === 'past_due' : state(c) === 'cancelled');
+    const list = rows.filter(inView);
+    const cnt = (k) => rows.filter((c) => state(c) === k).length;
+    const earned = (id) => (LIVE.commissions || []).filter((c) => c.referralId === id && c.status !== 'REVERSED')
+      .reduce((m, c) => { m[c.currency] = (m[c.currency] || 0) + c.amountMinor - c.reversedMinor; return m; }, {});
+    const pill = (c) => ({
+      active: '<span class="pill ok">Active</span>',
+      past_due: '<span class="pill warn">Payment failed</span>',
+      cancelled: '<span class="pill neutral">Cancelled</span>',
+      signed_up: '<span class="pill info">Signed up</span>',
+    }[state(c)]);
+    const perMonth = (c) => c.netMinor == null ? null : (c.interval === 'year' ? Math.round(c.netMinor / 12) : c.netMinor);
+    const money = (v, cur) => (v == null || !cur ? '<span class="muted">—</span>' : liveMoney(v, cur));
+    const src = { LINK: 'Referral link', CODE: 'Referral code', INVITE: 'Email invite' };
+    return `<div class="page-head"><div><h1>Clients</h1><p>Businesses that subscribed through your link or invitation.</p></div><button class="btn" data-act="invite">Invite a client</button></div>
+      <div class="card"><div class="card-head"><div class="seg" role="tablist">${[['all', `All ${rows.length}`], ['active', `Active ${cnt('active')}`], ['attention', `Payment failed ${cnt('past_due')}`], ['cancelled', `Cancelled ${cnt('cancelled')}`]].map(([k, l]) => `<button class="${f === k ? 'on' : ''}" data-cf="${k}">${l}</button>`).join('')}</div><span class="small muted">Commission is earned only on payments actually collected</span></div>
+      ${list.length ? `<div class="tbl-wrap"><table class="t"><thead><tr><th>Business</th><th>Plan</th><th>Status</th><th class="num">Net / month</th><th class="num">Your ${RATE * 100}%</th><th class="num">Earned to date</th><th>Subscribed</th><th>Next billing</th><th>Source</th></tr></thead><tbody>
+        ${list.map((c, i) => {
+          const pm = perMonth(c);
+          const e = Object.entries(earned(c.referralId)).map(([cur, v]) => liveMoney(v, cur)).join(' · ');
+          return `<tr><td><b style="font-weight:500">${esc(c.name || `Client ${rows.length - i}`)}</b><div class="xs muted">${[c.contact, c.country].filter(Boolean).map(esc).join(' · ') || '&nbsp;'}</div></td>
+            <td>${c.plan ? esc(c.plan) + (c.interval === 'year' ? ' <span class="xs muted">annual</span>' : '') : '<span class="muted">—</span>'}</td>
+            <td>${pill(c)}</td>
+            <td class="num">${money(pm, c.currency)}</td>
+            <td class="num">${state(c) === 'cancelled' ? '<span class="muted">—</span>' : money(pm == null ? null : Math.round(pm * RATE), c.currency)}</td>
+            <td class="num">${e || '<span class="muted">—</span>'}</td>
+            <td>${liveDate(c.subscribedAt || c.signupAt)}</td>
+            <td>${state(c) === 'cancelled' ? `<span class="muted">Ended ${c.canceledAt ? fds(String(c.canceledAt).slice(0, 10)) : ''}</span>` : liveDate(c.nextBillingAt)}</td>
+            <td><span class="xs muted">${src[c.source] || 'Referral link'}</span></td></tr>`;
+        }).join('')}
+      </tbody></table></div>` : `<div class="empty"><b>${rows.length ? 'No clients in this view' : 'No referred clients yet'}</b>Share your referral link — new subscriptions appear here automatically.${liveCode() ? '<div style="margin-top:14px"><button class="btn sm" data-act="copy-live-link">Copy referral link</button></div>' : ''}</div>`}</div>`;
+  }
+
+  function lCommissions() {
+    // Same page as the original portal, from real data (newest first).
+    const list = (LIVE.commissions || []).slice().sort((a, b) => String(b.earnedAt).localeCompare(String(a.earnedAt)));
+    const rows = liveBalances();
+    const clientName = (refId) => {
+      const all = (LIVE.clients || []).filter((c) => c.status !== 'REJECTED');
+      const i = all.findIndex((c) => c.referralId === refId);
+      return i < 0 ? '—' : (all[i].name || `Client ${all.length - i}`);
+    };
+    const pill = (c) => ({ PENDING: '<span class="pill warn">Pending</span>', APPROVED: '<span class="pill ok">Available</span>', IN_PAYOUT: '<span class="pill info">In payout</span>', PAID: '<span class="pill neutral">Paid</span>', REVERSED: '<span class="pill bad">Reversed</span>', REVIEW: '<span class="pill warn">In review</span>' }[c.status] || `<span class="pill neutral">${esc(String(c.status).toLowerCase())}</span>`);
+    return `<div class="page-head"><div><h1>Commissions</h1><p>One line for every client payment collected. ${RATE * 100}% of net revenue, excluding tax.</p></div><button class="btn ghost" data-act="export">Download statement (Excel)</button></div>
+      ${rows.map((r) => `<div class="card"><div class="balance"><div><div class="l">Pending · 30-day refund window${rows.length > 1 ? ` · ${esc(r.currency)}` : ''}</div><div class="v" style="color:var(--warn)">${liveMoney(r.pendingMinor, r.currency)}</div></div><div><div class="l">Available for payout</div><div class="v" style="color:var(--ok)">${liveMoney(r.approvedMinor, r.currency)}</div></div><div><div class="l">Paid out to date</div><div class="v">${liveMoney(r.paidMinor, r.currency)}</div></div></div></div>`).join('')}
+      <div class="card"><div class="card-head"><h2>Commission ledger</h2><span class="small muted">${list.length} entries</span></div>
+      ${list.length ? `<div class="tbl-wrap"><table class="t"><thead><tr><th>Date</th><th>Client</th><th>Invoice</th><th class="num">Net collected</th><th class="num">Rate</th><th class="num">Commission</th><th>Status</th><th>Available from</th></tr></thead><tbody>
+        ${list.map((c) => `<tr><td>${liveDate(c.earnedAt)}</td><td>${esc(clientName(c.referralId))}</td><td class="mono">${esc(c.invoice || '—')}${c.type === 'CLAWBACK' ? ' <span class="xs muted">refund</span>' : ''}</td><td class="num">${liveMoney(c.netMinor, c.currency)}</td><td class="num">${(c.rateBps / 100).toFixed(0)}%</td><td class="num" style="${c.status === 'REVERSED' ? 'text-decoration:line-through;color:var(--faint)' : ''}">${liveMoney(c.amountMinor, c.currency)}</td><td>${pill(c)}</td><td>${c.status === 'PENDING' ? liveDate(c.holdUntil) : c.status === 'PAID' ? `<span class="xs muted">Paid ${liveDate(c.paidAt)}</span>` : '—'}</td></tr>`).join('')}
+      </tbody></table></div>` : '<div class="empty"><b>No commission yet</b>Commission appears here when a referred client’s payment is collected.</div>'}</div>
+      <div class="note"><b>How commission is calculated.</b> ${RATE * 100}% of the net subscription amount actually collected — excluding GST/VAT, refunds, chargebacks, discounts and credits. Each amount is held for 30 days, then becomes available. Refunds inside the window reverse the commission; refunds after a payout are deducted from the next one. Failed payments earn nothing until they are collected.</div>`;
+  }
+
+  // ---- Commission statement (Excel). ExcelJS is self-hosted and loaded only when a statement is downloaded. ----
+  let excelLoading = null;
+  function loadExcelJs() {
+    if (window.ExcelJS) return Promise.resolve(window.ExcelJS);
+    if (!excelLoading) {
+      excelLoading = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = '/partners/vendor/exceljs-4.4.0.min.js';
+        s.onload = () => (window.ExcelJS ? resolve(window.ExcelJS) : reject(new Error('ExcelJS missing')));
+        s.onerror = () => { excelLoading = null; reject(new Error('ExcelJS failed to load')); };
+        document.head.appendChild(s);
+      });
+    }
+    return excelLoading;
+  }
+
+  const CURRENCY_FMT = { USD: '"US$"#,##0.00', SGD: '"S$"#,##0.00', AUD: '"A$"#,##0.00', INR: '"₹"#,##0.00', EUR: '"€"#,##0.00', GBP: '"£"#,##0.00' };
+  const moneyFmt = (cur) => CURRENCY_FMT[cur] || `#,##0.00 "${cur}"`;
+  const asDate = (s) => { if (!s) return null; const d = new Date(String(s).slice(0, 10) + 'T00:00:00Z'); return Number.isNaN(d.getTime()) ? null : d; };
+
+  async function exportStatement(p) {
+    let ExcelJS;
+    try { ExcelJS = await loadExcelJs(); } catch { return toast('Could not prepare the statement. Please try again.'); }
+    const BRAND = 'FF1F4E9E', INK = 'FF1F2937', MUTED = 'FF6B7280', LINE = 'FFE5E7EB', SOFT = 'FFF3F6FB';
+    const STATUS = {
+      PENDING: ['Pending (30-day hold)', 'FFFEF3C7', 'FF92400E'], APPROVED: ['Available', 'FFDCFCE7', 'FF166534'],
+      IN_PAYOUT: ['In payout', 'FFDBEAFE', 'FF1E40AF'], PAID: ['Paid', 'FFF3F4F6', 'FF374151'],
+      REVERSED: ['Reversed', 'FFFEE2E2', 'FF991B1B'], REVIEW: ['In review', 'FFFEF3C7', 'FF92400E'],
+    };
+    const all = (LIVE.clients || []).filter((c) => c.status !== 'REJECTED');
+    const nameOf = (id) => { const i = all.findIndex((c) => c.referralId === id); return i < 0 ? '' : (all[i].name || `Client ${all.length - i}`); };
+    const list = (LIVE.commissions || []).slice().sort((a, b) => String(b.earnedAt).localeCompare(String(a.earnedAt)));
+    const code = liveCode() ? liveCode().code : '';
+    const today = new Date();
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'LedgerLine'; wb.created = today;
+    const ws = wb.addWorksheet('Statement', { views: [{ showGridLines: false }], pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 } });
+    // One alignment per column, used for both the heading and its data so they always line up.
+    // Widths leave room for the heading text plus the filter button.
+    const COLS = [
+      { head: 'Date', width: 15, align: 'center' },
+      { head: 'Client', width: 40, align: 'left' },
+      { head: 'Invoice', width: 34, align: 'left' },
+      { head: 'Net collected', width: 18, align: 'right' },
+      { head: 'Rate', width: 10, align: 'center' },
+      { head: 'Commission', width: 17, align: 'right' },
+      { head: 'Status', width: 24, align: 'center' },
+      { head: 'Available from', width: 18, align: 'center' },
+      { head: 'Paid on', width: 15, align: 'center' },
+    ];
+    ws.columns = COLS.map((c) => ({ width: c.width }));
+    const border = { top: { style: 'thin', color: { argb: LINE } }, bottom: { style: 'thin', color: { argb: LINE } } };
+
+    // Title
+    ws.mergeCells('A1:I1'); Object.assign(ws.getCell('A1'), { value: 'LedgerLine' });
+    ws.getCell('A1').font = { name: 'Calibri', size: 20, bold: true, color: { argb: BRAND } };
+    ws.mergeCells('A2:I2'); ws.getCell('A2').value = 'Partner commission statement';
+    ws.getCell('A2').font = { size: 13, color: { argb: MUTED } };
+    ws.getRow(1).height = 30;
+
+    // Partner details
+    const info = [['Partner', p.name], ['Firm', p.firm], ['Partner code', code || '—'], ['Statement date', today], ['Commission rate', `${RATE * 100}% of collected net revenue`]];
+    info.forEach(([k, v], i) => {
+      const r = 4 + i;
+      // Same label | value layout as the Summary below (label A:B, value C:E), so nothing is cut off.
+      ws.mergeCells(`A${r}:B${r}`); ws.getCell(`A${r}`).value = k; ws.getCell(`A${r}`).font = { bold: true, color: { argb: MUTED } };
+      ws.mergeCells(`C${r}:E${r}`); const c = ws.getCell(`C${r}`); c.value = v; c.font = { color: { argb: INK } };
+      if (v instanceof Date) c.numFmt = 'd mmm yyyy';
+      c.alignment = { horizontal: 'left' };
+    });
+
+    // Summary: a simple two-column list per currency (label | amount), so each amount sits next to its label.
+    let r = 4 + info.length + 1;
+    ws.getCell(`A${r}`).value = 'Summary'; ws.getCell(`A${r}`).font = { bold: true, size: 13, color: { argb: INK } };
+    liveBalances().forEach((b) => {
+      const lines = [
+        ['Pending (held for 30 days)', b.pendingMinor, false],
+        ['Available to pay out', b.approvedMinor, false],
+        ['Paid out', b.paidMinor, false],
+        ['Lifetime earned', b.pendingMinor + b.approvedMinor + b.paidMinor, true],
+      ];
+      lines.forEach(([label, minor, strong], i) => {
+        r += 1;
+        ws.mergeCells(`A${r}:B${r}`);
+        const l = ws.getCell(`A${r}`);
+        l.value = liveBalances().length > 1 && i === 0 ? `${label} · ${b.currency}` : label;
+        l.font = { bold: strong, color: { argb: strong ? INK : MUTED } };
+        l.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SOFT } };
+        l.border = border;
+        const v = ws.getCell(`C${r}`);
+        v.value = minor / 100; v.numFmt = moneyFmt(b.currency);
+        v.font = { bold: strong, color: { argb: INK } }; v.alignment = { horizontal: 'right' }; v.border = border;
+      });
+      r += 1;
+    });
+
+    // Commission ledger
+    r += 2;
+    ws.getCell(`A${r}`).value = 'Commission ledger'; ws.getCell(`A${r}`).font = { bold: true, size: 13, color: { argb: INK } };
+    r += 1;
+    const headerRow = r;
+    COLS.forEach((col, i) => {
+      const c = ws.getRow(r).getCell(i + 1);
+      c.value = col.head; c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND } };
+      c.alignment = { vertical: 'middle', horizontal: col.align };
+    });
+    ws.getRow(r).height = 22;
+    if (!list.length) {
+      r += 1; ws.mergeCells(`A${r}:I${r}`); ws.getCell(`A${r}`).value = 'No commission yet.'; ws.getCell(`A${r}`).font = { italic: true, color: { argb: MUTED } };
+    }
+    list.forEach((c, idx) => {
+      r += 1;
+      const st = STATUS[c.status] || [String(c.status), 'FFF3F4F6', 'FF374151'];
+      const row = ws.getRow(r);
+      const vals = [asDate(c.earnedAt), nameOf(c.referralId), c.invoice || '—', c.netMinor / 100, c.rateBps / 10000,
+        (c.amountMinor - (c.reversedMinor || 0)) / 100, st[0], c.status === 'PENDING' ? asDate(c.holdUntil) : null, asDate(c.paidAt)];
+      vals.forEach((v, i) => {
+        const cell = row.getCell(i + 1);
+        cell.value = v ?? '—'; cell.border = border; cell.font = { color: { argb: INK } };
+        cell.alignment = { vertical: 'middle', horizontal: COLS[i].align };
+        if (idx % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFAFAFB' } };
+        if (i === 0 || i === 7 || i === 8) cell.numFmt = 'd mmm yyyy';
+        if (i === 3 || i === 5) cell.numFmt = moneyFmt(c.currency);
+        if (i === 4) cell.numFmt = '0%';
+        if (i === 5) cell.font = { bold: true, color: { argb: INK }, strike: c.status === 'REVERSED' };
+        if (i === 6) { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: st[1] } }; cell.font = { bold: true, color: { argb: st[2] } }; }
+      });
+    });
+    if (list.length) ws.autoFilter = { from: { row: headerRow, column: 1 }, to: { row: r, column: 9 } };
+    ws.views = [{ state: 'frozen', ySplit: headerRow, showGridLines: false }];
+
+    // How it works
+    r += 2;
+    ws.mergeCells(`A${r}:I${r + 1}`);
+    const note = ws.getCell(`A${r}`);
+    note.value = `How commission is calculated: ${RATE * 100}% of the net subscription amount actually collected, excluding tax, refunds, chargebacks, discounts and credits. Each amount is held for 30 days, then becomes available and is paid on the ${PAYOUT_DAY}th of the month.`;
+    note.font = { size: 9, color: { argb: MUTED } }; note.alignment = { wrapText: true, vertical: 'top' };
+    ws.getRow(r).height = 18; ws.getRow(r + 1).height = 18;
+
+    const buf = await wb.xlsx.writeBuffer();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+    a.download = `LedgerLine-commission-statement-${code || 'partner'}-${today.toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    toast('Commission statement downloaded');
+  }
+
+  function lPayouts() {
+    // Same layout as the original portal. Payouts are bank transfers sent by the LedgerLine team on the payout day.
+    const pos = (LIVE.payouts || []).slice().sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+    const { active, pending } = liveBank();
+    const b = liveBalances()[0] || { currency: 'USD', approvedMinor: 0 };
+    const prog = LIVE.program || {};
+    const payDay = prog.payoutDay || PAYOUT_DAY;
+    const minMinor = prog.currency === b.currency && prog.minPayoutMinor ? prog.minPayoutMinor : MIN_PAYOUT;
+    const inTransit = pos.filter((x) => ['CREATED', 'APPROVED', 'SUBMITTED', 'PROCESSING'].includes(x.status) && x.currency === b.currency)
+      .reduce((t, x) => t + x.netMinor, 0);
+    const next = (() => { const d = new Date(); let y = d.getUTCFullYear(), m = d.getUTCMonth(); if (d.getUTCDate() >= payDay) { m += 1; if (m > 11) { m = 0; y += 1; } } return iso(new Date(Date.UTC(y, m, payDay))); })();
+    const bankIcon = '<span style="font-size:24px;font-weight:700;color:var(--brand,#1F4E9E);letter-spacing:-0.02em">Bank</span>';
+    const bankCard = active
+      ? `<div class="card"><div class="card-head"><div class="stripe-row">${bankIcon}<span class="pill ok">Confirmed</span></div></div><div class="card-body"><dl class="kv">
+          <dt>Account holder</dt><dd>${esc(active.holder)}</dd><dt>Account</dt><dd class="mono">${esc(active.masked)}</dd>
+          <dt>Schedule</dt><dd>Monthly on the ${payDay}th</dd></dl>
+          ${pending ? `<p class="small" style="margin-top:10px">New details ${esc(pending.masked)} <span class="pill warn">Waiting for confirmation</span></p>` : ''}
+          <details style="margin-top:12px"><summary class="small">Change bank details</summary><div style="margin-top:10px">${liveBankForm()}</div></details></div></div>`
+      : `<div class="card"><div class="card-body" style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">${bankIcon}<div style="flex:1;min-width:260px"><b>Add your bank details to receive your commission</b><p class="small muted" style="margin-top:2px">LedgerLine pays commission by bank transfer every month. Your commission keeps accruing in the meantime.</p>
+          <div style="margin-top:12px">${liveApproved() ? liveBankForm() : '<p class="small muted">You can add bank details once your application is approved.</p>'}</div></div></div></div>`;
+    const footNote = !active ? 'Add bank details to receive payouts.'
+      : b.approvedMinor < minMinor ? `At least ${liveMoney(minMinor, b.currency)} must be available for the next payout.`
+      : `${liveMoney(b.approvedMinor, b.currency)} will be paid to your bank account on ${fd(next)}.`;
+    const pill = (s) => ({ PAID: '<span class="pill ok">Paid</span>', SETTLED_BY_DEBT: '<span class="pill neutral">Settled</span>', FAILED: '<span class="pill bad">Failed</span>', CANCELED: '<span class="pill neutral">Cancelled</span>', NEEDS_RECONCILIATION: '<span class="pill warn">Checking</span>' }[s] || '<span class="pill info">In transit</span>');
+    return `<div class="page-head"><div><h1>Payouts</h1><p>Commission transferred from LedgerLine to your bank account.</p></div></div>
+      ${bankCard}
+      <div class="card"><div class="balance"><div><div class="l">Available now</div><div class="v" style="color:var(--ok)">${liveMoney(b.approvedMinor, b.currency)}</div></div><div><div class="l">In transit to your bank</div><div class="v">${liveMoney(inTransit, b.currency)}</div></div><div><div class="l">${active ? 'Next scheduled payout' : 'Minimum payout'}</div><div class="v" style="font-size:20px;padding-top:6px">${active ? fd(next) : liveMoney(minMinor, b.currency)}</div></div></div>
+        <div class="card-body" style="border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap"><span class="small muted">${footNote}</span><span class="small muted">Minimum payout ${liveMoney(minMinor, b.currency)}</span></div></div>
+      <div class="card"><div class="card-head"><h2>Payout history</h2><span class="small muted">${pos.length} payouts</span></div>
+      ${pos.length ? `<div class="tbl-wrap"><table class="t"><thead><tr><th>Date</th><th>Payout</th><th>Bank reference</th><th class="num">Commission lines</th><th class="num">Amount</th><th>Status</th><th>Arrival</th></tr></thead><tbody>
+        ${pos.map((x) => `<tr><td>${liveDate(x.createdAt)}</td><td class="mono">PO-${esc(String(x.id).slice(0, 8).toUpperCase())}</td><td class="mono xs">${esc(x.bankRef || '—')}</td><td class="num">${x.lines ?? '—'}</td><td class="num"><b style="font-weight:600">${liveMoney(x.netMinor, x.currency)}</b></td><td>${pill(x.status)}</td><td>${liveDate(x.paidAt)}</td></tr>`).join('')}
+      </tbody></table></div>` : `<div class="empty"><b>No payouts yet</b>Your first payout is sent once at least ${liveMoney(minMinor, b.currency)} of commission is available.</div>`}</div>`;
   }
 
   function tOverview(p, st) {
@@ -597,14 +997,35 @@
   }
 
   function tShare(p) {
+    if (LIVE) return lShare(p);
     return `<div class="page-head"><div><h1>Share & invite</h1><p>Everything you need to introduce LedgerLine to your clients.</p></div></div>
-      <div class="card"><div class="card-head"><h2>Referral link</h2><span class="small muted">Attribution lasts 90 days from the first click</span></div><div class="card-body">${linkBox(p)}
-        <p class="small muted" style="margin-top:12px">Your code <span class="code-chip">${p.code}</span> can also be entered at checkout.</p></div></div>
+      <div class="card"><div class="card-head"><h2>Referral link</h2><span class="small muted">Attribution lasts 90 days from the first click</span></div><div class="card-body">${LIVE ? liveLinkBox() : linkBox(p)}
+        <p class="small muted" style="margin-top:12px">Your code <span class="code-chip">${esc(LIVE && liveCode() ? liveCode().code : p.code)}</span> can also be entered at checkout.</p></div></div>
       <div class="two">
         <div class="card"><div class="card-head"><h2>Email template</h2><button class="btn ghost sm" data-act="copy-email">Copy</button></div><div class="card-body"><textarea class="in-t" id="email-tpl" rows="15" style="font-size:13.5px;line-height:1.5;resize:vertical">${esc(emailTemplate(p))}</textarea></div></div>
         <div class="stack">
-          <div class="card" style="margin:0"><div class="card-head"><h2>Invite by email</h2></div><div class="card-body"><p class="small muted" style="margin-bottom:14px">We send your client a personal invitation with your link and disclosure. You can track it under Clients.</p><button class="btn" data-act="invite">Invite a client</button></div></div>
-          <div class="card" style="margin:0"><div class="card-head"><h2>What clients see</h2></div><div class="card-body"><p class="small muted" style="margin-bottom:14px">A short checkout page with your firm's name, the plans and a commission disclosure.</p><button class="btn ghost" data-act="open-checkout">Preview client page</button></div></div>
+          <div class="card" style="margin:0"><div class="card-head"><h2>Invite by email</h2></div><div class="card-body"><p class="small muted" style="margin-bottom:14px">${LIVE ? 'Send your client a personal invitation with your link and disclosure from your own email.' : 'We send your client a personal invitation with your link and disclosure. You can track it under Clients.'}</p><button class="btn" data-act="invite">Invite a client</button></div></div>
+          ${LIVE ? '' : `<div class="card" style="margin:0"><div class="card-head"><h2>What clients see</h2></div><div class="card-body"><p class="small muted" style="margin-bottom:14px">A short checkout page with your firm's name, the plans and a commission disclosure.</p><button class="btn ghost" data-act="open-checkout">Preview client page</button></div></div>`}
+        </div>
+      </div>`;
+  }
+
+  // Live Share & invite: only real, working ways to refer (the link). No typed codes or simulated checkout.
+  function lShare(p) {
+    const code = liveCode();
+    const days = (LIVE.program && LIVE.program.attributionDays) || 90;
+    const head = `<div class="page-head"><div><h1>Share & invite</h1><p>Everything you need to introduce LedgerLine to your clients.</p></div>${code ? '<button class="btn" data-act="invite">Invite a client</button>' : ''}</div>`;
+    if (!code) {
+      return `${head}<div class="card"><div class="card-head"><h2>Referral link</h2></div><div class="card-body">${liveLinkBox()}</div></div>`;
+    }
+    return `${head}
+      <div class="card"><div class="card-head"><h2>Referral link</h2><span class="small muted">Clients who sign up within ${days} days of clicking are credited to you</span></div><div class="card-body">${liveLinkBox()}
+        <p class="small muted" style="margin-top:12px">Your partner code is <span class="code-chip">${esc(code.code)}</span>. Clients are credited to you when they sign up through your link.</p></div></div>
+      <div class="two">
+        <div class="card"><div class="card-head"><h2>Email template</h2><button class="btn ghost sm" data-act="copy-email">Copy</button></div><div class="card-body"><textarea class="in-t" id="email-tpl" rows="15" style="font-size:13.5px;line-height:1.5;resize:vertical">${esc(emailTemplate(p))}</textarea></div></div>
+        <div class="stack">
+          <div class="card" style="margin:0"><div class="card-head"><h2>Invite by email</h2></div><div class="card-body"><p class="small muted" style="margin-bottom:14px">Send your client a personal invitation with your link and commission disclosure from your own email.</p><button class="btn" data-act="invite">Invite a client</button></div></div>
+          <div class="card" style="margin:0"><div class="card-head"><h2>What clients see</h2></div><div class="card-body"><p class="small muted" style="margin-bottom:14px">Your link opens the LedgerLine sign-up page and remembers that you referred them.</p><a class="btn ghost" href="${esc(liveLink())}" target="_blank" rel="noopener">Open my link</a></div></div>
         </div>
       </div>`;
   }
@@ -618,8 +1039,8 @@
           <div class="field"><label for="s-type">Partner type</label><select class="sel" id="s-type">${PTYPES.map((t) => `<option ${p.type === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
         </div></div>
         <div class="card"><div class="card-head"><h2>Partner agreement</h2><span class="pill ok">Accepted</span></div><div class="card-body"><dl class="kv">
-          <dt>Status</dt><dd>${p.status === 'approved' ? 'Approved partner' : 'Pending'}${p.founding ? ' · Founding partner' : ''}</dd>
-          <dt>Commission</dt><dd>20% <span class="life">lifetime</span> fixed</dd><dt>Accepted on</dt><dd>${fd(p.created)}</dd><dt>Partner code</dt><dd><span class="code-chip">${p.code}</span></dd></dl>
+          <dt>Status</dt><dd>${(LIVE ? liveApproved() : p.status === 'approved') ? 'Approved partner' : 'Under review'}${!LIVE && p.founding ? ' · Founding partner' : ''}</dd>
+          <dt>Commission</dt><dd>20% <span class="life">lifetime</span> fixed</dd><dt>Accepted on</dt><dd>${fd(p.created)}</dd><dt>Partner code</dt><dd><span class="code-chip">${esc(LIVE && liveCode() ? liveCode().code : p.code)}</span></dd></dl>
           <div style="margin-top:16px"><button class="btn ghost sm" data-act="terms">View key terms</button></div></div></div>
       </div>`;
   }
@@ -704,6 +1125,21 @@
   }
 
   function inviteModal() {
+    if (LIVE) {
+      // Live: the partner sends the invitation from their own email app (no system email to clients).
+      if (!liveCode()) {
+        modal(`${mHead('Invite a client', 'Get your referral link first.')}<div class="m-body"><p class="small muted">${liveApproved() ? 'Create your referral link, then invite clients with it.' : 'You can invite clients once your application is approved.'}</p></div>
+        <div class="m-foot"><button class="btn ghost" data-act="close-modal">Close</button>${liveApproved() ? '<button class="btn" data-act="live-code">Get my referral link</button>' : ''}</div>`);
+        return;
+      }
+      modal(`${mHead('Invite a client', 'Opens your email app with a ready-to-send invitation that includes your referral link.')}
+      <div class="m-body"><div class="field"><label for="iv-biz">Business name</label><input class="in-t" id="iv-biz" placeholder="Ironbark Brewing Co"></div>
+      <div class="field"><label for="iv-email">Client email</label><input class="in-t" id="iv-email" type="email" placeholder="accounts@client.com.au"></div>
+      <div class="field"><label for="iv-msg">Personal note (optional)</label><textarea class="in-t" id="iv-msg" rows="3" placeholder="Thought this would save you time at month-end."></textarea></div>
+      <div class="note">The invitation includes your commission disclosure. It is sent from your own email account.</div><div class="err-msg" id="iv-err"></div></div>
+      <div class="m-foot"><button class="btn ghost" data-act="close-modal">Cancel</button><button class="btn" data-act="live-invite-send">Open in my email</button></div>`);
+      return;
+    }
     modal(`${mHead('Invite a client', 'We email your client a personal invitation with your referral link.')}
     <div class="m-body"><div class="field"><label for="iv-biz">Business name</label><input class="in-t" id="iv-biz" placeholder="Ironbark Brewing Co"></div>
     <div class="field"><label for="iv-email">Client email</label><input class="in-t" id="iv-email" type="email" placeholder="accounts@client.com.au"></div>
@@ -808,7 +1244,7 @@
               UI.errors = { agree: body?.message || 'Unable to create your account. Try again.' };
               return;
             }
-            applyAuthPartner(body.partner);
+            applyAuthPartner(body.partner); loadLiveProgram();
             UI.draft = {}; UI.signupStep = 1; UI.tab = 'overview';
             UI.co = { plan: 'growth', cycle: 'monthly', step: 1, ref: body.partner.code, done: null };
             go('portal');
@@ -836,7 +1272,7 @@
               UI.errors = { si: body?.message || 'Email or password is incorrect' };
               return;
             }
-            applyAuthPartner(body.partner);
+            applyAuthPartner(body.partner); loadLiveProgram();
             UI.tab = 'overview';
             UI.co.ref = body.partner.code;
             go('portal');
@@ -859,10 +1295,47 @@
         })();
         return undefined;
       }
+      case 'live-bank': {
+        const body = { holder: $('#bk-holder').value.trim(), bankCode: $('#bk-code').value.trim(), accountNumber: $('#bk-number').value.trim() };
+        (async () => {
+          try {
+            const { res, body: out } = await authFetch('/program/bank', { method: 'POST', body: JSON.stringify(body) });
+            if (res.ok && out?.available) { LIVE = out; render(); return toast('Bank details sent for confirmation'); }
+            const errEl = $('#bk-err');
+            if (errEl) errEl.textContent = out?.fields ? Object.values(out.fields).join('. ') : (out?.message || 'Please try again later.');
+          } catch { toast('Please try again later.'); }
+        })();
+        return undefined;
+      }
+      case 'copy-live-link': {
+        const link = liveLink();
+        if (!link) return undefined;
+        if (p) { p.shared = true; save(); }
+        copy(link, 'Referral link copied');
+        return render();
+      }
+      case 'live-code': {
+        (async () => {
+          try {
+            const { res, body } = await authFetch('/program/code', { method: 'POST', body: '{}' });
+            if (res.ok && body?.available) { LIVE = body; render(); return toast('Your referral link is ready'); }
+            toast(body?.message || 'Please try again later.');
+          } catch { toast('Please try again later.'); }
+        })();
+        return undefined;
+      }
       case 'copy-link': p.shared = true; save(); copy(refLink(p), 'Referral link copied'); return render();
       case 'copy-email': { const t = $('#email-tpl'); p.shared = true; save(); return copy(t ? t.value : emailTemplate(p), 'Email template copied'); }
       case 'open-checkout': UI.demoOpen = false; UI.co = { plan: 'growth', cycle: 'monthly', step: 1, ref: p ? p.code : UI.co.ref, done: null }; if (p) { p.shared = true; save(); } return go('checkout');
       case 'invite': return inviteModal();
+      case 'live-invite-send': {
+        const biz = $('#iv-biz').value.trim(), em = $('#iv-email').value.trim(), note = $('#iv-msg').value.trim();
+        if (!biz || !validEmail(em)) { $('#iv-err').textContent = 'Enter the business name and a valid email.'; return undefined; }
+        const body = (note ? note + '\n\n' : '') + emailTemplate(p).replace('{first name}', biz);
+        window.location.href = `mailto:${encodeURIComponent(em)}?subject=${encodeURIComponent('LedgerLine for ' + biz)}&body=${encodeURIComponent(body)}`;
+        p.shared = true; save(); closeModal(); render();
+        return toast('Invitation opened in your email app');
+      }
       case 'invite-send': {
         const biz = $('#iv-biz').value.trim(), em = $('#iv-email').value.trim();
         if (!biz || !validEmail(em)) { $('#iv-err').textContent = 'Enter the business name and a valid email.'; return; }
@@ -886,6 +1359,10 @@
         p.abn = $('#s-abn').value.trim(); p.type = $('#s-type').value; save(); render(); return toast('Profile saved');
       }
       case 'export': {
+        if (LIVE) {
+          exportStatement(p);
+          return undefined;
+        }
         const rows = [['Date', 'Client', 'Invoice', 'Net collected (USD)', 'Rate', 'Commission (USD)', 'Status', 'Available from', 'Payout']];
         S.commissions.filter((x) => x.partnerId === p.id).forEach((x) => rows.push([x.date, (S.clients.find((c) => c.id === x.clientId) || {}).biz, (S.invoices.find((i) => i.id === x.invoiceId) || {}).num, (x.net / 100).toFixed(2), '20%', (x.amount / 100).toFixed(2), x.kind === 'clawback' ? 'adjustment' : x.status, x.availableOn, x.payoutId || '']));
         const csv = rows.map((r) => r.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
@@ -950,7 +1427,7 @@
     }
     if (d.tab) {
       if (!authPartner) return go('signin');
-      UI.tab = d.tab; UI.route = 'portal'; syncUrl(false); render(); return window.scrollTo(0, 0);
+      UI.tab = d.tab; UI.route = 'portal'; syncUrl(false); render(); return scrollTopAll();
     }
     if (d.jump) { const t = document.getElementById(d.jump); if (t) window.scrollTo({ top: t.getBoundingClientRect().top + window.scrollY - 90, behavior: 'smooth' }); return; }
     if (d.plan) { UI.co.plan = d.plan; return render(); }

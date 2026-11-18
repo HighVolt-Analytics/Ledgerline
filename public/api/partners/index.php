@@ -21,7 +21,13 @@ try {
 
     // Accept /api/partners, /api/partners/signup, /api/partners/admin/list, etc.
     $action = 'me';
-    if (preg_match('#/api/partners/admin/list$#', $path)) {
+    if (preg_match('#/api/partners/program/bank$#', $path)) {
+        $action = 'program_bank';
+    } elseif (preg_match('#/api/partners/program/code$#', $path)) {
+        $action = 'program_code';
+    } elseif (preg_match('#/api/partners/program$#', $path)) {
+        $action = 'program';
+    } elseif (preg_match('#/api/partners/admin/list$#', $path)) {
         $action = 'admin_list';
     } elseif (preg_match('#/api/partners(?:/(signup|signin|signout|me))?$#', $path, $m)) {
         $action = $m[1] ?? 'me';
@@ -41,6 +47,24 @@ try {
             exit;
         }
         $result = $auth->listForAdmin();
+        partner_respond($result['status'], $result['body']);
+        exit;
+    }
+
+    if ($method === 'GET' && $action === 'program') {
+        $result = $auth->program($sessionId);
+        partner_respond($result['status'], $result['body']);
+        exit;
+    }
+
+    if ($method === 'POST' && $action === 'program_bank') {
+        $result = $auth->programBank($sessionId, partner_json_input());
+        partner_respond($result['status'], $result['body']);
+        exit;
+    }
+
+    if ($method === 'POST' && $action === 'program_code') {
+        $result = $auth->programCode($sessionId);
         partner_respond($result['status'], $result['body']);
         exit;
     }

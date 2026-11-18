@@ -436,3 +436,229 @@ test('book-demo journey stays on booking flow and is not redirected to partner s
   assert.match(app, /Become a founding partner/)
   assert.match(app, /data-go="signup"/)
 })
+
+const signupBody = (email) => ({
+  name: 'Grace Hopper',
+  email,
+  password: 'secure-pass-123',
+  firm: 'Compiler Co',
+  type: 'Accounting firm',
+  country: 'AU',
+})
+
+test('signup links the partner to the HighVolt partner service when PARTNER_SERVICE_URL is set', async () => {
+  const received = []
+  const fake = createServer((req, res) => {
+    let data = ''
+    req.on('data', (c) => (data += c))
+    req.on('end', () => {
+      received.push({ method: req.method, url: req.url, body: JSON.parse(data || '{}') })
+      res.writeHead(201, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ partner_id: '11111111-2222-3333-4444-555555555555', status: 'APPLIED' }))
+    })
+  })
+  await new Promise((r) => fake.listen(0, '127.0.0.1', r))
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'll-partner-'))
+  const apiServer = await startPartnerApi(path.join(tmp, 'p.sqlite'), {
+    PARTNER_SERVICE_URL: `http://127.0.0.1:${fake.address().port}/platform/v1/partners/`,
+  })
+  try {
+    const email = `linked-${Date.now()}@example.test`
+    const signup = await api(apiServer.base, '/signup', { method: 'POST', body: signupBody(email) })
+    assert.equal(signup.res.status, 201)
+    assert.equal(signup.json.partner.programLinked, true)
+    assert.ok(!('hva_partner_id' in signup.json.partner))
+    assert.equal(received.length, 1)
+    assert.equal(received[0].method, 'POST')
+    assert.equal(received[0].url, '/platform/v1/partners/applications')
+    assert.deepEqual(received[0].body, {
+      product_key: 'ledgerline',
+      display_name: 'Compiler Co',
+      contact_email: email,
+      country: 'AU',
+      agreement_version: 'ledgerline-partner-terms-2026-11',
+      marketing_consent: false,
+    })
+    assert.ok(!('password' in received[0].body))
+    const me = await api(apiServer.base, '/me', { cookie: signup.cookie })
+    assert.equal(me.json.partner.programLinked, true)
+  } finally {
+    await apiServer.close()
+    fake.close()
+    await rm(tmp, { recursive: true, force: true })
+  }
+})
+
+test('signup still succeeds, unlinked, when the partner service is down or not configured', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'll-partner-'))
+  const down = await startPartnerApi(path.join(tmp, 'a.sqlite'), { PARTNER_SERVICE_URL: 'http://127.0.0.1:9' })
+  const off = await startPartnerApi(path.join(tmp, 'b.sqlite'))
+  try {
+    for (const server of [down, off]) {
+      const signup = await api(server.base, '/signup', {
+        method: 'POST',
+        body: signupBody(`unlinked-${Date.now()}-${Math.random()}@example.test`),
+      })
+      assert.equal(signup.res.status, 201)
+      assert.equal(signup.json.partner.programLinked, false)
+    }
+  } finally {
+    await down.close()
+    await off.close()
+    await rm(tmp, { recursive: true, force: true })
+  }
+})
+
+test('portal program data uses a 60s signed token for the signed-in partner only', async () => {
+  const { generateKeyPairSync, createVerify } = await import('node:crypto')
+  const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
+  const pem = privateKey.export({ type: 'pkcs8', format: 'pem' })
+  const ids = ['aaaaaaaa-0000-4000-8000-000000000001', 'bbbbbbbb-0000-4000-8000-000000000002']
+  let next = 0
+  const seen = []
+  const fake = createServer((req, res) => {
+    let data = ''
+    req.on('data', (c) => (data += c))
+    req.on('end', () => {
+      const send = (code, obj) => {
+        res.writeHead(code, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify(obj))
+      }
+      if (req.method === 'POST' && req.url === '/applications') return send(201, { partner_id: ids[next++], status: 'APPLIED' })
+      const auth = String(req.headers.authorization || '')
+      const [h, p, s] = auth.replace(/^Bearer /, '').split('.')
+      const ok = h && createVerify('RSA-SHA256').update(`${h}.${p}`).verify(publicKey, Buffer.from(s, 'base64url'))
+      if (!ok) return send(401, { error: 'bad' })
+      const header = JSON.parse(Buffer.from(h, 'base64url'))
+      const claims = JSON.parse(Buffer.from(p, 'base64url'))
+      seen.push({ url: req.url, method: req.method, header, claims })
+      const pid = claims.partner_id
+      if (req.url === '/site/me') return send(200, { partner_id: pid, status: 'APPLIED' })
+      if (req.url === '/site/me/balances') return send(200, [{ currency: 'USD', pending_minor: 1500, approved_minor: 0, paid_minor: 0, debt_minor: 0 }, { currency: 'SGD', pending_minor: 2000, approved_minor: 0, paid_minor: 0, debt_minor: 0 }])
+      if (req.url === '/site/me/referral-codes' && req.method === 'GET') return send(200, [{ code: `CODE-${pid.slice(0, 4)}`, status: 'ACTIVE' }])
+      if (req.url === '/site/me/referral-codes' && req.method === 'POST') return send(201, { code: 'NEW1', status: 'ACTIVE' })
+      return send(404, {})
+    })
+  })
+  await new Promise((r) => fake.listen(0, '127.0.0.1', r))
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'll-partner-'))
+  const apiServer = await startPartnerApi(path.join(tmp, 'p.sqlite'), {
+    PARTNER_SERVICE_URL: `http://127.0.0.1:${fake.address().port}`,
+    PARTNER_SITE_SIGNING_KEY: pem,
+    PARTNER_SITE_KEY_ID: 'test-kid',
+  })
+  try {
+    const anon = await api(apiServer.base, '/program')
+    assert.equal(anon.res.status, 401)
+
+    const a = await api(apiServer.base, '/signup', { method: 'POST', body: signupBody(`a-${Date.now()}@example.test`) })
+    const b = await api(apiServer.base, '/signup', { method: 'POST', body: signupBody(`b-${Date.now()}@example.test`) })
+    const progA = await api(apiServer.base, '/program', { cookie: a.cookie })
+    assert.equal(progA.res.status, 200)
+    assert.equal(progA.json.linked, true)
+    assert.equal(progA.json.available, true)
+    assert.equal(progA.json.status, 'APPLIED')
+    assert.deepEqual(progA.json.codes, [{ code: 'CODE-aaaa', status: 'ACTIVE' }])
+    assert.equal(progA.json.balance.currency, 'USD')
+    assert.equal(progA.json.balance.pendingMinor, 1500)
+    assert.deepEqual(progA.json.balances.map((x) => x.currency + ':' + x.pendingMinor), ['USD:1500', 'SGD:2000'])
+    assert.ok(!JSON.stringify(progA.json).includes(ids[0]), 'service partner id is never sent to the browser')
+
+    const progB = await api(apiServer.base, '/program', { cookie: b.cookie })
+    assert.deepEqual(progB.json.codes, [{ code: 'CODE-bbbb', status: 'ACTIVE' }])
+
+    // Every token: right issuer/audience/product/role, the caller's own partner id, at most 60 seconds.
+    assert.ok(seen.length >= 6)
+    for (const t of seen) {
+      assert.equal(t.header.alg, 'RS256')
+      assert.equal(t.header.kid, 'test-kid')
+      assert.equal(t.claims.aud, 'hva-partner-site')
+      assert.equal(t.claims.app_id, 'ledgerline')
+      assert.equal(t.claims.role, 'Partner')
+      assert.ok(t.claims.exp - t.claims.iat <= 60)
+      assert.ok(ids.includes(t.claims.partner_id))
+      assert.ok(!('email' in t.claims))
+    }
+    assert.equal(seen.filter((t) => t.claims.partner_id === ids[1]).length, 8) // /program is public (no token)
+
+    const code = await api(apiServer.base, '/program/code', { method: 'POST', cookie: a.cookie })
+    assert.equal(code.res.status, 200)
+    assert.ok(seen.some((t) => t.method === 'POST' && t.url === '/site/me/referral-codes' && t.claims.partner_id === ids[0]))
+
+    // Browser cannot pick another partner: query/body ids are ignored.
+    const spoof = await api(apiServer.base, `/program?partner_id=${ids[1]}`, { cookie: a.cookie })
+    assert.deepEqual(spoof.json.codes, [{ code: 'CODE-aaaa', status: 'ACTIVE' }])
+  } finally {
+    await apiServer.close()
+    fake.close()
+    await rm(tmp, { recursive: true, force: true })
+  }
+})
+
+test('portal program is safely off without a signing key', async () => {
+  const fake = createServer((req, res) => {
+    res.writeHead(201, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ partner_id: 'cccccccc-0000-4000-8000-000000000003', status: 'APPLIED' }))
+  })
+  await new Promise((r) => fake.listen(0, '127.0.0.1', r))
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'll-partner-'))
+  const apiServer = await startPartnerApi(path.join(tmp, 'p.sqlite'), {
+    PARTNER_SERVICE_URL: `http://127.0.0.1:${fake.address().port}`,
+  })
+  try {
+    const s = await api(apiServer.base, '/signup', { method: 'POST', body: signupBody(`k-${Date.now()}@example.test`) })
+    const prog = await api(apiServer.base, '/program', { cookie: s.cookie })
+    assert.equal(prog.res.status, 200)
+    assert.deepEqual(prog.json, { linked: true, available: false })
+  } finally {
+    await apiServer.close()
+    fake.close()
+    await rm(tmp, { recursive: true, force: true })
+  }
+})
+
+test('bank details go server-side to partner-service and are validated first', async () => {
+  const { generateKeyPairSync } = await import('node:crypto')
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
+  const puts = []
+  const fake = createServer((req, res) => {
+    let data = ''
+    req.on('data', (c) => (data += c))
+    req.on('end', () => {
+      const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)) }
+      if (req.method === 'POST' && req.url === '/applications') return send(201, { partner_id: 'dddddddd-0000-4000-8000-000000000004', status: 'APPLIED' })
+      if (req.method === 'PUT' && req.url === '/site/me/payout-account') { puts.push(JSON.parse(data)); return send(200, { id: 'acc-1' }) }
+      if (req.url === '/site/me') return send(200, { status: 'ACTIVE' })
+      if (req.url === '/site/me/payout-account') return send(200, puts.length ? [{ status: 'PENDING', account_masked: '****5678', account_holder_name: 'Elm & Co' }] : [])
+      if (req.url === '/site/me/balances') return send(200, [{ currency: 'USD' }])
+      if (req.url === '/site/me/referral-codes') return send(200, [])
+      return send(404, {})
+    })
+  })
+  await new Promise((r) => fake.listen(0, '127.0.0.1', r))
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'll-partner-'))
+  const apiServer = await startPartnerApi(path.join(tmp, 'p.sqlite'), {
+    PARTNER_SERVICE_URL: `http://127.0.0.1:${fake.address().port}`,
+    PARTNER_SITE_SIGNING_KEY: privateKey.export({ type: 'pkcs8', format: 'pem' }),
+  })
+  try {
+    const s = await api(apiServer.base, '/signup', { method: 'POST', body: signupBody(`bank-${Date.now()}@example.test`) })
+    const bad = await api(apiServer.base, '/program/bank', { method: 'POST', cookie: s.cookie, body: { holder: '', accountNumber: '12', bankCode: '!' } })
+    assert.equal(bad.res.status, 400)
+    assert.deepEqual(Object.keys(bad.json.fields).sort(), ['accountNumber', 'bankCode', 'holder'])
+    assert.equal(puts.length, 0, 'invalid input never reaches partner-service')
+
+    const ok = await api(apiServer.base, '/program/bank', { method: 'POST', cookie: s.cookie, body: { holder: 'Elm & Co', accountNumber: '1234 5678', bankCode: '062-000' } })
+    assert.equal(ok.res.status, 200)
+    assert.deepEqual(puts[0], { provider: 'MANUAL_BANK_BATCH', account_holder_name: 'Elm & Co', account_number: '12345678', bank_code: '062000' })
+    assert.deepEqual(ok.json.bank, [{ status: 'PENDING', masked: '****5678', holder: 'Elm & Co' }])
+    assert.ok(!JSON.stringify(ok.json).includes('12345678'), 'full account number is never sent back to the browser')
+
+    const anon = await api(apiServer.base, '/program/bank', { method: 'POST', body: { holder: 'x', accountNumber: '12345678', bankCode: '062000' } })
+    assert.equal(anon.res.status, 401)
+  } finally {
+    await apiServer.close()
+    fake.close()
+    await rm(tmp, { recursive: true, force: true })
+  }
+})
