@@ -578,3 +578,53 @@ table.t th.num, table.t td.num { text-align: right; }
   .proto-bar { height: 44px; }
   .site-head, .mobile-nav { top: 44px; }
 }
+
+/* ---- Partner portal sidebar (live) ---- */
+.portal.live { min-height: 100vh; }
+.portal.live .side { top: 0; height: 100vh; }
+.side nav .ico { width: 18px; height: 18px; flex: 0 0 18px; color: var(--faint); }
+.side nav button { position: relative; gap: 10px; justify-content: flex-start; padding: 9px 12px; transition: background .15s, color .15s; }
+.side nav button .lbl { flex: 1; text-align: left; }
+.side nav button:hover { background: var(--surface-2); color: var(--text); }
+.side nav button:hover .ico { color: var(--muted); }
+.side nav button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.side nav button.on .ico { color: var(--accent); }
+.side nav button.on::before { content: ''; position: absolute; left: -14px; top: 8px; bottom: 8px; width: 3px; border-radius: 0 3px 3px 0; background: var(--accent); }
+.side nav button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.side nav .nav-label { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); padding: 14px 12px 6px; }
+.side .who { display: flex; gap: 10px; align-items: center; padding: 14px 6px 0; }
+.side .who .avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font-weight: 700; font-size: 13px; flex: 0 0 36px; }
+.side .who .meta { min-width: 0; flex: 1; }
+.side .who .meta b, .side .who .meta span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side .who .meta span { color: var(--muted); font-size: 12.5px; }
+.side .who .signout { border: 0; background: none; color: var(--muted); padding: 6px; border-radius: 6px; cursor: pointer; }
+.side .who .signout:hover { background: var(--surface-2); color: var(--bad); }
+.side .nav-bottom { margin-top: auto; padding-bottom: 10px; }
+.side .nav-bottom + .who { margin-top: 0; }
+
+/* App shell on desktop: the sidebar stays put, only the content area scrolls. */
+@media (min-width: 901px) {
+  .portal.live { height: 100vh; min-height: 0; overflow: hidden; }
+  .portal.live .side { position: relative; top: 0; height: 100vh; overflow-y: auto; }
+  .portal.live > div:last-child { height: 100vh; overflow-y: auto; overscroll-behavior: contain; }
+}
+/* Mobile (no prototype banner in live mode): tab bar sticks to the very top. */
+@media (max-width: 900px) {
+  .portal.live .mobile-nav { top: 0; }
+}
+/* Live portal: no prototype switcher, no page-level scrollbars; sidebar never scrolls sideways. */
+body.live-portal { overflow: hidden; }
+@media (max-width: 900px) { body.live-portal { overflow: auto; } }
+.portal.live .side { overflow-x: hidden; }
+.portal.live .side .brand { min-width: 0; }
+.portal.live .side .brand span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.portal.live > div:last-child { overflow-x: hidden; }
+/* Live portal fits under the view switch: one scrollbar (the content column). */
+@media (min-width: 901px) {
+  .portal.live { height: calc(100vh - var(--bar-h, 0px)); }
+  .portal.live .side, .portal.live > div:last-child { height: calc(100vh - var(--bar-h, 0px)); }
+}
+@media (max-width: 900px) {
+  .portal.live .mobile-nav { top: var(--bar-h, 0px); }
+}
+.portal.live .side .brand span { font-weight: 700; font-size: 17px; letter-spacing: -0.01em; }

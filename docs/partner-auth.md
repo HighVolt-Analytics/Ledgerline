@@ -109,3 +109,31 @@ Do **not** change these from this PR. Before enabling partner auth in production
 6. When enabling the deployment portal Partners tab, set the shared admin secret via `PARTNER_ADMIN_TOKEN` **or** Hostinger `private/partner-secrets.php` (same value as `LEDGERLINE_PARTNERS_ADMIN_TOKEN` on Vercel).
 
 No Azure or shared booking API changes are required for partner auth.
+
+## Link to the HighVolt partner service
+
+On signup, the PHP API also sends the partner's application (firm or name, email, country, accepted terms version) server-side to the HighVolt partner service:
+
+`POST {PARTNER_SERVICE_URL}/applications` with `product_key = ledgerline`.
+
+- **Off by default.** Nothing is sent unless `PARTNER_SERVICE_URL` is set, so the live site is unchanged.
+- **Best-effort.** If the service is down, website signup still succeeds and the account stays unlinked (`programLinked: false`).
+- The returned service partner id is stored in `partners.hva_partner_id`, added automatically to existing databases. It is never returned to the browser.
+- Passwords are never sent.
+- Stage value: `https://ledgerline-stage.highvolt.tech/platform/v1/partners`. Test against stage only; production needs the partner service live first.
+
+### Live partner data in the portal
+
+`GET /api/partners/program` returns the signed-in partner's real status, referral codes, referral link base and
+balance (minor units). `POST /api/partners/program/code` creates their referral code once they are approved.
+
+- This server signs a 60-second RS256 token for the session's own partner only (partner-service ADR-0018) and
+  calls `{PARTNER_SERVICE_URL}/site/me/...`. The browser never sees the token or the service partner id, and cannot
+  choose another partner.
+- Settings:
+  - `PARTNER_SITE_SIGNING_KEY`: PEM private key. Env, or `private/partner-secrets.php` outside `public_html`.
+    Never in git.
+  - `PARTNER_SITE_KEY_ID`: `kid` that matches the public key published in partner-service.
+- Without a signing key the portal card stays hidden (`available: false`) and the prototype portal is unchanged.
+- Accounts created while the service was down are linked automatically on the next portal visit.
+- PHP needs the `openssl` extension. Hostinger has it enabled.

@@ -2,16 +2,17 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/bootstrap.php';
+require_once __DIR__ . '/PartnerProgramClient.php';
 
 final class PartnerAuthService
 {
-    public function __construct(private PDO $pdo)
+    public function __construct(private PDO $pdo, private PartnerProgramClient $program)
     {
     }
 
     public static function create(): self
     {
-        return new self(partner_pdo());
+        return new self(partner_pdo(), PartnerProgramClient::fromEnv());
     }
 
     public function signup(array $input): array
@@ -70,6 +71,11 @@ final class PartnerAuthService
         $insert->execute([$id, $email, $hash, $name, $firm, $type, $country, $abn, $code, $createdAt]);
 
         $partner = $this->findById($id);
+        $hvaPartnerId = $this->program->apply($partner, !empty($input['marketingConsent']));
+        if ($hvaPartnerId !== null) {
+            $this->pdo->prepare('UPDATE partners SET hva_partner_id = ? WHERE id = ?')->execute([$hvaPartnerId, $id]);
+            $partner = $this->findById($id);
+        }
         $sessionId = $this->createSession($id);
         return [
             'ok' => true,
@@ -131,6 +137,104 @@ final class PartnerAuthService
             ];
         }
         return ['ok' => true, 'status' => 200, 'body' => ['partner' => partner_public_row($partner)]];
+    }
+
+    /**
+     * Live partner-program data (status, referral codes, balance) for the signed-in partner only.
+     * The service partner id is read from this server's database, never from the browser.
+     */
+    public function program(?string $sessionId): array
+    {
+        $partner = $this->partnerFromSession($sessionId);
+        if (!$partner) {
+            return ['ok' => false, 'status' => 401, 'body' => ['error' => 'unauthenticated', 'signinPath' => '/partnership/signin']];
+        }
+        $hvaId = $this->ensureLinked($partner);
+        if ($hvaId === null) {
+            return ['ok' => true, 'status' => 200, 'body' => ['linked' => false]];
+        }
+        $summary = $this->program->summary($hvaId);
+        if ($summary === null) {
+            return ['ok' => true, 'status' => 200, 'body' => ['linked' => true, 'available' => false]];
+        }
+        return ['ok' => true, 'status' => 200, 'body' => ['linked' => true, 'available' => true] + $summary];
+    }
+
+    /** Creates the signed-in partner's referral code once they are approved. */
+    public function programCode(?string $sessionId): array
+    {
+        $partner = $this->partnerFromSession($sessionId);
+        if (!$partner) {
+            return ['ok' => false, 'status' => 401, 'body' => ['error' => 'unauthenticated']];
+        }
+        $hvaId = $partner['hva_partner_id'] ?? null;
+        if (!is_string($hvaId) || $hvaId === '') {
+            return ['ok' => false, 'status' => 409, 'body' => ['error' => 'not_linked']];
+        }
+        $status = $this->program->createCode($hvaId);
+        if ($status === 201) {
+            return $this->program($sessionId);
+        }
+        return ['ok' => false, 'status' => $status === 403 ? 409 : 502, 'body' => [
+            'error' => $status === 403 ? 'not_approved' : 'program_unavailable',
+            'message' => $status === 403 ? 'Your partner application is still being reviewed.' : 'Please try again later.',
+        ]];
+    }
+
+    /**
+     * Saves the signed-in partner's bank details (sent server-to-server; never stored on this website).
+     * They wait for HighVolt admin confirmation before any payout uses them.
+     */
+    public function programBank(?string $sessionId, array $input): array
+    {
+        $partner = $this->partnerFromSession($sessionId);
+        if (!$partner) {
+            return ['ok' => false, 'status' => 401, 'body' => ['error' => 'unauthenticated']];
+        }
+        $hvaId = $partner['hva_partner_id'] ?? null;
+        if (!is_string($hvaId) || $hvaId === '') {
+            return ['ok' => false, 'status' => 409, 'body' => ['error' => 'not_linked']];
+        }
+        $holder = trim((string) ($input['holder'] ?? ''));
+        $number = preg_replace('/[\s-]/', '', (string) ($input['accountNumber'] ?? '')) ?? '';
+        $code = strtoupper(preg_replace('/[\s-]/', '', (string) ($input['bankCode'] ?? '')) ?? '');
+        $errors = [];
+        if ($holder === '' || strlen($holder) > 200) {
+            $errors['holder'] = 'Enter the account holder name';
+        }
+        if (!preg_match('/^[0-9]{6,20}$/', $number)) {
+            $errors['accountNumber'] = 'Enter 6 to 20 digits';
+        }
+        if (!preg_match('/^[A-Z0-9]{4,11}$/', $code)) {
+            $errors['bankCode'] = 'Enter your BSB, routing number or SWIFT code';
+        }
+        if ($errors) {
+            return ['ok' => false, 'status' => 400, 'body' => ['error' => 'invalid', 'fields' => $errors]];
+        }
+        $status = $this->program->savePayoutAccount($hvaId, $holder, $number, $code);
+        if ($status === 200) {
+            return $this->program($sessionId);
+        }
+        return ['ok' => false, 'status' => in_array($status, [403, 422], true) ? 409 : 502, 'body' => [
+            'error' => $status === 403 ? 'not_approved' : ($status === 422 ? 'invalid' : 'program_unavailable'),
+            'message' => $status === 403 ? 'Your partner application is still being reviewed.'
+                : ($status === 422 ? 'Please check your bank details.' : 'Please try again later.'),
+        ]];
+    }
+
+    /** Retries the link for accounts created while the partner service was unavailable. */
+    private function ensureLinked(array $partner): ?string
+    {
+        $hvaId = $partner['hva_partner_id'] ?? null;
+        if (is_string($hvaId) && $hvaId !== '') {
+            return $hvaId;
+        }
+        $hvaId = $this->program->apply($partner);
+        if ($hvaId !== null) {
+            $this->pdo->prepare('UPDATE partners SET hva_partner_id = ? WHERE id = ? AND hva_partner_id IS NULL')
+                ->execute([$hvaId, $partner['id']]);
+        }
+        return $hvaId;
     }
 
     /**
