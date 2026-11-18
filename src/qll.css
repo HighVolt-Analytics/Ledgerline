@@ -3200,7 +3200,7 @@ select.book-input{
     min-height:85svh;
     min-height:85dvh;
     box-sizing:border-box;
-    padding-top:108px;
+    padding-top:168px;
     padding-bottom:8px;
   }
   .qll-site .hero-copy{
@@ -3217,10 +3217,12 @@ select.book-input{
   .qll-site .hero-tabs{
     flex-wrap:wrap;
     justify-content:center;
-    gap:6px 0;
+    gap:8px 0;
     margin:0;
-    font-size:10px;
-    letter-spacing:.1em;
+    max-width:34ch;
+    font-size:12px;
+    letter-spacing:.06em;
+    line-height:1.45;
   }
   .qll-site .hero-tab-dot{margin:0 8px}
   .qll-site .hero .h1{
@@ -3279,6 +3281,10 @@ select.book-input{
 }
 @media (max-width:760px){
   body{font-size:17px}
+  html{scroll-padding-top:88px}
+  .book-hero{padding:104px 0 20px}
+  .book-hero .h1{font-size:clamp(32px,9vw,44px)}
+  .book-input,select.book-input,textarea.book-input{font-size:16px}
   .rows li,.trust li,.two-block .rows li{grid-template-columns:1fr;gap:8px;padding:22px 0}
   .rows.two{grid-template-columns:1fr}
   .rail{grid-template-columns:repeat(2,minmax(0,1fr))}
