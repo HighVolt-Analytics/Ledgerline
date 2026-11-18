@@ -579,7 +579,7 @@ test('portal program data uses a 60s signed token for the signed-in partner only
       assert.ok(ids.includes(t.claims.partner_id))
       assert.ok(!('email' in t.claims))
     }
-    assert.equal(seen.filter((t) => t.claims.partner_id === ids[1]).length, 4)
+    assert.equal(seen.filter((t) => t.claims.partner_id === ids[1]).length, 8) // /program is public (no token)
 
     const code = await api(apiServer.base, '/program/code', { method: 'POST', cookie: a.cookie })
     assert.equal(code.res.status, 200)

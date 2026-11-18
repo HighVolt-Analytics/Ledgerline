@@ -108,6 +108,69 @@ final class PartnerProgramClient
         $balance = $balances[0] ?? null;
         [$s3, $codes] = $this->request('GET', '/site/me/referral-codes', $token);
         [$s4, $accounts] = $this->request('GET', '/site/me/payout-account', $token);
+        [$s9, $terms] = $this->request('GET', '/program/' . self::PRODUCT_KEY, null);
+        $program = $s9 === 200 && is_array($terms) ? [
+            'currency' => (string) ($terms['currency'] ?? ''),
+            'minPayoutMinor' => (int) ($terms['min_payout_minor'] ?? 0),
+            'payoutDay' => (int) ($terms['payout_day'] ?? 15),
+            'holdDays' => (int) ($terms['hold_days'] ?? 30),
+            'attributionDays' => (int) ($terms['attribution_days'] ?? 90),
+        ] : null;
+        // Portal lists (newest first). Referred customers are never identified to the partner (privacy).
+        [$s5, $refPage] = $this->request('GET', '/site/me/referrals?limit=100', $token);
+        // Clients table: referred client details and their latest subscription (partner-service V10).
+        [$s8, $clientRows] = $this->request('GET', '/site/me/clients?limit=100', $token);
+        $clients = $s8 === 200 && is_array($clientRows) ? array_values(array_map(static fn ($c) => [
+            'referralId' => (string) ($c['referral_id'] ?? ''),
+            'status' => (string) ($c['status'] ?? ''),
+            'signupAt' => (string) ($c['signup_at'] ?? ''),
+            'source' => (string) ($c['source'] ?? ''),
+            'name' => (string) ($c['customer_name'] ?? ''),
+            'contact' => (string) ($c['contact_name'] ?? ''),
+            'country' => (string) ($c['country'] ?? ''),
+            'subStatus' => (string) ($c['subscription_status'] ?? ''),
+            'plan' => (string) ($c['plan_name'] ?? ''),
+            'interval' => (string) ($c['billing_interval'] ?? ''),
+            'netMinor' => isset($c['net_minor']) ? (int) $c['net_minor'] : null,
+            'currency' => (string) ($c['currency'] ?? ''),
+            'subscribedAt' => (string) ($c['subscribed_at'] ?? ''),
+            'nextBillingAt' => (string) ($c['next_billing_at'] ?? ''),
+            'canceledAt' => (string) ($c['canceled_at'] ?? ''),
+        ], array_filter($clientRows, 'is_array'))) : [];
+        [$s6, $comPage] = $this->request('GET', '/site/me/commissions?limit=100', $token);
+        [$s7, $payPage] = $this->request('GET', '/site/me/payouts?limit=100', $token);
+        $items = static fn (int $s, mixed $page): array => $s === 200 && is_array($page) && is_array($page['items'] ?? null)
+            ? array_values(array_filter($page['items'], 'is_array')) : [];
+        $referrals = array_map(static fn ($r) => [
+            'id' => (string) ($r['referral_id'] ?? ''),
+            'status' => (string) ($r['status'] ?? ''),
+            'signupAt' => (string) ($r['signup_at'] ?? ''),
+        ], $items($s5, $refPage));
+        $commissions = array_map(static fn ($c) => [
+            'id' => (string) ($c['commission_id'] ?? ''),
+            'referralId' => (string) ($c['referral_id'] ?? ''),
+            'type' => (string) ($c['type'] ?? ''),
+            'netMinor' => (int) ($c['net_minor'] ?? 0),
+            'rateBps' => (int) ($c['rate_bps'] ?? 0),
+            'amountMinor' => (int) ($c['amount_minor'] ?? 0),
+            'reversedMinor' => (int) ($c['reversed_minor'] ?? 0),
+            'currency' => (string) ($c['currency'] ?? ''),
+            'status' => (string) ($c['status'] ?? ''),
+            'holdUntil' => (string) ($c['hold_until'] ?? ''),
+            'paidAt' => (string) ($c['paid_at'] ?? ''),
+            'earnedAt' => (string) ($c['earned_at'] ?? ''),
+            'invoice' => (string) ($c['invoice_ref'] ?? ''),
+        ], $items($s6, $comPage));
+        $payouts = array_map(static fn ($p) => [
+            'id' => (string) ($p['payout_id'] ?? ''),
+            'currency' => (string) ($p['currency'] ?? ''),
+            'netMinor' => (int) ($p['net_minor'] ?? 0),
+            'status' => (string) ($p['status'] ?? ''),
+            'createdAt' => (string) ($p['created_at'] ?? ''),
+            'paidAt' => (string) ($p['paid_at'] ?? ''),
+            'bankRef' => (string) ($p['bank_ref'] ?? ''),
+            'lines' => isset($p['commission_lines']) ? (int) $p['commission_lines'] : null,
+        ], $items($s7, $payPage));
         $bank = [];
         if ($s4 === 200 && is_array($accounts)) {
             foreach (array_filter($accounts, 'is_array') as $a) {
@@ -118,9 +181,15 @@ final class PartnerProgramClient
         }
         return [
             'bank' => $bank,
+            'referrals' => $referrals,
+            'clients' => $clients,
+            'commissions' => $commissions,
+            'payouts' => $payouts,
             'status' => is_string($profile['status'] ?? null) ? $profile['status'] : null,
             // Public click link: Edge /r/{code} redirects to the LedgerLine landing page and sets the referral cookie.
             'referralBase' => $this->baseUrl . '/r/',
+            // Program terms (public): minimum payout in the program currency, payout day.
+            'program' => $program,
             'codes' => $s3 === 200 && is_array($codes) ? array_values(array_map(
                 static fn ($c) => ['code' => (string) ($c['code'] ?? ''), 'status' => (string) ($c['status'] ?? '')],
                 array_filter($codes, 'is_array'),
