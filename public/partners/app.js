@@ -376,10 +376,12 @@
   }
 
   function siteHead(minimal) {
+    const nav = `<nav class="site-nav" id="site-nav"><a href="#program" data-jump="program">Program</a><a href="#clients" data-jump="clients">For your clients</a><a href="#earn" data-jump="earn">Earnings</a><a href="#how" data-jump="how">How it works</a></nav>`;
+    const menu = `<button class="nav-toggle" type="button" data-act="nav" aria-label="Menu" aria-expanded="false" aria-controls="site-nav"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>`;
     return `<header class="site-head"><div class="in">
       ${brandLink()}
-      ${minimal ? '' : `<nav class="site-nav"><a href="#program" data-jump="program">Program</a><a href="#clients" data-jump="clients">For your clients</a><a href="#earn" data-jump="earn">Earnings</a><a href="#how" data-jump="how">How it works</a></nav>`}
-      <div class="actions">${S.session ? `<button class="btn sm" data-go="portal">Open partner portal</button>` : `<button class="btn sm" data-go="signin">Sign in</button>`}</div>
+      ${minimal ? '' : nav}
+      <div class="actions">${S.session ? `<button class="btn sm" data-go="portal">Open partner portal</button>` : `<button class="btn sm" data-go="signin">Sign in</button>`}${minimal ? '' : menu}</div>
     </div></header>`;
   }
 
@@ -401,7 +403,7 @@
         <div class="eyebrow">LedgerLine <span class="life">Lifetime</span> Partnership Program</div>
         <h1>Your clients grow.<br>Your revenue grows.</h1>
         <p class="lede">For accountants, bookkeepers, virtual CFOs and finance advisors. Bring LedgerLine to your clients and earn 20% fixed commission for as long as they stay.</p>
-        <div class="ctas"><button class="btn lg grad" data-go="signup">Become a founding partner</button><a class="btn ghost lg" href="${GUIDE_PDF}" download="Quantum Ledger Line Partner Program Guide.pdf">Download program details</a></div>
+        <div class="ctas"><button class="btn lg grad" data-go="signup">Become a founding partner</button><a class="btn ghost lg dl" href="${GUIDE_PDF}" download="Quantum Ledger Line Partner Program Guide.pdf"><span class="dl-ico" aria-hidden="true"></span>Download program details</a></div>
       </section>
 
       <section class="band" id="program"><div class="wrap sec">
@@ -606,7 +608,7 @@
       <label class="chk"><input type="checkbox" id="agree" ${d.agree ? 'checked' : ''}><span>I accept the <a href="${TERMS_PDF}" target="_blank" rel="noopener" data-act="terms">LedgerLine partner terms</a>.</span></label>
       <label class="chk"><input type="checkbox" id="disclose" ${d.disclose ? 'checked' : ''}><span>I will disclose my referral commission to clients as required by my professional obligations.</span></label>
       ${e.agree ? `<div class="err-msg" style="margin-bottom:10px">${e.agree}</div>` : ''}
-      <div style="display:flex;gap:10px;margin-top:8px"><button class="btn ghost lg" data-act="su-back" ${UI.authBusy ? 'disabled' : ''}>Back</button><button class="btn lg" style="flex:1" data-act="su-create" ${UI.authBusy ? 'disabled' : ''}>${UI.authBusy ? 'Creating…' : 'Create account'}</button></div>`;
+      <div class="auth-actions"><button class="btn ghost lg" data-act="su-back" ${UI.authBusy ? 'disabled' : ''}>Back</button><button class="btn lg" data-act="su-create" ${UI.authBusy ? 'disabled' : ''}>${UI.authBusy ? 'Creating…' : 'Create account'}</button></div>`;
     return `<div class="auth">${siteHead(true)}<div class="auth-main"><div class="auth-card">${body}</div></div></div>`;
   }
 
@@ -1535,6 +1537,13 @@
     if (!el) return;
     const d = el.dataset;
     if (el.tagName === 'A') ev.preventDefault();
+    if (d.act === 'nav') {
+      const head = el.closest('.site-head');
+      const open = head.classList.toggle('open');
+      el.setAttribute('aria-expanded', open ? 'true' : 'false');
+      el.setAttribute('aria-label', open ? 'Close menu' : 'Menu');
+      return;
+    }
     if (d.act) return act(d.act, el);
     if (d.go) {
       if (d.go === 'checkout') {
@@ -1548,7 +1557,12 @@
       if (!authPartner) return go('signin');
       UI.tab = d.tab; UI.route = 'portal'; syncUrl(false); render(); return scrollTopAll();
     }
-    if (d.jump) { const t = document.getElementById(d.jump); if (t) window.scrollTo({ top: t.getBoundingClientRect().top + window.scrollY - 90, behavior: 'smooth' }); return; }
+    if (d.jump) {
+      document.querySelector('.site-head')?.classList.remove('open');
+      const t = document.getElementById(d.jump);
+      if (t) window.scrollTo({ top: t.getBoundingClientRect().top + window.scrollY - 90, behavior: 'smooth' });
+      return;
+    }
     if (d.plan) { UI.co.plan = d.plan; return render(); }
     if (d.cycle) { UI.co.cycle = d.cycle; return render(); }
     if (d.cf) { UI.cfilter = d.cf; return render(); }
@@ -1565,7 +1579,12 @@
   document.addEventListener('input', clearErr); document.addEventListener('change', clearErr);
   document.addEventListener('change', (ev) => { if (ev.target.id === 'ccountry') { readCo(); render(); } });
   document.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape') { if ($('#modal-wrap').classList.contains('open')) closeModal(); else if (UI.demoOpen) { UI.demoOpen = false; render(); } }
+    if (ev.key === 'Escape') {
+      const head = document.querySelector('.site-head.open');
+      if (head) { head.classList.remove('open'); const b = head.querySelector('.nav-toggle'); if (b) { b.setAttribute('aria-expanded', 'false'); b.setAttribute('aria-label', 'Menu'); } }
+      else if ($('#modal-wrap').classList.contains('open')) closeModal();
+      else if (UI.demoOpen) { UI.demoOpen = false; render(); }
+    }
     if (ev.key === 'Enter' && ev.target.matches('.auth-card input')) { const b = $('.auth-card [data-act="su-next"], .auth-card [data-act="su-create"], .auth-card [data-act="signin"]'); if (b) b.click(); }
   });
   $('#modal-wrap').addEventListener('click', (ev) => { if (ev.target.id === 'modal-wrap') closeModal(); });
