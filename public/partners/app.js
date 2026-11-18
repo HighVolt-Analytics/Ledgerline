@@ -584,7 +584,6 @@
       <div class="field"><label for="si-email">Email</label><input class="in-t ${e.si ? 'err' : ''}" id="si-email" type="email" autocomplete="email"></div>
       <div class="field"><label for="si-pw">Password</label><input class="in-t ${e.si ? 'err' : ''}" id="si-pw" type="password" autocomplete="current-password">${e.si ? `<div class="err-msg">${e.si}</div>` : ''}</div>
       <button class="btn block lg" data-act="signin" ${UI.authBusy ? 'disabled' : ''}>${UI.authBusy ? 'Signing in…' : 'Sign in'}</button>
-      <p class="hint xs muted" style="margin-top:12px;text-align:center">Portal commissions and payouts are a prototype simulation after you sign in.</p>
       <div class="auth-alt">New to LedgerLine? <a href="#" data-go="signup">Become a partner</a></div>
     </div></div></div>`;
   }
