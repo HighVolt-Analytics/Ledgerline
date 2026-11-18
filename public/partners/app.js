@@ -11,6 +11,8 @@
   const PAYOUT_DAY = 15;
   const TODAY0 = '2026-11-11';
   const SITE = 'https://www.quantumledgerline.com';
+  const TERMS_PDF = encodeURI('/Quantum Ledger Line Partner Program Terms and Conditions_181126.pdf');
+  const GUIDE_PDF = encodeURI('/Quantum Ledger Line Partner Program Guide.pdf');
 
   const PLANS = {
     essentials: { name: 'Essentials', price: 7900, desc: 'For sole traders and small teams getting their books automated.',
@@ -377,19 +379,29 @@
     return `<header class="site-head"><div class="in">
       ${brandLink()}
       ${minimal ? '' : `<nav class="site-nav"><a href="#program" data-jump="program">Program</a><a href="#clients" data-jump="clients">For your clients</a><a href="#earn" data-jump="earn">Earnings</a><a href="#how" data-jump="how">How it works</a></nav>`}
-      <div class="actions">${S.session ? `<button class="btn sm" data-go="portal">Open partner portal</button>` : `<button class="btn quiet sm" data-go="signin">Sign in</button><button class="btn sm" data-go="signup">Become a partner</button>`}</div>
+      <div class="actions">${S.session ? `<button class="btn sm" data-go="portal">Open partner portal</button>` : `<button class="btn sm" data-go="signin">Sign in</button>`}</div>
     </div></header>`;
   }
 
   function vHome() {
     const rows = [10, 25, 50, 100].map((n) => `<tr><td>${n}</td><td class="num">${M(n * 15000 * RATE, { whole: true })}</td><td class="num">${M(n * 15000 * RATE * 12, { whole: true })}</td></tr>`).join('');
+    const faceA = '/qll/cfo-user-a.png';
+    const faceB = '/qll/cfo-user-b.png';
+    const chatPill = (kind, src, label) => `<span class="bubble"><img class="${kind}" src="${src}" alt=""><span>${label}</span></span>`;
+    const chatLane = (items) => `<div class="chat-lane"><div class="chat-track">${items.map(([kind, src, label]) => chatPill(kind, src, label)).join('')}</div></div>`;
+    const chatLanes = [
+      [['face', faceA, 'Sent them the link'], ['mark full', '/integrations/xero.svg', 'Connected in Xero'], ['face', faceB, 'Typing…']],
+      [['face', faceB, 'Yes, they subscribed'], ['mark', '/integrations/stripe.svg', 'First month is paid'], ['face', faceA, 'Joined this morning']],
+      [['mark', '/integrations/slack.svg', 'Invite is on its way'], ['face', faceA, "They're coming onboard"], ['mark full', '/integrations/quickbooks.svg', 'Synced to QuickBooks']],
+      [['face', faceB, 'Share it with the firm'], ['mark', '/integrations/microsoft.svg', 'Ready when you are'], ['face', faceA, "They're in for the year"]],
+    ].map(chatLane).join('');
     return `${siteHead()}
     <main>
       <section class="hero wrap">
         <div class="eyebrow">LedgerLine <span class="life">Lifetime</span> Partnership Program</div>
         <h1>Your clients grow.<br>Your revenue grows.</h1>
         <p class="lede">For accountants, bookkeepers, virtual CFOs and finance advisors. Bring LedgerLine to your clients and earn 20% fixed commission for as long as they stay.</p>
-        <div class="ctas"><button class="btn lg" data-go="signup">Become a founding partner</button><button class="btn ghost lg" data-jump="earn">See what you could earn</button></div>
+        <div class="ctas"><button class="btn lg grad" data-go="signup">Become a founding partner</button><a class="btn ghost lg" href="${GUIDE_PDF}" download="Quantum Ledger Line Partner Program Guide.pdf">Download program details</a></div>
       </section>
 
       <section class="band" id="program"><div class="wrap sec">
@@ -405,24 +417,99 @@
 
       <section id="clients"><div class="wrap sec">
         <div class="sec-head"><h2>What your clients get.</h2><p>An AI-powered bookkeeping and finance automation platform that works alongside their existing accounting systems.</p></div>
-        <div class="grid3">
-          <div><h3>Automated Bookkeeping</h3><p>From invoice capture to GL coding and ERP-ready posting.</p></div>
-          <div><h3>Invoice-to-Pay</h3><p>Invoice validation, approvals, matching and payment workflows.</p></div>
-          <div><h3>Expense Management</h3><p>Automated employee expenses, claims and approvals.</p></div>
-          <div><h3>Bank Intelligence</h3><p>AI-assisted transaction categorisation, reconciliation and financial reporting.</p></div>
-          <div><h3>Intelligent Record Management</h3><p>Organised, searchable and audit-ready financial records.</p></div>
-          <div><h3>Human Oversight</h3><p>AI handles repetitive processing. Finance professionals review exceptions and stay in control.</p></div>
+        <div class="client-cards">
+          <article class="client-card tone-books has-art">
+            <div class="client-copy"><h3>Automated Bookkeeping</h3><p>From invoice capture to GL coding and ERP-ready posting.</p></div>
+            <div class="client-art"><img src="/partners/bookkeeping.png" alt=""></div>
+          </article>
+          <article class="client-card tone-lime has-art">
+            <div class="client-copy"><h3>Invoice-to-Pay</h3><p>Invoice validation, approvals, matching and payment workflows.</p></div>
+            <div class="client-art"><img src="/partners/invoice-pay.png" alt=""></div>
+          </article>
+          <article class="client-card tone-sand has-art">
+            <div class="client-copy"><h3>Expense Management</h3><p>Automated employee expenses, claims and approvals.</p></div>
+            <div class="client-art" aria-hidden="true">
+              <div class="exp">
+                <div class="exp-slip"><b>EXPENSE</b><i></i><i></i><i></i><i></i></div>
+                <div class="exp-chip"><span>3</span> items</div>
+                <div class="exp-ok"><span></span>Approved</div>
+                <div class="exp-amt"><strong>$86.40</strong><svg viewBox="0 0 64 22" fill="none"><path d="M2 16c8-1 10-9 16-9s6 8 12 7 8-10 14-9 8 6 18 2" stroke="#1d1d1f" stroke-width="1.6" stroke-linecap="round"/><path d="M2 16c8-1 10-9 16-9s6 8 12 7 8-10 14-9 8 6 18 2V22H2Z" fill="#dff5a8"/></svg></div>
+              </div>
+            </div>
+          </article>
+          <article class="client-card tone-mint has-art">
+            <div class="client-copy"><h3>Bank Intelligence</h3><p>AI-assisted transaction categorisation, reconciliation and financial reporting.</p></div>
+            <div class="client-art" aria-hidden="true">
+              <div class="lockv">
+                <span class="lockv-rings"></span>
+                <span class="lockv-doc lockv-doc-l"><i></i><b>PDF</b></span>
+                <span class="lockv-doc lockv-doc-r"><i></i><b>DOC</b></span>
+                <span class="lockv-badge"><svg viewBox="0 0 24 24" width="26" height="26"><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5" fill="none" stroke="#6d4aff" stroke-width="1.8" stroke-linecap="round"/><rect x="5.2" y="10.5" width="13.6" height="9.2" rx="2.4" fill="#6d4aff"/><circle cx="12" cy="15" r="1.15" fill="#fff"/></svg></span>
+              </div>
+            </div>
+          </article>
+          <article class="client-card tone-sage has-art">
+            <div class="client-copy"><h3>Intelligent Record Management</h3><p>Organised, searchable and audit-ready financial records.</p></div>
+            <div class="client-art" aria-hidden="true">
+              <div class="recv">
+                <svg class="recv-lines" viewBox="0 0 148 120" fill="none" aria-hidden="true">
+                  <path d="M32 18h22M32 23h22M32 28h22" stroke="#c9d8ea" stroke-width="1"/>
+                  <path d="M94 16h24M94 21h24M94 26h24" stroke="#c9d8ea" stroke-width="1"/>
+                  <path d="M30 92h22M30 97h22M30 102h22" stroke="#c9d8ea" stroke-width="1"/>
+                  <path d="M96 90h22M96 95h22M96 100h22" stroke="#c9d8ea" stroke-width="1"/>
+                  <circle cx="32" cy="23" r="2" fill="#6aaff0"/>
+                  <circle cx="118" cy="21" r="2" fill="#6aaff0"/>
+                  <circle cx="30" cy="97" r="2" fill="#6aaff0"/>
+                  <circle cx="118" cy="95" r="2" fill="#6aaff0"/>
+                </svg>
+                <span class="recv-file recv-file-tl"></span>
+                <span class="recv-logo recv-logo-tr"><img src="/integrations/xero.svg" alt=""></span>
+                <span class="recv-logo recv-logo-bl"><img src="/integrations/quickbooks.svg" alt=""></span>
+                <span class="recv-file recv-file-br"></span>
+                <span class="recv-shield"><svg viewBox="0 0 64 76" width="54" height="64"><defs><linearGradient id="recv-metal" x1="10" y1="2" x2="54" y2="74" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#f4fbff"/><stop offset=".2" stop-color="#9ad8ff"/><stop offset=".48" stop-color="#3aa4ff"/><stop offset=".78" stop-color="#1a62f0"/><stop offset="1" stop-color="#123fbe"/></linearGradient><linearGradient id="recv-sheen" x1="16" y1="4" x2="36" y2="40" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#fff" stop-opacity=".75"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient></defs><path d="M32 2 58 13v23c0 18-10.6 28-26 37C16.6 64 6 54 6 36V13Z" fill="url(#recv-metal)"/><path d="M32 5 54 14.5v20c0 15.5-9 24.5-22 32.5C19 59 10 50 10 34.5v-20Z" fill="url(#recv-sheen)"/><path d="M24 36.5a8.5 8.5 0 0 1 14.2-5.6" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/><path d="M37.2 28.2l2.2 5.2-5.2.1" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M40 42.5a8.5 8.5 0 0 1-14.2 5.6" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/><path d="M26.8 50.8l-2.2-5.2 5.2-.1" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+              </div>
+            </div>
+          </article>
+          <article class="client-card tone-foam has-art">
+            <div class="client-copy"><h3>Human Oversight</h3><p>AI handles repetitive processing. Finance professionals review exceptions and stay in control.</p></div>
+            <div class="client-art"><img src="/partners/oversight.png" alt=""></div>
+          </article>
         </div>
       </div></section>
 
       <section class="band"><div class="wrap sec">
         <div class="sec-head"><h2>What your firm gets.</h2><p>You bring the relationship. We bring the technology. We grow together.</p></div>
-        <div class="list-num">
-          <div class="i"><div class="k">01</div><h3><span class="life">Lifetime</span> fixed revenue</h3><p>20% of eligible net fixed subscription revenue from every approved referred client.</p></div>
-          <div class="i"><div class="k">02</div><h3>More value for clients</h3><p>Less manual processing, stronger controls, more time running the business.</p></div>
-          <div class="i"><div class="k">03</div><h3>No system replacement</h3><p>Works alongside existing accounting and ERP systems, subject to supported integrations.</p></div>
-          <div class="i"><div class="k">04</div><h3>Demos and onboarding</h3><p>Our team demonstrates, onboards and supports your referred clients.</p></div>
-          <div class="i"><div class="k">05</div><h3>Long-term growth</h3><p>As your clients grow, your fixed commission grows with them.</p></div>
+        <div class="firm-cards">
+          <article class="firm-card">
+            <span class="firm-ico blue"><svg viewBox="0 0 32 32" width="26" height="26"><ellipse cx="16" cy="22" rx="8.2" ry="3" fill="#fff" opacity=".4"/><path d="M7.8 18.2c0 1.7 3.7 3 8.2 3s8.2-1.3 8.2-3v2.2c0 1.7-3.7 3-8.2 3s-8.2-1.3-8.2-3z" fill="#fff" opacity=".62"/><ellipse cx="16" cy="14.2" rx="8.2" ry="3.1" fill="#fff"/><ellipse cx="16" cy="13.4" rx="4.6" ry="1.5" fill="#fff" opacity=".45"/></svg></span>
+            <h3><span class="life">Lifetime</span> fixed revenue</h3>
+            <p>20% of eligible net fixed subscription revenue from every approved referred client.</p>
+            <span class="firm-go"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h10M9 4l4 4-4 4"/></svg></span>
+          </article>
+          <article class="firm-card">
+            <span class="firm-ico pink"><svg viewBox="0 0 32 32" width="26" height="26"><path d="M16 26 6.5 16.2a5.2 5.2 0 0 1 7.4-7.3L16 11l2.1-2.1a5.2 5.2 0 0 1 7.4 7.3Z" fill="#fff"/><path d="M16 12.2 13.6 9.8a4 4 0 0 0-2.2 6.4L16 21V12.2Z" fill="#fff" opacity=".45"/></svg></span>
+            <h3>More value for clients</h3>
+            <p>Less manual processing, stronger controls, more time running the business.</p>
+            <span class="firm-go"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h10M9 4l4 4-4 4"/></svg></span>
+          </article>
+          <article class="firm-card">
+            <span class="firm-ico violet"><svg viewBox="0 0 32 32" width="26" height="26"><rect x="7" y="7" width="16" height="5" rx="1.6" fill="#fff" opacity=".45"/><rect x="8" y="13.5" width="16" height="5" rx="1.6" fill="#fff" opacity=".72"/><rect x="9" y="20" width="16" height="5" rx="1.6" fill="#fff"/></svg></span>
+            <h3>No system replacement</h3>
+            <p>Works alongside existing accounting and ERP systems, subject to supported integrations.</p>
+            <span class="firm-go"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h10M9 4l4 4-4 4"/></svg></span>
+          </article>
+          <article class="firm-card">
+            <span class="firm-ico gold"><svg viewBox="0 0 32 32" width="26" height="26"><rect x="7" y="9" width="18" height="15" rx="3" fill="#fff"/><path d="M7 14h18" stroke="#c4a36a" stroke-width="1.4"/><rect x="11" y="6.5" width="2.2" height="5" rx="1" fill="#fff"/><rect x="18.8" y="6.5" width="2.2" height="5" rx="1" fill="#fff"/><circle cx="16" cy="19" r="2" fill="#c4a36a" opacity=".85"/></svg></span>
+            <h3>Demos and onboarding</h3>
+            <p>Our team demonstrates, onboards and supports your referred clients.</p>
+            <span class="firm-go"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h10M9 4l4 4-4 4"/></svg></span>
+          </article>
+          <article class="firm-card">
+            <span class="firm-ico teal"><svg viewBox="0 0 32 32" width="26" height="26"><rect x="6" y="18" width="5.2" height="8" rx="1.4" fill="#fff" opacity=".5"/><rect x="13.4" y="13" width="5.2" height="13" rx="1.4" fill="#fff" opacity=".75"/><rect x="20.8" y="7" width="5.2" height="19" rx="1.4" fill="#fff"/></svg></span>
+            <h3>Long-term growth</h3>
+            <p>As your clients grow, your fixed commission grows with them.</p>
+            <span class="firm-go"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h10M9 4l4 4-4 4"/></svg></span>
+          </article>
         </div>
       </div></section>
 
@@ -444,13 +531,46 @@
 
       <section class="band" id="how"><div class="wrap sec">
         <div class="sec-head"><h2>How the partnership works.</h2></div>
-        <div class="steps">
-          <div class="s"><div class="dot">1</div><h3>Join LedgerLine</h3><p>Create your partner account and accept the partnership terms. Your referral link is ready straight away.</p></div>
-          <div class="s"><div class="dot">2</div><h3>Introduce your clients</h3><p>Share your link or invite clients by email. They subscribe online in a few minutes.</p></div>
-          <div class="s"><div class="dot">3</div><h3>We demonstrate and onboard</h3><p>Our team supports demonstrations, implementation and customer onboarding.</p></div>
-          <div class="s"><div class="dot">4</div><h3>Earn fixed commission</h3><p>20% of eligible net fixed revenue actually collected, paid monthly to your connected Stripe account.</p></div>
+        <div class="how-cards">
+          <article class="how-card">
+            <div class="how-visual how-v1">
+              <span class="how-badge">Step 1</span>
+              <p class="how-line">Your link, ready today</p>
+              <p class="how-sub">Open a partner account and start referring.</p>
+              <span class="how-chip">Join free</span>
+            </div>
+            <div class="how-body">
+              <h3>Join LedgerLine</h3>
+              <p>Create your partner account and accept the partnership terms. Your referral link is ready straight away.</p>
+            </div>
+          </article>
+          <article class="how-card">
+            <div class="how-visual how-chat" aria-hidden="true">${chatLanes}</div>
+            <div class="how-body">
+              <h3>Introduce your clients</h3>
+              <p>Share your link or invite clients by email. They subscribe online in a few minutes.</p>
+            </div>
+          </article>
+          <article class="how-card">
+            <div class="how-visual how-board" aria-hidden="true">
+              <img src="/partners/onboard-visual.png" alt="">
+            </div>
+            <div class="how-body">
+              <h3>We demonstrate and onboard</h3>
+              <p>Our team supports demonstrations, implementation and customer onboarding.</p>
+            </div>
+          </article>
+          <article class="how-card">
+            <div class="how-visual how-earn" aria-hidden="true">
+              <img src="/partners/earn-coins.jpg" alt="">
+            </div>
+            <div class="how-body">
+              <h3>Earn fixed commission</h3>
+              <p>20% of eligible net fixed revenue actually collected, paid monthly to your connected Stripe account.</p>
+            </div>
+          </article>
         </div>
-        <p class="fine" style="margin-top:36px">Commissions are subject to the partner agreement, including referral eligibility, payment terms, exclusions and applicable professional disclosure requirements. <a href="#" data-act="terms">Read the key terms</a>.</p>
+        <p class="fine" style="margin-top:36px">Commissions are subject to the partner agreement, including referral eligibility, payment terms, exclusions and applicable professional disclosure requirements. <a href="${TERMS_PDF}" target="_blank" rel="noopener" data-act="terms">Read the key terms</a>.</p>
       </div></section>
 
       <section class="cta-final wrap">
@@ -483,7 +603,7 @@
         <div class="field"><label for="country">Country</label><select class="sel" id="country">${COUNTRIES.map(([k, n]) => `<option value="${k}" ${(d.country || 'AU') === k ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
       </div>
       ${f('abn', 'ABN or business number', 'text', '51 824 753 556', 'Optional. Used on your commission statements.')}
-      <label class="chk"><input type="checkbox" id="agree" ${d.agree ? 'checked' : ''}><span>I accept the <a href="#" data-act="terms">LedgerLine partner terms</a>.</span></label>
+      <label class="chk"><input type="checkbox" id="agree" ${d.agree ? 'checked' : ''}><span>I accept the <a href="${TERMS_PDF}" target="_blank" rel="noopener" data-act="terms">LedgerLine partner terms</a>.</span></label>
       <label class="chk"><input type="checkbox" id="disclose" ${d.disclose ? 'checked' : ''}><span>I will disclose my referral commission to clients as required by my professional obligations.</span></label>
       ${e.agree ? `<div class="err-msg" style="margin-bottom:10px">${e.agree}</div>` : ''}
       <div style="display:flex;gap:10px;margin-top:8px"><button class="btn ghost lg" data-act="su-back" ${UI.authBusy ? 'disabled' : ''}>Back</button><button class="btn lg" style="flex:1" data-act="su-create" ${UI.authBusy ? 'disabled' : ''}>${UI.authBusy ? 'Creating…' : 'Create account'}</button></div>`;
@@ -497,7 +617,6 @@
       <div class="field"><label for="si-email">Email</label><input class="in-t ${e.si ? 'err' : ''}" id="si-email" type="email" autocomplete="email"></div>
       <div class="field"><label for="si-pw">Password</label><input class="in-t ${e.si ? 'err' : ''}" id="si-pw" type="password" autocomplete="current-password">${e.si ? `<div class="err-msg">${e.si}</div>` : ''}</div>
       <button class="btn block lg" data-act="signin" ${UI.authBusy ? 'disabled' : ''}>${UI.authBusy ? 'Signing in…' : 'Sign in'}</button>
-      <p class="hint xs muted" style="margin-top:12px;text-align:center">Portal commissions and payouts are a prototype simulation after you sign in.</p>
       <div class="auth-alt">New to LedgerLine? <a href="#" data-go="signup">Become a partner</a></div>
     </div></div></div>`;
   }
@@ -1203,7 +1322,7 @@
     const p = me();
     switch (a) {
       case 'close-modal': return closeModal();
-      case 'terms': return termsModal();
+      case 'terms': window.open(TERMS_PDF, '_blank', 'noopener'); return;
       case 'su-next': {
         readDraft(); const d = UI.draft, e = {};
         if (!d.name) e.name = 'Enter your name';
