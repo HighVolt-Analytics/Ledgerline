@@ -23,6 +23,7 @@ PARTNERS_CSS = b".partner{color:teal}"
 JS_BODY = b"const app = true;"
 CSS_BODY = b"body{color:#000}"
 PNG_BODY = b"fixture png bytes"
+PDF_BODY = b"%PDF-1.4 fixture"
 ROBOTS_BODY = b"User-agent: *\nAllow: /\n"
 SITEMAP_BODY = b"<urlset></urlset>"
 
@@ -110,6 +111,11 @@ class FixtureHandler(BaseHTTPRequestHandler):
                 self.send_body(ROOT_SHELL, "text/html")
             else:
                 self.send_body(PNG_BODY, "image/png")
+        elif path == "/program.pdf":
+            if self.server.mode == "pdf_html_fallback":
+                self.send_body(ROOT_SHELL, "text/html")
+            else:
+                self.send_body(PDF_BODY, "application/pdf")
         elif path == "/assets/missing.js":
             # Model the Hostinger .htaccess SPA fallback for a missing file.
             self.send_body(ROOT_SHELL, "text/html")
@@ -164,6 +170,7 @@ class DeployedHealthTests(unittest.TestCase):
         feature_images = self.index.parent / "feature images"
         feature_images.mkdir()
         (feature_images / "asset (sample).png").write_bytes(PNG_BODY)
+        (self.index.parent / "program.pdf").write_bytes(PDF_BODY)
         partners = self.index.parent / "partners"
         partners.mkdir()
         (partners / "index.html").write_bytes(PARTNERS_SHELL)
@@ -266,6 +273,12 @@ class DeployedHealthTests(unittest.TestCase):
 
     def test_image_asset_spa_fallback_is_rejected(self):
         self.server.mode = "image_html_fallback"
+        result = self.run_health()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("HEALTH_FAILURE stage=release_files category=content_type_mismatch", result.stderr)
+
+    def test_pdf_spa_fallback_is_rejected(self):
+        self.server.mode = "pdf_html_fallback"
         result = self.run_health()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("HEALTH_FAILURE stage=release_files category=content_type_mismatch", result.stderr)

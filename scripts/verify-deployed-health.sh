@@ -324,6 +324,7 @@ verify_release_mime() {
     *.svg:image/svg+xml*) ;;
     *.png:image/png*) ;;
     *.jpg:image/jpeg*|*.jpeg:image/jpeg*) ;;
+    *.pdf:application/pdf*) ;;
     *.txt:text/plain*) ;;
     *.xml:application/xml*|*.xml:text/xml*) ;;
     *.htaccess:*) return 0 ;;
