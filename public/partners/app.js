@@ -387,16 +387,6 @@
 
   function vHome() {
     const rows = [10, 25, 50, 100].map((n) => `<tr><td>${n}</td><td class="num">${M(n * 15000 * RATE, { whole: true })}</td><td class="num">${M(n * 15000 * RATE * 12, { whole: true })}</td></tr>`).join('');
-    const faceA = '/qll/cfo-user-a.png';
-    const faceB = '/qll/cfo-user-b.png';
-    const chatPill = (kind, src, label) => `<span class="bubble"><img class="${kind}" src="${src}" alt=""><span>${label}</span></span>`;
-    const chatLane = (items) => `<div class="chat-lane"><div class="chat-track">${items.map(([kind, src, label]) => chatPill(kind, src, label)).join('')}</div></div>`;
-    const chatLanes = [
-      [['face', faceA, 'Sent them the link'], ['mark full', '/integrations/xero.svg', 'Connected in Xero'], ['face', faceB, 'Typing…']],
-      [['face', faceB, 'Yes, they subscribed'], ['mark', '/integrations/stripe.svg', 'First month is paid'], ['face', faceA, 'Joined this morning']],
-      [['mark', '/integrations/slack.svg', 'Invite is on its way'], ['face', faceA, "They're coming onboard"], ['mark full', '/integrations/quickbooks.svg', 'Synced to QuickBooks']],
-      [['face', faceB, 'Share it with the firm'], ['mark', '/integrations/microsoft.svg', 'Ready when you are'], ['face', faceA, "They're in for the year"]],
-    ].map(chatLane).join('');
     return `${siteHead()}
     <main>
       <section class="hero wrap">
@@ -404,6 +394,7 @@
         <h1>Your clients grow.<br>Your revenue grows.</h1>
         <p class="lede">For accountants, bookkeepers, virtual CFOs and finance advisors. Bring LedgerLine to your clients and earn 20% fixed commission for as long as they stay.</p>
         <div class="ctas"><button class="btn lg grad" data-go="signup">Become a founding partner</button><a class="btn ghost lg dl" href="${GUIDE_PDF}" download="Quantum Ledger Line Partner Program Guide.pdf"><span class="dl-ico" aria-hidden="true"></span>Download program details</a></div>
+        <div class="logo-trail" aria-hidden="true"><div class="logo-track">${'<img src="/partners/aira-consulting.png?v=2" alt="">'.repeat(4).repeat(2)}</div></div>
       </section>
 
       <section class="band" id="program"><div class="wrap sec">
@@ -534,42 +525,37 @@
       <section class="band" id="how"><div class="wrap sec">
         <div class="sec-head"><h2>How the partnership works.</h2></div>
         <div class="how-cards">
-          <article class="how-card">
-            <div class="how-visual how-v1">
-              <span class="how-badge">Step 1</span>
-              <p class="how-line">Your link, ready today</p>
-              <p class="how-sub">Open a partner account and start referring.</p>
-              <span class="how-chip">Join free</span>
-            </div>
+          <article class="how-card how-c1">
             <div class="how-body">
+              <p class="how-step">1</p>
               <h3>Join LedgerLine</h3>
               <p>Create your partner account and accept the partnership terms. Your referral link is ready straight away.</p>
             </div>
+            <div class="how-wave" aria-hidden="true"></div>
           </article>
-          <article class="how-card">
-            <div class="how-visual how-chat" aria-hidden="true">${chatLanes}</div>
+          <article class="how-card how-c2">
             <div class="how-body">
+              <p class="how-step">2</p>
               <h3>Introduce your clients</h3>
               <p>Share your link or invite clients by email. They subscribe online in a few minutes.</p>
             </div>
+            <div class="how-wave" aria-hidden="true"></div>
           </article>
-          <article class="how-card">
-            <div class="how-visual how-board" aria-hidden="true">
-              <img src="/partners/onboard-visual.png" alt="">
-            </div>
+          <article class="how-card how-c3">
             <div class="how-body">
+              <p class="how-step">3</p>
               <h3>We demonstrate and onboard</h3>
               <p>Our team supports demonstrations, implementation and customer onboarding.</p>
             </div>
+            <div class="how-wave" aria-hidden="true"></div>
           </article>
-          <article class="how-card">
-            <div class="how-visual how-earn" aria-hidden="true">
-              <img src="/partners/earn-coins.jpg" alt="">
-            </div>
+          <article class="how-card how-c4">
             <div class="how-body">
+              <p class="how-step">4</p>
               <h3>Earn fixed commission</h3>
               <p>20% of eligible net fixed revenue actually collected, paid monthly to your connected Stripe account.</p>
             </div>
+            <div class="how-wave" aria-hidden="true"></div>
           </article>
         </div>
         <p class="fine" style="margin-top:36px">Commissions are subject to the partner agreement, including referral eligibility, payment terms, exclusions and applicable professional disclosure requirements. <a href="${TERMS_PDF}" target="_blank" rel="noopener" data-act="terms">Read the key terms</a>.</p>
