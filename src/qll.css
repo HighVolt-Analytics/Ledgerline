@@ -201,6 +201,16 @@ h1,h2,h3,p{margin:0;overflow-wrap:break-word}
   color:rgba(160,199,209,.55);
   letter-spacing:0;
 }
+.hero-tabs a{
+  color:inherit;
+  text-decoration:underline;
+  text-underline-offset:3px;
+  text-decoration-thickness:1px;
+}
+.hero-tabs a:hover{
+  color:#fff;
+  text-decoration:underline;
+}
 .hero .h1{
   font-size:clamp(18px,3.6vw,58px);
   max-width:none;

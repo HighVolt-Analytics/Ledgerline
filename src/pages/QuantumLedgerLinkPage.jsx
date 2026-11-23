@@ -657,11 +657,13 @@ export default function QuantumLedgerLinkPage() {
             <div className="hero-copy">
               <span className="hero-mark" aria-hidden="true" />
               <p className="hero-tabs r">
-                <span>Invoice to pay</span>
+                <Link to="/interactive-tour?demo=invoice-to-pay">Invoice to pay</Link>
                 <span className="hero-tab-dot" aria-hidden="true">·</span>
                 <span>Invoice to cash</span>
                 <span className="hero-tab-dot" aria-hidden="true">·</span>
-                <span>Team expenses mgt</span>
+                <Link to="/interactive-tour?demo=employee-expense-claim">Team expenses mgt</Link>
+                <span className="hero-tab-dot" aria-hidden="true">·</span>
+                <Link to="/interactive-tour?demo=bank-to-books">Bank to Books</Link>
                 <span className="hero-tab-dot" aria-hidden="true">·</span>
                 <span>Document mgt</span>
               </p>
@@ -976,7 +978,7 @@ export default function QuantumLedgerLinkPage() {
         <section className="s dark" id="presence">
           <div className="wrap">
             <p className="eyebrow r">Presence</p>
-            <h2 className="h2 r">Four offices. One team. Your business hours.</h2>
+            <h2 className="h2 r">One global team. Close to yours.</h2>
             <p className="lead r">Connect with us across continents globally.</p>
 
             <div className="presence-map r">
