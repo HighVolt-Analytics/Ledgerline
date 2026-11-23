@@ -15,6 +15,7 @@ const imageMotion = {
 export default function GradientCard({
   tone = 'teal',
   badgeText,
+  industry,
   badgeColor,
   title,
   description,
@@ -41,9 +42,12 @@ export default function GradientCard({
           className="industry-card-art"
         />
         <div className="industry-card-body">
-          <div className="industry-card-badge">
-            <span className="industry-card-dot" style={{ backgroundColor: badgeColor }} />
-            {badgeText}
+          <div className="industry-card-tags">
+            <div className="industry-card-badge">
+              <span className="industry-card-dot" style={{ backgroundColor: badgeColor }} />
+              {badgeText}
+            </div>
+            {industry ? <span className="industry-card-sector">{industry}</span> : null}
           </div>
           <div className="industry-card-copy">
             <h3>{title}</h3>

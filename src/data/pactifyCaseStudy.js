@@ -1,7 +1,7 @@
 export const pactifyCaseStudy = {
   slug: 'pactify',
   company: 'Pactify',
-  sector: 'Bookkeeping & BAS',
+  sector: 'Global Technology',
   heroImage: '/qll/industries/accounting.png',
   heroPrimary: 'How Invoice to Pay took a quarterly BAS crunch',
   heroSecondary: 'from 6–7 hours down to 1',

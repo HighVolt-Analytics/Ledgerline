@@ -25,14 +25,20 @@ import { WorldMap } from '../components/ui/WorldMap';
 import IntegrationsSection from '../components/sections/IntegrationsSection';
 import ProblemSolutionSection from '../components/sections/ProblemSolutionSection';
 import { bookDemoPath, externalLinks } from '../data/navigation';
+import { pactifyCaseStudy } from '../data/pactifyCaseStudy';
+import { spectraCaseStudy } from '../data/spectraCaseStudy';
 import '../qll.css';
 
 const YOUTUBE_EMBED =
   'https://www.youtube-nocookie.com/embed/SElwFjDrqLI?autoplay=1&rel=0&modestbranding=1';
-const TEAM_YOUTUBE_EMBED =
-  'https://www.youtube-nocookie.com/embed/5Xw_KPwWrR8?autoplay=1&rel=0&modestbranding=1';
-const INVOICE_YOUTUBE_EMBED =
-  'https://www.youtube-nocookie.com/embed/XZUaMXvXw-w?autoplay=1&rel=0&modestbranding=1';
+const INVOICE_DEMO_URL =
+  'https://app.trupeer.ai/view/g747RfGIx/email-to-payment-invoice-automation';
+const EXPENSE_DEMO_URL =
+  'https://app.trupeer.ai/view/LpR8NSQWD/duplicate-invoice-and-expense-budget-controls';
+const BANK_DEMO_URL =
+  'https://app.trupeer.ai/view/BbgCgp3XZ/bank-statements-to-financial-reports';
+const APPROVAL_DEMO_URL =
+  'https://app.trupeer.ai/view/jrF1MDKNC/invoice-approval-workflow';
 
 const howFlows = [
   {
@@ -246,73 +252,6 @@ const howFlows = [
       },
     ],
   },
-  {
-    title: 'Document Mgt',
-    subtitle: 'Capture. Organize. Bundle. Notify.',
-    foot: 'From file capture to bundled reporting — fast, organized, and automated.',
-    stages: [
-      {
-        name: '1. Capture & Organize',
-        tone: 'blue',
-        steps: [
-          {
-            n: '1',
-            title: 'Capture Files',
-            desc: 'Files arrive from email, WhatsApp, Slack, Viber, app, or other channels.',
-            visual: 'captureFiles',
-          },
-          {
-            n: '2',
-            title: 'Route to Folder',
-            desc: 'Each file lands automatically in the correct folder.',
-            visual: 'routeFolder',
-          },
-          {
-            n: '3',
-            title: 'Time-Stamp & Index',
-            desc: 'Tagged by vendor, year, month, date, and timestamp.',
-            visual: 'timestamp',
-          },
-          {
-            n: '4',
-            title: 'Organize Structure',
-            desc: 'Files are arranged in a searchable, structured archive.',
-            visual: 'organize',
-          },
-        ],
-      },
-      {
-        name: '2. Match, Bundle & Notify',
-        tone: 'teal',
-        steps: [
-          {
-            n: '5',
-            title: 'Find Companion Files',
-            desc: 'The system searches for related or supporting documents.',
-            visual: 'companion',
-          },
-          {
-            n: '6',
-            title: 'Auto-Bundle',
-            desc: 'When a supporting file arrives, it is linked and bundled automatically.',
-            visual: 'bundle',
-          },
-          {
-            n: '7',
-            title: 'Update Records',
-            desc: 'The file set updates instantly with the latest attachments and status.',
-            visual: 'update',
-          },
-          {
-            n: '8',
-            title: 'Report & Notify',
-            desc: 'Reports are updated and notifications are sent automatically.',
-            visual: 'report',
-          },
-        ],
-      },
-    ],
-  },
 ];
 
 const mobileHighlights = [
@@ -518,6 +457,7 @@ const industryCards = [
   {
     tone: 'teal',
     badgeText: 'Case study',
+    industry: spectraCaseStudy.sector,
     badgeColor: '#5EEAD4',
     title: 'Spectra',
     description:
@@ -529,6 +469,7 @@ const industryCards = [
   {
     tone: 'violet',
     badgeText: 'Case study',
+    industry: pactifyCaseStudy.sector,
     badgeColor: '#C4B5FD',
     title: 'Pactify',
     description:
@@ -599,8 +540,6 @@ const presenceOffices = [
 
 export default function QuantumLedgerLinkPage() {
   const [videoPlaying, setVideoPlaying] = useState(false);
-  const [teamVideoPlaying, setTeamVideoPlaying] = useState(false);
-  const [invoiceVideoPlaying, setInvoiceVideoPlaying] = useState(false);
   const [howTab, setHowTab] = useState(0);
   const rootRef = useRef(null);
 
@@ -659,13 +598,9 @@ export default function QuantumLedgerLinkPage() {
               <p className="hero-tabs r">
                 <Link to="/interactive-tour?demo=invoice-to-pay">Invoice to pay</Link>
                 <span className="hero-tab-dot" aria-hidden="true">·</span>
-                <span>Invoice to cash</span>
+                <Link to="/interactive-tour?demo=invoice-to-cash">Invoice to cash</Link>
                 <span className="hero-tab-dot" aria-hidden="true">·</span>
                 <Link to="/interactive-tour?demo=employee-expense-claim">Team expenses mgt</Link>
-                <span className="hero-tab-dot" aria-hidden="true">·</span>
-                <Link to="/interactive-tour?demo=bank-to-books">Bank to Books</Link>
-                <span className="hero-tab-dot" aria-hidden="true">·</span>
-                <span>Document mgt</span>
               </p>
               <h1 className="h1 r">
                 Bookkeeping in 3 Clicks.
@@ -735,9 +670,9 @@ export default function QuantumLedgerLinkPage() {
           </div>
         </section>
 
-        <section className="s dark industry-strip" id="industries" aria-label="Industries">
+        <section className="s dark industry-strip" id="industries" aria-label="Customers">
           <div className="wrap">
-            <h3 className="blabel industry-heading r">Industries</h3>
+            <h3 className="blabel industry-heading r">Customers</h3>
             <div className="industry-grid r">
               {industryCards.map((card) => (
                 <GradientCard key={card.href} {...card} />
@@ -759,38 +694,50 @@ export default function QuantumLedgerLinkPage() {
 
             <div className="how-tabs r" role="tablist" aria-label="How it works">
               {howFlows.map((flow, index) => (
-                <button
-                  key={flow.title}
-                  type="button"
-                  role="tab"
-                  aria-selected={howTab === index}
-                  className={`how-tab${howTab === index ? ' is-active' : ''}`}
-                  onClick={() => setHowTab(index)}
-                >
-                  {flow.title}
-                </button>
+                <Fragment key={flow.title}>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={howTab === index}
+                    className={`how-tab${howTab === index ? ' is-active' : ''}`}
+                    onClick={() => setHowTab(index)}
+                  >
+                    {flow.title}
+                  </button>
+                  {flow.title === 'Team Expenses Mgt' ? (
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={howTab === 'bank'}
+                      className={`how-tab${howTab === 'bank' ? ' is-active' : ''}`}
+                      onClick={() => setHowTab('bank')}
+                    >
+                      Bank to Books
+                    </button>
+                  ) : null}
+                </Fragment>
               ))}
             </div>
 
             {howFlows.map((flow, index) => {
               const howVideo = {
                 'Invoice to Pay': {
-                  playing: invoiceVideoPlaying,
-                  onPlay: () => setInvoiceVideoPlaying(true),
-                  embed: INVOICE_YOUTUBE_EMBED,
-                  title: 'Invoice to pay',
-                  label: 'Play the invoice to pay video',
+                  href: INVOICE_DEMO_URL,
+                  label: 'Play the invoice to pay demo',
                   thumb: '/qll/invoice-to-pay-thumbnail.jpg',
-                  alt: 'Invoice to pay video',
+                  alt: 'Email-to-payment invoice automation',
+                },
+                'Invoice to Cash': {
+                  href: APPROVAL_DEMO_URL,
+                  label: 'Play the invoice approval demo',
+                  thumb: '/qll/invoice-approval-thumbnail.png',
+                  alt: 'Invoice approval workflow',
                 },
                 'Team Expenses Mgt': {
-                  playing: teamVideoPlaying,
-                  onPlay: () => setTeamVideoPlaying(true),
-                  embed: TEAM_YOUTUBE_EMBED,
-                  title: 'Team expenses management',
-                  label: 'Play the team expenses video',
-                  thumb: '/qll/team-expense-thumbnail.jpg',
-                  alt: 'Team expenses video',
+                  href: EXPENSE_DEMO_URL,
+                  label: 'Play the team expenses demo',
+                  thumb: '/qll/expense-demo-thumbnail.png',
+                  alt: 'Duplicate invoice and expense budget controls',
                 },
               }[flow.title];
 
@@ -802,35 +749,26 @@ export default function QuantumLedgerLinkPage() {
                   role="tabpanel"
                   hidden={howTab !== index}
                 >
-                  {howVideo.playing ? (
-                    <iframe
-                      src={howVideo.embed}
-                      title={howVideo.title}
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                      allowFullScreen
-                      referrerPolicy="strict-origin-when-cross-origin"
+                  <a
+                    className="video-btn"
+                    href={howVideo.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={howVideo.label}
+                  >
+                    <img
+                      src={howVideo.thumb}
+                      alt={howVideo.alt}
+                      width="1280"
+                      height="720"
                     />
-                  ) : (
-                    <button
-                      className="video-btn"
-                      type="button"
-                      aria-label={howVideo.label}
-                      onClick={howVideo.onPlay}
-                    >
-                      <img
-                        src={howVideo.thumb}
-                        alt={howVideo.alt}
-                        width="1280"
-                        height="720"
-                      />
-                      <span className="play" aria-hidden="true">
-                        <svg viewBox="0 0 64 64" fill="none">
-                          <circle cx="32" cy="32" r="31.25" stroke="#fff" strokeWidth="1.5" />
-                          <path d="M26 22.5 43 32l-17 9.5V22.5Z" fill="#fff" />
-                        </svg>
-                      </span>
-                    </button>
-                  )}
+                    <span className="play" aria-hidden="true">
+                      <svg viewBox="0 0 64 64" fill="none">
+                        <circle cx="32" cy="32" r="31.25" stroke="#fff" strokeWidth="1.5" />
+                        <path d="M26 22.5 43 32l-17 9.5V22.5Z" fill="#fff" />
+                      </svg>
+                    </span>
+                  </a>
                 </div>
                 );
               }
@@ -874,6 +812,33 @@ export default function QuantumLedgerLinkPage() {
               </article>
               );
             })}
+
+            <div
+              className="video how-tab-video r"
+              role="tabpanel"
+              hidden={howTab !== 'bank'}
+            >
+              <a
+                className="video-btn"
+                href={BANK_DEMO_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Play the bank to books demo"
+              >
+                <img
+                  src="/qll/bank-to-books-thumbnail.png"
+                  alt="Bank statements to financial reports"
+                  width="1280"
+                  height="720"
+                />
+                <span className="play" aria-hidden="true">
+                  <svg viewBox="0 0 64 64" fill="none">
+                    <circle cx="32" cy="32" r="31.25" stroke="#fff" strokeWidth="1.5" />
+                    <path d="M26 22.5 43 32l-17 9.5V22.5Z" fill="#fff" />
+                  </svg>
+                </span>
+              </a>
+            </div>
           </div>
         </section>
 

@@ -6,8 +6,9 @@ import SupademoEmbed from '../components/ui/SupademoEmbed';
 
 export const TOUR_DEMOS = [
   { slug: 'invoice-to-pay', title: 'Invoice to Pay', id: 'cmw0z86dt00t2qmx65nceofxy' },
-  { slug: 'invoice-approval', title: 'Invoice Approval', id: null },
-  { slug: 'employee-expense-claim', title: 'Employee Expense Claim', id: null },
+  { slug: 'invoice-to-cash', title: 'Invoice to Cash', id: 'cmwt3lzsu1az5qm24wvmqglm8' },
+  { slug: 'invoice-approval', title: 'Invoice Approval', id: 'cmwn9qis40c04qmk16e8hc99g' },
+  { slug: 'employee-expense-claim', title: 'Employee Expense Claim', id: 'cmwnf96tb0joxqmk1h8bpdmo2' },
   { slug: 'duplicate-invoice-check', title: 'Duplicate Invoice check', id: 'cmwnqiagu000c2w0jbrzczfgf' },
   { slug: 'bank-to-books', title: 'Bank to Books', id: 'cmwnsve6213bsqmk14j9jmpmw' },
 ];
@@ -19,7 +20,9 @@ function embedSrc(id) {
 export default function InteractiveTourPage() {
   const [params, setParams] = useSearchParams();
   const requested = params.get('demo');
-  const active = TOUR_DEMOS.find((demo) => demo.slug === requested) || TOUR_DEMOS[0];
+  const active =
+    TOUR_DEMOS.find((demo) => demo.slug === requested || demo.aliases?.includes(requested)) ||
+    TOUR_DEMOS[0];
 
   useEffect(() => {
     document.body.classList.remove('qll-page');
