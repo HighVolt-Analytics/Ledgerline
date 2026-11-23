@@ -1,7 +1,7 @@
 export const spectraCaseStudy = {
   slug: 'spectra',
   company: 'Spectra',
-  sector: 'Export & Import Across Multiple Countries',
+  sector: 'Global Trading',
   heroImage: '/qll/industries/spectra-hero.jpg',
   heroPrimary: 'From scattered trade documents',
   heroSecondary: 'to audit-ready ledger posting with Quantum Ledger Line',
