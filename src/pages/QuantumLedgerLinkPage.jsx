@@ -38,7 +38,7 @@ const EXPENSE_DEMO_URL =
 const BANK_DEMO_URL =
   'https://app.trupeer.ai/view/BbgCgp3XZ/bank-statements-to-financial-reports';
 const APPROVAL_DEMO_URL =
-  'https://app.trupeer.ai/view/jrF1MDKNC/invoice-approval-workflow';
+  'https://app.trupeer.ai/view/sZrNVLsaC/invoice-to-cash-reconciliation';
 
 const howFlows = [
   {
