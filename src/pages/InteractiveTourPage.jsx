@@ -11,6 +11,7 @@ export const TOUR_DEMOS = [
   { slug: 'employee-expense-claim', title: 'Employee Expense Claim', id: 'cmwnf96tb0joxqmk1h8bpdmo2' },
   { slug: 'duplicate-invoice-check', title: 'Duplicate Invoice check', id: 'cmwnqiagu000c2w0jbrzczfgf' },
   { slug: 'bank-to-books', title: 'Bank to Books', id: 'cmwnsve6213bsqmk14j9jmpmw' },
+  { slug: 'document-mgt', title: 'Document Mgt', id: 'cmwqrev3t0ddlqm24dh8bwkam' },
 ];
 
 function embedSrc(id) {
