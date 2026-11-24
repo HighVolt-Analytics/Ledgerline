@@ -601,6 +601,8 @@ export default function QuantumLedgerLinkPage() {
                 <Link to="/interactive-tour?demo=invoice-to-cash">Invoice to cash</Link>
                 <span className="hero-tab-dot" aria-hidden="true">·</span>
                 <Link to="/interactive-tour?demo=employee-expense-claim">Team expenses mgt</Link>
+                <span className="hero-tab-dot" aria-hidden="true">·</span>
+                <Link to="/interactive-tour?demo=document-mgt">Document mgt</Link>
               </p>
               <h1 className="h1 r">
                 Bookkeeping in 3 Clicks.
