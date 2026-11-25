@@ -33,8 +33,10 @@ const YOUTUBE_EMBED =
   'https://www.youtube-nocookie.com/embed/SElwFjDrqLI?autoplay=1&rel=0&modestbranding=1';
 const INVOICE_DEMO_URL =
   'https://app.trupeer.ai/view/g747RfGIx/email-to-payment-invoice-automation';
-const EXPENSE_DEMO_URL =
+const DOCUMENT_APPROVAL_DEMO_URL =
   'https://app.trupeer.ai/view/LpR8NSQWD/duplicate-invoice-and-expense-budget-controls';
+const TEAM_DEMO_URL =
+  'https://app.trupeer.ai/view/hqRFhhlkK/employee-expense-reimbursement-workflow';
 const BANK_DEMO_URL =
   'https://app.trupeer.ai/view/BbgCgp3XZ/bank-statements-to-financial-reports';
 const APPROVAL_DEMO_URL =
@@ -707,15 +709,26 @@ export default function QuantumLedgerLinkPage() {
                     {flow.title}
                   </button>
                   {flow.title === 'Team Expenses Mgt' ? (
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={howTab === 'bank'}
-                      className={`how-tab${howTab === 'bank' ? ' is-active' : ''}`}
-                      onClick={() => setHowTab('bank')}
-                    >
-                      Bank to Books
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={howTab === 'document'}
+                        className={`how-tab${howTab === 'document' ? ' is-active' : ''}`}
+                        onClick={() => setHowTab('document')}
+                      >
+                        Document Approval
+                      </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={howTab === 'bank'}
+                        className={`how-tab${howTab === 'bank' ? ' is-active' : ''}`}
+                        onClick={() => setHowTab('bank')}
+                      >
+                        Bank to Books
+                      </button>
+                    </>
                   ) : null}
                 </Fragment>
               ))}
@@ -736,10 +749,10 @@ export default function QuantumLedgerLinkPage() {
                   alt: 'Invoice approval workflow',
                 },
                 'Team Expenses Mgt': {
-                  href: EXPENSE_DEMO_URL,
+                  href: TEAM_DEMO_URL,
                   label: 'Play the team expenses demo',
-                  thumb: '/qll/expense-demo-thumbnail.png',
-                  alt: 'Duplicate invoice and expense budget controls',
+                  thumb: '/qll/team-expense-demo-thumbnail.png',
+                  alt: 'Employee expense reimbursement',
                 },
               }[flow.title];
 
@@ -814,6 +827,33 @@ export default function QuantumLedgerLinkPage() {
               </article>
               );
             })}
+
+            <div
+              className="video how-tab-video r"
+              role="tabpanel"
+              hidden={howTab !== 'document'}
+            >
+              <a
+                className="video-btn"
+                href={DOCUMENT_APPROVAL_DEMO_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Play the document approval demo"
+              >
+                <img
+                  src="/qll/expense-demo-thumbnail.png"
+                  alt="Document approval"
+                  width="1280"
+                  height="720"
+                />
+                <span className="play" aria-hidden="true">
+                  <svg viewBox="0 0 64 64" fill="none">
+                    <circle cx="32" cy="32" r="31.25" stroke="#fff" strokeWidth="1.5" />
+                    <path d="M26 22.5 43 32l-17 9.5V22.5Z" fill="#fff" />
+                  </svg>
+                </span>
+              </a>
+            </div>
 
             <div
               className="video how-tab-video r"
