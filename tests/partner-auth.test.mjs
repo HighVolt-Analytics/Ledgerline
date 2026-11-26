@@ -489,6 +489,44 @@ test('signup links the partner to the HighVolt partner service when PARTNER_SERV
   }
 })
 
+test('partner service address and key id can come from private/partner-secrets.php (no environment on Hostinger)', async () => {
+  const received = []
+  const fake = createServer((req, res) => {
+    let data = ''
+    req.on('data', (c) => (data += c))
+    req.on('end', () => {
+      received.push({ method: req.method, url: req.url })
+      res.writeHead(201, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ partner_id: '11111111-2222-3333-4444-555555555555', status: 'APPLIED' }))
+    })
+  })
+  await new Promise((r) => fake.listen(0, '127.0.0.1', r))
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'll-partner-secrets-'))
+  const docRoot = path.join(tmp, 'public_html')
+  const privateDir = path.join(tmp, 'private')
+  await mkdir(docRoot, { recursive: true })
+  await mkdir(privateDir, { recursive: true })
+  await writeFile(
+    path.join(privateDir, 'partner-secrets.php'),
+    `<?php
+declare(strict_types=1);
+return ['PARTNER_SERVICE_URL' => ${JSON.stringify(`http://127.0.0.1:${fake.address().port}/platform/v1/partners`)}];
+`,
+    'utf8',
+  )
+  const apiServer = await startPartnerApi(path.join(tmp, 'p.sqlite'), { PARTNER_SERVICE_URL: '', PARTNER_DOCUMENT_ROOT: docRoot })
+  try {
+    const signup = await api(apiServer.base, '/signup', { method: 'POST', body: signupBody(`file-url-${Date.now()}@example.test`) })
+    assert.equal(signup.res.status, 201)
+    assert.equal(signup.json.partner.programLinked, true)
+    assert.deepEqual(received, [{ method: 'POST', url: '/platform/v1/partners/applications' }])
+  } finally {
+    await apiServer.close()
+    fake.close()
+    await rm(tmp, { recursive: true, force: true })
+  }
+})
+
 test('signup still succeeds, unlinked, when the partner service is down or not configured', async () => {
   const tmp = await mkdtemp(path.join(os.tmpdir(), 'll-partner-'))
   const down = await startPartnerApi(path.join(tmp, 'a.sqlite'), { PARTNER_SERVICE_URL: 'http://127.0.0.1:9' })
