@@ -1,6 +1,8 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -100,6 +102,32 @@ function servePartnership(req, res, next) {
   next();
 }
 
+/**
+ * The partner portal's plain files (public/partners) are cached by browsers for 7 days. After the build, point
+ * index.html at app.js / styles.css with a content hash (?v=...), so every release is picked up at once and
+ * unchanged files stay cached.
+ */
+function partnerAssetVersions() {
+  return {
+    name: 'partner-asset-versions',
+    apply: 'build',
+    closeBundle() {
+      const dir = path.join(ROOT, 'dist', 'partners');
+      const htmlPath = path.join(dir, 'index.html');
+      if (!fs.existsSync(htmlPath)) return;
+      let html = fs.readFileSync(htmlPath, 'utf8');
+      for (const file of ['app.js', 'styles.css']) {
+        const hash = createHash('sha256').update(fs.readFileSync(path.join(dir, file))).digest('hex').slice(0, 12);
+        // "/partners/app.js" or "/partners/styles.css?v=anything", up to the closing quote.
+        const ref = new RegExp(`/partners/${file.replace(/\./g, '\\.')}(\\?v=[^"']*)?(?=["'])`, 'g');
+        if (!html.match(ref)) throw new Error(`partners/index.html does not reference ${file}`);
+        html = html.replace(ref, `/partners/${file}?v=${hash}`);
+      }
+      fs.writeFileSync(htmlPath, html);
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [partnershipRoutes(), react()],
+  plugins: [partnershipRoutes(), react(), partnerAssetVersions()],
 });

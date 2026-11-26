@@ -152,6 +152,44 @@
     if (UI.route === 'portal') render();
   }
 
+  // Keep the portal current without a manual refresh: re-read the program data every minute while the tab is
+  // visible, and as soon as the partner returns to the tab. Quiet (no loading state); the page re-renders only
+  // when something changed and never while the partner is typing or has a dialog open.
+  const LIVE_REFRESH_MS = 60 * 1000;
+  let liveRefreshing = false;
+  let liveLastRefresh = 0;
+
+  function partnerIsBusy() {
+    const a = document.activeElement;
+    if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return true;
+    const wrap = document.getElementById('modal-wrap');
+    return !!(wrap && wrap.classList.contains('open'));
+  }
+
+  async function refreshLiveQuietly() {
+    if (!LIVE || liveRefreshing || UI.route !== 'portal' || document.visibilityState !== 'visible') return;
+    liveRefreshing = true;
+    liveLastRefresh = Date.now();
+    try {
+      const { res, body } = await authFetch('/program');
+      if (res.status === 401) return; // signed out elsewhere; the next navigation sends them to sign in
+      const next = res.ok && body?.linked && body.available ? body : null;
+      if (!next || JSON.stringify(next) === JSON.stringify(LIVE)) return;
+      LIVE = next;
+      if (!partnerIsBusy()) render();
+    } catch {
+      // Network blip: keep showing what we have and try again on the next tick.
+    } finally {
+      liveRefreshing = false;
+    }
+  }
+
+  setInterval(refreshLiveQuietly, LIVE_REFRESH_MS);
+  document.addEventListener('visibilitychange', () => {
+    // Back on the tab: refresh unless we just did (avoids a burst when switching tabs quickly).
+    if (document.visibilityState === 'visible' && Date.now() - liveLastRefresh > 10 * 1000) refreshLiveQuietly();
+  });
+
   async function refreshAuthSession() {
     try {
       const { res, body } = await authFetch('/me');
