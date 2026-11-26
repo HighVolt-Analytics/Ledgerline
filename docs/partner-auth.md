@@ -127,6 +127,13 @@ On signup, the PHP API also sends the partner's application (firm or name, email
 `GET /api/partners/program` returns the signed-in partner's real status, referral codes, referral link base and
 balance (minor units). `POST /api/partners/program/code` creates their referral code once they are approved.
 
+`POST /api/partners/program/reapply` (`{"acceptTerms": true}`) lets a partner whose partnership was **ended** apply
+again. Ending is final, so coming back is a new partner-service application that the team reviews and approves
+like the first one. It's allowed only when partner-service reports the current partnership as `TERMINATED`; the
+server checks this, never the browser. The account is linked to the new application, and commission from the
+ended partnership stays with it in partner-service and is still paid. Suspended partners can't apply again; the
+team reactivates them.
+
 - This server signs a 60-second RS256 token for the session's own partner only (partner-service ADR-0018) and
   calls `{PARTNER_SERVICE_URL}/site/me/...`. The browser never sees the token or the service partner id, and cannot
   choose another partner.

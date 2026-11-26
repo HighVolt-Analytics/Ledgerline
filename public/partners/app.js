@@ -822,7 +822,7 @@
     // Same header as the original portal; a status pill shows unless the partner is approved.
     return `<div class="page-head"><div><h1>Welcome, ${esc(firstName)}</h1><p>${esc(p.firm)}${liveCode() ? ` · Partner code <span class="code-chip">${esc(liveCode().code)}</span>` : ''}${liveStatusPill() ? ` · ${liveStatusPill()}` : ''}</p></div>
       ${liveStopped() ? '' : '<button class="btn" data-act="invite">Invite a client</button>'}</div>
-      ${liveStopped() ? `<div class="card"><div class="card-body"><p class="small" data-testid="live-stopped">${liveNotApprovedText()}</p></div></div>` : ''}
+      ${liveStopped() ? `<div class="card"><div class="card-body"><p class="small" data-testid="live-stopped">${liveNotApprovedText()}</p>${LIVE.status === 'TERMINATED' ? '<button class="btn sm" style="margin-top:10px" data-act="live-reapply">Apply again</button>' : ''}</div></div>` : ''}
       ${liveKpis()}
       ${liveStopped() ? '' : `<div class="card"><div class="card-head"><h2>Your referral link</h2><span class="small muted">Clients who subscribe through this link are attributed to you for life</span></div><div class="card-body">${liveLinkBox()}</div></div>`}
       <div class="two">
@@ -1475,6 +1475,24 @@
         if (p) { p.shared = true; save(); }
         copy(link, 'Referral link copied');
         return render();
+      }
+      case 'live-reapply':
+        modal(`${mHead('Apply again', 'Your new application is reviewed by the LedgerLine team, like the first time.')}
+          <div class="m-body"><p class="small muted">Commission from your ended partnership stays with it and is still paid out. Once approved, you get a new referral link.</p>
+          <label class="small" style="display:flex;gap:8px;align-items:flex-start;margin-top:12px"><input type="checkbox" id="ra-terms"> <span>I accept the LedgerLine partnership terms.</span></label>
+          <div class="err-msg" id="ra-err" role="alert"></div></div>
+          <div class="m-foot"><button class="btn ghost" data-act="close-modal">Cancel</button><button class="btn" data-act="live-reapply-send">Send application</button></div>`);
+        return undefined;
+      case 'live-reapply-send': {
+        if (!$('#ra-terms').checked) { $('#ra-err').textContent = 'Please accept the partnership terms.'; return undefined; }
+        (async () => {
+          try {
+            const { res, body } = await authFetch('/program/reapply', { method: 'POST', body: JSON.stringify({ acceptTerms: true }) });
+            if (res.ok && body?.available) { LIVE = body; closeModal(); render(); return toast('Application sent. We will review it soon.'); }
+            $('#ra-err').textContent = body?.message || 'Please try again later.';
+          } catch { $('#ra-err').textContent = 'Please try again later.'; }
+        })();
+        return undefined;
       }
       case 'live-code': {
         (async () => {
