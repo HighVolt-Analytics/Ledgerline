@@ -21,6 +21,11 @@ RewriteCond %{REQUEST_FILENAME} !-d
 RewriteRule ^ index.html [L]
 
 # Pages always revalidate so a new release (and its versioned partner assets) is picked up at once.
+# Hostinger's LiteSpeed applies its long caching via mod_expires, so set the HTML rule there too.
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType text/html "access plus 0 seconds"
+</IfModule>
 <IfModule mod_headers.c>
   <FilesMatch "\.html$">
     Header set Cache-Control "no-cache"
