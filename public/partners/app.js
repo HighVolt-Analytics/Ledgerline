@@ -691,7 +691,8 @@
 
   // ---- Live portal (real data from the HighVolt partner service). Replaces the simulated prototype views. ----
   const liveDate = (s) => (s ? fd(String(s).slice(0, 10)) : '—');
-  function liveCode() { return LIVE ? (LIVE.codes || []).find((c) => c.status === 'ACTIVE') : null; }
+  // A referral code only counts while the partner is approved (partner-service ignores clicks otherwise).
+  function liveCode() { return LIVE && LIVE.status === 'ACTIVE' ? (LIVE.codes || []).find((c) => c.status === 'ACTIVE') : null; }
   function liveLink() { const c = liveCode(); return c ? `${LIVE.referralBase}${encodeURIComponent(c.code)}` : ''; }
   function liveBalances() {
     const all = LIVE.balances && LIVE.balances.length ? LIVE.balances : (LIVE.balance ? [LIVE.balance] : []);
@@ -704,6 +705,19 @@
     return { active: rows.find((x) => x.status === 'ACTIVE'), pending: rows.find((x) => x.status === 'PENDING') };
   }
   const liveApproved = () => LIVE && LIVE.status === 'ACTIVE';
+  // Suspended or ended by the LedgerLine team: no new referrals, but earned commission and payouts stay visible.
+  const liveStopped = () => LIVE && (LIVE.status === 'SUSPENDED' || LIVE.status === 'TERMINATED');
+  function liveStatusPill() {
+    if (!LIVE || LIVE.status === 'ACTIVE') return '';
+    if (LIVE.status === 'TERMINATED') return '<span class="pill bad">Partnership ended</span>';
+    if (LIVE.status === 'SUSPENDED') return '<span class="pill bad">Suspended</span>';
+    return '<span class="pill warn">Under review</span>';
+  }
+  function liveNotApprovedText() {
+    if (LIVE && LIVE.status === 'TERMINATED') return 'Your partnership has ended, so your referral link no longer works. Commission you have already earned is still paid out.';
+    if (LIVE && LIVE.status === 'SUSPENDED') return 'Your partnership is suspended, so your referral link is switched off. Contact the LedgerLine team if you think this is a mistake.';
+    return 'Your referral link is created once your application is approved.';
+  }
 
   function liveKpis() {
     // Same five tiles as the original portal, from real data. Amounts in the main (product) currency; other
@@ -730,7 +744,7 @@
     if (!liveCode()) {
       return liveApproved()
         ? `<button class="btn sm" data-act="live-code">Get my referral link</button>`
-        : `<p class="small muted">Your referral link is created once your application is approved.</p>`;
+        : `<p class="small muted" data-testid="live-link-off">${liveNotApprovedText()}</p>`;
     }
     return `<div class="link-box"><input class="in-t" id="live-link" readonly value="${esc(liveLink())}" aria-label="Your referral link"><button class="btn sm" data-act="copy-live-link">Copy link</button></div>`;
   }
@@ -760,18 +774,19 @@
     const steps = [
       [true, 'Partner account created', fd(p.created), ''],
       [!!liveCode() && (!!p.shared || refs.length > 0), 'Share your referral link with a client',
-        liveApproved() ? '' : 'Available once your application is approved', shareAct],
+        liveApproved() ? '' : (liveStopped() ? 'Not available' : 'Available once your application is approved'), shareAct],
       [refs.length > 0, 'First client subscribes', '', liveCode() ? `<button class="btn ghost sm act" data-act="copy-live-link">Copy link</button>` : ''],
       [!!active, 'Add bank details to receive payouts', '', `<button class="btn sm act" data-tab="payouts">Add bank details</button>`],
     ];
     const done = steps.filter((s) => s[0]).length;
     const b = liveBalances()[0] || { currency: 'USD', pendingMinor: 0, approvedMinor: 0 };
     const firstName = p.name.split(' ')[0];
-    // Same header as the original portal; "Under review" shows only until the application is approved.
-    return `<div class="page-head"><div><h1>Welcome, ${esc(firstName)}</h1><p>${esc(p.firm)}${liveCode() ? ` · Partner code <span class="code-chip">${esc(liveCode().code)}</span>` : ''}${liveApproved() ? '' : ' · <span class="pill warn">Under review</span>'}</p></div>
-      <button class="btn" data-act="invite">Invite a client</button></div>
+    // Same header as the original portal; a status pill shows unless the partner is approved.
+    return `<div class="page-head"><div><h1>Welcome, ${esc(firstName)}</h1><p>${esc(p.firm)}${liveCode() ? ` · Partner code <span class="code-chip">${esc(liveCode().code)}</span>` : ''}${liveStatusPill() ? ` · ${liveStatusPill()}` : ''}</p></div>
+      ${liveStopped() ? '' : '<button class="btn" data-act="invite">Invite a client</button>'}</div>
+      ${liveStopped() ? `<div class="card"><div class="card-body"><p class="small" data-testid="live-stopped">${liveNotApprovedText()}</p></div></div>` : ''}
       ${liveKpis()}
-      <div class="card"><div class="card-head"><h2>Your referral link</h2><span class="small muted">Clients who subscribe through this link are attributed to you for life</span></div><div class="card-body">${liveLinkBox()}</div></div>
+      ${liveStopped() ? '' : `<div class="card"><div class="card-head"><h2>Your referral link</h2><span class="small muted">Clients who subscribe through this link are attributed to you for life</span></div><div class="card-body">${liveLinkBox()}</div></div>`}
       <div class="two">
         <div class="card"><div class="card-head"><h2>Get set up</h2><span class="small muted">${done} of ${steps.length} done</span></div><div class="card-body" style="padding-top:4px;padding-bottom:4px"><ul class="checklist">${steps.map(([ok, t, sub, a]) => `<li class="${ok ? 'done' : ''}"><span class="ic">${ok ? '✓' : ''}</span><span class="tx">${t}${sub ? `<br><span class="xs muted">${sub}</span>` : ''}</span>${ok ? '' : a}</li>`).join('')}</ul></div></div>
         <div class="card"><div class="card-head"><h2>Next payout</h2>${active ? '<span class="pill ok">Bank details confirmed</span>' : '<span class="pill warn">Bank details needed</span>'}</div><div class="card-body">
@@ -1148,7 +1163,7 @@
           <div class="field"><label for="s-type">Partner type</label><select class="sel" id="s-type">${PTYPES.map((t) => `<option ${p.type === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
         </div></div>
         <div class="card"><div class="card-head"><h2>Partner agreement</h2><span class="pill ok">Accepted</span></div><div class="card-body"><dl class="kv">
-          <dt>Status</dt><dd>${(LIVE ? liveApproved() : p.status === 'approved') ? 'Approved partner' : 'Under review'}${!LIVE && p.founding ? ' · Founding partner' : ''}</dd>
+          <dt>Status</dt><dd>${(LIVE ? liveApproved() : p.status === 'approved') ? 'Approved partner' : LIVE && LIVE.status === 'TERMINATED' ? 'Partnership ended' : LIVE && LIVE.status === 'SUSPENDED' ? 'Suspended' : 'Under review'}${!LIVE && p.founding ? ' · Founding partner' : ''}</dd>
           <dt>Commission</dt><dd>20% <span class="life">lifetime</span> fixed</dd><dt>Accepted on</dt><dd>${fd(p.created)}</dd><dt>Partner code</dt><dd><span class="code-chip">${esc(LIVE && liveCode() ? liveCode().code : p.code)}</span></dd></dl>
           <div style="margin-top:16px"><button class="btn ghost sm" data-act="terms">View key terms</button></div></div></div>
       </div>`;
@@ -1237,7 +1252,7 @@
     if (LIVE) {
       // Live: the partner sends the invitation from their own email app (no system email to clients).
       if (!liveCode()) {
-        modal(`${mHead('Invite a client', 'Get your referral link first.')}<div class="m-body"><p class="small muted">${liveApproved() ? 'Create your referral link, then invite clients with it.' : 'You can invite clients once your application is approved.'}</p></div>
+        modal(`${mHead('Invite a client', 'Get your referral link first.')}<div class="m-body"><p class="small muted">${liveApproved() ? 'Create your referral link, then invite clients with it.' : liveStopped() ? liveNotApprovedText() : 'You can invite clients once your application is approved.'}</p></div>
         <div class="m-foot"><button class="btn ghost" data-act="close-modal">Close</button>${liveApproved() ? '<button class="btn" data-act="live-code">Get my referral link</button>' : ''}</div>`);
         return;
       }
