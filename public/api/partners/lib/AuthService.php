@@ -223,9 +223,9 @@ final class PartnerAuthService
     }
 
     /**
-     * Apply again after the partnership was ended (industry practice: ending is final; coming back is a new
-     * application, new terms acceptance and a new approval). Allowed only when partner-service says the current
-     * partnership is TERMINATED. Earnings of the ended partnership stay with it in partner-service.
+     * Apply again after the partnership was ended. Ending is final for the team; the partner re-opens it by accepting
+     * the terms again, and the team approves again. Partner-service re-opens the SAME partner (history, earnings and
+     * bank details stay) and is idempotent, so double clicks never create a second application.
      */
     public function programReapply(?string $sessionId, array $input): array
     {
@@ -239,32 +239,21 @@ final class PartnerAuthService
                 'message' => 'Please accept the partnership terms to apply again.',
             ]];
         }
-        $oldId = $partner['hva_partner_id'] ?? null;
-        if (!is_string($oldId) || $oldId === '') {
+        $hvaId = $partner['hva_partner_id'] ?? null;
+        if (!is_string($hvaId) || $hvaId === '') {
             return ['ok' => false, 'status' => 409, 'body' => ['error' => 'not_linked']];
         }
-        // Server-side check: never trust the browser about the current status.
-        $summary = $this->program->summary($oldId);
-        if ($summary === null) {
-            return ['ok' => false, 'status' => 502, 'body' => ['error' => 'program_unavailable', 'message' => 'Please try again later.']];
+        $status = $this->program->reapply($hvaId);
+        if ($status === 200) {
+            return $this->program($sessionId);
         }
-        if (($summary['status'] ?? null) !== 'TERMINATED') {
+        if ($status === 409) {
             return ['ok' => false, 'status' => 409, 'body' => [
                 'error' => 'not_ended',
                 'message' => 'You can only apply again after your partnership has ended.',
             ]];
         }
-        $newId = $this->program->apply($partner, !empty($input['marketingConsent']));
-        if ($newId === null) {
-            return ['ok' => false, 'status' => 502, 'body' => ['error' => 'program_unavailable', 'message' => 'Please try again later.']];
-        }
-        // Compare-and-set so two clicks cannot both swap the link.
-        $stmt = $this->pdo->prepare('UPDATE partners SET hva_partner_id = ? WHERE id = ? AND hva_partner_id = ?');
-        $stmt->execute([$newId, $partner['id'], $oldId]);
-        if ($stmt->rowCount() !== 1) {
-            return ['ok' => false, 'status' => 409, 'body' => ['error' => 'already_reapplied']];
-        }
-        return $this->program($sessionId);
+        return ['ok' => false, 'status' => 502, 'body' => ['error' => 'program_unavailable', 'message' => 'Please try again later.']];
     }
 
     /** Retries the link for accounts created while the partner service was unavailable. */

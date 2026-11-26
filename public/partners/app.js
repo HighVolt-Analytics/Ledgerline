@@ -1361,7 +1361,7 @@
     return code;
   }
 
-  function act(a) {
+  function act(a, el) {
     const p = me();
     switch (a) {
       case 'close-modal': return closeModal();
@@ -1478,19 +1478,26 @@
       }
       case 'live-reapply':
         modal(`${mHead('Apply again', 'Your new application is reviewed by the LedgerLine team, like the first time.')}
-          <div class="m-body"><p class="small muted">Commission from your ended partnership stays with it and is still paid out. Once approved, you get a new referral link.</p>
+          <div class="m-body"><p class="small muted">Your history, earnings and bank details stay. Once approved, your referral link works again.</p>
           <label class="small" style="display:flex;gap:8px;align-items:flex-start;margin-top:12px"><input type="checkbox" id="ra-terms"> <span>I accept the LedgerLine partnership terms.</span></label>
           <div class="err-msg" id="ra-err" role="alert"></div></div>
           <div class="m-foot"><button class="btn ghost" data-act="close-modal">Cancel</button><button class="btn" data-act="live-reapply-send">Send application</button></div>`);
         return undefined;
       case 'live-reapply-send': {
         if (!$('#ra-terms').checked) { $('#ra-err').textContent = 'Please accept the partnership terms.'; return undefined; }
+        // One request at a time: the button stays disabled until the answer arrives (no double applications).
+        const btn = el;
+        if (btn.disabled) return undefined;
+        btn.disabled = true;
+        btn.textContent = 'Sending…';
         (async () => {
           try {
             const { res, body } = await authFetch('/program/reapply', { method: 'POST', body: JSON.stringify({ acceptTerms: true }) });
             if (res.ok && body?.available) { LIVE = body; closeModal(); render(); return toast('Application sent. We will review it soon.'); }
             $('#ra-err').textContent = body?.message || 'Please try again later.';
           } catch { $('#ra-err').textContent = 'Please try again later.'; }
+          btn.disabled = false;
+          btn.textContent = 'Send application';
         })();
         return undefined;
       }

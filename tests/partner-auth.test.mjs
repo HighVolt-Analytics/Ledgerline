@@ -701,25 +701,28 @@ test('bank details go server-side to partner-service and are validated first', a
   }
 })
 
-test('apply again only after the partnership ended, with terms accepted, as a new application', async () => {
+test('apply again re-opens the same partner once, only after it ended, with terms accepted', async () => {
   const { generateKeyPairSync } = await import('node:crypto')
   const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
-  const ended = 'eeeeeeee-0000-4000-8000-000000000005'
-  const fresh = 'ffffffff-0000-4000-8000-000000000006'
-  const applications = []
+  const pid = 'eeeeeeee-0000-4000-8000-000000000005'
+  let status = 'TERMINATED'
+  let applications = 0
+  const reapplies = []
   const fake = createServer((req, res) => {
     let data = ''
     req.on('data', (c) => (data += c))
     req.on('end', () => {
       const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)) }
-      if (req.method === 'POST' && req.url === '/applications') {
-        applications.push(JSON.parse(data))
-        return send(201, { partner_id: applications.length === 1 ? ended : fresh, status: 'APPLIED' })
-      }
+      if (req.method === 'POST' && req.url === '/applications') { applications++; return send(201, { partner_id: pid, status: 'APPLIED' }) }
       const [, p] = String(req.headers.authorization || '').replace(/^Bearer /, '').split('.')
-      const pid = p ? JSON.parse(Buffer.from(p, 'base64url')).partner_id : null
-      if (req.url === '/site/me') return send(200, { status: pid === ended ? 'TERMINATED' : 'APPLIED' })
-      if (req.url === '/site/me/balances') return send(200, [{ currency: 'INR', pending_minor: pid === ended ? 100000 : 0 }])
+      const claims = p ? JSON.parse(Buffer.from(p, 'base64url')) : {}
+      if (req.method === 'POST' && req.url === '/site/me/reapply') {
+        reapplies.push({ partner: claims.partner_id, body: JSON.parse(data) })
+        if (status === 'TERMINATED' || status === 'APPLIED') { status = 'APPLIED'; return send(200, { partner_id: pid, status }) }
+        return send(409, { type: 'urn:hva:problem:partner-partner-not-ended' })
+      }
+      if (req.url === '/site/me') return send(200, { status })
+      if (req.url === '/site/me/balances') return send(200, [{ currency: 'INR', pending_minor: 100000 }])
       if (req.url === '/site/me/referral-codes' || req.url === '/site/me/payout-account') return send(200, [])
       return send(404, {})
     })
@@ -738,18 +741,23 @@ test('apply again only after the partnership ended, with terms accepted, as a ne
     assert.equal(anon.res.status, 401)
     const noTerms = await api(apiServer.base, '/program/reapply', { method: 'POST', cookie: s.cookie, body: {} })
     assert.equal(noTerms.res.status, 400)
-    assert.equal(applications.length, 1, 'nothing is sent without accepting the terms')
+    assert.equal(reapplies.length, 0, 'nothing is sent without accepting the terms')
 
-    const ok = await api(apiServer.base, '/program/reapply', { method: 'POST', cookie: s.cookie, body: { acceptTerms: true } })
-    assert.equal(ok.res.status, 200)
-    assert.equal(ok.json.status, 'APPLIED')
-    assert.equal(applications.length, 2)
-    assert.equal(applications[1].contact_email, applications[0].contact_email)
-    assert.ok(!JSON.stringify(ok.json).includes(fresh), 'service partner id is never sent to the browser')
+    // Double click: both succeed, same partner, no new application, earnings still there.
+    const [one, two] = await Promise.all([
+      api(apiServer.base, '/program/reapply', { method: 'POST', cookie: s.cookie, body: { acceptTerms: true } }),
+      api(apiServer.base, '/program/reapply', { method: 'POST', cookie: s.cookie, body: { acceptTerms: true } }),
+    ])
+    assert.equal(one.res.status, 200)
+    assert.equal(two.res.status, 200)
+    assert.equal(one.json.status, 'APPLIED')
+    assert.equal(one.json.balances[0].pendingMinor, 100000)
+    assert.equal(applications, 1, 'apply again never creates a new partner')
+    assert.ok(reapplies.every((r) => r.partner === pid && r.body.agreement_version))
 
-    const again = await api(apiServer.base, '/program/reapply', { method: 'POST', cookie: s.cookie, body: { acceptTerms: true } })
-    assert.equal(again.res.status, 409, 'only an ended partnership can apply again')
-    assert.equal(applications.length, 2)
+    status = 'ACTIVE'
+    const active = await api(apiServer.base, '/program/reapply', { method: 'POST', cookie: s.cookie, body: { acceptTerms: true } })
+    assert.equal(active.res.status, 409, 'only an ended partnership can apply again')
   } finally {
     await apiServer.close()
     fake.close()

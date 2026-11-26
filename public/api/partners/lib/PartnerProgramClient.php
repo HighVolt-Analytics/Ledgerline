@@ -213,6 +213,21 @@ final class PartnerProgramClient
     }
 
     /**
+     * Re-opens an ended partnership on the same partner (history and earnings kept; terms accepted again; admin
+     * approves again). Idempotent in partner-service. Returns HTTP status (0 when off or unreachable).
+     */
+    public function reapply(string $hvaPartnerId): int
+    {
+        if (!$this->portalEnabled()) {
+            return 0;
+        }
+        $token = $this->signFor($hvaPartnerId);
+        return $token === null ? 0 : $this->request('POST', '/site/me/reapply', $token, [
+            'agreement_version' => self::AGREEMENT_VERSION,
+        ])[0];
+    }
+
+    /**
      * Submits bank details for the partner. Saved as PENDING by partner-service and unusable for payouts until a
      * PartnerAdmin confirms them. Returns HTTP status (0 when off or unreachable).
      */
