@@ -116,7 +116,7 @@ On signup, the PHP API also sends the partner's application (firm or name, email
 
 `POST {PARTNER_SERVICE_URL}/applications` with `product_key = ledgerline`.
 
-- **Off by default.** Nothing is sent unless `PARTNER_SERVICE_URL` is set, so the live site is unchanged.
+- **Off by default.** Nothing is sent unless `PARTNER_SERVICE_URL` is set (env, or `private/partner-secrets.php` outside `public_html`; every partner setting is read the same way), so the live site is unchanged.
 - **Best-effort.** If the service is down, website signup still succeeds and the account stays unlinked (`programLinked: false`).
 - The returned service partner id is stored in `partners.hva_partner_id`, added automatically to existing databases. It is never returned to the browser.
 - Passwords are never sent.

@@ -11,7 +11,8 @@ require_once __DIR__ . '/bootstrap.php';
  *   signed-in partner only (partner-service ADR-0018). The private key comes from PARTNER_SITE_SIGNING_KEY
  *   (env or private/partner-secrets.php) and never leaves this server.
  *
- * Off unless PARTNER_SERVICE_URL is set, so the live site is unchanged until it is configured.
+ * Off unless PARTNER_SERVICE_URL is set (environment or private/partner-secrets.php), so the live site is unchanged
+ * until it is configured.
  * Best-effort: a failure never blocks website signup or sign-in.
  */
 final class PartnerProgramClient
@@ -32,12 +33,14 @@ final class PartnerProgramClient
 
     public static function fromEnv(): self
     {
-        $url = partner_env('PARTNER_SERVICE_URL');
+        // Each setting: environment first, else private/partner-secrets.php outside the web root (Hostinger has no
+        // per-site environment variables). Off unless PARTNER_SERVICE_URL is set in one of them.
+        $url = partner_secret('PARTNER_SERVICE_URL');
         return new self(
             $url ? rtrim($url, '/') : null,
             partner_secret('PARTNER_SITE_SIGNING_KEY'),
-            partner_env('PARTNER_SITE_KEY_ID', 'ledgerline-1'),
-            partner_env('PARTNER_SITE_ISSUER', 'https://quantumledgerline.com/partnership'),
+            partner_secret('PARTNER_SITE_KEY_ID') ?? 'ledgerline-1',
+            partner_secret('PARTNER_SITE_ISSUER') ?? 'https://quantumledgerline.com/partnership',
         );
     }
 
