@@ -695,7 +695,9 @@
   function liveLink() { const c = liveCode(); return c ? `${LIVE.referralBase}${encodeURIComponent(c.code)}` : ''; }
   function liveBalances() {
     const all = LIVE.balances && LIVE.balances.length ? LIVE.balances : (LIVE.balance ? [LIVE.balance] : []);
-    return all.filter((x, i) => i === 0 || x.pendingMinor || x.approvedMinor || x.paidMinor);
+    // Only currencies that hold money; the product currency alone when nothing is earned yet (no empty duplicate rows).
+    const used = all.filter((x) => x.pendingMinor || x.approvedMinor || x.paidMinor || x.debtMinor);
+    return used.length ? used : all.slice(0, 1);
   }
   function liveBank() {
     const rows = LIVE.bank || [];
