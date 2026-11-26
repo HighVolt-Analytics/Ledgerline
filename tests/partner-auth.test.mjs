@@ -700,3 +700,59 @@ test('bank details go server-side to partner-service and are validated first', a
     await rm(tmp, { recursive: true, force: true })
   }
 })
+
+test('apply again only after the partnership ended, with terms accepted, as a new application', async () => {
+  const { generateKeyPairSync } = await import('node:crypto')
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
+  const ended = 'eeeeeeee-0000-4000-8000-000000000005'
+  const fresh = 'ffffffff-0000-4000-8000-000000000006'
+  const applications = []
+  const fake = createServer((req, res) => {
+    let data = ''
+    req.on('data', (c) => (data += c))
+    req.on('end', () => {
+      const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)) }
+      if (req.method === 'POST' && req.url === '/applications') {
+        applications.push(JSON.parse(data))
+        return send(201, { partner_id: applications.length === 1 ? ended : fresh, status: 'APPLIED' })
+      }
+      const [, p] = String(req.headers.authorization || '').replace(/^Bearer /, '').split('.')
+      const pid = p ? JSON.parse(Buffer.from(p, 'base64url')).partner_id : null
+      if (req.url === '/site/me') return send(200, { status: pid === ended ? 'TERMINATED' : 'APPLIED' })
+      if (req.url === '/site/me/balances') return send(200, [{ currency: 'INR', pending_minor: pid === ended ? 100000 : 0 }])
+      if (req.url === '/site/me/referral-codes' || req.url === '/site/me/payout-account') return send(200, [])
+      return send(404, {})
+    })
+  })
+  await new Promise((r) => fake.listen(0, '127.0.0.1', r))
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'll-partner-'))
+  const apiServer = await startPartnerApi(path.join(tmp, 'p.sqlite'), {
+    PARTNER_SERVICE_URL: `http://127.0.0.1:${fake.address().port}`,
+    PARTNER_SITE_SIGNING_KEY: privateKey.export({ type: 'pkcs8', format: 'pem' }),
+  })
+  try {
+    const s = await api(apiServer.base, '/signup', { method: 'POST', body: signupBody(`again-${Date.now()}@example.test`) })
+    assert.equal((await api(apiServer.base, '/program', { cookie: s.cookie })).json.status, 'TERMINATED')
+
+    const anon = await api(apiServer.base, '/program/reapply', { method: 'POST', body: { acceptTerms: true } })
+    assert.equal(anon.res.status, 401)
+    const noTerms = await api(apiServer.base, '/program/reapply', { method: 'POST', cookie: s.cookie, body: {} })
+    assert.equal(noTerms.res.status, 400)
+    assert.equal(applications.length, 1, 'nothing is sent without accepting the terms')
+
+    const ok = await api(apiServer.base, '/program/reapply', { method: 'POST', cookie: s.cookie, body: { acceptTerms: true } })
+    assert.equal(ok.res.status, 200)
+    assert.equal(ok.json.status, 'APPLIED')
+    assert.equal(applications.length, 2)
+    assert.equal(applications[1].contact_email, applications[0].contact_email)
+    assert.ok(!JSON.stringify(ok.json).includes(fresh), 'service partner id is never sent to the browser')
+
+    const again = await api(apiServer.base, '/program/reapply', { method: 'POST', cookie: s.cookie, body: { acceptTerms: true } })
+    assert.equal(again.res.status, 409, 'only an ended partnership can apply again')
+    assert.equal(applications.length, 2)
+  } finally {
+    await apiServer.close()
+    fake.close()
+    await rm(tmp, { recursive: true, force: true })
+  }
+})

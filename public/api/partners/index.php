@@ -25,6 +25,8 @@ try {
         $action = 'program_bank';
     } elseif (preg_match('#/api/partners/program/code$#', $path)) {
         $action = 'program_code';
+    } elseif (preg_match('#/api/partners/program/reapply$#', $path)) {
+        $action = 'program_reapply';
     } elseif (preg_match('#/api/partners/program$#', $path)) {
         $action = 'program';
     } elseif (preg_match('#/api/partners/admin/list$#', $path)) {
@@ -59,6 +61,12 @@ try {
 
     if ($method === 'POST' && $action === 'program_bank') {
         $result = $auth->programBank($sessionId, partner_json_input());
+        partner_respond($result['status'], $result['body']);
+        exit;
+    }
+
+    if ($method === 'POST' && $action === 'program_reapply') {
+        $result = $auth->programReapply($sessionId, partner_json_input());
         partner_respond($result['status'], $result['body']);
         exit;
     }
